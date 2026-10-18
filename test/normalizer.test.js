@@ -45,3 +45,47 @@ test('never throws on empty or null-ish input', () => {
   assert.doesNotThrow(() => normalize(''));
   assert.doesNotThrow(() => normalize(undefined));
 });
+
+test('does not strip fences when the reply is not a single wrapping fence', () => {
+  const r = normalize('```js\na\n```\nmid\n```py\nb\n```');
+  assert.ok(r.text.includes('mid'));
+  assert.ok(r.text.includes('```py'));
+});
+
+test('APPROVED / BLOCKED normalize to APPROVE / BLOCK', () => {
+  assert.equal(normalize('VERDICT: APPROVED').verdict.decision, 'APPROVE');
+  const b = normalize('VERDICT: BLOCKED - needs a test').verdict;
+  assert.equal(b.decision, 'BLOCK');
+  assert.match(b.reason, /needs a test/);
+});
+
+test('verdict tolerates markdown bold / quote decoration', () => {
+  assert.equal(normalize('**VERDICT: APPROVE**').verdict.decision, 'APPROVE');
+  assert.equal(normalize('> VERDICT: BLOCK - x').verdict.decision, 'BLOCK');
+});
+
+test('verdict line and diff block are removed from text', () => {
+  const r = normalize('Prose here.\n```diff\n--- a/x\n+++ b/x\n@@\n+n\n```\nVERDICT: APPROVE');
+  assert.equal(r.text, 'Prose here.');
+  assert.ok(!/VERDICT/.test(r.text));
+  assert.ok(!/```/.test(r.text));
+  assert.match(r.diff, /\+n/);
+  assert.equal(r.verdict.decision, 'APPROVE');
+});
+
+test('a VERDICT-looking context line inside the diff does not win', () => {
+  const r = normalize('```diff\n--- a/x\n+++ b/x\n@@\n+VERDICT: BLOCK inside diff\n```\nVERDICT: APPROVE');
+  assert.equal(r.verdict.decision, 'APPROVE');
+});
+
+test('large whitespace input does not hang (no catastrophic backtracking)', () => {
+  const r = normalize(' \n'.repeat(50000));
+  assert.equal(r.verdict, null);
+  assert.equal(typeof r.text, 'string');
+});
+
+test('non-string input never throws', () => {
+  assert.doesNotThrow(() => normalize(null));
+  assert.doesNotThrow(() => normalize(42));
+  assert.doesNotThrow(() => normalize({}));
+});
