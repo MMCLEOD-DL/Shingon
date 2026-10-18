@@ -3,9 +3,9 @@ import { runCommand } from './exec.js';
 
 export function classifyFailure(stderr = '') {
   const s = stderr.toLowerCase();
-  if (/401|unauthorized|authentication token|sign in/.test(s)) return 'unauthorized';
+  if (/\b401\b|unauthorized|authentication token|\bsign in\b/.test(s)) return 'unauthorized';
   if (/unknown variant|unknown field|invalid value/.test(s)) return 'version-skew';
-  if (/429|rate limit|limit reached/.test(s)) return 'rate-limit';
+  if (/\b429\b|rate limit|limit reached/.test(s)) return 'rate-limit';
   return 'unavailable';
 }
 

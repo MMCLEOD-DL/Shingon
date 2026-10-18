@@ -34,3 +34,16 @@ test('missing binary is unavailable, not a throw', async () => {
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'unavailable');
 });
+
+test('timeout yields unavailable (not classified)', async () => {
+  const bin = writeStubCli(tmp(), 'codex', `setInterval(()=>{},1000);`);
+  const r = await checkHealth({ kind: 'codex', bin }, { timeoutMs: 200 });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'unavailable');
+});
+
+test('invokes the CLI with --version', async () => {
+  const bin = writeStubCli(tmp(), 'claude', `if (args[0] !== '--version') process.exit(1); process.stdout.write('2.1.302');`);
+  const r = await checkHealth({ kind: 'claude-code', bin });
+  assert.equal(r.ok, true);
+});
