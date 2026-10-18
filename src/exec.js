@@ -1,38 +1,45 @@
-// src/exec.js
 import { spawn } from 'node:child_process';
 
 export function runCommand({ cmd, args = [], cwd, input = null, timeoutMs = 120000, env = process.env } = {}) {
   return new Promise((resolve) => {
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
-    let child;
+    let stdout = '', stderr = '', timedOut = false, settled = false;
+    let timer = null, grace = null, child;
+
+    const finish = (code) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (grace) clearTimeout(grace);
+      resolve({ stdout, stderr, code: code ?? -1, timedOut });
+    };
+
     try {
-      child = spawn(cmd, args, { cwd, env });
+      child = spawn(cmd, args, { cwd, env, detached: true });
     } catch (err) {
       resolve({ stdout, stderr: String(err?.message ?? err), code: -1, timedOut });
       return;
     }
-    const timer = setTimeout(() => {
+
+    timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGKILL');
+      try { process.kill(-child.pid, 'SIGKILL'); }
+      catch { try { child.kill('SIGKILL'); } catch {} }
+      // a descendant may hold the pipes open after the child dies; force-resolve after a grace period
+      grace = setTimeout(() => {
+        try { child.stdout?.destroy(); child.stderr?.destroy(); } catch {}
+        finish(-1);
+      }, 2000);
     }, timeoutMs);
 
-    child.stdout.on('data', (d) => { stdout += d; });
-    child.stderr.on('data', (d) => { stderr += d; });
-    child.on('error', (err) => {
-      clearTimeout(timer);
-      resolve({ stdout, stderr: stderr + String(err?.message ?? err), code: -1, timedOut });
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({ stdout, stderr, code: code ?? -1, timedOut });
-    });
+    child.stdout?.setEncoding('utf8');
+    child.stderr?.setEncoding('utf8');
+    child.stdout?.on('data', (d) => { stdout += d; });
+    child.stderr?.on('data', (d) => { stderr += d; });
+    child.on('error', (err) => { stderr += String(err?.message ?? err); finish(-1); });
+    child.on('close', (code) => finish(code));
 
-    if (input != null) {
-      child.stdin.on('error', () => {});
-      child.stdin.write(input);
-      child.stdin.end();
-    }
+    child.stdin?.on('error', () => {});
+    if (input != null) child.stdin?.write(input);
+    child.stdin?.end();
   });
 }

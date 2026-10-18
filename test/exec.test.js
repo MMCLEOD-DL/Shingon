@@ -41,3 +41,22 @@ test('does not reject on a missing binary', async () => {
   assert.equal(r.code, -1);
   assert.match(r.stderr, /ENOENT|spawn/i);
 });
+
+test('times out even when a descendant keeps the pipe open', async () => {
+  const r = await runCommand({
+    cmd: node,
+    args: ['-e', 'require("node:child_process").spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:["ignore","inherit","inherit"]}); setInterval(()=>{},1000);'],
+    timeoutMs: 300,
+  });
+  assert.equal(r.timedOut, true);
+});
+
+test('null input does not hang a child that reads stdin to EOF', async () => {
+  const r = await runCommand({
+    cmd: node,
+    args: ['-e', 'process.stdin.resume(); process.stdin.on("end",()=>process.exit(0));'],
+    timeoutMs: 5000,
+  });
+  assert.equal(r.code, 0);
+  assert.equal(r.timedOut, false);
+});
