@@ -1,5 +1,5 @@
 // src/roles.js
-export const ROLES = ['author', 'reviewer', 'grunt'];
+export const ROLES = Object.freeze(['author', 'reviewer', 'grunt']);
 
 const PRESETS = {
   author: {
@@ -27,7 +27,8 @@ const PRESETS = {
 };
 
 export function getRolePreset(role) {
-  const preset = PRESETS[role];
-  if (!preset) throw new Error(`Unknown role: ${role}. Valid roles: ${ROLES.join(', ')}`);
-  return preset;
+  if (!Object.hasOwn(PRESETS, role)) {
+    throw new Error(`Unknown role: ${role}. Valid roles: ${ROLES.join(', ')}`);
+  }
+  return PRESETS[role];
 }

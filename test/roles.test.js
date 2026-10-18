@@ -20,3 +20,9 @@ test('author and grunt presets exist and differ', () => {
 test('unknown role throws naming the role', () => {
   assert.throws(() => getRolePreset('boss'), /boss/);
 });
+
+test('prototype-key role names throw, not return inherited members', () => {
+  assert.throws(() => getRolePreset('constructor'), /constructor/);
+  assert.throws(() => getRolePreset('__proto__'), /__proto__/);
+  assert.throws(() => getRolePreset('toString'), /toString/);
+});
