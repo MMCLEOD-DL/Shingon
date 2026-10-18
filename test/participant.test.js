@@ -24,3 +24,15 @@ test('capabilities default to false and merge', () => {
   assert.equal(p.capabilities.is_agentic, true);
   assert.equal(p.capabilities.can_edit_files, false);
 });
+
+test('run rejects when the adapter returns a non-Result', async () => {
+  const badAdapter = { kind: 'bad', async run() { return { text: 'not a result' }; } };
+  const p = new Participant({ name: 'x', adapter: badAdapter, roles: ['author'] });
+  await assert.rejects(() => p.run('author', 't'), /Result/);
+});
+
+test('constructor validates name, adapter, and roles', () => {
+  assert.throws(() => new Participant({ adapter: fakeAdapter, roles: ['author'] }), /name/);
+  assert.throws(() => new Participant({ name: 'x', adapter: {}, roles: ['author'] }), /adapter/);
+  assert.throws(() => new Participant({ name: 'x', adapter: fakeAdapter, roles: [] }), /role/);
+});
