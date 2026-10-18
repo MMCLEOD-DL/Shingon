@@ -1,0 +1,4 @@
+# workspace / transcripts / local config (future)
+/workspace/
+/transcripts/
+*.log
