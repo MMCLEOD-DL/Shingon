@@ -7,9 +7,11 @@ const WHAT_HAPPENED = {
   final: 'The final check of the finished work raised a concern.',
 };
 
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const MARK_RE = new RegExp(`${escapeRe(IRREVERSIBLE_MARK)}\\s*`, 'gi');
+
 export function plainReason(reason) {
-  const r = String(reason ?? '').trim();
-  return r.toUpperCase().startsWith(IRREVERSIBLE_MARK) ? r.slice(IRREVERSIBLE_MARK.length).trim() : r;
+  return String(reason ?? '').replace(MARK_RE, '').trim();
 }
 
 export function buildEscalation({ kind, title, reason, recommendation }) {

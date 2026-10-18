@@ -46,3 +46,14 @@ test('summary caps a long file list and handles no tests / no notes', () => {
   assert.doesNotMatch(s, /Notes:/);
   assert.match(buildSummary({ request: 'r', plan: { chunks: [] }, tests: { ran: true, passed: false } }), /Tests: FAILING/);
 });
+
+test('plainReason strips the marker wherever it appears, any case', () => {
+  assert.equal(plainReason('Concern: IRREVERSIBLE: drops table'), 'Concern: drops table');
+  assert.equal(plainReason('Concern: irreversible: drops table'), 'Concern: drops table');
+});
+
+test('escalation message hides a mid-string marker', () => {
+  const e = buildEscalation({ kind: 'chunk', title: 't', reason: 'Concern: IRREVERSIBLE: drops table', recommendation: 'Reject.' });
+  assert.match(e.message, /Concern: drops table/);
+  assert.doesNotMatch(e.message, /IRREVERSIBLE/i);
+});
