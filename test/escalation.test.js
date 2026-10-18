@@ -1,0 +1,48 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { buildEscalation, buildSummary, plainReason } from '../src/escalation.js';
+
+test('plainReason strips the marker', () => {
+  assert.equal(plainReason('IRREVERSIBLE: deletes data'), 'deletes data');
+  assert.equal(plainReason('fine'), 'fine');
+});
+
+test('escalation is plain English with approve/reject and no marker', () => {
+  const e = buildEscalation({ kind: 'chunk', title: 'Step 2: migrate data', reason: 'IRREVERSIBLE: drops a column', recommendation: 'Approve: the column is unused.' });
+  assert.equal(e.kind, 'chunk');
+  assert.deepEqual(e.options, ['approve', 'reject']);
+  assert.match(e.message, /Step 2: migrate data/);
+  assert.match(e.message, /drops a column/);
+  assert.doesNotMatch(e.message, /IRREVERSIBLE/);
+  assert.match(e.message, /Recommendation: Approve: the column is unused\./);
+  assert.match(e.message, /reject to stop/i);
+});
+
+test('each kind has its own explanation', () => {
+  const msgs = ['plan', 'chunk', 'final'].map((kind) => buildEscalation({ kind, title: 't', reason: 'r', recommendation: 'x' }).message);
+  assert.equal(new Set(msgs).size, 3);
+});
+
+test('summary lists steps, files, tests and notes', () => {
+  const s = buildSummary({
+    request: 'CSV export',
+    plan: { summary: 's', chunks: [{ title: 'Backend' }, { title: 'UI' }] },
+    notes: ['Accepted over an objection: naming'],
+    files: ['a.js', 'b.js'],
+    tests: { ran: true, passed: true },
+  });
+  assert.match(s, /CSV export/);
+  assert.match(s, /1\. Backend[\s\S]*2\. UI/);
+  assert.match(s, /Files changed \(2\): a\.js, b\.js/);
+  assert.match(s, /Tests: passing/);
+  assert.match(s, /naming/);
+});
+
+test('summary caps a long file list and handles no tests / no notes', () => {
+  const files = Array.from({ length: 35 }, (_, i) => `f${i}`);
+  const s = buildSummary({ request: 'r', plan: { chunks: [] }, files });
+  assert.match(s, /\+ 5 more/);
+  assert.match(s, /Tests: not configured/);
+  assert.doesNotMatch(s, /Notes:/);
+  assert.match(buildSummary({ request: 'r', plan: { chunks: [] }, tests: { ran: true, passed: false } }), /Tests: FAILING/);
+});
