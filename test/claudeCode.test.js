@@ -52,3 +52,41 @@ test('malformed JSON stdout does not throw; raw kept in text', async () => {
   assert.equal(r.ok, false);
   assert.match(r.text, /not json/);
 });
+
+test('is_error:true in JSON yields ok:false', async () => {
+  const bin = writeStubCli(tmp(), 'claude', `process.stdout.write(JSON.stringify({ result: "boom", is_error: true }));`);
+  const r = await new ClaudeCodeAdapter({ bin }).run('author', 't');
+  assert.equal(r.ok, false);
+  assert.match(r.error, /boom/);
+});
+
+test('timeout yields ok:false with "timed out"', async () => {
+  const bin = writeStubCli(tmp(), 'claude', `setInterval(()=>{},1000);`);
+  const r = await new ClaudeCodeAdapter({ bin, timeoutMs: 200 }).run('author', 't');
+  assert.equal(r.ok, false);
+  assert.match(r.error, /timed out/);
+});
+
+test('valid-but-non-object JSON does not throw', async () => {
+  const bin = writeStubCli(tmp(), 'claude', `process.stdout.write("null");`);
+  const r = await new ClaudeCodeAdapter({ bin }).run('author', 't');
+  assert.equal(r.ok, false);
+});
+
+test('passes --model when set', async () => {
+  const bin = writeStubCli(tmp(), 'claude', `
+    const i = args.indexOf('--model');
+    process.stdout.write(JSON.stringify({ result: (i>=0 && args[i+1]==='claude-opus-4-8') ? 'ok' : 'no-model', is_error:false }));
+  `);
+  const r = await new ClaudeCodeAdapter({ bin, model: 'claude-opus-4-8' }).run('author', 't');
+  assert.equal(r.text, 'ok');
+});
+
+test('folds context into the prompt', async () => {
+  const bin = writeStubCli(tmp(), 'claude', `
+    const p = args[args.indexOf('-p')+1] || '';
+    process.stdout.write(JSON.stringify({ result: p.includes('CTX-MARKER') ? 'ok' : 'no-ctx', is_error:false }));
+  `);
+  const r = await new ClaudeCodeAdapter({ bin }).run('author', 'do it', 'CTX-MARKER');
+  assert.equal(r.text, 'ok');
+});

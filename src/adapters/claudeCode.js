@@ -34,14 +34,19 @@ export class ClaudeCodeAdapter {
       return makeResult({ text: stdout, ok: false, error: 'could not parse claude JSON output' });
     }
 
-    const norm = normalize(obj.result ?? '');
+    if (!obj || typeof obj !== 'object') {
+      return makeResult({ text: stdout, ok: false, error: 'claude JSON output was not an object' });
+    }
+
+    const resultText = typeof obj.result === 'string' ? obj.result : '';
+    const norm = normalize(resultText);
     return makeResult({
       text: norm.text,
       diff: norm.diff,
       verdict: norm.verdict,
-      usage: { costUsd: obj.total_cost_usd ?? null, raw: { num_turns: obj.num_turns ?? null } },
+      usage: { costUsd: typeof obj.total_cost_usd === 'number' ? obj.total_cost_usd : null, raw: { num_turns: obj.num_turns ?? null } },
       ok: obj.is_error !== true,
-      error: obj.is_error === true ? (obj.result ?? 'claude reported is_error') : null,
+      error: obj.is_error === true ? (typeof obj.result === 'string' ? obj.result : 'claude reported is_error') : null,
     });
   }
 }
