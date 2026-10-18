@@ -16,11 +16,11 @@ export class Participant {
     return this.roles.includes(role);
   }
 
-  async run(role, task, context = '') {
+  async run(role, task, context = '', opts = {}) {
     if (!this.canPlay(role)) {
       throw new Error(`Participant ${this.name} is not eligible for role "${role}" (eligible: ${this.roles.join(', ')})`);
     }
-    const result = await this.adapter.run(role, task, context);
+    const result = await this.adapter.run(role, task, context, opts);
     if (!isResult(result)) {
       throw new Error(`Adapter ${this.adapter.kind} for ${this.name} did not return a Result`);
     }

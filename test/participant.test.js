@@ -36,3 +36,11 @@ test('constructor validates name, adapter, and roles', () => {
   assert.throws(() => new Participant({ name: 'x', adapter: {}, roles: ['author'] }), /adapter/);
   assert.throws(() => new Participant({ name: 'x', adapter: fakeAdapter, roles: [] }), /role/);
 });
+
+test('forwards opts to the adapter', async () => {
+  let seen = null;
+  const adapter = { kind: 'fake', run: async (role, task, context, opts) => { seen = opts; return makeResult({ text: 'x' }); } };
+  const p = new Participant({ name: 'p', adapter, roles: ['grunt'] });
+  await p.run('grunt', 't', 'c', { cwd: '/w', write: true });
+  assert.deepEqual(seen, { cwd: '/w', write: true });
+});

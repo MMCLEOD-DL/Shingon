@@ -52,3 +52,15 @@ test('non-array participants throws', () => {
   const f = writeConfig({ participants: 'nope' });
   assert.throws(() => loadConfig(f), /participants/);
 });
+
+test('buildAdapter forwards timeoutMs, extraConfig and provider', () => {
+  const c = buildAdapter({ name: 'c', adapter: 'codex', timeoutMs: 999, extraConfig: ['a=1'] });
+  assert.equal(c.timeoutMs, 999);
+  assert.deepEqual(c.extraConfig, ['a=1']);
+  const l = buildAdapter({ name: 'l', adapter: 'local-agent', model: 'm', provider: 'ollama', extraConfig: ['b=2'], timeoutMs: 5 });
+  assert.equal(l.provider, 'ollama');
+  assert.deepEqual(l._codex.extraConfig, ['model_provider=ollama', 'model=m', 'b=2']);
+  assert.equal(l._codex.timeoutMs, 5);
+  const k = buildAdapter({ name: 'k', adapter: 'claude-code' });
+  assert.equal(k.timeoutMs, 120000);
+});

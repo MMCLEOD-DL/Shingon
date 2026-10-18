@@ -1,7 +1,7 @@
 // test/codex.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { writeStubCli } from './helpers/stubCli.js';
@@ -47,4 +47,47 @@ test('missing output file yields ok:false', async () => {
   const bin = writeStubCli(tmp(), 'codex', `process.stdout.write("no file written");`);
   const r = await new CodexAdapter({ bin }).run('author', 't');
   assert.equal(r.ok, false);
+});
+
+const ECHO_ARGS = `
+  const oi = args.indexOf('-o');
+  require('node:fs').writeFileSync(args[oi+1], 'cwd=' + process.cwd() + ' ' + args.join(' '));
+`;
+
+test('runs in opts.cwd and uses workspace-write when opts.write', async () => {
+  const dir = tmp();
+  const bin = writeStubCli(tmp(), 'codex', ECHO_ARGS);
+  const r = await new CodexAdapter({ bin }).run('grunt', 't', '', { cwd: dir, write: true });
+  assert.match(r.text, new RegExp('cwd=' + dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(r.text, /--sandbox workspace-write/);
+});
+
+test('defaults to read-only sandbox when not writing', async () => {
+  const bin = writeStubCli(tmp(), 'codex', ECHO_ARGS);
+  const r = await new CodexAdapter({ bin }).run('reviewer', 't');
+  assert.match(r.text, /--sandbox read-only/);
+});
+
+test('opts.timeoutMs overrides the constructor timeout', async () => {
+  const bin = writeStubCli(tmp(), 'codex', `setTimeout(() => {}, 10000);`);
+  const t0 = Date.now();
+  const r = await new CodexAdapter({ bin, timeoutMs: 60000 }).run('author', 't', '', { timeoutMs: 300 });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /timed out/);
+  assert.ok(Date.now() - t0 < 5000);
+});
+
+test('removes its temp output dir on success and failure', async () => {
+  const marker = path.join(tmp(), 'marker.txt');
+  const record = `require('node:fs').writeFileSync(${JSON.stringify(marker)}, args[args.indexOf('-o') + 1]);`;
+
+  const ok = writeStubCli(tmp(), 'codex', `${record}\nrequire('node:fs').writeFileSync(args[args.indexOf('-o') + 1], 'done');`);
+  const r1 = await new CodexAdapter({ bin: ok }).run('author', 't');
+  assert.equal(r1.ok, true);
+  assert.equal(existsSync(path.dirname(readFileSync(marker, 'utf8'))), false);
+
+  const bad = writeStubCli(tmp(), 'codex', `${record}\nprocess.exit(3);`);
+  const r2 = await new CodexAdapter({ bin: bad }).run('author', 't');
+  assert.equal(r2.ok, false);
+  assert.equal(existsSync(path.dirname(readFileSync(marker, 'utf8'))), false);
 });

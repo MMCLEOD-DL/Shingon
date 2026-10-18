@@ -12,15 +12,16 @@ export class ClaudeCodeAdapter {
     this.timeoutMs = timeoutMs;
   }
 
-  async run(role, task, context = '') {
+  async run(role, task, context = '', opts = {}) {
     const preset = getRolePreset(role);
     const prompt = context ? `${task}\n\n---\nContext:\n${context}` : task;
     const system = `${preset.systemPrompt}\n\n${preset.outputShape}`;
     const args = ['-p', prompt, '--output-format', 'json', '--append-system-prompt', system];
     if (this.model) args.push('--model', this.model);
+    if (opts.write) args.push('--permission-mode', 'acceptEdits');
 
     const { stdout, stderr, code, timedOut } = await runCommand({
-      cmd: this.bin, args, timeoutMs: this.timeoutMs,
+      cmd: this.bin, args, cwd: opts.cwd, timeoutMs: opts.timeoutMs ?? this.timeoutMs,
     });
 
     if (code !== 0 || timedOut) {

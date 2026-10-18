@@ -6,11 +6,11 @@ import { LocalAgentAdapter } from './adapters/localAgent.js';
 import { Participant } from './participant.js';
 
 export function buildAdapter(spec) {
-  const opts = { bin: spec.bin, model: spec.model };
+  const opts = { bin: spec.bin, model: spec.model, timeoutMs: spec.timeoutMs };
   switch (spec.adapter) {
     case 'claude-code': return new ClaudeCodeAdapter(opts);
-    case 'codex': return new CodexAdapter(opts);
-    case 'local-agent': return new LocalAgentAdapter(opts); // throws if model missing
+    case 'codex': return new CodexAdapter({ ...opts, extraConfig: spec.extraConfig });
+    case 'local-agent': return new LocalAgentAdapter({ ...opts, provider: spec.provider, extraConfig: spec.extraConfig }); // throws if model missing
     default:
       throw new Error(`Participant ${spec.name}: unknown adapter "${spec.adapter}" (expected claude-code | codex | local-agent)`);
   }

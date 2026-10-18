@@ -90,3 +90,21 @@ test('folds context into the prompt', async () => {
   const r = await new ClaudeCodeAdapter({ bin }).run('author', 'do it', 'CTX-MARKER');
   assert.equal(r.text, 'ok');
 });
+
+const CLAUDE_ECHO = `
+  process.stdout.write(JSON.stringify({ result: 'cwd=' + process.cwd() + ' ' + args.join(' '), is_error: false }));
+`;
+
+test('runs in opts.cwd and adds acceptEdits when opts.write', async () => {
+  const dir = tmp();
+  const bin = writeStubCli(tmp(), 'claude', CLAUDE_ECHO);
+  const r = await new ClaudeCodeAdapter({ bin }).run('author', 't', '', { cwd: dir, write: true });
+  assert.ok(r.text.includes('cwd=' + dir));
+  assert.match(r.text, /--permission-mode acceptEdits/);
+});
+
+test('no permission-mode flag when not writing', async () => {
+  const bin = writeStubCli(tmp(), 'claude', CLAUDE_ECHO);
+  const r = await new ClaudeCodeAdapter({ bin }).run('reviewer', 't');
+  assert.doesNotMatch(r.text, /--permission-mode/);
+});

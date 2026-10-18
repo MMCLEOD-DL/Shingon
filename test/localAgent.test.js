@@ -25,3 +25,16 @@ test('requires a model', () => {
 test('kind is local-agent', () => {
   assert.equal(new LocalAgentAdapter({ model: 'm' }).kind, 'local-agent');
 });
+
+test('forwards opts and appends extraConfig after provider/model', async () => {
+  const d = mkdtempSync(path.join(tmpdir(), 'la-'));
+  const bin = writeStubCli(d, 'codex', `
+    const oi = args.indexOf('-o');
+    require('node:fs').writeFileSync(args[oi+1], 'cwd=' + process.cwd() + ' ' + args.join(' '));
+  `);
+  const a = new LocalAgentAdapter({ bin, model: 'm1', extraConfig: ['model_providers.localai.base_url=http://127.0.0.1:8091/v1'] });
+  const r = await a.run('grunt', 't', '', { cwd: d, write: true });
+  assert.ok(r.text.includes('cwd=' + d));
+  assert.match(r.text, /-c model_provider=localai -c model=m1 -c model_providers\.localai\.base_url=http:\/\/127\.0\.0\.1:8091\/v1/);
+  assert.match(r.text, /--sandbox workspace-write/);
+});
