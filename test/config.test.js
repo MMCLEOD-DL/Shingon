@@ -31,3 +31,24 @@ test('unknown adapter kind throws naming the participant', () => {
 test('local-agent without model throws', () => {
   assert.throws(() => buildAdapter({ name: 'local', adapter: 'local-agent' }), /model/);
 });
+
+test('config.example.json loads into three Participants', () => {
+  const { participants, byName } = loadConfig('config.example.json');
+  assert.equal(participants.length, 3);
+  assert.ok(byName.get('claude'));
+  assert.ok(byName.get('codex'));
+  assert.ok(byName.get('local'));
+});
+
+test('duplicate participant names throw', () => {
+  const f = writeConfig({ participants: [
+    { name: 'dup', adapter: 'codex', roles: ['author'] },
+    { name: 'dup', adapter: 'claude-code', roles: ['reviewer'] },
+  ]});
+  assert.throws(() => loadConfig(f), /[Dd]uplicate/);
+});
+
+test('non-array participants throws', () => {
+  const f = writeConfig({ participants: 'nope' });
+  assert.throws(() => loadConfig(f), /participants/);
+});

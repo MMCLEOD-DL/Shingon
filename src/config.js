@@ -26,6 +26,10 @@ export function loadConfig(filePath) {
       roles: spec.roles,
       capabilities: spec.capabilities ?? {},
     }));
-  const byName = new Map(participants.map((p) => [p.name, p]));
+  const byName = new Map();
+  for (const p of participants) {
+    if (byName.has(p.name)) throw new Error(`Duplicate participant name: ${p.name}`);
+    byName.set(p.name, p);
+  }
   return { participants, byName };
 }
