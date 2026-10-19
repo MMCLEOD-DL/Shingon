@@ -36,7 +36,10 @@ export function summarizeFailure(text = '') {
   return picked.map((l) => (l.length > LINE_MAX ? `${l.slice(0, LINE_MAX)}…` : l)).join(' / ');
 }
 
+// An adapter that knows how to check itself (the local model, API keys) says so with probe();
+// the subscription CLIs fall back to a cheap `--version`.
 export async function checkHealth(adapter, { timeoutMs = 15000 } = {}) {
+  if (typeof adapter.probe === 'function') return adapter.probe({ timeoutMs });
   const bin = adapter.bin ?? adapter.kind;
   const { stderr, code, timedOut } = await runCommand({ cmd: bin, args: ['--version'], timeoutMs });
   if (code === 0 && !timedOut) return { ok: true, reason: '' };

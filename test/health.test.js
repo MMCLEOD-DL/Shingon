@@ -85,3 +85,10 @@ test('isContextOverflow recognises the usual context-limit messages', () => {
   assert.equal(isContextOverflow('ERROR: stream disconnected before completion'), false);
   assert.equal(isContextOverflow(''), false);
 });
+
+test('checkHealth delegates to adapter.probe when there is one', async () => {
+  let seen = null;
+  const r = await checkHealth({ kind: 'x', probe: async (opts) => { seen = opts; return { ok: false, reason: 'unauthorized' }; } }, { timeoutMs: 1234 });
+  assert.deepEqual(r, { ok: false, reason: 'unauthorized' });
+  assert.deepEqual(seen, { timeoutMs: 1234 });
+});

@@ -1,6 +1,7 @@
 // src/adapters/localAgent.js
 import { CodexAdapter } from './codex.js';
-import { addScrubEnv } from '../secrets.js';
+import { addScrubEnv, redact } from '../secrets.js';
+import { runCommand } from '../exec.js';
 
 // The local model's own shell commands never see credentials: do not rely on the Codex default.
 export const SHELL_ENV_EXCLUDE = 'shell_environment_policy.exclude=["*KEY*","*TOKEN*","*SECRET*","*PASSWORD*","*CREDENTIAL*"]';
@@ -55,5 +56,33 @@ export class LocalAgentAdapter {
 
   run(role, task, context = '', opts = {}) {
     return this._codex.run(role, task, context, opts);
+  }
+
+  // A real liveness check: LocalAI's /models answers even when its worker is down (F-A5),
+  // so ask the model for one token. Free: it runs locally.
+  async probe({ timeoutMs = 60000 } = {}) {
+    const v = await runCommand({ cmd: this.bin, args: ['--version'], timeoutMs: 15000 });
+    if (v.code !== 0 || v.timedOut) return { ok: false, reason: 'unavailable', detail: `${this.bin} is not installed or does not run` };
+    const key = process.env[this.envKey];
+    let res;
+    try {
+      res = await fetch(`${String(this.baseUrl).replace(/\/+$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(key ? { authorization: `Bearer ${key}` } : {}) },
+        body: JSON.stringify({ model: this.model, messages: [{ role: 'user', content: 'Reply with OK.' }], max_tokens: 1 }),
+        redirect: 'error', // never resend the key to wherever a redirect points
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      await res.text();
+    } catch (e) {
+      const detail = e?.name === 'TimeoutError'
+        ? 'the local model did not answer in time'
+        : redact(`could not reach the local model server (${e?.cause?.code ?? e?.message ?? e})`);
+      return { ok: false, reason: 'unavailable', detail };
+    }
+    if (res.ok) return { ok: true, reason: '' };
+    if (res.status === 401 || res.status === 403) return { ok: false, reason: 'unauthorized', detail: `the local model server refused the key (HTTP ${res.status})` };
+    if (res.status === 404) return { ok: false, reason: 'model-missing', detail: `the local model server has no model named ${this.model}` };
+    return { ok: false, reason: 'unavailable', detail: `the local model server answered HTTP ${res.status}` };
   }
 }

@@ -104,3 +104,87 @@ test('frontier codex keeps the user codex home', async () => {
     if (prev !== undefined) process.env.CODEX_HOME = prev;
   }
 });
+
+import http from 'node:http';
+
+async function withLocalServer(status, fn) {
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (d) => { body += d; });
+    req.on('end', () => {
+      seen.push({ url: req.url, auth: req.headers.authorization ?? null, body: JSON.parse(body) });
+      res.writeHead(status, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(status === 200 ? { choices: [{ message: { content: 'OK' } }] } : { error: 'nope' }));
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    return await fn(`http://127.0.0.1:${server.address().port}/v1`, seen);
+  } finally {
+    server.closeAllConnections();
+    await new Promise((r) => server.close(r));
+  }
+}
+const okBin = () => writeStubCli(mkdtempSync(path.join(tmpdir(), 'la-')), 'codex', `console.log('codex-cli 0.163.0');`);
+
+test('probe sends a 1-token completion to the local model with the key', async () => {
+  const prev = process.env.LOCALAI_API_KEY;
+  process.env.LOCALAI_API_KEY = 'local-probe-key-123456';
+  try {
+    await withLocalServer(200, async (baseUrl, seen) => {
+      const r = await new LocalAgentAdapter({ bin: okBin(), model: 'qwen', baseUrl }).probe();
+      assert.deepEqual(r, { ok: true, reason: '' });
+      assert.equal(seen[0].url, '/v1/chat/completions');
+      assert.equal(seen[0].auth, 'Bearer local-probe-key-123456');
+      assert.equal(seen[0].body.model, 'qwen');
+      assert.equal(seen[0].body.max_tokens, 1);
+    });
+  } finally {
+    if (prev === undefined) delete process.env.LOCALAI_API_KEY; else process.env.LOCALAI_API_KEY = prev;
+  }
+});
+
+test('probe maps server answers to reasons', async () => {
+  for (const [status, reason] of [[401, 'unauthorized'], [403, 'unauthorized'], [404, 'model-missing'], [500, 'unavailable']]) {
+    await withLocalServer(status, async (baseUrl) => {
+      const r = await new LocalAgentAdapter({ bin: okBin(), model: 'm', baseUrl }).probe();
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, reason, String(status));
+      assert.equal(typeof r.detail, 'string');
+    });
+  }
+});
+
+test('probe reports a missing CLI and an unreachable server as unavailable', async () => {
+  const noBin = await new LocalAgentAdapter({ bin: '/nonexistent/codex', model: 'm', baseUrl: 'http://127.0.0.1:9/v1' }).probe();
+  assert.equal(noBin.reason, 'unavailable');
+  assert.match(noBin.detail, /not installed/);
+  const down = await new LocalAgentAdapter({ bin: okBin(), model: 'm', baseUrl: 'http://127.0.0.1:9/v1' }).probe({ timeoutMs: 2000 });
+  assert.equal(down.reason, 'unavailable');
+  assert.match(down.detail, /could not reach/);
+});
+
+test('probe does not follow a redirect (the key stays with the configured server)', async () => {
+  const prev = process.env.LOCALAI_API_KEY;
+  process.env.LOCALAI_API_KEY = 'local-probe-key-123456';
+  let hits = 0;
+  const target = http.createServer((req, res) => { hits++; res.writeHead(200); res.end('{}'); });
+  await new Promise((r) => target.listen(0, '127.0.0.1', r));
+  const redirector = http.createServer((req, res) => {
+    req.resume();
+    res.writeHead(307, { location: `http://127.0.0.1:${target.address().port}/v1/chat/completions` });
+    res.end();
+  });
+  await new Promise((r) => redirector.listen(0, '127.0.0.1', r));
+  try {
+    const r = await new LocalAgentAdapter({ bin: okBin(), model: 'm', baseUrl: `http://127.0.0.1:${redirector.address().port}/v1` }).probe({ timeoutMs: 5000 });
+    assert.equal(r.ok, false);
+    assert.equal(r.reason, 'unavailable');
+    assert.ok(!JSON.stringify(r).includes('local-probe-key-123456'));
+    assert.equal(hits, 0);
+  } finally {
+    if (prev === undefined) delete process.env.LOCALAI_API_KEY; else process.env.LOCALAI_API_KEY = prev;
+    for (const s of [redirector, target]) { s.closeAllConnections(); await new Promise((r) => s.close(r)); }
+  }
+});
