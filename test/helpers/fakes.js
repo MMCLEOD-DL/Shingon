@@ -37,7 +37,7 @@ export async function makeCtx({ files, request = 'do the thing', team, hooks = {
     approveChunk: rec('approveChunk', true),
     ...hooks,
   };
-  const log = new RunLog(ws.dir, { onEvent: allHooks.onEvent });
+  const log = new RunLog(ws.metaDir, { onEvent: allHooks.onEvent });
   const state = {
     version: 1, taskId: request, request, repoDir,
     phase: 'plan', plan: null, chunkIndex: 0, chunkShas: [], notes: [], status: 'running',

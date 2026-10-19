@@ -1,7 +1,7 @@
 // src/conductor.js
 import path from 'node:path';
 import { Workspace, git } from './workspace.js';
-import { RunLog, callRole } from './runlog.js';
+import { RunLog, callAgent } from './runlog.js';
 import { DEFAULT_OPTIONS } from './options.js';
 import { runPlanPhase } from './planPhase.js';
 import { runChunk } from './chunkPhase.js';
@@ -13,6 +13,7 @@ import { redact } from './secrets.js';
 export { DEFAULT_OPTIONS };
 
 const FINISHED = new Set(['landed', 'rejected', 'stopped']);
+const SUFFIXES = ['', '-2', '-3', '-4', '-5', '-6', '-7', '-8', '-9'];
 
 export function validateTeam(team) {
   const { author, reviewer, local } = team ?? {};
@@ -53,6 +54,15 @@ async function assertOnBranch(ws) {
   }
 }
 
+// The workspace must sit exactly at `sha` with a clean tree; anything else
+// (a test command or agent that committed or left files) is reset away.
+async function holdAt(ws, log, sha, eventName) {
+  const head = await ws.head();
+  if (head === sha && (await ws.isClean())) return;
+  log.event(eventName, { expected: sha, found: head });
+  await ws.resetHard(sha);
+}
+
 async function safeHook(log, name, fn, arg) {
   try {
     return await fn(arg);
@@ -69,7 +79,7 @@ export async function runTask({ repoDir, request, team, hooks, options = {}, bas
   if (typeof request !== 'string' || !request.trim()) throw new Error('request must be a non-empty string');
 
   const ws = await Workspace.create({ repoDir, baseDir, taskId: request });
-  const log = new RunLog(ws.dir, { onEvent: hooks.onEvent });
+  const log = new RunLog(ws.metaDir, { onEvent: hooks.onEvent });
   const state = {
     version: 1, taskId: ws.branch, request, repoDir: path.resolve(repoDir), options: opts,
     phase: 'plan', plan: null, chunkIndex: 0, chunkShas: [], notes: [], status: 'running',
@@ -79,15 +89,25 @@ export async function runTask({ repoDir, request, team, hooks, options = {}, bas
   return drive({ request, team, hooks, options: opts, ws, log, state });
 }
 
-export async function resume({ workspaceDir, team, hooks, options = {} }) {
+// repoDir: the repository the caller expects this run to land in. It must match
+// the one recorded when the workspace was created (Ruling 11 / I2).
+export async function resume({ workspaceDir, repoDir, team, hooks, options = {} }) {
   validateTeam(team);
+  if (typeof repoDir !== 'string' || !repoDir) throw new Error('resume needs the repoDir the run belongs to');
   let ws = await Workspace.open(workspaceDir);
-  const log = new RunLog(ws.dir, { onEvent: hooks?.onEvent });
+  const log = new RunLog(ws.metaDir, { onEvent: hooks?.onEvent });
   const state = log.loadState();
   if (!state) throw new Error(`no Conductor run state in ${workspaceDir}`);
   if (FINISHED.has(state.status)) {
     return { status: state.status, workspaceDir: ws.dir, branch: state.branch, reason: state.reason };
   }
+  const repoProblem = (await ws.checkRepo(repoDir)) ?? (path.resolve(repoDir) === state.repoDir ? null : 'the run state names a different repository');
+  if (repoProblem) {
+    log.event('resume-refused', { detail: repoProblem });
+    return redact({ status: 'failed', workspaceDir: ws.dir, reason: `Conductor will not resume this run: ${repoProblem}. Nothing was changed.` });
+  }
+  const tampered = ws.restoreConfigIfTampered();
+  if (tampered) log.event('config-tampered', { participant: null, role: null, ...tampered });
   const opts = { ...DEFAULT_OPTIONS, ...state.options, ...options };
   validateHooks(hooks, opts);
   state.options = opts;
@@ -148,14 +168,26 @@ async function drive(ctx) {
       log.saveState(state);
     }
 
-    // Final whole-branch review, then the user's gate.
+    // A crash between land and finish: the branch may already be there (T9-M1).
+    const approvedSha = state.chunkShas.at(-1) ?? ws.baseSha;
+    if (state.landing?.sha === approvedSha && approvedSha !== ws.baseSha) {
+      const already = await Workspace.findBranchAt(state.repoDir, SUFFIXES.map((x) => `${state.taskId}${x}`), approvedSha);
+      if (already) {
+        log.event('landed-before-crash', { branch: already, sha: approvedSha });
+        return finish('landed', { branch: already });
+      }
+    }
+
+    // Final whole-branch review, then the user's gate. What the user approves is
+    // exactly approvedSha: diffs are commit-to-commit, and land ships that sha.
     await assertOnBranch(ws);
     log.event('phase', { name: 'final' });
-    const diff = await ws.diff(ws.baseSha);
-    const files = await ws.listFiles(ws.baseSha);
+    await holdAt(ws, log, approvedSha, 'final-reset');
+    const diff = await ws.diffRange(ws.baseSha, approvedSha);
+    const files = await ws.filesRange(ws.baseSha, approvedSha);
     const tests = await ws.runTests(options.testCommand, { timeoutMs: options.testTimeoutMs });
-    const r = await callRole(log, team.reviewer, 'reviewer',
-      prompts.finalReview({ request: state.request, plan: state.plan, diff, tests }), '',
+    const r = await callAgent(ctx, team.reviewer, 'reviewer',
+      prompts.finalReview({ request: state.request, plan: state.plan, diff, tests }),
       { cwd: ws.dir, write: false, timeoutMs: options.agentTimeoutMs });
     const finalReview = verdictOf(r);
     const notes = [...state.notes];
@@ -165,10 +197,16 @@ async function drive(ctx) {
     const approved = await safeHook(log, 'approveResult', hooks.approveResult, redact({ summary, files, tests, finalReview, diff }));
     if (approved !== true) return finish('rejected', { reason: 'You did not approve the result.' });
 
+    // The test command and the reviewer ran after the diff was taken: re-check.
+    const tampered = ws.restoreConfigIfTampered();
+    if (tampered) log.event('config-tampered', { participant: null, role: null, ...tampered });
     await assertOnBranch(ws);
+    await holdAt(ws, log, approvedSha, 'final-drift');
 
-    for (const suffix of ['', '-2', '-3', '-4', '-5', '-6', '-7', '-8', '-9']) {
-      const landed = await ws.land({ repoDir: state.repoDir, branch: `${ws.branch}${suffix}` });
+    state.landing = { sha: approvedSha };
+    log.saveState(state);
+    for (const suffix of SUFFIXES) {
+      const landed = await ws.land({ repoDir: state.repoDir, branch: `${ws.branch}${suffix}`, sha: approvedSha });
       if (landed.ok) return finish('landed', { branch: landed.branch });
       if (!/already exists/.test(landed.error)) return finish('failed', { reason: landed.error });
     }

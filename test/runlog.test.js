@@ -7,13 +7,11 @@ import { RunLog, callRole } from '../src/runlog.js';
 import { DEFAULT_OPTIONS } from '../src/options.js';
 import { fakeParticipant, approve } from './helpers/fakes.js';
 
-// RunLog only needs a directory with a .git folder.
+// RunLog is given the run's metadata directory (Workspace#metaDir) and creates it.
 function wsDir() {
-  const d = mkdtempSync(path.join(tmpdir(), 'rl-'));
-  mkdirSync(path.join(d, '.git'));
-  return d;
+  return path.join(mkdtempSync(path.join(tmpdir(), 'rl-')), 'ws.conductor');
 }
-const lines = (d) => readFileSync(path.join(d, '.git', 'conductor', 'transcript.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+const lines = (d) => readFileSync(path.join(d, 'transcript.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
 
 test('DEFAULT_OPTIONS is frozen with the documented caps', () => {
   assert.ok(Object.isFrozen(DEFAULT_OPTIONS));
@@ -47,8 +45,8 @@ test('state round-trips atomically; missing is null; corrupt throws', () => {
   assert.equal(log.loadState(), null);
   log.saveState({ phase: 'chunks', chunkIndex: 2 });
   assert.deepEqual(log.loadState(), { phase: 'chunks', chunkIndex: 2 });
-  assert.deepEqual(readdirSync(path.join(d, '.git', 'conductor')).filter((n) => n.endsWith('.tmp')), []);
-  writeFileSync(path.join(d, '.git', 'conductor', 'state.json'), '{oops');
+  assert.deepEqual(readdirSync(d).filter((n) => n.endsWith('.tmp')), []);
+  writeFileSync(path.join(d, 'state.json'), '{oops');
   assert.throws(() => log.loadState(), /corrupt run state/);
 });
 

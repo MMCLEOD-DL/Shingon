@@ -64,7 +64,7 @@ test('a key leaking through test output is redacted from prompts, transcript, st
   for (const p of [team.author, team.reviewer, team.local]) {
     for (const c of p.calls) { leaks(`${p.name} task`, c.task); leaks(`${p.name} context`, c.context); }
   }
-  const meta = path.join(wsDir, '.git', 'conductor');
+  const meta = `${wsDir}.conductor`;
   leaks('transcript', readFileSync(path.join(meta, 'transcript.jsonl'), 'utf8'));
   leaks('state.json', readFileSync(path.join(meta, 'state.json'), 'utf8'));
 });

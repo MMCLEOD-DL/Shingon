@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, appendFileSync, chmodSync, rmSync, symlinkSync, lstatSync } from 'node:fs';
+import { runCommand } from '../src/exec.js';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Workspace, git, slugify } from '../src/workspace.js';
@@ -132,7 +133,7 @@ test('land creates a new branch in the real repo without touching its checkout',
   const ws = await Workspace.create({ repoDir: repo, baseDir: base(), taskId: 't' });
   writeFileSync(path.join(ws.dir, 'a.txt'), 'a');
   const sha = await ws.commitAll('a');
-  const r = await ws.land({ repoDir: repo, branch: 'conductor/result' });
+  const r = await ws.land({ repoDir: repo, branch: 'conductor/result', sha });
   assert.deepEqual(r, { ok: true, branch: 'conductor/result', error: null });
   assert.equal((await git(repo, ['rev-parse', 'conductor/result'])).stdout.trim(), sha);
   assert.equal((await git(repo, ['rev-parse', '--abbrev-ref', 'HEAD'])).stdout.trim(), 'main');
@@ -145,8 +146,8 @@ test('land refuses an existing branch and leaves it unchanged', async () => {
   const before = await refsOf(repo);
   const ws = await Workspace.create({ repoDir: repo, baseDir: base(), taskId: 't' });
   writeFileSync(path.join(ws.dir, 'a.txt'), 'a');
-  await ws.commitAll('a');
-  const r = await ws.land({ repoDir: repo, branch: 'taken' });
+  const sha = await ws.commitAll('a');
+  const r = await ws.land({ repoDir: repo, branch: 'taken', sha });
   assert.equal(r.ok, false);
   assert.match(r.error, /already exists/);
   assert.equal(await refsOf(repo), before);
@@ -155,7 +156,122 @@ test('land refuses an existing branch and leaves it unchanged', async () => {
 test('land rejects an invalid branch name', async () => {
   const repo = await makeRepo();
   const ws = await Workspace.create({ repoDir: repo, baseDir: base(), taskId: 't' });
-  const r = await ws.land({ repoDir: repo, branch: 'bad..name' });
+  const r = await ws.land({ repoDir: repo, branch: 'bad..name', sha: await ws.head() });
   assert.equal(r.ok, false);
   assert.match(r.error, /invalid branch name/);
+});
+
+// ---- Final-review fixes: I1 (land the approved sha) and I2 (agent-writable .git) ----
+
+const writeHook = (dir, name, marker) => {
+  const f = path.join(dir, name);
+  writeFileSync(f, `#!/bin/sh\ntouch '${marker}'\n`);
+  chmodSync(f, 0o755);
+  return f;
+};
+
+// Plants the two payloads the review reproduced: core.fsmonitor and diff.external.
+function plantConfig(ws) {
+  const d = mkdtempSync(path.join(tmpdir(), 'evil-'));
+  const markers = { fs: path.join(d, 'fsmonitor-ran'), ext: path.join(d, 'extdiff-ran') };
+  const fsHook = writeHook(d, 'fs.sh', markers.fs);
+  const extHook = writeHook(d, 'ext.sh', markers.ext);
+  appendFileSync(path.join(ws.dir, '.git', 'config'), `[core]\n\tfsmonitor = ${fsHook}\n[diff]\n\texternal = ${extHook}\n`);
+  return markers;
+}
+
+test('metadata lives in <ws>.conductor, outside the agents\' cwd', async () => {
+  const repo = await makeRepo();
+  const ws = await Workspace.create({ repoDir: repo, baseDir: base(), taskId: 't' });
+  assert.equal(ws.metaDir, `${ws.dir}.conductor`);
+  assert.equal(readFileSync(path.join(ws.metaDir, 'base'), 'utf8').trim(), ws.baseSha);
+  assert.ok(existsSync(path.join(ws.metaDir, 'git-config')));
+  assert.equal(JSON.parse(readFileSync(path.join(ws.metaDir, 'repo.json'), 'utf8')).repoDir, path.resolve(repo));
+  assert.ok(!existsSync(path.join(ws.dir, '.git', 'conductor')));
+  assert.ok(!ws.metaDir.startsWith(ws.dir + path.sep));
+});
+
+test('an agent-written core.fsmonitor / diff.external never runs inside Conductor\'s git calls', async () => {
+  const repo = await makeRepo();
+  const ws = await Workspace.create({ repoDir: repo, baseDir: base(), taskId: 't' });
+  const markers = plantConfig(ws);
+  writeFileSync(path.join(ws.dir, 'a.txt'), 'a\n');
+  writeFileSync(path.join(ws.dir, 'README.md'), 'changed\n');
+  await ws.head();
+  await ws.isClean();
+  assert.match(await ws.diff(ws.baseSha), /\+changed/);
+  await ws.listFiles(ws.baseSha);
+  const sha = await ws.commitAll('one');
+  await ws.diffRange(ws.baseSha, sha);
+  await ws.filesRange(ws.baseSha, sha);
+  writeFileSync(path.join(ws.dir, 'b.txt'), 'b\n');
+  const squashed = await ws.squashSince(ws.baseSha, 'squash');
+  await ws.resetHard(squashed);
+  assert.equal((await ws.land({ repoDir: repo, branch: 'conductor/evil', sha: squashed })).ok, true);
+  assert.ok(!existsSync(markers.fs), 'core.fsmonitor ran');
+  assert.ok(!existsSync(markers.ext), 'diff.external ran');
+  // Sanity: the same payload does fire for a plain git call, so the test is meaningful.
+  await runCommand({ cmd: 'git', args: ['diff', ws.baseSha], cwd: ws.dir });
+  assert.ok(existsSync(markers.fs) || existsSync(markers.ext), 'payload should fire without the flags');
+});
+
+test('restoreConfigIfTampered restores the sealed config, even through a planted symlink', async () => {
+  const ws = await Workspace.create({ repoDir: await makeRepo(), baseDir: base(), taskId: 't' });
+  const cfg = path.join(ws.dir, '.git', 'config');
+  const pristine = readFileSync(cfg, 'utf8');
+  assert.equal(ws.restoreConfigIfTampered(), null);
+  plantConfig(ws);
+  const t = ws.restoreConfigIfTampered();
+  assert.match(t.expected, /^[0-9a-f]{64}$/);
+  assert.notEqual(t.found, t.expected);
+  assert.equal(readFileSync(cfg, 'utf8'), pristine);
+  const elsewhere = path.join(mkdtempSync(path.join(tmpdir(), 'tgt-')), 'target');
+  writeFileSync(elsewhere, 'untouched');
+  rmSync(cfg);
+  symlinkSync(elsewhere, cfg);
+  assert.ok(ws.restoreConfigIfTampered());
+  assert.equal(readFileSync(elsewhere, 'utf8'), 'untouched');
+  assert.equal(readFileSync(cfg, 'utf8'), pristine);
+  assert.ok(!lstatSync(cfg).isSymbolicLink());
+});
+
+test('checkRepo accepts the original repo and refuses any other', async () => {
+  const repo = await makeRepo();
+  const ws = await Workspace.create({ repoDir: repo, baseDir: base(), taskId: 't' });
+  assert.equal(await ws.checkRepo(repo), null);
+  assert.match(await ws.checkRepo(await makeRepo()), /belongs to/);
+});
+
+test('land ships exactly the given sha and refuses when the workspace branch moved', async () => {
+  const repo = await makeRepo();
+  const before = await refsOf(repo);
+  const ws = await Workspace.create({ repoDir: repo, baseDir: base(), taskId: 't' });
+  writeFileSync(path.join(ws.dir, 'a.txt'), 'a');
+  const approved = await ws.commitAll('a');
+  writeFileSync(path.join(ws.dir, 'extra.txt'), 'sneaky');
+  await ws.commitAll('moved after approval');
+  const r = await ws.land({ repoDir: repo, branch: 'conductor/result', sha: approved });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /no longer holds the approved result/);
+  assert.equal(await refsOf(repo), before); // no branch, and the temp incoming ref is gone
+  assert.equal((await ws.land({ repoDir: repo, branch: 'conductor/result', sha: 'nope' })).ok, false);
+});
+
+test('land leaves no temporary refs and rejects @{-1}-style names', async () => {
+  const repo = await makeRepo();
+  const ws = await Workspace.create({ repoDir: repo, baseDir: base(), taskId: 't' });
+  writeFileSync(path.join(ws.dir, 'a.txt'), 'a');
+  const sha = await ws.commitAll('a');
+  assert.equal((await ws.land({ repoDir: repo, branch: '@{-1}', sha })).ok, false);
+  assert.equal((await ws.land({ repoDir: repo, branch: 'conductor/ok', sha })).ok, true);
+  assert.equal((await git(repo, ['for-each-ref', 'refs/conductor'])).stdout, '');
+  assert.ok(!existsSync(path.join(repo, '.git', 'FETCH_HEAD')));
+});
+
+test('findBranchAt finds a branch already at the sha', async () => {
+  const repo = await makeRepo();
+  const head = (await git(repo, ['rev-parse', 'HEAD'])).stdout.trim();
+  await git(repo, ['branch', 'conductor/x-2']);
+  assert.equal(await Workspace.findBranchAt(repo, ['conductor/x', 'conductor/x-2'], head), 'conductor/x-2');
+  assert.equal(await Workspace.findBranchAt(repo, ['conductor/x'], head), null);
 });

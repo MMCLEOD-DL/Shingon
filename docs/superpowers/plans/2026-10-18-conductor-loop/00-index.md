@@ -78,16 +78,22 @@ clip(text, max = 8000) -> string
 class Workspace {
   static async create({ repoDir, baseDir, taskId }) -> Workspace
   static async open(dir) -> Workspace
-  baseSha                                       // clone-time HEAD (set by create; open reads .git/conductor/base)
-  dir; branch
+  baseSha                                       // clone-time HEAD (set by create; open reads <dir>.conductor/base)
+  dir; branch; metaDir                          // metaDir = `${dir}.conductor`: base, state.json, transcript.jsonl, repo.json, git-config
   async head() -> sha
   async commitAll(message) -> sha | null
   async diff(fromSha) -> string                 // fromSha..HEAD plus uncommitted
   async listFiles(fromSha) -> string[]
+  async diffRange(fromSha, toSha) -> string     // commit-to-commit (--no-ext-diff --no-textconv)
+  async filesRange(fromSha, toSha) -> string[]
+  async isClean() -> boolean
+  restoreConfigIfTampered() -> null | { expected, found }   // restores the sealed .git/config
+  async checkRepo(repoDir) -> null | problem
+  static async findBranchAt(repoDir, names, sha) -> name | null
   async squashSince(baseSha, message) -> sha | null
   async resetHard(sha)
   async runTests(command, { timeoutMs }) -> { ran, passed, code, output }
-  async land({ repoDir, branch }) -> { ok, branch, error }
+  async land({ repoDir, branch, sha }) -> { ok, branch, error }   // fetches into a temp ref, verifies == sha, create-only update-ref
 }
 
 // Task 3
@@ -107,9 +113,10 @@ buildSummary({ request, plan, notes, files, tests }) -> string
 
 // Task 6
 DEFAULT_OPTIONS (src/options.js)
-class RunLog { constructor(workspaceDir, { onEvent }); event(type, data); saveState(state); loadState() -> state | null }
+class RunLog { constructor(metaDir, { onEvent }); event(type, data); saveState(state); loadState() -> state | null }   // metaDir = ws.metaDir
 callRole(log, participant, role, task, context, opts) -> Result   // never throws
-// state = { version: 1, taskId, request, repoDir, phase: 'plan'|'chunks'|'final'|'done', plan, chunkIndex, chunkShas, notes, status }
+callAgent(ctx, participant, role, task, opts) -> Result         // callRole + restore a tampered .git/config (logs config-tampered)
+// state = { version: 1, taskId, request, repoDir, phase: 'plan'|'chunks'|'final'|'done', plan, chunkIndex, chunkShas, notes, status, landing? }
 
 // Task 7
 askUser(ctx, { kind, title, reason, recommendation }) -> 'approve' | 'reject'   // only exact 'approve' continues
@@ -124,7 +131,7 @@ DEFAULT_OPTIONS; validateTeam(team); validateHooks(hooks, options)
 // hooks: escalate(esc) -> 'approve'|'reject'; approveResult({ summary, files, tests, finalReview, diff }) -> true lands;
 //        approveChunk({ index, title, total }) -> true continues (needed if approveEachChunk); onEvent(entry)
 runTask({ repoDir, request, team, hooks, options, baseDir }) -> RunOutcome
-resume({ workspaceDir, team, hooks, options }) -> RunOutcome
+resume({ workspaceDir, repoDir, team, hooks, options }) -> RunOutcome   // repoDir required; must match the run's recorded repo
 // RunOutcome: { status: 'landed' | 'rejected' | 'stopped' | 'failed', branch?, reason?, workspaceDir }
 
 // ctx object passed to phases (built in Task 9; Task 7/8 tests build it via test/helpers/fakes.js makeCtx)

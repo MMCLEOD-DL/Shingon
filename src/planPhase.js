@@ -3,7 +3,7 @@ import { reviewLoop } from './review.js';
 import { parsePlan } from './plan.js';
 import * as prompts from './prompts.js';
 import { settleDeadlock } from './deadlock.js';
-import { callRole } from './runlog.js';
+import { callAgent } from './runlog.js';
 import { askUser } from './askUser.js';
 
 const PRODUCE_FAILED = 'could not produce a result';
@@ -16,13 +16,13 @@ export async function runPlanPhase(ctx) {
   const loop = await reviewLoop({
     maxRounds: options.planRounds,
     produce: async (round, feedback) => {
-      const r = await callRole(log, team.author, 'author',
-        prompts.planAuthor({ request, maxChunks: options.maxChunks, feedback }), '', opts);
+      const r = await callAgent(ctx, team.author, 'author',
+        prompts.planAuthor({ request, maxChunks: options.maxChunks, feedback }), opts);
       if (!r.ok) return { error: `author failed: ${r.error}` };
       const parsed = parsePlan(r.text, { maxChunks: options.maxChunks });
       return parsed.ok ? { plan: parsed.plan, text: r.text } : { error: parsed.error };
     },
-    review: (a) => callRole(log, team.reviewer, 'reviewer', prompts.planReview({ request, planText: a.text }), '', opts),
+    review: (a) => callAgent(ctx, team.reviewer, 'reviewer', prompts.planReview({ request, planText: a.text }), opts),
   });
 
   if (loop.status === 'approved') return { status: 'ok', plan: loop.artifact.plan, note: null };

@@ -6,8 +6,10 @@ import { clip } from './text.js';
 import { redact } from './secrets.js';
 
 export class RunLog {
-  constructor(workspaceDir, { onEvent } = {}) {
-    this.dir = path.join(workspaceDir, '.git', 'conductor');
+  // metaDir: the workspace's metadata directory (Workspace#metaDir, `<ws>.conductor/`),
+  // outside the agents' cwd so they cannot rewrite the run state or the transcript.
+  constructor(metaDir, { onEvent } = {}) {
+    this.dir = metaDir;
     mkdirSync(this.dir, { recursive: true });
     this.transcript = path.join(this.dir, 'transcript.jsonl');
     this.statePath = path.join(this.dir, 'state.json');
@@ -52,5 +54,15 @@ export async function callRole(log, participant, role, task, context = '', opts 
     participant: participant.name, role, ok: result.ok, error: result.error,
     verdict: result.verdict, costUsd: result.usage?.costUsd ?? null, text: clip(redact(result.text), 2000),
   });
+  return result;
+}
+
+// Every agent call the loop makes. An agent may have written the workspace's
+// .git/config (core.fsmonitor, diff drivers, filters...) so that Conductor's next
+// own git call runs its commands: restore the sealed config before anything else runs.
+export async function callAgent(ctx, participant, role, task, opts = {}) {
+  const result = await callRole(ctx.log, participant, role, task, '', opts);
+  const tampered = ctx.ws.restoreConfigIfTampered();
+  if (tampered) ctx.log.event('config-tampered', { participant: participant.name, role, ...tampered });
   return result;
 }

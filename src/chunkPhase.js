@@ -2,7 +2,7 @@
 import { reviewLoop } from './review.js';
 import * as prompts from './prompts.js';
 import { settleDeadlock } from './deadlock.js';
-import { callRole } from './runlog.js';
+import { callAgent } from './runlog.js';
 import { askUser } from './askUser.js';
 
 // Rotate vendors: the frontier that reviews a chunk is never the one that implements its fallback.
@@ -39,7 +39,7 @@ async function runChunkFrom(ctx, chunk, index, base) {
   log.event('chunk', { index, title: chunk.title, base });
 
   const attempt = (who, role) => async (round, feedback) => {
-    const r = await callRole(log, who, role, prompts.chunkExec({ request, plan, chunk, index, total, feedback }), '', writeOpts);
+    const r = await callAgent(ctx, who, role, prompts.chunkExec({ request, plan, chunk, index, total, feedback }), writeOpts);
     if (!r.ok) return { error: `${who.name} failed: ${r.error}` };
     // Nothing an agent leaves behind may crash the run: a workspace we cannot
     // inspect is a blocked round, and the bad state is reset away before the next.
@@ -54,8 +54,8 @@ async function runChunkFrom(ctx, chunk, index, base) {
       return { error: `could not inspect the workspace: ${msg}` };
     }
   };
-  const review = (a) => callRole(log, reviewer, 'reviewer',
-    prompts.chunkReview({ request, plan, chunk, index, total, diff: a.diff, tests: a.tests }), '', readOpts);
+  const review = (a) => callAgent(ctx, reviewer, 'reviewer',
+    prompts.chunkReview({ request, plan, chunk, index, total, diff: a.diff, tests: a.tests }), readOpts);
 
   let note = null;
   let loop = await reviewLoop({ maxRounds: options.localRounds, produce: attempt(team.local, 'grunt'), review });
