@@ -21,9 +21,9 @@
 
 ## Observations
 - The live status read clearly, with no raw model chatter. Without a TTY, every redraw is appended instead of replacing the last one, so the cost line repeats. That is expected for non-TTY output.
-- Cosmetic issues:
-  - The step line shows `? ✎ …` for a moment, before the editor is known.
-  - "What was done (1 steps)" should be singular for one step.
+- Cosmetic issues (both fixed after run 1):
+  - The step line shows `? ✎ …` for a moment, before the editor is known. It now says `starting…`.
+  - "What was done (1 steps)" should be singular for one step. It now is.
 - Not yet checked:
   - Whether `v` shows the diff and `a` lands a branch. This needs a real terminal.
   - Quota and sign-in detection against real CLI output. No limit was hit.

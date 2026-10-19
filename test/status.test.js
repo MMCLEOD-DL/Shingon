@@ -110,3 +110,8 @@ test('seed shows a resumed run; unknown or malformed events are ignored', () => 
     '    Step 2/2   Two                    queued',
   ]);
 });
+
+test('a step that has started but has no editor yet says starting, not "?"', () => {
+  const lines = run([...PLAN, { type: 'chunk', index: 0, title: 'export util' }]);
+  assert.equal(lines[1], '  ⟳ Step 1/2   export util            starting…');
+});

@@ -50,7 +50,7 @@ export function buildSummary({ request, plan, notes = [], files = [], tests = nu
   const testLine = !tests?.ran ? 'not configured' : tests.passed ? 'passing' : 'FAILING';
   const lines = [
     `Request: ${request}`,
-    `What was done (${steps.length} steps):`,
+    `What was done (${steps.length} step${steps.length === 1 ? '' : 's'}):`,
     ...steps,
     `Files changed (${files.length}): ${shown}${more}`,
     `Tests: ${testLine}`,

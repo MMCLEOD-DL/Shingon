@@ -83,3 +83,8 @@ test('summary says which commit it started from and whether uncommitted work was
   assert.match(buildSummary({ request: 'r', plan, source: { sha: 'abcdef0123', branch: null, dirty: true } }), /on a detached HEAD; your uncommitted changes were not included\./);
   assert.doesNotMatch(buildSummary({ request: 'r', plan }), /Started from/);
 });
+
+test('the summary counts one step in the singular', () => {
+  assert.match(buildSummary({ request: 'r', plan: { chunks: [{ title: 'a' }] } }), /What was done \(1 step\):/);
+  assert.match(buildSummary({ request: 'r', plan: { chunks: [{ title: 'a' }, { title: 'b' }] } }), /What was done \(2 steps\):/);
+});

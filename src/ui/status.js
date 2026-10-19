@@ -145,6 +145,7 @@ export class StatusModel {
       return `${c.editor ?? '?'} ✎${c.fallback ? ' (took over)' : ''} · ${c.reviewer ?? '?'} reviewed ✓`;
     }
     if (c.activity === 'reviewing') return `${c.editor ?? '?'} ✎ · ${c.reviewer ?? '?'} reviewing…`;
-    return `${c.editor ?? '?'} ✎ …`;
+    if (!c.editor) return 'starting…';
+    return `${c.editor} ✎ …`;
   }
 }
