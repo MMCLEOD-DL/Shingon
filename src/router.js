@@ -42,6 +42,8 @@ export class HealthBoard {
   }
 }
 
+const STAYS_DOWN = new Set(['unauthorized', 'version-skew']);
+
 const sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export class Seat {
@@ -51,7 +53,8 @@ export class Seat {
     this.name = name;
     this.candidates = candidates;
     this.board = board;
-    this.cooldownMs = cooldownMs;
+    // At least 1 ms: a zero cooldown would leave the candidate neither cooling nor retried.
+    this.cooldownMs = Math.max(1, Number(cooldownMs) || 0);
     this.maxWaitMs = maxWaitMs;
     this.sleep = sleep;
     this.roles = [...new Set(candidates.flatMap((c) => c.roles))];
@@ -96,8 +99,10 @@ export class Seat {
         r.servedKind = c.adapter.kind;
         if (r.ok || r.failure !== 'infrastructure') return r;
         const reason = classifyFailure(r.error ?? '');
-        if (reason === 'rate-limit') this.board.cool(c.name, reason, this.cooldownMs);
-        else this.board.markDown(c.name, reason);
+        // A refused sign-in or an out-of-date program will not fix itself during the run;
+        // anything else (a rate limit, a dropped connection) may, so it only cools.
+        if (STAYS_DOWN.has(reason)) this.board.markDown(c.name, reason);
+        else this.board.cool(c.name, reason, this.cooldownMs);
         this.emit('route-failover', { seat: this.name, from: c.name, reason, error: r.error });
       }
       const eligible = this.candidates.filter((c) => this.#eligible(c, role, opts));

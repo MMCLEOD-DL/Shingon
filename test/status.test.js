@@ -79,7 +79,7 @@ test('routing notices: plain words, last three only, same-vendor once', () => {
   ]);
   assert.deepEqual(lines.slice(-3), [
     '  ! a step was checked by the same AI company that wrote it',
-    '  ⏸ every model for codex is rate-limited; waiting 30s',
+    '  ⏸ every model for codex is rate-limited or unreachable; waiting 30s',
     '  $ using the paid API (gpt-api); this costs money',
   ]);
   assert.ok(!lines.some((l) => l.includes('↪')), 'only the last three notices are shown');

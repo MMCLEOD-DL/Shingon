@@ -155,3 +155,41 @@ test('a Seat looks like a Participant', () => {
 test('REASON_TEXT gives plain words for every reason', () => {
   for (const k of ['unauthorized', 'version-skew', 'rate-limit', 'unavailable', 'model-missing']) assert.equal(typeof REASON_TEXT[k], 'string');
 });
+
+const EDROP = { ok: false, error: 'ERROR: stream disconnected before completion: response.failed event received', failure: 'infrastructure' };
+const ESKEW = { ok: false, error: "unknown variant 'max'", failure: 'infrastructure' };
+
+test('a transient infrastructure failure cools the candidate; it serves again after the cooldown (I3)', async () => {
+  const c = clock();
+  const a = cand('claude', 'claude-code', [EDROP, OK]);
+  const b = cand('codex', 'codex', [OK]);
+  const board = new HealthBoard({ now: c.now });
+  const seat = new Seat({ name: 'author', candidates: [a, b], board, cooldownMs: 60000, sleep: c.sleep });
+  assert.equal((await seat.run('author', 't')).servedBy, 'codex');
+  assert.deepEqual(board.state('claude'), { status: 'cooling', reason: 'unavailable', until: 1000 + 60000 });
+  c.advance(60000);
+  assert.equal(board.state('claude').status, 'ok');
+  assert.equal((await seat.run('author', 't')).servedBy, 'claude');
+});
+
+test('only unauthorized and version-skew mark a candidate down (I3)', async () => {
+  for (const [reply, reason] of [[E401, 'unauthorized'], [ESKEW, 'version-skew']]) {
+    const c = clock();
+    const board = new HealthBoard({ now: c.now });
+    const seat = new Seat({ name: 'author', candidates: [cand('claude', 'claude-code', [reply, OK]), cand('codex', 'codex', [OK])], board, sleep: c.sleep });
+    await seat.run('author', 't');
+    assert.deepEqual(board.state('claude'), { status: 'down', reason, until: null });
+    c.advance(10 * 60000);
+    assert.equal(board.state('claude').status, 'down');
+  }
+});
+
+test('cooldownMs 0 retries the candidate instead of giving up', async () => {
+  const c = clock();
+  const a = cand('claude', 'claude-code', [E429, OK]);
+  const seat = new Seat({ name: 'author', candidates: [a], board: new HealthBoard({ now: c.now }), cooldownMs: 0, sleep: c.sleep });
+  const r = await seat.run('author', 't');
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.servedBy, 'claude');
+  assert.equal(a.calls.length, 2);
+});

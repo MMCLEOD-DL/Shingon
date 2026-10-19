@@ -84,7 +84,7 @@ export class StatusModel {
         this.#notice(`↪ ${e.from} is ${REASON_TEXT[e.reason] ?? e.reason}; switching to the next model`);
         break;
       case 'route-wait':
-        this.#notice(`⏸ every model for ${e.seat} is rate-limited; waiting ${Math.round((e.ms ?? 0) / 1000)}s`);
+        this.#notice(`⏸ every model for ${e.seat} is rate-limited or unreachable; waiting ${Math.round((e.ms ?? 0) / 1000)}s`);
         break;
       case 'api-in-use':
         this.#notice(`$ using the paid API (${e.participant}); this costs money`);
