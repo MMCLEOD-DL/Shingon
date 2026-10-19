@@ -127,3 +127,11 @@ test('a context overflow wins over the infrastructure classification', async () 
   const r = await new CodexAdapter({ bin }).run('grunt', 't');
   assert.equal(r.failure, 'context-overflow');
 });
+
+test("Codex's usage-limit ERROR: line is an infrastructure failure (C1)", async () => {
+  const bin = writeStubCli(tmp(), 'codex', `process.stderr.write("ERROR: You've hit your usage limit. Upgrade to Pro or try again in 3 days.\\n"); process.exit(1);`);
+  const r = await new CodexAdapter({ bin }).run('author', 't');
+  assert.equal(r.ok, false);
+  assert.match(r.error, /usage limit/);
+  assert.equal(r.failure, 'infrastructure');
+});

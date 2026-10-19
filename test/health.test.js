@@ -92,3 +92,16 @@ test('checkHealth delegates to adapter.probe when there is one', async () => {
   assert.deepEqual(r, { ok: false, reason: 'unauthorized' });
   assert.deepEqual(seen, { timeoutMs: 1234 });
 });
+
+test('quota and sign-in phrases are infrastructure, classified as rate-limit / unauthorized (C1)', () => {
+  const quota = ['Claude AI usage limit reached|1760000000', "ERROR: You've hit your usage limit. Try again later.", 'Credit balance is too low'];
+  const login = ['Invalid API key · Please run /login', 'OAuth token has expired. Please obtain a new token or refresh your existing token.', 'please run /login'];
+  for (const s of quota) {
+    assert.equal(isInfrastructureFailure(s), true, s);
+    assert.equal(classifyFailure(s), 'rate-limit', s);
+  }
+  for (const s of login) {
+    assert.equal(isInfrastructureFailure(s), true, s);
+    assert.equal(classifyFailure(s), 'unauthorized', s);
+  }
+});

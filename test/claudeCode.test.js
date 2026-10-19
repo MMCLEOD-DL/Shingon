@@ -6,6 +6,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { writeStubCli } from './helpers/stubCli.js';
 import { ClaudeCodeAdapter } from '../src/adapters/claudeCode.js';
+import { Participant } from '../src/participant.js';
+import { Seat, HealthBoard } from '../src/router.js';
+import { makeResult } from '../src/result.js';
 
 function tmp() { return mkdtempSync(path.join(tmpdir(), 'cc-')); }
 
@@ -122,4 +125,40 @@ test('a timed-out claude run is failure "timeout"', async () => {
   const bin = writeStubCli(tmp(), 'claude', `setTimeout(() => {}, 10000);`);
   const r = await new ClaudeCodeAdapter({ bin }).run('author', 't', '', { timeoutMs: 300 });
   assert.equal(r.failure, 'timeout');
+});
+
+// C1: claude -p --output-format json reports a spent subscription or a lost sign-in on stdout.
+const QUOTA_JSON = JSON.stringify({ type: 'result', is_error: true, result: 'Claude AI usage limit reached|1760000000' });
+
+for (const exitCode of [0, 1]) {
+  test(`an is_error usage-limit JSON on exit ${exitCode} is an infrastructure failure (C1)`, async () => {
+    const bin = writeStubCli(tmp(), 'claude', `process.stdout.write(${JSON.stringify(QUOTA_JSON)}); process.exit(${exitCode});`);
+    const r = await new ClaudeCodeAdapter({ bin }).run('author', 't');
+    assert.equal(r.ok, false);
+    assert.match(r.error, /usage limit reached/);
+    assert.equal(r.failure, 'infrastructure');
+  });
+}
+
+test('an is_error sign-in JSON is an infrastructure failure; a plain is_error is not (C1)', async () => {
+  const login = writeStubCli(tmp(), 'claude', `process.stdout.write(JSON.stringify({ is_error: true, result: 'Invalid API key · Please run /login' })); process.exit(1);`);
+  const r = await new ClaudeCodeAdapter({ bin: login }).run('author', 't');
+  assert.equal(r.failure, 'infrastructure');
+  assert.match(r.error, /Please run \/login/);
+  const plain = writeStubCli(tmp(), 'claude', `process.stdout.write(JSON.stringify({ is_error: true, result: 'boom' }));`);
+  assert.equal((await new ClaudeCodeAdapter({ bin: plain }).run('author', 't')).failure, null);
+});
+
+test("a Seat [claude, codex] moves to codex after claude's quota error (C1)", async () => {
+  const bin = writeStubCli(tmp(), 'claude', `process.stdout.write(${JSON.stringify(QUOTA_JSON)});`);
+  const caps = { is_agentic: true, can_edit_files: true };
+  const claude = new Participant({ name: 'claude', adapter: new ClaudeCodeAdapter({ bin }), roles: ['author', 'reviewer'], capabilities: caps });
+  let codexCalls = 0;
+  const codex = new Participant({ name: 'codex', adapter: { kind: 'codex', run: async () => { codexCalls += 1; return makeResult({ text: 'ok' }); } }, roles: ['author', 'reviewer'], capabilities: caps });
+  const board = new HealthBoard();
+  const r = await new Seat({ name: 'claude', candidates: [claude, codex], board }).run('author', 'x');
+  assert.equal(r.ok, true);
+  assert.equal(r.servedBy, 'codex');
+  assert.equal(codexCalls, 1);
+  assert.equal(board.state('claude').reason, 'rate-limit');
 });

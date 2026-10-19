@@ -3,15 +3,17 @@ import { runCommand } from './exec.js';
 
 export function classifyFailure(stderr = '') {
   const s = stderr.toLowerCase();
-  if (/\b401\b|unauthorized|authentication token|\bsign in\b/.test(s)) return 'unauthorized';
+  if (/\b401\b|unauthorized|authentication token|\bsign in\b|please run \/login|oauth token.*expired|invalid api key/.test(s)) return 'unauthorized';
   if (/unknown variant|unknown field|invalid value/.test(s)) return 'version-skew';
-  if (/\b429\b|rate limit|limit reached/.test(s)) return 'rate-limit';
+  // A spent subscription or credit is a limit that lifts later, like a rate limit.
+  if (/\b429\b|rate limit|limit reached|usage limit|credit balance/.test(s)) return 'rate-limit';
   return 'unavailable';
 }
 
-// The backend or the CLI's connection to it is broken (not the model's work):
-// another attempt against the same participant will fail the same way.
-const INFRASTRUCTURE = /stream disconnected|response\.failed|connection refused|econnrefused|error sending request|failed to connect|could not resolve host|service unavailable|\b50[234]\b|\b401\b|unauthorized|\b429\b|rate limit/i;
+// The backend or the CLI's connection to it is broken, or the account is out of quota or
+// signed out (not the model's work): another attempt against the same participant will fail
+// the same way.
+const INFRASTRUCTURE = /stream disconnected|response\.failed|connection refused|econnrefused|error sending request|failed to connect|could not resolve host|service unavailable|\b50[234]\b|\b401\b|unauthorized|\b429\b|rate limit|usage limit|limit reached|credit balance|please run \/login|oauth token.*expired|invalid api key/i;
 
 export function isInfrastructureFailure(text = '') {
   return INFRASTRUCTURE.test(String(text));
