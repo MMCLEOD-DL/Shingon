@@ -41,8 +41,18 @@ async function runChunkFrom(ctx, chunk, index, base) {
   const attempt = (who, role) => async (round, feedback) => {
     const r = await callRole(log, who, role, prompts.chunkExec({ request, plan, chunk, index, total, feedback }), '', writeOpts);
     if (!r.ok) return { error: `${who.name} failed: ${r.error}` };
-    const tests = await ws.runTests(options.testCommand, { timeoutMs: options.testTimeoutMs });
-    return { diff: await ws.diff(base), tests };
+    // Nothing an agent leaves behind may crash the run: a workspace we cannot
+    // inspect is a blocked round, and the bad state is reset away before the next.
+    // A failing reset is real infrastructure trouble and throws to runChunk's catch.
+    try {
+      const tests = await ws.runTests(options.testCommand, { timeoutMs: options.testTimeoutMs });
+      return { diff: await ws.diff(base), tests };
+    } catch (e) {
+      const msg = String(e?.message ?? e);
+      log.event('inspect-failed', { index, participant: who.name, error: msg });
+      await ws.resetHard(base);
+      return { error: `could not inspect the workspace: ${msg}` };
+    }
   };
   const review = (a) => callRole(log, reviewer, 'reviewer',
     prompts.chunkReview({ request, plan, chunk, index, total, diff: a.diff, tests: a.tests }), '', readOpts);

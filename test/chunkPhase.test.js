@@ -202,7 +202,8 @@ test('an unexpected error mid-chunk rolls the workspace back to base and rethrow
   const t = team({ local: writes('a.txt') });
   const ctx = await ctxFor(t, { testCommand: 'true' });
   const base = await ctx.ws.head();
-  ctx.ws.runTests = async () => { throw new Error('disk on fire'); };
+  // squashSince runs after approval, outside any attempt, so this is a genuine throw.
+  ctx.ws.squashSince = async () => { throw new Error('disk on fire'); };
   await assert.rejects(runChunk(ctx, PLAN.chunks[0], 0), /disk on fire/);
   assert.equal(await ctx.ws.head(), base);
   assert.ok(!existsSync(path.join(ctx.ws.dir, 'a.txt')));
@@ -237,7 +238,7 @@ test('a failed rollback is recorded in chunk-error and the original error is ret
   const events = [];
   const t = team({ local: writes('a.txt') });
   const ctx = await ctxFor(t, {}, { onEvent: (e) => events.push(e) });
-  ctx.ws.runTests = async () => { throw new Error('disk on fire'); };
+  ctx.ws.squashSince = async () => { throw new Error('disk on fire'); };
   ctx.ws.resetHard = async () => { throw new Error('reset broke'); };
   await assert.rejects(runChunk(ctx, PLAN.chunks[0], 0), /disk on fire/);
   const ev = events.find((e) => e.type === 'chunk-error');
@@ -285,21 +286,54 @@ test('deadlock with no test command and a plain BLOCK is accepted with a note, o
   assert.equal(await commitsSince(ctx.ws, base), '1');
 });
 
-test('an empty nested git init makes the chunk throw, and the rollback still leaves it clean', async () => {
-  // git add -A refuses a nested repo with no commit; that surfaces as a throw, not a blocked round.
-  const t = team({
-    local: async (role, task, c, opts) => {
-      const sub = path.join(opts.cwd, 'vendor');
-      mkdirSync(sub);
-      await git(sub, ['init', '-q']);
-      writeFileSync(path.join(sub, 'lib.js'), 'x');
-      return { text: 'ok' };
-    },
-  });
-  const ctx = await ctxFor(t);
+test('an uncommitted nested git init every round is a blocked round, never a crash', async () => {
+  // git add -A refuses a nested repo with no commit; ws.diff fails, which must become an error artifact.
+  const initVendor = async (role, task, c, opts) => {
+    const sub = path.join(opts.cwd, 'vendor');
+    mkdirSync(sub, { recursive: true });
+    await git(sub, ['init', '-q']);
+    writeFileSync(path.join(sub, 'lib.js'), 'x');
+    return { text: 'ok' };
+  };
+  const t = team({ local: initVendor, author: initVendor });
+  const ctx = await ctxFor(t, { localRounds: 2, frontierRounds: 1 });
   const base = await ctx.ws.head();
-  await assert.rejects(runChunk(ctx, PLAN.chunks[0], 0), /does not have a commit checked out/);
-  assert.equal(await ctx.ws.head(), base);
+  const r = await runChunk(ctx, PLAN.chunks[0], 0);
+  assert.equal(r.status, 'stopped');
+  assert.equal(t.local.calls.length, 2);
+  assert.equal(t.author.calls.filter((c) => c.role === 'author').length, 1);
+  assert.equal(t.reviewer.calls.filter((c) => c.role === 'reviewer').length, 0);
+  assert.match(t.local.calls[1].task, /could not inspect the workspace/);
+  assert.equal(ctx.hookCalls.length, 1);
+  assert.match(ctx.hookCalls[0].arg.message, /nothing usable/);
+  assert.equal(await commitsSince(ctx.ws, base), '0');
   assert.equal(await porcelain(ctx.ws), '');
   assert.ok(!existsSync(path.join(ctx.ws.dir, 'vendor')));
+});
+
+test('a test-runner failure inside an attempt resets to base and the next round recovers', async () => {
+  let fail = true;
+  const t = team({
+    local: (role, task, c, opts, n) => { writeFileSync(path.join(opts.cwd, `try${n}.txt`), 'x'); return { text: 'ok' }; },
+  });
+  const ctx = await ctxFor(t, { testCommand: 'true' });
+  const base = await ctx.ws.head();
+  const real = ctx.ws.runTests.bind(ctx.ws);
+  ctx.ws.runTests = async (...a) => { if (fail) { fail = false; throw new Error('runner exploded'); } return real(...a); };
+  const r = await runChunk(ctx, PLAN.chunks[0], 0);
+  assert.equal(r.status, 'done');
+  assert.match(t.local.calls[1].task, /could not inspect the workspace: runner exploded/);
+  assert.equal(await commitsSince(ctx.ws, base), '1');
+  const files = (await git(ctx.ws.dir, ['show', '--name-only', '--format=', 'HEAD'])).stdout.trim().split('\n');
+  assert.deepEqual(files, ['try1.txt']); // round-1 edits were reset away
+});
+
+test('if the reset after an inspection failure itself fails, the chunk throws (infrastructure)', async () => {
+  const events = [];
+  const t = team({ local: writes('a.txt') });
+  const ctx = await ctxFor(t, { testCommand: 'true' }, { onEvent: (e) => events.push(e) });
+  ctx.ws.runTests = async () => { throw new Error('runner exploded'); };
+  ctx.ws.resetHard = async () => { throw new Error('reset broke'); };
+  await assert.rejects(runChunk(ctx, PLAN.chunks[0], 0), /reset broke/);
+  assert.ok(events.some((e) => e.type === 'chunk-error'));
 });
