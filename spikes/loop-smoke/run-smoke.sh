@@ -6,7 +6,14 @@ set -u
 cd "$(dirname "$0")/../.." || exit 2
 LPORT=8091
 
+CFG=""
 cleanup() { pkill -f "${LPORT}:127.0.0.1:8081" 2>/dev/null; }
+cleanup_all() {
+  [ -n "$CFG" ] && rm -f "$CFG"
+  cleanup && echo "tunnel closed"
+}
+trap cleanup_all EXIT
+trap 'exit 130' INT TERM
 cleanup; sleep 1
 
 echo "== tunnel =="
@@ -18,7 +25,7 @@ export LOCALAI_API_KEY="$(ssh -o ConnectTimeout=6 root@192.168.1.110 \
     'grep -E "^LOCALAI_API_KEY=" /opt/shingon-localai/.env | cut -d= -f2-')"
 [ -n "${LOCALAI_API_KEY:-}" ] && echo "key loaded" || { echo "NO KEY"; cleanup; exit 1; }
 
-CFG="$(mktemp --suffix=.json)"
+CFG="$(mktemp --suffix=.json)" || { echo "CONFIG BUILD FAILED"; exit 1; }
 node -e '
   const fs = require("fs");
   const [src, dst, url] = process.argv.slice(1);
@@ -27,13 +34,11 @@ node -e '
     if (p.adapter === "local-agent") p.extraConfig = [...(p.extraConfig || []), `model_providers.localai.base_url=${url}`];
   }
   fs.writeFileSync(dst, JSON.stringify(c, null, 2));
-' config.example.json "$CFG" "http://127.0.0.1:${LPORT}/v1"
+' config.example.json "$CFG" "http://127.0.0.1:${LPORT}/v1" || { echo "CONFIG BUILD FAILED"; exit 1; }
 
 echo "== conductor loop smoke (several minutes) =="
 node spikes/loop-smoke/smoke.js "$CFG"
 rc=$?
 
-rm -f "$CFG"
-cleanup && echo "tunnel closed"
 echo "smoke exit: $rc"
 exit $rc
