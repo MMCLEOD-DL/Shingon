@@ -5,6 +5,9 @@ import { settleDeadlock } from './deadlock.js';
 import { callAgent } from './runlog.js';
 import { askUser } from './askUser.js';
 
+// Local failures that the same prompt to the same backend cannot fix: go to the fallback now.
+export const LOCAL_FATAL = new Set(['infrastructure', 'timeout', 'context-overflow', 'no-participant']);
+
 // Rotate vendors: the frontier that reviews a chunk is never the one that implements its fallback.
 export function chunkRoles(index, team) {
   return index % 2 === 0
@@ -37,7 +40,7 @@ async function runChunkFrom(ctx, chunk, index, base, reset) {
   const total = plan.chunks.length;
   const step = `Step ${index + 1} (${chunk.title})`;
   const { reviewer, fallback } = chunkRoles(index, team);
-  const writeOpts = { cwd: ws.dir, write: true, timeoutMs: options.agentTimeoutMs };
+  const writeOpts = (who) => ({ cwd: ws.dir, write: true, timeoutMs: who === team.local ? options.localTimeoutMs : options.agentTimeoutMs });
   const readOpts = { cwd: ws.dir, write: false, timeoutMs: options.agentTimeoutMs };
   log.event('chunk', { index, title: chunk.title, base });
 
@@ -46,7 +49,7 @@ async function runChunkFrom(ctx, chunk, index, base, reset) {
     // that leaves an uninspectable mess goes back here, not all the way to base.
     let snap = null;
     return async (round, feedback, feedbackKind) => {
-      const r = await callAgent(ctx, who, role, prompts.chunkExec({ request, plan, chunk, index, total, feedback, feedbackKind }), writeOpts);
+      const r = await callAgent(ctx, who, role, prompts.chunkExec({ request, plan, chunk, index, total, feedback, feedbackKind }), writeOpts(who));
       // An agent that switched or detached the branch: put the run's branch back (T9).
       if (!(await ws.onOwnBranch())) {
         log.event('branch-switched', { index, participant: who.name, found: await ws.currentBranch() });
@@ -59,9 +62,9 @@ async function runChunkFrom(ctx, chunk, index, base, reset) {
         await reset(snap ?? base);
         return { error: r.error };
       }
-      // A dead local backend fails every retry the same way: go to the fallback now. The frontier
+      // A local failure the same prompt cannot fix ends the local loop; the frontier
       // fallback keeps its retries (a 429 there may be a short per-minute limit).
-      if (!r.ok) return { error: `${who.name} failed: ${r.error}`, fatal: who === team.local && r.failure === 'infrastructure' };
+      if (!r.ok) return { error: `${who.name} failed: ${r.error}`, fatal: who === team.local && LOCAL_FATAL.has(r.failure) };
       // Nothing an agent leaves behind may crash the run: a workspace we cannot
       // inspect is a blocked round, and the bad state is reset away before the next.
       // A failing reset is real infrastructure trouble and throws to runChunk's catch.

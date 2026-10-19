@@ -31,7 +31,7 @@ export class ClaudeCodeAdapter {
       return makeResult({
         text: stdout, ok: false,
         error: timedOut ? 'timed out' : (reason || `exit ${code}`),
-        failure: !timedOut && isInfrastructureFailure(reason) ? 'infrastructure' : null,
+        failure: timedOut ? 'timeout' : (isInfrastructureFailure(reason) ? 'infrastructure' : null),
       });
     }
 

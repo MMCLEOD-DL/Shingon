@@ -7,6 +7,7 @@ export const DEFAULT_OPTIONS = Object.freeze({
   testCommand: null,      // e.g. "npm test"; null = no tests configured
   testTimeoutMs: 600000,
   agentTimeoutMs: 1800000,
+  localTimeoutMs: 900000, // local grunt calls: a hung local backend gives up after 15 min, not 30
   approveEachChunk: false,
   keepWorkspace: false,   // true: keep the workspace after landed/rejected (the transcript is always kept in <baseDir>/logs)
 });

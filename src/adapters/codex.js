@@ -3,7 +3,7 @@ import { runCommand } from '../exec.js';
 import { normalize } from '../normalizer.js';
 import { getRolePreset } from '../roles.js';
 import { makeResult } from '../result.js';
-import { summarizeFailure, isInfrastructureFailure } from '../health.js';
+import { summarizeFailure, isInfrastructureFailure, isContextOverflow } from '../health.js';
 import { childEnv } from '../secrets.js';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
@@ -63,11 +63,12 @@ export class CodexAdapter {
         // Classify only Codex's own ERROR: lines, never raw stderr: it echoes the prompt there
         // (a task may mention "401"), and its last line may be the model's command output.
         const reason = summarizeFailure(stderr);
-        return makeResult({
-          text: stdout, ok: false,
-          error: timedOut ? 'timed out' : (reason || `exit ${code}`),
-          failure: !timedOut && /^error:/i.test(reason) && isInfrastructureFailure(reason) ? 'infrastructure' : null,
-        });
+        const own = /^error:/i.test(reason);
+        let failure = null;
+        if (timedOut) failure = 'timeout';
+        else if (own && isContextOverflow(reason)) failure = 'context-overflow';
+        else if (own && isInfrastructureFailure(reason)) failure = 'infrastructure';
+        return makeResult({ text: stdout, ok: false, error: timedOut ? 'timed out' : (reason || `exit ${code}`), failure });
       }
       if (!existsSync(outFile)) {
         return makeResult({ text: stdout, ok: false, error: 'codex produced no output file' });

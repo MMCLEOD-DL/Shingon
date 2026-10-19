@@ -113,3 +113,17 @@ test('only a Codex ERROR: line can mark a failure as infrastructure', async () =
   const bad = writeStubCli(tmp(), 'codex', `process.stderr.write('ERROR: unexpected status 502 Bad Gateway\\n'); process.exit(1);`);
   assert.equal((await new CodexAdapter({ bin: bad }).run('grunt', 't')).failure, 'infrastructure');
 });
+
+test('a timed-out run is failure "timeout"', async () => {
+  const bin = writeStubCli(tmp(), 'codex', `setTimeout(() => {}, 10000);`);
+  const r = await new CodexAdapter({ bin }).run('grunt', 't', '', { timeoutMs: 300 });
+  assert.equal(r.ok, false);
+  assert.equal(r.error, 'timed out');
+  assert.equal(r.failure, 'timeout');
+});
+
+test('a context overflow wins over the infrastructure classification', async () => {
+  const bin = writeStubCli(tmp(), 'codex', `process.stderr.write('ERROR: unexpected status 500: the request exceeds the available context size\\n'); process.exit(1);`);
+  const r = await new CodexAdapter({ bin }).run('grunt', 't');
+  assert.equal(r.failure, 'context-overflow');
+});

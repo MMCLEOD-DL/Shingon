@@ -5,7 +5,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { writeStubCli } from './helpers/stubCli.js';
-import { checkHealth, classifyFailure, summarizeFailure, isInfrastructureFailure } from '../src/health.js';
+import { checkHealth, classifyFailure, summarizeFailure, isInfrastructureFailure, isContextOverflow } from '../src/health.js';
 
 function tmp() { return mkdtempSync(path.join(tmpdir(), 'hc-')); }
 
@@ -72,4 +72,16 @@ test('isInfrastructureFailure spots dead backends, not model mistakes', () => {
   assert.equal(isInfrastructureFailure('ERROR: tool call failed: file not found'), false);
   // the echoed prompt mentions 401, but the summary is what gets classified
   assert.equal(summarizeFailure(CODEX_STDERR).includes('401'), false);
+});
+
+test('isContextOverflow recognises the usual context-limit messages', () => {
+  for (const s of [
+    'ERROR: the request exceeds the available context size',
+    'ERROR: unexpected status 400: prompt is too long: 40000 tokens > 32768 maximum',
+    "ERROR: This model's maximum context length is 32768 tokens",
+    'ERROR: input exceeds context window',
+    'ERROR: n_ctx exceeded',
+  ]) assert.equal(isContextOverflow(s), true, s);
+  assert.equal(isContextOverflow('ERROR: stream disconnected before completion'), false);
+  assert.equal(isContextOverflow(''), false);
 });

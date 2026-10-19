@@ -117,3 +117,9 @@ test('opts.timeoutMs overrides the constructor timeout (T1)', async () => {
   assert.equal(r.error, 'timed out');
   assert.ok(Date.now() - t0 < 5000);
 });
+
+test('a timed-out claude run is failure "timeout"', async () => {
+  const bin = writeStubCli(tmp(), 'claude', `setTimeout(() => {}, 10000);`);
+  const r = await new ClaudeCodeAdapter({ bin }).run('author', 't', '', { timeoutMs: 300 });
+  assert.equal(r.failure, 'timeout');
+});

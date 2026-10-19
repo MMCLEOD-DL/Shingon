@@ -17,6 +17,13 @@ export function isInfrastructureFailure(text = '') {
   return INFRASTRUCTURE.test(String(text));
 }
 
+// The prompt did not fit the model's context window: sending it again cannot help.
+const CONTEXT_OVERFLOW = /context (length|window|size)|maximum context|exceeds? the (available )?context|n_ctx|too many tokens|prompt is too long/i;
+
+export function isContextOverflow(text = '') {
+  return CONTEXT_OVERFLOW.test(String(text));
+}
+
 const LINE_MAX = 300;
 
 // A short, readable reason from a failed CLI run: its last distinct `ERROR:` lines

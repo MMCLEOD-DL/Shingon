@@ -4,7 +4,7 @@ import { writeFileSync, existsSync, mkdirSync, mkdtempSync, cpSync, appendFileSy
 import { tmpdir } from 'node:os';
 import { Workspace } from '../src/workspace.js';
 import path from 'node:path';
-import { runChunk, chunkRoles } from '../src/chunkPhase.js';
+import { runChunk, chunkRoles, LOCAL_FATAL } from '../src/chunkPhase.js';
 import { git } from '../src/workspace.js';
 import { fakeParticipant, approve, block, makeCtx } from './helpers/fakes.js';
 
@@ -42,7 +42,7 @@ test('local success becomes exactly one commit; reviewer sees the diff', async (
   assert.equal(r.note, null);
   assert.equal(await commitsSince(ctx.ws, base), '1');
   assert.equal((await git(ctx.ws.dir, ['log', '-1', '--format=%s'])).stdout.trim(), 'conductor: step 1/2 — Add a');
-  assert.deepEqual(t.local.calls[0].opts, { cwd: ctx.ws.dir, write: true, timeoutMs: ctx.options.agentTimeoutMs });
+  assert.deepEqual(t.local.calls[0].opts, { cwd: ctx.ws.dir, write: true, timeoutMs: ctx.options.localTimeoutMs });
   assert.equal(t.reviewer.calls[0].opts.write, false);
   assert.match(t.reviewer.calls[0].task, /\+hello a/);
 });
@@ -543,4 +543,26 @@ test('an infrastructure failure in the frontier fallback still gets its retries'
   assert.equal(r.status, 'done');
   assert.equal(t.local.calls.length, 1);
   assert.equal(t.author.calls.length, 2);
+});
+
+test('a local timeout or context overflow goes straight to the fallback', async () => {
+  for (const failure of ['timeout', 'context-overflow']) {
+    const t = team({ local: () => ({ ok: false, error: failure === 'timeout' ? 'timed out' : 'ERROR: context size exceeded', failure }) });
+    const ctx = await ctxFor(t, { localRounds: 3 });
+    const r = await runChunk(ctx, PLAN.chunks[0], 0);
+    assert.equal(r.status, 'done', failure);
+    assert.equal(t.local.calls.length, 1, failure);
+  }
+});
+
+test('local calls use localTimeoutMs; the frontier fallback keeps agentTimeoutMs', async () => {
+  const t = team({ local: () => ({ ok: false, error: 'timed out', failure: 'timeout' }) });
+  const ctx = await ctxFor(t, { localTimeoutMs: 1234, agentTimeoutMs: 5678 });
+  await runChunk(ctx, PLAN.chunks[0], 0);
+  assert.equal(t.local.calls[0].opts.timeoutMs, 1234);
+  assert.equal(t.author.calls.find((c) => c.role === 'author').opts.timeoutMs, 5678);
+});
+
+test('LOCAL_FATAL lists exactly the kinds that end the local loop', () => {
+  assert.deepEqual([...LOCAL_FATAL].sort(), ['context-overflow', 'infrastructure', 'no-participant', 'timeout']);
 });
