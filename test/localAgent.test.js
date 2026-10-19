@@ -65,6 +65,7 @@ test('runs codex with a private CODEX_HOME holding only the provider block, remo
   const seen = JSON.parse((await a.run('grunt', 't', '', { write: true })).text);
   assert.ok(seen.home && !seen.home.startsWith(path.join(process.env.HOME ?? '/nonexistent', '.codex')));
   assert.equal(seen.mode, 0o700);
+  assert.ok(!seen.home.startsWith(tmpdir() + path.sep), `home ${seen.home} is under the temp dir`);
   assert.equal(seen.cfg, [
     'model_context_window = 32768',
     '',

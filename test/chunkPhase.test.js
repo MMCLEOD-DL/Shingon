@@ -531,3 +531,16 @@ test('an ordinary local failure still retries, with a short capped reason', asyn
   assert.ok(note && note.length < 800, `retry note is ${note?.length} chars`);
   assert.equal(t.local.calls[2].task.split('did not finish').length, 2); // no nesting
 });
+
+test('an infrastructure failure in the frontier fallback still gets its retries', async () => {
+  let n = 0;
+  const t = team({
+    local: () => ({ ok: false, error: 'ERROR: stream disconnected', failure: 'infrastructure' }),
+    author: (role, task, c, opts) => (n++ === 0 ? { ok: false, error: 'API Error: 429 rate limit', failure: 'infrastructure' } : writes('a.txt')(role, task, c, opts)),
+  });
+  const ctx = await ctxFor(t, { localRounds: 3, frontierRounds: 2 });
+  const r = await runChunk(ctx, PLAN.chunks[0], 0);
+  assert.equal(r.status, 'done');
+  assert.equal(t.local.calls.length, 1);
+  assert.equal(t.author.calls.length, 2);
+});

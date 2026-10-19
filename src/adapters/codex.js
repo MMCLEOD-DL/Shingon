@@ -6,8 +6,14 @@ import { makeResult } from '../result.js';
 import { summarizeFailure, isInfrastructureFailure } from '../health.js';
 import { childEnv } from '../secrets.js';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import path from 'node:path';
+
+// Private homes live outside the temp dir: Codex refuses to install its helper shims under /tmp,
+// and the workspace-write sandbox lets the model write anywhere in /tmp.
+export function codexHomeBase(env = process.env) {
+  return path.join(env.XDG_CACHE_HOME || path.join(homedir(), '.cache'), 'conductor', 'codex-homes');
+}
 
 export class CodexAdapter {
   constructor({ bin = 'codex', model = null, timeoutMs = 120000, extraConfig = [], sandbox = null, envAllow = [], homeConfig = null } = {}) {
@@ -30,6 +36,7 @@ export class CodexAdapter {
       (context ? `\n\n---\nContext:\n${context}` : '');
 
     const outDir = mkdtempSync(path.join(tmpdir(), 'codex-out-'));
+    let home = null;
     try {
       const outFile = path.join(outDir, 'last-message.txt');
       const sandbox = opts.write ? 'workspace-write' : (this.sandbox ?? 'read-only');
@@ -41,8 +48,9 @@ export class CodexAdapter {
 
       const env = childEnv({ allow: this.envAllow });
       if (this.homeConfig != null) {
-        const home = path.join(outDir, 'home');
-        mkdirSync(home, { mode: 0o700 });
+        const base = codexHomeBase();
+        mkdirSync(base, { recursive: true, mode: 0o700 });
+        home = mkdtempSync(path.join(base, 'home-')); // mkdtemp creates it 0700
         writeFileSync(path.join(home, 'config.toml'), this.homeConfig, { mode: 0o600 });
         env.CODEX_HOME = home;
       }
@@ -52,12 +60,13 @@ export class CodexAdapter {
       });
 
       if (code !== 0 || timedOut) {
-        // Classify the summary, not raw stderr: Codex echoes the prompt there, and a task may mention "401".
+        // Classify only Codex's own ERROR: lines, never raw stderr: it echoes the prompt there
+        // (a task may mention "401"), and its last line may be the model's command output.
         const reason = summarizeFailure(stderr);
         return makeResult({
           text: stdout, ok: false,
           error: timedOut ? 'timed out' : (reason || `exit ${code}`),
-          failure: !timedOut && isInfrastructureFailure(reason) ? 'infrastructure' : null,
+          failure: !timedOut && /^error:/i.test(reason) && isInfrastructureFailure(reason) ? 'infrastructure' : null,
         });
       }
       if (!existsSync(outFile)) {
@@ -74,6 +83,7 @@ export class CodexAdapter {
       });
     } finally {
       rmSync(outDir, { recursive: true, force: true });
+      if (home) rmSync(home, { recursive: true, force: true });
     }
   }
 }

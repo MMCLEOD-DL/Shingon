@@ -59,8 +59,9 @@ async function runChunkFrom(ctx, chunk, index, base, reset) {
         await reset(snap ?? base);
         return { error: r.error };
       }
-      // A dead backend fails every retry the same way: end this participant's loop now.
-      if (!r.ok) return { error: `${who.name} failed: ${r.error}`, fatal: r.failure === 'infrastructure' };
+      // A dead local backend fails every retry the same way: go to the fallback now. The frontier
+      // fallback keeps its retries (a 429 there may be a short per-minute limit).
+      if (!r.ok) return { error: `${who.name} failed: ${r.error}`, fatal: who === team.local && r.failure === 'infrastructure' };
       // Nothing an agent leaves behind may crash the run: a workspace we cannot
       // inspect is a blocked round, and the bad state is reset away before the next.
       // A failing reset is real infrastructure trouble and throws to runChunk's catch.

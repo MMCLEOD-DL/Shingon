@@ -104,3 +104,12 @@ test('a failed run reports a short reason and flags a dead backend as infrastruc
   const bad = writeStubCli(tmp(), 'codex', `process.stderr.write('ERROR: model refused the tool call\\n'); process.exit(1);`);
   assert.equal((await new CodexAdapter({ bin: bad }).run('grunt', 't')).failure, null);
 });
+
+test('only a Codex ERROR: line can mark a failure as infrastructure', async () => {
+  const bin = writeStubCli(tmp(), 'codex', `process.stderr.write('curl: (7) Failed to connect: Connection refused\\n'); process.exit(1);`);
+  const r = await new CodexAdapter({ bin }).run('grunt', 't');
+  assert.equal(r.error, 'curl: (7) Failed to connect: Connection refused');
+  assert.equal(r.failure, null);
+  const bad = writeStubCli(tmp(), 'codex', `process.stderr.write('ERROR: unexpected status 502 Bad Gateway\\n'); process.exit(1);`);
+  assert.equal((await new CodexAdapter({ bin: bad }).run('grunt', 't')).failure, 'infrastructure');
+});
