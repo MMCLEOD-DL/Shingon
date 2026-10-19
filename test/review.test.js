@@ -102,3 +102,35 @@ test('a producer failure is fed back as kind "failed" (I4)', async () => {
   });
   assert.deepEqual(kinds, [null, 'failed']);
 });
+
+// ---- Final-review fixes: Task 4 ledger minors ----
+
+test('verdictOf tolerates a non-string reason (T4)', () => {
+  assert.deepEqual(verdictOf(makeResult({ verdict: { decision: 'BLOCK', reason: 5 } })), { decision: 'BLOCK', reason: 'no reason given', detail: '' });
+  assert.equal(verdictOf(makeResult({ verdict: { decision: 'APPROVE', reason: { x: 1 } } })).reason, '');
+});
+
+test('maxRounds must be a positive integer (T4)', async () => {
+  for (const bad of [1.5, NaN, '2', -1]) {
+    await assert.rejects(reviewLoop({ produce: async () => ({}), review: async () => approve(), maxRounds: bad }), /maxRounds/);
+  }
+});
+
+test('a producer returning nothing is a BLOCK round and never lastGood (T4)', async () => {
+  let reviewed = 0;
+  const r = await reviewLoop({ produce: async () => null, review: async () => { reviewed++; return approve(); }, maxRounds: 2 });
+  assert.equal(r.status, 'exhausted');
+  assert.equal(reviewed, 0);
+  assert.equal(r.lastGood, null);
+  assert.match(r.lastReason, /producer returned nothing/);
+});
+
+test('round-1 error then exhaustion leaves lastGood null (T4)', async () => {
+  const r = await reviewLoop({ produce: async () => ({ error: 'boom' }), review: async () => approve(), maxRounds: 1 });
+  assert.equal(r.status, 'exhausted');
+  assert.equal(r.lastGood, null);
+});
+
+test('a review that throws rejects reviewLoop (contract: callers wrap reviews with callRole) (T4)', async () => {
+  await assert.rejects(reviewLoop({ produce: async () => ({}), review: async () => { throw new Error('kaput'); }, maxRounds: 2 }), /kaput/);
+});

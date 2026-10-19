@@ -12,12 +12,13 @@ export function verdictOf(result) {
   if (!v || (v.decision !== 'APPROVE' && v.decision !== 'BLOCK')) {
     return { decision: 'BLOCK', reason: 'reviewer gave no VERDICT line', detail };
   }
-  if (v.decision === 'BLOCK') return { decision: 'BLOCK', reason: v.reason?.trim() || 'no reason given', detail };
-  return { decision: 'APPROVE', reason: v.reason ?? '', detail };
+  const reason = typeof v.reason === 'string' ? v.reason.trim() : '';
+  if (v.decision === 'BLOCK') return { decision: 'BLOCK', reason: reason || 'no reason given', detail };
+  return { decision: 'APPROVE', reason, detail };
 }
 
 export async function reviewLoop({ produce, review, maxRounds }) {
-  if (!(maxRounds >= 1)) throw new Error(`maxRounds must be >= 1 (got ${maxRounds})`);
+  if (!Number.isInteger(maxRounds) || maxRounds < 1) throw new Error(`maxRounds must be an integer >= 1 (got ${maxRounds})`);
   const history = [];
   let feedback = null;
   let feedbackKind = null; // 'blocked' | 'failed'
@@ -28,8 +29,8 @@ export async function reviewLoop({ produce, review, maxRounds }) {
   for (let round = 1; round <= maxRounds; round++) {
     artifact = await produce(round, feedback, feedbackKind);
     let v;
-    if (artifact?.error) {
-      v = { decision: 'BLOCK', reason: `could not produce a result: ${artifact.error}` };
+    if (artifact == null || artifact.error) {
+      v = { decision: 'BLOCK', reason: `could not produce a result: ${artifact?.error ?? 'producer returned nothing'}` };
     } else {
       lastGood = artifact;
       v = verdictOf(await review(artifact, round));
@@ -39,7 +40,7 @@ export async function reviewLoop({ produce, review, maxRounds }) {
     if (v.decision === 'APPROVE') return { status: 'approved', artifact, lastGood, rounds: round, lastReason, history };
     // The fixer gets the reviewer's whole critique, not just the one-liner.
     feedback = v.detail ? `${v.reason}\n\nReviewer's full notes:\n${v.detail}` : v.reason;
-    feedbackKind = artifact?.error ? 'failed' : 'blocked';
+    feedbackKind = artifact == null || artifact.error ? 'failed' : 'blocked';
   }
   return { status: 'exhausted', artifact, lastGood, rounds: maxRounds, lastReason, history };
 }
