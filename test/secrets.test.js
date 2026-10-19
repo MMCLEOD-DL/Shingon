@@ -98,3 +98,11 @@ test('the transcript never stores a key an agent printed', async () => {
   assert.ok(!raw.includes(X_KEY));
   assert.ok(raw.includes(REDACTED));
 });
+
+test('a local envKey that is a frontier auth key is never scrubbed (frontier CLIs keep working)', () => {
+  process.env.OPENAI_API_KEY = 'sk-test-openai-0123456789';
+  // eslint-disable-next-line no-new
+  new LocalAgentAdapter({ model: 'm', envKey: 'OPENAI_API_KEY' });
+  assert.ok(!SCRUB_ENV.includes('OPENAI_API_KEY'));
+  assert.equal(childEnv().OPENAI_API_KEY, 'sk-test-openai-0123456789');
+});

@@ -257,6 +257,7 @@ async function drive(ctx) {
         return finish('landed', { branch: already });
       }
     }
+    delete state.landing; // nothing was landed: this is a fresh pass through the gate
 
     // Final whole-branch review, then the user's gate. What the user approves is
     // exactly approvedSha: diffs are commit-to-commit, and land ships that sha.

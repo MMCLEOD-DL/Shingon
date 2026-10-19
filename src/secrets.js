@@ -12,10 +12,12 @@ const MIN_SECRET_LENGTH = 8;
 export const REDACTED = '[redacted]';
 
 export const SCRUB_ENV = ['LOCALAI_API_KEY'];
+// The frontier CLIs authenticate with these: never scrub them, whatever a config says.
+const FRONTIER_KEYS = new Set(['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN']);
 
 // A local provider configured with a different env key is scrubbed from every other child too.
 export function addScrubEnv(name) {
-  if (typeof name === 'string' && name && !SCRUB_ENV.includes(name)) SCRUB_ENV.push(name);
+  if (typeof name === 'string' && name && !FRONTIER_KEYS.has(name) && !SCRUB_ENV.includes(name)) SCRUB_ENV.push(name);
 }
 
 export function childEnv({ allow = [], env = process.env } = {}) {
