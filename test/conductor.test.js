@@ -635,3 +635,49 @@ test('seats are bound to the transcript: their routing events are logged', async
   assert.equal(out.status, 'landed');
   assert.ok(events.some((e) => e.type === 'route-failover' && e.from === 'claude' && e.reason === 'unauthorized'));
 });
+
+import { SAME_VENDOR_WARNING } from '../src/team.js';
+
+test('a same-vendor run says so once in the summary (Review Focus 4)', async () => {
+  const h = hooks();
+  const t = makeTeam();
+  t.reviewer = fakeParticipant({ name: 'claude-2', kind: 'claude-code', script: () => approve() });
+  const out = await runTask({ repoDir: await makeRepo(), request: 'x', team: t, hooks: h, baseDir: base(), options: { allowSameVendor: true }, warnings: [SAME_VENDOR_WARNING] });
+  assert.equal(out.status, 'landed');
+  const summary = h.calls.find((c) => c.name === 'approveResult').arg.summary;
+  assert.equal(summary.split(SAME_VENDOR_WARNING).length, 2);
+});
+
+test('the plan-agreed event reaches onEvent during a real run', async () => {
+  const events = [];
+  await runTask({ repoDir: await makeRepo(), request: 'x', team: makeTeam(), hooks: hooks({ onEvent: (e) => events.push(e) }), baseDir: base() });
+  const agreed = events.find((e) => e.type === 'plan-agreed');
+  assert.deepEqual(agreed.chunks, ['One', 'Two']);
+  assert.equal(agreed.author, 'claude');
+});
+
+test('approvePlan: shown the plan before any step; anything but true stops', async () => {
+  let seen = null;
+  const t = makeTeam();
+  const out = await runTask({ repoDir: await makeRepo(), request: 'x', team: t, hooks: hooks({ approvePlan: async (p) => { seen = p; return 'yes'; } }), baseDir: base(), options: { approvePlan: true } });
+  assert.equal(out.status, 'stopped');
+  assert.equal(out.reason, 'You did not approve the plan, so nothing was changed.');
+  assert.deepEqual(seen.steps, ['One', 'Two']);
+  assert.equal(t.local.calls.length, 0);
+  const ok = await runTask({ repoDir: await makeRepo(), request: 'x', team: makeTeam(), hooks: hooks({ approvePlan: async () => true }), baseDir: base(), options: { approvePlan: true } });
+  assert.equal(ok.status, 'landed');
+  await assert.rejects(runTask({ repoDir: await makeRepo(), request: 'x', team: makeTeam(), hooks: hooks(), baseDir: base(), options: { approvePlan: true } }), /hooks\.approvePlan is required/);
+});
+
+test('reject with a note keeps the note; only exactly true lands', async () => {
+  const repo = await makeRepo();
+  const before = await refsOf(repo);
+  const noted = await runTask({ repoDir: repo, request: 'x', team: makeTeam(), hooks: hooks({ approveResult: async () => ({ approved: false, note: '  please use smaller steps  ' }) }), baseDir: base() });
+  assert.equal(noted.status, 'rejected');
+  assert.equal(noted.note, 'please use smaller steps');
+  assert.match(readFileSync(noted.transcript, 'utf8'), /"type":"gate-note"[^\n]*please use smaller steps/);
+  const objTrue = await runTask({ repoDir: repo, request: 'x', team: makeTeam(), hooks: hooks({ approveResult: async () => ({ approved: true }) }), baseDir: base() });
+  assert.equal(objTrue.status, 'rejected');
+  assert.equal('note' in objTrue, false);
+  assert.equal(await refsOf(repo), before);
+});

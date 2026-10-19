@@ -4,7 +4,18 @@ import path from 'node:path';
 import { makeResult } from './result.js';
 import { clip } from './text.js';
 import { redact } from './secrets.js';
-import { isApiKind } from './vendors.js';
+import { vendorOf, isApiKind } from './vendors.js';
+
+// Two-vendor rule at run time (spec §7): a frontier model's work reviewed by the same
+// vendor is allowed, but the run is flagged so the summary can say so. Local work never counts.
+export function noteSameVendor(ctx, { phase, index = null, producerVendor, result, participant }) {
+  if (!producerVendor || producerVendor === 'local' || !result?.ok) return;
+  const vendor = vendorOf(result.servedKind ?? participant.adapter?.kind);
+  if (vendor !== producerVendor) return;
+  ctx.state.flags ??= {};
+  ctx.state.flags.sameVendor = true;
+  ctx.log.event('same-vendor-review', { phase, index, vendor });
+}
 
 export class RunLog {
   // metaDir: the workspace's metadata directory (Workspace#metaDir, `<ws>.conductor/`),

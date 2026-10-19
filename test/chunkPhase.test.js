@@ -586,3 +586,50 @@ test('a frontier fallback with nothing left pauses; a local seat with nothing le
   assert.equal(r.status, 'paused');
   assert.equal(paused.local.calls.length, 1, 'local no-participant is fatal for local, not a pause');
 });
+
+import { Participant as P7 } from '../src/participant.js';
+import { makeResult as mk7 } from '../src/result.js';
+
+// A participant whose results look Seat-served: servedBy/servedKind set.
+function served(name, kind, servedBy, servedKind, script) {
+  return new P7({
+    name, roles: ['author', 'reviewer', 'grunt'], capabilities: { is_agentic: true, can_edit_files: true },
+    adapter: { kind, run: async (...a) => Object.assign(mk7(await script(...a)), { servedBy, servedKind }) },
+  });
+}
+
+test('the fallback note names who actually produced the step', async () => {
+  const t = team({ local: () => ({ ok: false, error: 'timed out', failure: 'timeout' }) });
+  t.author = served('claude', 'claude-code', 'codex-backup', 'codex', writes('a.txt'));
+  const r = await runChunk(await ctxFor(t), PLAN.chunks[0], 0);
+  assert.match(r.note, /was done by codex-backup because the local model could not finish it/);
+});
+
+test('a frontier step reviewed by the same vendor is flagged; local work never is', async () => {
+  const events = [];
+  const t = team({ local: () => ({ ok: false, error: 'timed out', failure: 'timeout' }) });
+  t.reviewer = fakeParticipant({ name: 'other-claude', kind: 'claude-code', script: approve });
+  const ctx = await ctxFor(t, {}, { onEvent: (e) => events.push(e) });
+  await runChunk(ctx, PLAN.chunks[0], 0);
+  assert.equal(ctx.state.flags?.sameVendor, true);
+  assert.ok(events.some((e) => e.type === 'same-vendor-review' && e.phase === 'chunk' && e.index === 0 && e.vendor === 'anthropic'));
+
+  const clean = team({ local: writes('a.txt') });
+  clean.reviewer = fakeParticipant({ name: 'other-claude', kind: 'claude-code', script: approve });
+  const ctx2 = await ctxFor(clean);
+  await runChunk(ctx2, PLAN.chunks[0], 0);
+  assert.equal(ctx2.state.flags?.sameVendor, undefined);
+});
+
+test('chunk-done carries files and who did it; the diff only with watchDiffs', async () => {
+  for (const watchDiffs of [false, true]) {
+    const events = [];
+    const ctx = await ctxFor(team({ local: writes('a.txt', 'hello\n') }), { watchDiffs }, { onEvent: (e) => events.push(e) });
+    await runChunk(ctx, PLAN.chunks[0], 0);
+    const done = events.find((e) => e.type === 'chunk-done');
+    assert.deepEqual(done.files, ['a.txt']);
+    assert.equal(done.by, 'local');
+    if (watchDiffs) assert.match(done.diff, /\+hello/);
+    else assert.equal('diff' in done, false);
+  }
+});

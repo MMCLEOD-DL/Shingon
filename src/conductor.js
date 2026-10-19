@@ -11,6 +11,8 @@ import * as prompts from './prompts.js';
 import { buildSummary, plainReason } from './escalation.js';
 import { redact, REDACTED } from './secrets.js';
 import { vendorOf } from './vendors.js';
+import { SAME_VENDOR_WARNING } from './team.js';
+import { clip } from './text.js';
 
 export { DEFAULT_OPTIONS };
 
@@ -46,6 +48,9 @@ export function validateHooks(hooks, options) {
   if (typeof hooks?.approveResult !== 'function') throw new Error('hooks.approveResult is required');
   if (options.approveEachChunk && typeof hooks.approveChunk !== 'function') {
     throw new Error('hooks.approveChunk is required when approveEachChunk is set');
+  }
+  if (options.approvePlan && typeof hooks.approvePlan !== 'function') {
+    throw new Error('hooks.approvePlan is required when approvePlan is set');
   }
 }
 
@@ -234,6 +239,13 @@ async function drive(ctx) {
       if (p.status !== 'ok') return finish(p.status, { reason: p.reason });
       state.plan = p.plan;
       if (p.note) state.notes.push(p.note);
+      // Spec §8 stop point 1 (off by default). Asked before phase moves on, so a Ctrl-C here re-plans and asks again on resume.
+      if (options.approvePlan) {
+        const ok = await safeHook(log, 'approvePlan', hooks.approvePlan, redact({
+          summary: state.plan.summary, steps: state.plan.chunks.map((c) => c.title), note: p.note ? plainReason(p.note) : null,
+        }));
+        if (ok !== true) return finish('stopped', { reason: 'You did not approve the plan, so nothing was changed.' });
+      }
       Object.assign(state, { phase: 'chunks', chunkIndex: 0, chunkShas: [] });
       log.saveState(state);
     }
@@ -298,13 +310,20 @@ async function drive(ctx) {
       const cost = state.usage.apiCostUsd > 0 ? `, about $${state.usage.apiCostUsd.toFixed(2)}.` : ' (the cost was not reported).';
       warnings.push(`Paid API use this run: ${n} call${n === 1 ? '' : 's'}${cost}`);
     }
+    if (state.flags?.sameVendor && !warnings.includes(SAME_VENDOR_WARNING)) warnings.push(SAME_VENDOR_WARNING);
     if (redact(diff).includes(REDACTED)) warnings.push(CREDENTIAL_WARNING); // N2: redaction hides it; the file still lands
     const summary = buildSummary({ request: state.request, plan: state.plan, notes, files, tests, source: state.source, warnings });
 
     // The hook never sees the raw IRREVERSIBLE marker (m2).
     const shownReview = { ...finalReview, reason: plainReason(finalReview.reason), detail: plainReason(finalReview.detail) };
     const approved = await safeHook(log, 'approveResult', hooks.approveResult, redact({ summary, files, tests, finalReview: shownReview, diff }));
-    if (approved !== true) return finish('rejected', { reason: 'You did not approve the result.' });
+    if (approved !== true) {
+      // "[n] reject with a note" (spec §8): keep the user's words with the run.
+      const raw = approved && typeof approved === 'object' && typeof approved.note === 'string' ? approved.note.trim() : '';
+      const note = raw ? clip(redact(raw), 2000) : null;
+      if (note) log.event('gate-note', { note });
+      return finish('rejected', { reason: 'You did not approve the result.', ...(note ? { note } : {}) });
+    }
 
     // The test command and the reviewer ran after the diff was taken: re-check.
     const tampered = ws.restoreConfigIfTampered();

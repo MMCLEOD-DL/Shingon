@@ -4,7 +4,7 @@ import { buildEscalation } from './escalation.js';
 import { redact } from './secrets.js';
 
 export async function askUser(ctx, { kind, title, reason, recommendation, situation }) {
-  const esc = redact(buildEscalation({ kind, title, reason, recommendation, situation }));
+  const esc = redact({ ...buildEscalation({ kind, title, reason, recommendation, situation }), transcript: ctx.log.transcript });
   ctx.log.event('escalation', { kind, title, situation: situation ?? 'disagree', message: esc.message });
   let answer;
   try {

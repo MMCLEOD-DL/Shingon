@@ -63,3 +63,10 @@ test('a throwing hook logs hook-error and a reject decision', async () => {
   assert.match(ev[1].error, /ui gone/);
   assert.equal(ev[2].decision, 'reject');
 });
+
+test('the escalation carries the transcript path for "see details"', async () => {
+  let got = null;
+  const ctx = await makeCtx({ hooks: { escalate: async (e) => { got = e; return 'reject'; } } });
+  await askUser(ctx, esc);
+  assert.equal(got.transcript, ctx.log.transcript);
+});

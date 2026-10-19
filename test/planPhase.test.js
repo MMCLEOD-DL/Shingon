@@ -138,3 +138,16 @@ test('a reviewer seat with nothing left pauses the plan phase', async () => {
   const r = await runPlanPhase(await makeCtx({ team: t }));
   assert.equal(r.status, 'paused');
 });
+
+test('plan-agreed names the chunks, rounds, author and reviewer', async () => {
+  const events = [];
+  const reviews = [block('too big'), approve()];
+  const t = team({ author: planReply, reviewer: () => reviews.shift() });
+  const ctx = await makeCtx({ team: t, hooks: { onEvent: (e) => events.push(e) } });
+  const r = await runPlanPhase(ctx);
+  assert.equal(r.status, 'ok');
+  const agreed = events.filter((e) => e.type === 'plan-agreed');
+  assert.equal(agreed.length, 1);
+  assert.deepEqual({ chunks: agreed[0].chunks, rounds: agreed[0].rounds, author: agreed[0].author, reviewer: agreed[0].reviewer },
+    { chunks: ['A'], rounds: 2, author: 'claude', reviewer: 'codex' });
+});

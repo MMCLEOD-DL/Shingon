@@ -2,7 +2,9 @@
 import { reviewLoop } from './review.js';
 import * as prompts from './prompts.js';
 import { settleDeadlock } from './deadlock.js';
-import { callAgent } from './runlog.js';
+import { callAgent, noteSameVendor } from './runlog.js';
+import { vendorOf } from './vendors.js';
+import { clip } from './text.js';
 import { askUser } from './askUser.js';
 
 // Local failures that the same prompt to the same backend cannot fix: go to the fallback now.
@@ -76,7 +78,7 @@ async function runChunkFrom(ctx, chunk, index, base, reset) {
         const tests = await ws.runTests(options.testCommand, { timeoutMs: options.testTimeoutMs });
         const diff = await ws.diff(base);
         snap = await ws.snapshot();
-        return { diff, tests, base };
+        return { diff, tests, base, producedBy: r.servedBy ?? who.name, vendor: vendorOf(r.servedKind ?? who.adapter.kind) };
       } catch (e) {
         const msg = String(e?.message ?? e);
         log.event('inspect-failed', { index, participant: who.name, error: msg, resetTo: snap ?? base });
@@ -85,8 +87,12 @@ async function runChunkFrom(ctx, chunk, index, base, reset) {
       }
     };
   };
-  const review = (a) => callAgent(ctx, reviewer, 'reviewer',
-    prompts.chunkReview({ request, plan, chunk, index, total, diff: a.diff, tests: a.tests, base }), readOpts);
+  const review = async (a) => {
+    const rv = await callAgent(ctx, reviewer, 'reviewer',
+      prompts.chunkReview({ request, plan, chunk, index, total, diff: a.diff, tests: a.tests, base }), readOpts);
+    noteSameVendor(ctx, { phase: 'chunk', index, producerVendor: a.vendor, result: rv, participant: reviewer });
+    return rv;
+  };
 
   let note = null;
   let loop = await reviewLoop({ maxRounds: options.localRounds, produce: attempt(team.local, 'grunt'), review });
@@ -103,7 +109,7 @@ async function runChunkFrom(ctx, chunk, index, base, reset) {
       await reset();
       return { status: 'paused', reason: loop.lastReason };
     }
-    note = `${step} was done by ${fallback.name} because the local model could not finish it.`;
+    note = `${step} was done by ${loop.artifact?.producedBy ?? fallback.name} because the local model could not finish it.`;
   }
 
   if (loop.status !== 'approved') {
@@ -139,6 +145,8 @@ async function runChunkFrom(ctx, chunk, index, base, reset) {
 
   await ws.assertOnBranch(); // never squash onto a branch an agent (or reviewer) switched to
   const sha = await ws.squashSince(base, `conductor: step ${index + 1}/${total} — ${chunk.title}`);
-  log.event('chunk-done', { index, sha });
+  const done = { index, sha, files: await ws.filesRange(base, sha ?? base), by: loop.artifact?.producedBy ?? null };
+  if (options.watchDiffs) done.diff = clip(await ws.diffRange(base, sha ?? base), 20000);
+  log.event('chunk-done', done);
   return { status: 'done', sha, note, tests: loop.artifact?.tests ?? null };
 }
