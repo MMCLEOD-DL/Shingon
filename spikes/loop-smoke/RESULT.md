@@ -21,8 +21,19 @@
 - **Redaction:** no `[redacted]` markers appear in the transcript, and no key material showed up in the output.
 - **Workspace:** kept, because the smoke sets `keepWorkspace: true`. It is at `~/.conductor/smoke-workspaces/conductor-ws-Tvmi5k` (+ `.conductor/`).
 
+## Run 2 (2026-10-19, worker up)
+- **Outcome:** `landed` again in 97s, but **through the fallback again** (commit `6ecbd6e`).
+- **Cause of run 1:** the desktop worker had not been started.
+- **What changed this time:** the local model did respond. On its first turn it made a real tool call: it listed the workspace and read `package.json`, `math.js` and `test.js`.
+  - Codex then reported `tokens used 8,040`.
+  - The next request, which carried the tool output, came back `response.failed`.
+- **Likely cause:** the model is loaded with **n_ctx 8192**. Codex's own system prompt, plus tools, plus our task already fill the context in one turn, so the second turn overflows it. Spike #1 passed only because its whole job fit in roughly 7.6k tokens per turn.
+  - Not yet confirmed in the LocalAI logs.
+- **New finding:** the local Codex loads the operator's `~/.codex` MCP servers. A Netlify MCP server tried to authenticate on every attempt. Its tool definitions also eat into the 8k context, and an agent that should be sandboxed gets access to extra tools it was never meant to have.
+
 ## Follow-ups for Plan 3
-1. **Fix the local backend first.** Find out why LocalAI sends `response.failed` (check the LocalAI logs on CT110 and the worker status on .109), then re-run the smoke. That rerun is the one that actually proves local execution.
+1. **Raise the local model's context** (e.g. 32k, or with a quantized KV cache if VRAM is tight), then re-run the smoke. This changes the CT110 model config, so it is operator-gated.
+1a. **Isolate the local Codex from the operator's Codex config.** Give it its own `CODEX_HOME` holding only the localai provider, with no MCP servers.
 2. **The retry prompt nests the whole previous error recursively.** The "Your previous attempt did not finish (...)" text embeds the full Codex stdout: banner, echoed prompt and the previous retry note. That made the prompt grow from about 2k to 6.7k chars after three attempts. Pass only a short failure reason, such as the last `ERROR:` line, capped at a few hundred chars.
 3. **Adapter failure text is the raw Codex stdout.** When `ok:false`, `error` should be the stderr tail or the `ERROR:` lines, not the banner plus the prompt echo. The event log and the `chunk-fallback` reason are currently unreadable.
 4. **Classify provider/stream failures as infrastructure.** Skip the remaining local retries and go straight to the frontier fallback. Retrying a dead backend just wastes about 20s and three Codex starts.
