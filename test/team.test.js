@@ -105,3 +105,26 @@ test('a probe that throws counts as unavailable', async () => {
   assert.equal(r.report[1].reason, 'unavailable');
   assert.equal(r.allowSameVendor, true);
 });
+
+test('without preferTwoVendors a healthy other-vendor API is only a fallback: same-vendor subscription reviews', async () => {
+  const r = await buildTeam([claude({ probe: DOWN }), codex(), local(), claudeApi()], { routing: { allowApi: true }, env: NOENV });
+  assert.equal(r.team.author.name, 'codex');
+  assert.equal(r.team.reviewer.name, 'codex');
+  assert.equal(r.allowSameVendor, true);
+  assert.ok(r.warnings.includes(SAME_VENDOR_WARNING));
+  assert.deepEqual(names(r.team.reviewer), ['codex', 'claude', 'claude-api']);
+});
+
+test('probe text is redacted in the report and the error', async () => {
+  const SECRET = 'sk-test-abcdefghijklmnop1234';
+  const env = { ANTHROPIC_API_KEY: SECRET };
+  const leaky = (n, k, roles) => p(n, k, { roles, probe: { ok: false, reason: 'unavailable', detail: `proxy echoed ${SECRET}` } });
+  const boom = new Participant({ name: 'codex', roles: ['author', 'reviewer'], capabilities: { can_edit_files: true }, adapter: { kind: 'codex', probe: async () => { throw new Error(`bad ${SECRET}`); }, run: async () => makeResult({}) } });
+  const r = await buildTeam([leaky('claude', 'claude-code', ['author', 'reviewer']), boom, local()], { env });
+  assert.equal(r.ok, false);
+  assert.ok(!JSON.stringify(r).includes(SECRET));
+  const l = await buildTeam([claude(), codex(), leaky('local', 'local-agent', ['grunt'])], { env, routing: { localDown: 'pause' } });
+  assert.equal(l.ok, false);
+  assert.ok(!JSON.stringify(l).includes(SECRET));
+  assert.match(l.error, /\[redacted\]/);
+});

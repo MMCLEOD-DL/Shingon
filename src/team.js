@@ -3,6 +3,7 @@
 // vendors, order each Seat's fallbacks by the ladder, and say plainly when the run is degraded.
 import { checkHealth } from './health.js';
 import { HealthBoard, Seat, REASON_TEXT } from './router.js';
+import { redact, secretValues } from './secrets.js';
 import { vendorOf, isApiKind, isSubscriptionKind } from './vendors.js';
 
 export const SAME_VENDOR_WARNING = "Only one AI company's models were available, so the same company's AI checked its own work. The cross-checking is weaker this run.";
@@ -16,6 +17,8 @@ const uniq = (list) => [...new Set(list)];
 
 export async function buildTeam(participants, { routing = {}, health = checkHealth, env = process.env, board = new HealthBoard(), sleep } = {}) {
   const r = { ...ROUTING_DEFAULTS, ...routing };
+  const secrets = [...new Set([...secretValues(), ...secretValues(env)])].sort((a, b) => b.length - a.length);
+  const scrub = (x) => (x == null ? x : redact(String(x), secrets));
   const named = (n) => participants.find((p) => p.name === n);
   const subs = participants.filter((p) => isSubscriptionKind(p.adapter.kind) && p.canPlay('author') && p.canPlay('reviewer'));
   const apis = r.allowApi ? participants.filter((p) => isApiKind(p.adapter.kind)) : [];
@@ -27,10 +30,10 @@ export async function buildTeam(participants, { routing = {}, health = checkHeal
     try {
       h = await health(p.adapter, { timeoutMs: PROBE_TIMEOUT_MS[p.adapter.kind] ?? 15000 });
     } catch (e) {
-      h = { ok: false, reason: 'unavailable', detail: String(e?.message ?? e) };
+      h = { ok: false, reason: 'unavailable', detail: scrub(e?.message ?? e) };
     }
     const ok = h?.ok === true;
-    return { name: p.name, kind: p.adapter.kind, ok, reason: ok ? '' : (h?.reason || 'unavailable'), detail: h?.detail ?? null };
+    return { name: p.name, kind: p.adapter.kind, ok, reason: ok ? '' : (h?.reason || 'unavailable'), detail: scrub(h?.detail ?? null) };
   }));
   const entry = (p) => report.find((x) => x.name === p.name);
   const healthy = (p) => entry(p)?.ok === true;
@@ -63,7 +66,7 @@ export async function buildTeam(participants, { routing = {}, health = checkHeal
     preferred(r.reviewer, okSubs.filter(otherVendor)) ??
     okSubs.find(otherVendor) ??
     (r.preferTwoVendors ? okApis.find(otherVendor) : undefined) ??
-    [...okSubs, ...okApis].find((p) => p !== author) ??
+    okSubs.find((p) => p !== author) ??
     author;
   const allowSameVendor = vendorOf(author.adapter.kind) === vendorOf(reviewer.adapter.kind);
   if (allowSameVendor) warnings.push(SAME_VENDOR_WARNING);
