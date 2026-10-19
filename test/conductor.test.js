@@ -579,3 +579,59 @@ test('validateTeam compares vendors, and allowSameVendor lifts the rule', () => 
   const sameVendor = { ...t, reviewer: fakeParticipant({ name: 'c2', kind: 'claude-code', script: approve }) };
   assert.doesNotThrow(() => validateTeam(sameVendor, { allowSameVendor: true }));
 });
+
+import { Seat } from '../src/router.js';
+import { makeResult as mkResult } from '../src/result.js';
+import { Participant } from '../src/participant.js';
+
+const NOBODY_R = { ok: false, error: 'no AI model is available for codex (codex: rate-limited)', failure: 'no-participant' };
+
+test('a frontier seat with nothing left pauses the run; resume finishes it (Review Focus 2)', async () => {
+  const repo = await makeRepo();
+  const before = await refsOf(repo);
+  const out = await runTask({ repoDir: repo, request: 'x', team: makeTeam({ reviewer: () => NOBODY_R }), hooks: hooks(), baseDir: base() });
+  assert.equal(out.status, 'paused');
+  assert.match(out.reason, /^Conductor paused: no AI model is available for codex \(codex: rate-limited\)\. Your repository is unchanged/);
+  assert.match(out.reason, /conductor resume/);
+  assert.ok(out.workspaceDir, 'a paused run keeps its workspace');
+  assert.equal(await refsOf(repo), before);
+  const state = JSON.parse(readFileSync(path.join(`${out.workspaceDir}.conductor`, 'state.json'), 'utf8'));
+  assert.equal(state.status, 'paused');
+  const done = await resume({ workspaceDir: out.workspaceDir, repoDir: repo, team: makeTeam(), hooks: hooks() });
+  assert.equal(done.status, 'landed');
+});
+
+test('a final review with nothing left pauses at the gate, never lands', async () => {
+  const repo = await makeRepo();
+  const h = hooks();
+  const finalNobody = (role, task) => (/Review the whole branch/.test(task) ? NOBODY_R : approve());
+  const out = await runTask({ repoDir: repo, request: 'x', team: makeTeam({ reviewer: finalNobody }), hooks: h, baseDir: base() });
+  assert.equal(out.status, 'paused');
+  assert.equal(h.calls.filter((c) => c.name === 'approveResult').length, 0);
+});
+
+test('run warnings and paid API use reach the final summary', async () => {
+  const repo = await makeRepo();
+  const h = hooks();
+  const t = makeTeam();
+  t.reviewer = fakeParticipant({ name: 'gpt-api', kind: 'openai-api', script: () => ({ ...approve(), usage: { costUsd: 0.02 } }) });
+  t.author = fakeParticipant({ name: 'claude', kind: 'claude-code', script: (role) => (role === 'reviewer' ? approve() : planReply) });
+  const out = await runTask({ repoDir: repo, request: 'x', team: t, hooks: h, baseDir: base(), warnings: ['WARNING-ONE', 'WARNING-ONE'] });
+  assert.equal(out.status, 'landed');
+  const summary = h.calls.find((c) => c.name === 'approveResult').arg.summary;
+  assert.equal(summary.split('WARNING-ONE').length, 2, 'each warning appears once');
+  assert.match(summary, /Paid API use this run: \d+ calls?, about \$0\.\d\d\./);
+});
+
+test('seats are bound to the transcript: their routing events are logged', async () => {
+  const repo = await makeRepo();
+  const events = [];
+  const dead = new Participant({ name: 'claude', roles: ['author', 'reviewer'], capabilities: { can_edit_files: true }, adapter: { kind: 'claude-code', run: async () => mkResult({ ok: false, error: 'HTTP 401: unauthorized', failure: 'infrastructure' }) } });
+  const t = makeTeam();
+  // Health is tracked by candidate name, so the backup needs its own name.
+  const backup = fakeParticipant({ name: 'claude-2', kind: 'claude-code', script: (role) => (role === 'reviewer' ? approve() : planReply) });
+  t.author = new Seat({ name: 'claude', candidates: [dead, backup] });
+  const out = await runTask({ repoDir: repo, request: 'x', team: t, hooks: hooks({ onEvent: (e) => events.push(e) }), baseDir: base() });
+  assert.equal(out.status, 'landed');
+  assert.ok(events.some((e) => e.type === 'route-failover' && e.from === 'claude' && e.reason === 'unauthorized'));
+});

@@ -566,3 +566,23 @@ test('local calls use localTimeoutMs; the frontier fallback keeps agentTimeoutMs
 test('LOCAL_FATAL lists exactly the kinds that end the local loop', () => {
   assert.deepEqual([...LOCAL_FATAL].sort(), ['context-overflow', 'infrastructure', 'no-participant', 'timeout']);
 });
+
+const NOBODY = { ok: false, error: 'no AI model is available for codex (codex: rate-limited)', failure: 'no-participant' };
+
+test('a reviewer with nothing left pauses the chunk and resets the workspace', async () => {
+  const t = team({ local: writes('a.txt'), reviewer: () => NOBODY });
+  const ctx = await ctxFor(t);
+  const base = await ctx.ws.head();
+  const r = await runChunk(ctx, PLAN.chunks[0], 0);
+  assert.equal(r.status, 'paused');
+  assert.match(r.reason, /no AI model is available for codex/);
+  assert.equal(await commitsSince(ctx.ws, base), '0');
+  assert.equal(await ctx.ws.isClean(), true);
+});
+
+test('a frontier fallback with nothing left pauses; a local seat with nothing left falls back', async () => {
+  const paused = team({ local: () => ({ ok: false, error: 'x', failure: 'no-participant' }), author: () => NOBODY });
+  const r = await runChunk(await ctxFor(paused), PLAN.chunks[0], 0);
+  assert.equal(r.status, 'paused');
+  assert.equal(paused.local.calls.length, 1, 'local no-participant is fatal for local, not a pause');
+});

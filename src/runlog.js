@@ -4,6 +4,7 @@ import path from 'node:path';
 import { makeResult } from './result.js';
 import { clip } from './text.js';
 import { redact } from './secrets.js';
+import { isApiKind } from './vendors.js';
 
 export class RunLog {
   // metaDir: the workspace's metadata directory (Workspace#metaDir, `<ws>.conductor/`),
@@ -62,7 +63,7 @@ export async function callRole(log, participant, role, task, context = '', opts 
   // Prompts leave for third-party vendors: no secret value may be in them.
   task = redact(task);
   context = redact(context);
-  log.event('call', { participant: participant.name, role, task: clip(task, 1000) });
+  log.event('call', { participant: participant.name, role, write: opts.write === true, task: clip(task, 1000) });
   let result;
   try {
     result = await participant.run(role, task, context, opts);
@@ -71,7 +72,7 @@ export async function callRole(log, participant, role, task, context = '', opts 
   }
   const v = result.verdict;
   log.event('result', {
-    participant: participant.name, role, ok: result.ok,
+    participant: participant.name, role, servedBy: result.servedBy ?? null, ok: result.ok,
     error: clip(redact(typeof result.error === 'string' ? result.error : (result.error == null ? '' : String(result.error))), 2000) || null,
     verdict: v && { ...v, reason: clip(redact(typeof v.reason === 'string' ? v.reason : ''), 1000) },
     costUsd: result.usage?.costUsd ?? null, text: clip(redact(result.text), 2000),
@@ -88,6 +89,15 @@ export async function callRole(log, participant, role, task, context = '', opts 
 // so it counts as a failed attempt / BLOCK; an unrepairable one throws.
 export async function callAgent(ctx, participant, role, task, opts = {}) {
   let result = await callRole(ctx.log, participant, role, task, '', opts);
+  // Usage totals (spec §7 budget awareness): cost as the CLIs/APIs report it, and paid API calls.
+  const servedKind = result.servedKind ?? participant.adapter?.kind;
+  const usage = (ctx.state.usage ??= { costUsd: 0, apiCostUsd: 0, apiCalls: 0 });
+  const cost = result.usage?.costUsd;
+  if (typeof cost === 'number' && Number.isFinite(cost)) {
+    usage.costUsd += cost;
+    if (isApiKind(servedKind)) usage.apiCostUsd += cost;
+  }
+  if (isApiKind(servedKind)) usage.apiCalls += 1;
   let gitdir;
   let tampered;
   try {

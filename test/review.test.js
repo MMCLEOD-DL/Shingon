@@ -143,3 +143,24 @@ test('a fatal producer error ends the loop at once', async () => {
   assert.equal(calls, 1);
   assert.match(r.lastReason, /backend down/);
 });
+
+test('a producer artifact with pause ends the loop as paused', async () => {
+  let reviews = 0;
+  const r = await reviewLoop({ produce: async () => ({ error: 'no model', pause: 'no AI model is available for claude (claude: rate-limited)' }), review: async () => { reviews++; return approve(); }, maxRounds: 3 });
+  assert.equal(r.status, 'paused');
+  assert.equal(r.rounds, 1);
+  assert.equal(r.lastReason, 'no AI model is available for claude (claude: rate-limited)');
+  assert.equal(reviews, 0);
+});
+
+test('a reviewer with nothing left pauses the loop instead of blocking', async () => {
+  let produced = 0;
+  const r = await reviewLoop({
+    produce: async () => { produced++; return { v: 1 }; },
+    review: async () => makeResult({ ok: false, error: 'no AI model is available for codex (codex: rate-limited)', failure: 'no-participant' }),
+    maxRounds: 3,
+  });
+  assert.equal(r.status, 'paused');
+  assert.equal(produced, 1);
+  assert.match(r.lastReason, /no AI model is available for codex/);
+});

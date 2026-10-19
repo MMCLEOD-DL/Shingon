@@ -121,3 +121,20 @@ test('an accepted plan deadlock does not claim "no tests configured" (m3)', asyn
   assert.match(r.note, /tests do not apply to a plan/);
   assert.doesNotMatch(r.note, /no tests configured/);
 });
+
+const NOBODY = { ok: false, error: 'no AI model is available for claude (claude: rate-limited; codex: rate-limited)', failure: 'no-participant' };
+
+test('an author seat with nothing left pauses the plan phase', async () => {
+  const t = team({ author: () => NOBODY, reviewer: approve });
+  const r = await runPlanPhase(await makeCtx({ team: t }));
+  assert.equal(r.status, 'paused');
+  assert.match(r.reason, /claude: rate-limited/);
+  assert.equal(t.author.calls.length, 1);
+  assert.equal(t.reviewer.calls.length, 0);
+});
+
+test('a reviewer seat with nothing left pauses the plan phase', async () => {
+  const t = team({ author: planReply, reviewer: () => NOBODY });
+  const r = await runPlanPhase(await makeCtx({ team: t }));
+  assert.equal(r.status, 'paused');
+});

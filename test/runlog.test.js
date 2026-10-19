@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { RunLog, callRole } from '../src/runlog.js';
+import { RunLog, callRole, callAgent } from '../src/runlog.js';
 import { DEFAULT_OPTIONS } from '../src/options.js';
-import { fakeParticipant, approve } from './helpers/fakes.js';
+import { fakeParticipant, approve, makeCtx } from './helpers/fakes.js';
 import { Participant } from '../src/participant.js';
 
 // RunLog is given the run's metadata directory (Workspace#metaDir) and creates it.
@@ -133,4 +133,19 @@ test('loadState rejects non-object JSON and other versions (T6)', () => {
     writeFileSync(path.join(d, 'state.json'), body);
     assert.throws(() => log.loadState(), /corrupt run state/, body);
   }
+});
+
+test('callAgent totals cost, and counts paid API calls; call/result events gain write and servedBy', async () => {
+  const seen = [];
+  const sub = fakeParticipant({ name: 'claude', kind: 'claude-code', script: () => ({ text: 'x', usage: { costUsd: 0.25 } }) });
+  const api = fakeParticipant({ name: 'gpt-api', kind: 'openai-api', script: () => ({ text: 'y', usage: { costUsd: 0.1 } }) });
+  const ctx = await makeCtx({ team: { author: sub, reviewer: api, local: sub }, hooks: { onEvent: (e) => seen.push(e) } });
+  await callAgent(ctx, sub, 'author', 't', { cwd: ctx.ws.dir, write: true });
+  await callAgent(ctx, api, 'reviewer', 't', { cwd: ctx.ws.dir, write: false });
+  assert.ok(Math.abs(ctx.state.usage.costUsd - 0.35) < 1e-9);
+  assert.ok(Math.abs(ctx.state.usage.apiCostUsd - 0.1) < 1e-9);
+  assert.equal(ctx.state.usage.apiCalls, 1);
+  const calls = seen.filter((e) => e.type === 'call');
+  assert.deepEqual(calls.map((e) => e.write), [true, false]);
+  assert.ok(seen.filter((e) => e.type === 'result').every((e) => 'servedBy' in e));
 });

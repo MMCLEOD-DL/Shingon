@@ -64,7 +64,11 @@ async function runChunkFrom(ctx, chunk, index, base, reset) {
       }
       // A local failure the same prompt cannot fix ends the local loop; the frontier
       // fallback keeps its retries (a 429 there may be a short per-minute limit).
-      if (!r.ok) return { error: `${who.name} failed: ${r.error}`, fatal: who === team.local && LOCAL_FATAL.has(r.failure) };
+      if (!r.ok) {
+        // A frontier seat with no model left pauses the run; the local seat just falls back.
+        if (r.failure === 'no-participant' && who !== team.local) return { error: r.error, pause: r.error };
+        return { error: `${who.name} failed: ${r.error}`, fatal: who === team.local && LOCAL_FATAL.has(r.failure) };
+      }
       // Nothing an agent leaves behind may crash the run: a workspace we cannot
       // inspect is a blocked round, and the bad state is reset away before the next.
       // A failing reset is real infrastructure trouble and throws to runChunk's catch.
@@ -86,11 +90,19 @@ async function runChunkFrom(ctx, chunk, index, base, reset) {
 
   let note = null;
   let loop = await reviewLoop({ maxRounds: options.localRounds, produce: attempt(team.local, 'grunt'), review });
+  if (loop.status === 'paused') {
+    await reset();
+    return { status: 'paused', reason: loop.lastReason };
+  }
 
   if (loop.status !== 'approved') {
     log.event('chunk-fallback', { index, to: fallback.name, reason: loop.lastReason });
     await reset();
     loop = await reviewLoop({ maxRounds: options.frontierRounds, produce: attempt(fallback, 'author'), review });
+    if (loop.status === 'paused') {
+      await reset();
+      return { status: 'paused', reason: loop.lastReason };
+    }
     note = `${step} was done by ${fallback.name} because the local model could not finish it.`;
   }
 

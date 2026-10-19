@@ -18,13 +18,14 @@ export async function runPlanPhase(ctx) {
     produce: async (round, feedback, feedbackKind) => {
       const r = await callAgent(ctx, team.author, 'author',
         prompts.planAuthor({ request, maxChunks: options.maxChunks, feedback, feedbackKind }), opts);
-      if (!r.ok) return { error: `author failed: ${r.error}` };
+      if (!r.ok) return r.failure === 'no-participant' ? { error: r.error, pause: r.error } : { error: `author failed: ${r.error}` };
       const parsed = parsePlan(r.text, { maxChunks: options.maxChunks });
       return parsed.ok ? { plan: parsed.plan, text: r.text } : { error: parsed.error };
     },
     review: (a) => callAgent(ctx, team.reviewer, 'reviewer', prompts.planReview({ request, planText: a.text }), opts),
   });
 
+  if (loop.status === 'paused') return { status: 'paused', reason: loop.lastReason };
   if (loop.status === 'approved') return { status: 'ok', plan: loop.artifact.plan, note: null };
   if (!loop.lastGood) {
     return { status: 'failed', reason: `No valid plan after ${loop.rounds} rounds. Last problem: ${loop.lastReason}` };

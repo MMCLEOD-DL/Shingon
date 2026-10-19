@@ -22,6 +22,7 @@ const TMP_BASEDIR_WARNING = 'Warning: the workspace is under the temporary direc
 const CREDENTIAL_WARNING = 'Warning: this change contains something that looks like a credential (shown as [redacted]); check it before approving.';
 const INTERNAL_PROBLEM = 'Conductor hit an internal problem and stopped. Your repository was not changed. ' +
   'Details are in the run transcript; you can resume.';
+const pausedReason = (why) => `Conductor paused: ${why}. Your repository is unchanged and the finished steps are kept; run "conductor resume" when it is available again.`;
 
 export function validateTeam(team, { allowSameVendor = false } = {}) {
   const { author, reviewer, local } = team ?? {};
@@ -68,7 +69,7 @@ async function safeHook(log, name, fn, arg) {
 
 const message = (e) => String(e?.message ?? e);
 
-export async function runTask({ repoDir, request, team, hooks, options = {}, baseDir }) {
+export async function runTask({ repoDir, request, team, hooks, options = {}, baseDir, warnings = [] }) {
   const opts = { ...DEFAULT_OPTIONS, ...options };
   validateTeam(team, opts);
   validateHooks(hooks, opts);
@@ -90,6 +91,7 @@ export async function runTask({ repoDir, request, team, hooks, options = {}, bas
       phase: 'plan', plan: null, chunkIndex: 0, chunkShas: [], notes: [], warnings: [], status: 'running',
     };
     if (isUnderTmp(path.dirname(ws.dir))) state.warnings.push(TMP_BASEDIR_WARNING); // N4
+    for (const w of warnings) if (!state.warnings.includes(w)) state.warnings.push(w);
     log.saveState(state);
   } catch (e) {
     return redact({ status: 'failed', workspaceDir: ws.dir, reason: `Conductor could not write its run state, so it did not start: ${message(e)}` });
@@ -106,7 +108,7 @@ export async function runTask({ repoDir, request, team, hooks, options = {}, bas
 
 // A run state resume can safely continue (T9-M3). Returns a problem or null.
 async function stateProblem(state, ws) {
-  if (!['running', 'failed'].includes(state.status)) return `its status is ${state.status}`;
+  if (!['running', 'failed', 'paused'].includes(state.status)) return `its status is ${state.status}`;
   if (!RESUMABLE_PHASES.has(state.phase)) return `its phase is ${state.phase}`;
   if (typeof state.taskId !== 'string' || !state.taskId.startsWith('conductor/')) return 'its branch name is missing';
   if (typeof state.request !== 'string' || !state.request.trim()) return 'its request is missing';
@@ -125,7 +127,7 @@ async function stateProblem(state, ws) {
 // repoDir: the repository the caller expects this run to land in. It must match
 // the one recorded when the workspace was created (Ruling 11 / I2).
 // Always resolves: anything that stops a resume is a 'failed' outcome with a plain reason.
-export async function resume({ workspaceDir, repoDir, team, hooks, options = {} }) {
+export async function resume({ workspaceDir, repoDir, team, hooks, options = {}, warnings = [] }) {
   validateTeam(team, options);
   if (typeof repoDir !== 'string' || !repoDir) throw new Error('resume needs the repoDir the run belongs to');
   const refuse = (detail, log, dir = workspaceDir) => {
@@ -169,6 +171,8 @@ export async function resume({ workspaceDir, repoDir, team, hooks, options = {} 
     log.event('resume-error', { detail: message(e) });
     return redact({ status: 'failed', workspaceDir: ws.dir, reason: 'Conductor could not prepare the workspace to resume. Details are in the run transcript.' });
   }
+  state.warnings ??= [];
+  for (const w of warnings) if (!state.warnings.includes(w)) state.warnings.push(w);
   state.options = opts;
   state.status = 'running';
   log.event('resume', { phase: state.phase, chunkIndex: state.chunkIndex });
@@ -216,6 +220,8 @@ async function drive(ctx) {
     return redact(out);
   };
 
+  for (const member of new Set([team.author, team.reviewer, team.local])) member.bind?.((type, data) => log.event(type, data));
+
   try {
     if (state.phase === 'plan') {
       const p = await runPlanPhase(ctx);
@@ -224,6 +230,7 @@ async function drive(ctx) {
         log.event('plan-failed', { detail: p.reason });
         return finish('failed', { reason: 'Conductor could not get a usable plan from the AI planner, so nothing was changed. The technical details are in the run transcript; you can resume to try again.' });
       }
+      if (p.status === 'paused') return finish('paused', { reason: pausedReason(p.reason) });
       if (p.status !== 'ok') return finish(p.status, { reason: p.reason });
       state.plan = p.plan;
       if (p.note) state.notes.push(p.note);
@@ -238,6 +245,7 @@ async function drive(ctx) {
         const prevSha = state.chunkShas.at(-1) ?? ws.baseSha;
         const c = await runChunk(ctx, chunk, i);
         if (c.status === 'failed') return finish('failed', { reason: c.reason });
+        if (c.status === 'paused') return finish('paused', { reason: pausedReason(c.reason) });
         if (c.status !== 'done') return finish('stopped', { reason: c.reason });
         await ws.assertOnBranch();
         if (c.note) state.notes.push(c.note);
@@ -280,10 +288,16 @@ async function drive(ctx) {
     const r = await callAgent(ctx, team.reviewer, 'reviewer',
       prompts.finalReview({ request: state.request, plan: state.plan, diff, tests, base: ws.baseSha }),
       { cwd: ws.dir, write: false, timeoutMs: options.agentTimeoutMs });
+    if (r.failure === 'no-participant') return finish('paused', { reason: pausedReason(r.error) });
     const finalReview = verdictOf(r);
     const notes = [...state.notes];
     if (finalReview.decision === 'BLOCK') notes.push(`Final review concern: ${plainReason(finalReview.reason)}`);
     const warnings = [...(state.warnings ?? [])];
+    if (state.usage?.apiCalls) {
+      const n = state.usage.apiCalls;
+      const cost = state.usage.apiCostUsd > 0 ? `, about $${state.usage.apiCostUsd.toFixed(2)}.` : ' (the cost was not reported).';
+      warnings.push(`Paid API use this run: ${n} call${n === 1 ? '' : 's'}${cost}`);
+    }
     if (redact(diff).includes(REDACTED)) warnings.push(CREDENTIAL_WARNING); // N2: redaction hides it; the file still lands
     const summary = buildSummary({ request: state.request, plan: state.plan, notes, files, tests, source: state.source, warnings });
 

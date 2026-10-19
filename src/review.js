@@ -28,12 +28,16 @@ export async function reviewLoop({ produce, review, maxRounds }) {
 
   for (let round = 1; round <= maxRounds; round++) {
     artifact = await produce(round, feedback, feedbackKind);
+    // No model left to do this at all: not a failed round, the run pauses (Seat 'no-participant').
+    if (artifact?.pause) return { status: 'paused', artifact, lastGood, rounds: round, lastReason: String(artifact.pause), history };
     let v;
     if (artifact == null || artifact.error) {
       v = { decision: 'BLOCK', reason: `could not produce a result: ${artifact?.error ?? 'producer returned nothing'}` };
     } else {
       lastGood = artifact;
-      v = verdictOf(await review(artifact, round));
+      const rv = await review(artifact, round);
+      if (rv?.failure === 'no-participant') return { status: 'paused', artifact, lastGood, rounds: round, lastReason: String(rv.error), history };
+      v = verdictOf(rv);
     }
     history.push({ round, ...v });
     lastReason = v.reason;
