@@ -24,6 +24,8 @@ test('clean approval returns the plan with no note; agents run read-only in the 
   assert.equal(t.author.calls[0].opts.cwd, ctx.ws.dir);
   assert.equal(t.author.calls[0].opts.write, false);
   assert.equal(t.reviewer.calls[0].role, 'reviewer');
+  assert.equal(t.reviewer.calls[0].opts.write, false);
+  assert.equal(t.reviewer.calls[0].opts.cwd, ctx.ws.dir);
 });
 
 test('an unparsable plan is fed back to the author and not sent for review', async () => {
@@ -98,4 +100,15 @@ test('bad JSON, zero chunks and too many chunks are each fed back as a round, ne
   assert.match(t.author.calls[1].task, /not valid JSON/);
   assert.match(t.author.calls[2].task, /no chunks/);
   assert.match(t.author.calls[3].task, /3 chunks \(max 2\)/);
+});
+
+test('a reviewer that throws every round escalates once and never auto-accepts', async () => {
+  const t = team({ author: planReply, reviewer: () => { throw new Error('codex crashed'); } });
+  const ctx = await makeCtx({ team: t, options: { planRounds: 2 } });
+  const r = await runPlanPhase(ctx);
+  assert.equal(r.status, 'stopped');
+  assert.equal(t.reviewer.calls.length, 2);
+  const escs = ctx.hookCalls.filter((h) => h.name === 'escalate');
+  assert.equal(escs.length, 1);
+  assert.match(escs[0].arg.message, /codex crashed/);
 });

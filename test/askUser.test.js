@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { askUser } from '../src/askUser.js';
 import { makeCtx } from './helpers/fakes.js';
 
@@ -34,4 +35,31 @@ test('true, "Approve", a rejected promise, a sync throw and a missing hook all r
     ctx.hooks.escalate = escalate;
     assert.equal(await askUser(ctx, esc), 'reject');
   }
+});
+
+const eventsOf = (ctx) => readFileSync(ctx.log.transcript, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+
+test('logs escalation and decision events; the hook sees no IRREVERSIBLE marker', async () => {
+  let got = null;
+  const seen = [];
+  const ctx = await makeCtx({ hooks: { escalate: async (e) => { got = e; return 'approve'; }, onEvent: (e) => seen.push(e.type) } });
+  await askUser(ctx, { ...esc, reason: 'Concern: IRREVERSIBLE: drops table' });
+  assert.doesNotMatch(got.message, /IRREVERSIBLE/i);
+  const ev = eventsOf(ctx);
+  const escEv = ev.find((e) => e.type === 'escalation');
+  assert.equal(escEv.kind, 'plan');
+  assert.doesNotMatch(escEv.message, /IRREVERSIBLE/i);
+  assert.equal(ev.find((e) => e.type === 'decision').decision, 'approve');
+  assert.ok(!ev.some((e) => e.type === 'hook-error'));
+  assert.deepEqual(seen, ['escalation', 'decision']);
+});
+
+test('a throwing hook logs hook-error and a reject decision', async () => {
+  const ctx = await makeCtx({ hooks: { escalate: async () => { throw new Error('ui gone'); } } });
+  assert.equal(await askUser(ctx, esc), 'reject');
+  const ev = eventsOf(ctx);
+  assert.deepEqual(ev.map((e) => e.type), ['escalation', 'hook-error', 'decision']);
+  assert.equal(ev[1].hook, 'escalate');
+  assert.match(ev[1].error, /ui gone/);
+  assert.equal(ev[2].decision, 'reject');
 });

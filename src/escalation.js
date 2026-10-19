@@ -37,6 +37,6 @@ export function buildSummary({ request, plan, notes = [], files = [], tests = nu
     `Files changed (${files.length}): ${shown}${more}`,
     `Tests: ${testLine}`,
   ];
-  if (notes.length) lines.push('Notes:', ...notes.map((n) => `  - ${n}`));
+  if (notes.length) lines.push('Notes:', ...notes.map((n) => `  - ${plainReason(n)}`));
   return lines.join('\n');
 }

@@ -37,3 +37,19 @@ test('unreviewed or unproduced work escalates', () => {
   assert.equal(settleDeadlock({ reason: 'reviewer gave no VERDICT line', tests: pass }).action, 'escalate');
   assert.equal(settleDeadlock({ reason: 'whatever', tests: pass, produced: false }).action, 'escalate');
 });
+
+test('notes and recommendations never carry the IRREVERSIBLE marker; detection is unchanged', () => {
+  for (const args of [
+    { reason: 'IRREVERSIBLE: drops the users table', tests: pass },
+    { reason: 'Concern: irreversible: renames public API', tests: pass },
+    { reason: 'IRREVERSIBLE: x', tests: fail },
+    { reason: 'IRREVERSIBLE: x', produced: false },
+  ]) {
+    const r = settleDeadlock(args);
+    assert.equal(r.action, 'escalate');
+    assert.doesNotMatch(r.note, /IRREVERSIBLE/i);
+    assert.doesNotMatch(r.recommendation, /IRREVERSIBLE/i);
+  }
+  const hit = settleDeadlock({ reason: 'IRREVERSIBLE: drops the users table', tests: pass });
+  assert.match(hit.note, /hard-to-undo concern: drops the users table/);
+});

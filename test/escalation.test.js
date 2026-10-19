@@ -57,3 +57,12 @@ test('escalation message hides a mid-string marker', () => {
   assert.match(e.message, /Concern: drops table/);
   assert.doesNotMatch(e.message, /IRREVERSIBLE/i);
 });
+
+test('summary notes are passed through plainReason (marker mid-string)', () => {
+  const s = buildSummary({
+    request: 'r', plan: { chunks: [] },
+    notes: ['Plan: you approved it over the concern: Concern: IRREVERSIBLE: deletes the user table'],
+  });
+  assert.doesNotMatch(s, /IRREVERSIBLE/i);
+  assert.match(s, /Concern: deletes the user table/);
+});
