@@ -109,3 +109,34 @@ test('bell can be turned off', async () => {
   await t.escalate(ESC);
   assert.ok(!text().includes('\x07'));
 });
+
+test('type-ahead is discarded: a leftover answer cannot approve the gate', async () => {
+  const input = new PassThrough();
+  const o = sink();
+  const t = createTerminal({ input, output: o.out, isTTY: true });
+  input.write('a\na\n');
+  assert.equal(await t.escalate(ESC), 'approve');
+  await new Promise((r) => setImmediate(r));
+  const gate = t.approveResult(GATE);
+  input.end();
+  assert.equal(await gate, false);
+});
+
+test('a prompt after close() answers end-of-input instead of hanging', async () => {
+  const { t } = term({ answers: ['a', 'a'] });
+  assert.equal(await t.escalate(ESC), 'approve');
+  t.close();
+  assert.equal(await t.escalate(ESC), 'reject');
+  assert.equal(await t.approveResult(GATE), false);
+  assert.equal(await t.approveChunk({ index: 0, title: 'x', total: 1, files: [] }), false);
+});
+
+test('null files, steps or payload fail closed without throwing', async () => {
+  assert.equal(await term({ answers: ['a'] }).t.approveChunk({ index: 0, title: 'x', total: 1, files: null, tests: null }), true);
+  assert.equal(await term({ answers: ['a'] }).t.approvePlan({ summary: null, steps: null }), true);
+  assert.equal(await term({ answers: [] }).t.approveResult(null), false);
+  const n = term({ isTTY: false });
+  assert.equal(await n.t.approveChunk({ index: 0, title: 'x', total: 1, files: null }), false);
+  assert.equal(await n.t.approvePlan({ steps: null }), false);
+  assert.equal(await n.t.escalate(null), 'reject');
+});

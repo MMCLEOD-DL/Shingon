@@ -26,6 +26,8 @@ function lineReader(input) {
   });
   return {
     next: () => (queue.length ? Promise.resolve(queue.shift()) : closed ? Promise.resolve(null) : new Promise((r) => { waiting = r; })),
+    // Lines typed before a prompt is shown are not answers to it.
+    drain: () => { queue.length = 0; },
     close: () => rl.close(),
   };
 }
@@ -35,8 +37,9 @@ export function createTerminal({ input = process.stdin, output = process.stdout,
   const printed = new Set();
   let prompting = false;
   let reader = null;
+  let closed = false;
   const write = (s) => output.write(s);
-  const nextLine = () => (reader ??= lineReader(input)).next();
+  const nextLine = () => (closed ? Promise.resolve(null) : (reader ??= lineReader(input)).next());
 
   function draw() {
     if (prompting) return;
@@ -79,8 +82,9 @@ export function createTerminal({ input = process.stdin, output = process.stdout,
   // Every prompt pauses the live redraw and puts the status back afterwards.
   const prompt = (fn) => async (arg) => {
     prompting = true;
+    reader?.drain();
     try {
-      return await fn(arg);
+      return await fn(arg ?? {});
     } finally {
       prompting = false;
       draw();
@@ -97,7 +101,7 @@ export function createTerminal({ input = process.stdin, output = process.stdout,
     }
   });
 
-  const approveResult = prompt(async ({ summary, diff } = {}) => {
+  const approveResult = prompt(async ({ summary, diff }) => {
     say(`\n=== Ready for your approval ===\n${summary ?? ''}\n`);
     if (!isTTY) { say(NO_TTY_GATE); return false; }
     for (;;) {
@@ -113,7 +117,8 @@ export function createTerminal({ input = process.stdin, output = process.stdout,
     }
   });
 
-  const approveChunk = prompt(async ({ index, title, total, files = [], note = null, tests = null } = {}) => {
+  const approveChunk = prompt(async ({ index, title, total, files, note = null, tests = null }) => {
+    files = files ?? [];
     const lines = [`\nStep ${index + 1}/${total} done: ${title}`, `Files: ${files.length ? files.join(', ') : '(none)'}`];
     if (note) lines.push(`Note: ${note}`);
     lines.push(`Tests: ${testsLine(tests)}`);
@@ -122,8 +127,8 @@ export function createTerminal({ input = process.stdin, output = process.stdout,
     return (await ask('[a] continue · [r] stop here > ', ['a', 'r'])) === 'a';
   });
 
-  const approvePlan = prompt(async ({ summary = '', steps = [], note = null } = {}) => {
-    const lines = ['\nProposed plan:', summary, ...steps.map((s, i) => `  ${i + 1}. ${s}`)];
+  const approvePlan = prompt(async ({ summary, steps, note = null }) => {
+    const lines = ['\nProposed plan:', summary ?? '', ...(steps ?? []).map((s, i) => `  ${i + 1}. ${s}`)];
     if (note) lines.push(`Note: ${note}`);
     say(lines.join('\n'));
     if (!isTTY) { say(NO_TTY_GATE); return false; }
@@ -139,6 +144,6 @@ export function createTerminal({ input = process.stdin, output = process.stdout,
 
   return {
     onEvent, escalate, approveResult, approveChunk, approvePlan, say, model,
-    close: () => { reader?.close(); reader = null; },
+    close: () => { closed = true; reader?.close(); reader = null; },
   };
 }
