@@ -174,7 +174,7 @@ async function drive(ctx) {
     const files = await ws.filesRange(ws.baseSha, approvedSha);
     const tests = await ws.runTests(options.testCommand, { timeoutMs: options.testTimeoutMs });
     const r = await callAgent(ctx, team.reviewer, 'reviewer',
-      prompts.finalReview({ request: state.request, plan: state.plan, diff, tests }),
+      prompts.finalReview({ request: state.request, plan: state.plan, diff, tests, base: ws.baseSha }),
       { cwd: ws.dir, write: false, timeoutMs: options.agentTimeoutMs });
     const finalReview = verdictOf(r);
     const notes = [...state.notes];

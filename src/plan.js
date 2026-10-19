@@ -1,5 +1,6 @@
 // src/plan.js
-const JSON_FENCE = /```json[ \t]*\n([\s\S]*?)\n```/gi;
+// Tolerates CRLF line endings and an empty block (which then fails as "not valid JSON").
+const JSON_FENCE = /```json[ \t]*\r?\n([\s\S]*?)\r?\n?```/gi;
 
 function extractJson(text) {
   const blocks = [...text.matchAll(JSON_FENCE)];

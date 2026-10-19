@@ -52,3 +52,23 @@ test('failure feedback is not framed as a reviewer block (I4)', () => {
   assert.match(exec, /Your previous attempt did not finish \(local failed: timed out\)/);
   assert.doesNotMatch(exec, /blocked by the reviewer/);
 });
+
+test('an empty diff shows "(no changes)" in both review prompts (T3)', () => {
+  assert.match(P.chunkReview({ request: 'r', plan, chunk: plan.chunks[0], index: 0, total: 2, diff: '', tests: { ran: false } }), /Diff for this chunk:\n\(no changes\)/);
+  assert.match(P.finalReview({ request: 'r', plan, diff: '', tests: { ran: false } }), /finished branch:\n\(no changes\)/);
+});
+
+test('request, instructions and feedback are clipped (T3)', () => {
+  const huge = 'q'.repeat(50000);
+  const e = P.chunkExec({ request: huge, plan, chunk: { title: 'T', instructions: huge }, index: 0, total: 1, feedback: huge });
+  assert.ok(e.length < 30000);
+  assert.ok(P.planAuthor({ request: huge, maxChunks: 3, feedback: huge }).length < 20000);
+});
+
+test('a shortened diff tells the reviewer where the full change is and to BLOCK if unsure (T8-M5)', () => {
+  const small = P.chunkReview({ request: 'r', plan, chunk: plan.chunks[0], index: 0, total: 2, diff: '+x', tests: { ran: false }, base: 'abc123' });
+  assert.doesNotMatch(small, /was shortened/);
+  const big = P.chunkReview({ request: 'r', plan, chunk: plan.chunks[0], index: 0, total: 2, diff: 'x'.repeat(40000), tests: { ran: false }, base: 'abc123' });
+  assert.match(big, /The diff above was shortened[\s\S]*git diff abc123[\s\S]*BLOCK and say so/);
+  assert.match(P.finalReview({ request: 'r', plan, diff: 'x'.repeat(50000), tests: { ran: false }, base: 'def456' }), /git diff def456/);
+});

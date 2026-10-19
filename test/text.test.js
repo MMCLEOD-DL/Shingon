@@ -17,3 +17,9 @@ test('long text keeps head and tail with a marker', () => {
 test('non-string becomes empty string', () => {
   assert.equal(clip(undefined), '');
 });
+
+test('clip boundary: exactly max is unchanged, max+1 is clipped (T2)', () => {
+  assert.equal(clip('x'.repeat(20), 20), 'x'.repeat(20));
+  const c = clip('x'.repeat(21), 20);
+  assert.match(c, /\[1 chars clipped\]/);
+});

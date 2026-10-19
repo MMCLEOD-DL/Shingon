@@ -104,7 +104,7 @@ class Workspace {
 
 // Task 3
 parsePlan(text, { maxChunks }) -> { ok: true, plan: { summary, chunks: [{ title, instructions }] } } | { ok: false, error }
-prompts: planAuthor, planReview, chunkExec, chunkReview, finalReview   // planAuthor/chunkExec take feedbackKind
+prompts: planAuthor, planReview, chunkExec, chunkReview, finalReview   // planAuthor/chunkExec take feedbackKind; chunkReview/finalReview take base
 // normalize(): the LAST VERDICT line of a reply wins (Ruling 12)
 
 // Task 4

@@ -36,3 +36,16 @@ test('errors: no block, bad JSON, no chunks, too many, incomplete chunk', () => 
   assert.match(parsePlan(fenced([1, 2])).error, /must be an object/);
   assert.match(parsePlan(undefined).error, /no ```json plan block/);
 });
+
+test('CRLF replies parse; an empty json block is "not valid JSON" (T3)', () => {
+  const crlf = 'Plan:\r\n```json\r\n' + JSON.stringify(good) + '\r\n```\r\n';
+  assert.equal(parsePlan(crlf).ok, true);
+  assert.match(parsePlan('```json\n```').error, /not valid JSON/);
+  assert.match(parsePlan('```json\r\n```').error, /not valid JSON/);
+});
+
+test('the default cap is 12 chunks (T3)', () => {
+  const many = (n) => fenced({ chunks: Array.from({ length: n }, (_, i) => ({ title: `t${i}`, instructions: 'i' })) });
+  assert.equal(parsePlan(many(12)).ok, true);
+  assert.match(parsePlan(many(13)).error, /13 chunks \(max 12\)/);
+});
