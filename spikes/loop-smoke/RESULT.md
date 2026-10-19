@@ -1,6 +1,6 @@
 # Loop smoke — result
 
-**Status:** ✅ LANDED, but only through the frontier fallback. The local model did no work.
+**Status:** ✅ **PASS (run 3, 2026-10-19).** The local model did the chunk itself, first try. Runs 1–2 landed only through the frontier fallback (see below).
 
 ## Run
 - **Date:** 2026-10-19
@@ -21,6 +21,15 @@
 - **Redaction:** no `[redacted]` markers appear in the transcript, and no key material showed up in the output.
 - **Workspace:** kept, because the smoke sets `keepWorkspace: true`. It is at `~/.conductor/smoke-workspaces/conductor-ws-Tvmi5k` (+ `.conductor/`).
 
+## Run 3 (2026-10-19, ctx 32k + private CODEX_HOME): PASS
+- **Outcome:** `landed` in 51s, commit `b496edb`, no fallback, no escalations.
+- **Flow:** Claude planned, Codex approved the plan, and the **local model completed chunk 1 on its first attempt** (16s). Codex approved the chunk and then approved the final result.
+- **Landed diff (checked by hand):**
+  - `math.js` gained `export function multiply(a, b) { return a * b; }`.
+  - `test.js` now imports `multiply` and has 3 new assertions.
+  - `node test.js` prints `tests ok`.
+- **Errors:** no Netlify/MCP noise, and no stream errors.
+
 ## Run 2 (2026-10-19, worker up)
 - **Outcome:** `landed` again in 97s, but **through the fallback again** (commit `6ecbd6e`).
 - **Cause of run 1:** the desktop worker had not been started.
@@ -32,7 +41,7 @@
 - **New finding:** the local Codex loads the operator's `~/.codex` MCP servers. A Netlify MCP server tried to authenticate on every attempt. Its tool definitions also eat into the 8k context, and an agent that should be sandboxed gets access to extra tools it was never meant to have.
 
 ## Follow-ups for Plan 3
-1. ~~Raise the local model's context~~ **DONE 2026-10-19 (operator-approved):** CT110 `/models/shingon-qwen3.8-27b-q4.yaml` `context_size` 8192 → 32768. The previous YAML (sha 0f6e5a1a…) is backed up at `/opt/shingon-localai/model-yaml-backups/` (outside the models dir). After unloading and restarting the frontend, the log shows `context=32768` and 4.6 GB VRAM is still free on .109. The new YAML sha is 4a6d2c8e…, which supersedes the frozen OP06-era revision. Re-run the smoke.
+1. ~~Raise the local model's context~~ **DONE 2026-10-19 (operator-approved):** CT110 `/models/shingon-qwen3.8-27b-q4.yaml` `context_size` 8192 → 32768. The previous YAML (sha 0f6e5a1a…) is backed up at `/opt/shingon-localai/model-yaml-backups/` (outside the models dir). After unloading and restarting the frontend, the log shows `context=32768` and 4.6 GB VRAM is still free on .109. The new YAML sha is 4a6d2c8e…, which supersedes the frozen OP06-era revision. Run 3 then passed.
 1a. ~~Isolate the local Codex~~ **DONE:** each local call gets a private per-call `CODEX_HOME` (removed afterwards). It holds only the provider block (`base_url`, `wire_api`, `env_key`, plus `model_context_window`), configured with the new `baseUrl`/`contextWindow` participant fields. The frontier Codex keeps `~/.codex`.
 2. **The retry prompt nests the whole previous error recursively.** The "Your previous attempt did not finish (...)" text embeds the full Codex stdout: banner, echoed prompt and the previous retry note. That made the prompt grow from about 2k to 6.7k chars after three attempts. Pass only a short failure reason, such as the last `ERROR:` line, capped at a few hundred chars.
 3. **Adapter failure text is the raw Codex stdout.** When `ok:false`, `error` should be the stderr tail or the `ERROR:` lines, not the banner plus the prompt echo. The event log and the `chunk-fallback` reason are currently unreadable.
