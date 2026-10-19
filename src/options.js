@@ -10,4 +10,5 @@ export const DEFAULT_OPTIONS = Object.freeze({
   localTimeoutMs: 900000, // local grunt calls: a hung local backend gives up after 15 min, not 30
   approveEachChunk: false,
   keepWorkspace: false,   // true: keep the workspace after landed/rejected (the transcript is always kept in <baseDir>/logs)
+  allowSameVendor: false, // set by buildTeam when only one AI vendor is healthy (the summary then says so)
 });

@@ -571,3 +571,11 @@ test('a baseDir under the temp dir is flagged: basedir-warning event and a summa
   assert.ok(events.some((e) => e.type === 'basedir-warning'));
   assert.match(h.calls.find((c) => c.name === 'approveResult').arg.summary, /Warning: the workspace is under the temporary directory/);
 });
+
+test('validateTeam compares vendors, and allowSameVendor lifts the rule', () => {
+  const t = makeTeam();
+  const apiReviewer = fakeParticipant({ name: 'claude-api', kind: 'anthropic-api', script: approve });
+  assert.throws(() => validateTeam({ ...t, reviewer: apiReviewer }), /two-vendor rule/);
+  const sameVendor = { ...t, reviewer: fakeParticipant({ name: 'c2', kind: 'claude-code', script: approve }) };
+  assert.doesNotThrow(() => validateTeam(sameVendor, { allowSameVendor: true }));
+});

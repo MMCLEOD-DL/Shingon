@@ -10,6 +10,7 @@ import { verdictOf } from './review.js';
 import * as prompts from './prompts.js';
 import { buildSummary, plainReason } from './escalation.js';
 import { redact, REDACTED } from './secrets.js';
+import { vendorOf } from './vendors.js';
 
 export { DEFAULT_OPTIONS };
 
@@ -22,7 +23,7 @@ const CREDENTIAL_WARNING = 'Warning: this change contains something that looks l
 const INTERNAL_PROBLEM = 'Conductor hit an internal problem and stopped. Your repository was not changed. ' +
   'Details are in the run transcript; you can resume.';
 
-export function validateTeam(team) {
+export function validateTeam(team, { allowSameVendor = false } = {}) {
   const { author, reviewer, local } = team ?? {};
   if (!author || !reviewer || !local) throw new Error('team needs author, reviewer and local participants');
   for (const p of [author, reviewer]) {
@@ -34,8 +35,8 @@ export function validateTeam(team) {
   for (const p of [author, reviewer, local]) {
     if (!p.capabilities.can_edit_files) throw new Error(`${p.name} must have can_edit_files`);
   }
-  if (author.adapter.kind === reviewer.adapter.kind) {
-    throw new Error(`two-vendor rule: ${author.name} and ${reviewer.name} both use ${author.adapter.kind}; pick frontier participants from different vendors`);
+  if (!allowSameVendor && vendorOf(author.adapter.kind) === vendorOf(reviewer.adapter.kind)) {
+    throw new Error(`two-vendor rule: ${author.name} and ${reviewer.name} are both ${vendorOf(author.adapter.kind)} models; pick frontier participants from different vendors`);
   }
 }
 
@@ -69,7 +70,7 @@ const message = (e) => String(e?.message ?? e);
 
 export async function runTask({ repoDir, request, team, hooks, options = {}, baseDir }) {
   const opts = { ...DEFAULT_OPTIONS, ...options };
-  validateTeam(team);
+  validateTeam(team, opts);
   validateHooks(hooks, opts);
   if (typeof request !== 'string' || !request.trim()) throw new Error('request must be a non-empty string');
   await Workspace.assertRepo(repoDir);
@@ -125,7 +126,7 @@ async function stateProblem(state, ws) {
 // the one recorded when the workspace was created (Ruling 11 / I2).
 // Always resolves: anything that stops a resume is a 'failed' outcome with a plain reason.
 export async function resume({ workspaceDir, repoDir, team, hooks, options = {} }) {
-  validateTeam(team);
+  validateTeam(team, options);
   if (typeof repoDir !== 'string' || !repoDir) throw new Error('resume needs the repoDir the run belongs to');
   const refuse = (detail, log, dir = workspaceDir) => {
     try { log?.event('resume-refused', { detail }); } catch {}
