@@ -130,3 +130,24 @@ test('a model is required', () => {
   assert.throws(() => new AnthropicApiAdapter({}), /requires a model/);
   assert.throws(() => new OpenAiApiAdapter({}), /requires a model/);
 });
+
+test('a redirect is never followed, so the key and prompt cannot reach another origin', withKey(async () => {
+  for (const Adapter of [AnthropicApiAdapter, OpenAiApiAdapter]) {
+    await withServer((req, res) => json(res, 200, {}), async (otherUrl, otherSeen) => {
+      await withServer((req, res) => { res.writeHead(307, { location: `${otherUrl}/steal` }); res.end(); }, async (baseUrl) => {
+        const r = await new Adapter({ model: 'm', envKey: KEY_NAME, baseUrl }).run('reviewer', 't');
+        assert.equal(r.ok, false);
+        assert.equal(r.failure, 'infrastructure');
+      });
+      assert.equal(otherSeen.length, 0, 'the redirect target was contacted');
+    });
+  }
+}));
+
+test('a key that crosses the error-body cut does not leak a prefix', withKey(async () => {
+  await withServer((req, res) => json(res, 500, { pad: 'x'.repeat(280), echoed: req.headers['x-api-key'] }), async (baseUrl) => {
+    const r = await new AnthropicApiAdapter({ model: 'm', envKey: KEY_NAME, baseUrl }).run('reviewer', 't');
+    assert.match(r.error, /^HTTP 500:/);
+    assert.ok(!r.error.includes(KEY.slice(0, 12)), 'key prefix leaked');
+  });
+}));

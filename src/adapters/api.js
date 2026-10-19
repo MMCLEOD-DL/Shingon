@@ -52,7 +52,7 @@ class ApiAdapter {
     let text;
     try {
       res = await fetch(url, {
-        method: 'POST', headers, body: JSON.stringify(body),
+        method: 'POST', redirect: 'error', headers, body: JSON.stringify(body),
         signal: AbortSignal.timeout(opts.timeoutMs ?? this.timeoutMs),
       });
       text = await res.text();
@@ -62,7 +62,7 @@ class ApiAdapter {
       return makeResult({ ok: false, error: redact(`could not reach ${new URL(url).host}: ${why}`), failure: 'infrastructure' });
     }
     if (!res.ok) {
-      return makeResult({ ok: false, error: redact(`HTTP ${res.status}: ${text.slice(0, BODY_MAX)}`), failure: failureFor(res.status, text) });
+      return makeResult({ ok: false, error: `HTTP ${res.status}: ${redact(text).slice(0, BODY_MAX)}`, failure: failureFor(res.status, text) });
     }
     let data;
     try {
