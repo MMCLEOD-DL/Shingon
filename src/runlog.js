@@ -1,5 +1,5 @@
 // src/runlog.js
-import { mkdirSync, appendFileSync, writeFileSync, renameSync, readFileSync, existsSync } from 'node:fs';
+import { mkdirSync, appendFileSync, openSync, writeSync, fsyncSync, closeSync, renameSync, readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { makeResult } from './result.js';
 import { clip } from './text.js';
@@ -14,28 +14,47 @@ export class RunLog {
     this.transcript = path.join(this.dir, 'transcript.jsonl');
     this.statePath = path.join(this.dir, 'state.json');
     this.onEvent = onEvent;
+    this.writeErrors = 0;
   }
 
+  // Never throws: a transcript that cannot be written is counted and reported
+  // through onEvent, so callRole keeps its never-throws contract.
   event(type, data = {}) {
-    const entry = redact({ ts: new Date().toISOString(), type, ...data });
-    appendFileSync(this.transcript, JSON.stringify(entry) + '\n');
+    let entry = redact({ ts: new Date().toISOString(), type, ...data });
+    try {
+      appendFileSync(this.transcript, JSON.stringify(entry) + '\n');
+    } catch (e) {
+      this.writeErrors++;
+      entry = { ...entry, logError: String(e?.message ?? e) };
+    }
     try { this.onEvent?.(entry); } catch {}
     return entry;
   }
 
   saveState(state) {
     const tmp = `${this.statePath}.tmp`;
-    writeFileSync(tmp, JSON.stringify(redact(state), null, 2));
+    const fd = openSync(tmp, 'w');
+    try {
+      writeSync(fd, JSON.stringify(redact(state), null, 2));
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
     renameSync(tmp, this.statePath);
   }
 
   loadState() {
     if (!existsSync(this.statePath)) return null;
+    let s;
     try {
-      return JSON.parse(readFileSync(this.statePath, 'utf8'));
+      s = JSON.parse(readFileSync(this.statePath, 'utf8'));
     } catch (e) {
       throw new Error(`corrupt run state at ${this.statePath}: ${e.message}`);
     }
+    if (!s || typeof s !== 'object' || Array.isArray(s) || s.version !== 1) {
+      throw new Error(`corrupt run state at ${this.statePath}: not a version 1 state object`);
+    }
+    return s;
   }
 }
 
@@ -50,9 +69,12 @@ export async function callRole(log, participant, role, task, context = '', opts 
   } catch (e) {
     result = makeResult({ ok: false, error: String(e?.message ?? e) });
   }
+  const v = result.verdict;
   log.event('result', {
-    participant: participant.name, role, ok: result.ok, error: result.error,
-    verdict: result.verdict, costUsd: result.usage?.costUsd ?? null, text: clip(redact(result.text), 2000),
+    participant: participant.name, role, ok: result.ok,
+    error: clip(redact(typeof result.error === 'string' ? result.error : (result.error == null ? '' : String(result.error))), 2000) || null,
+    verdict: v && { ...v, reason: clip(redact(typeof v.reason === 'string' ? v.reason : ''), 1000) },
+    costUsd: result.usage?.costUsd ?? null, text: clip(redact(result.text), 2000),
   });
   return result;
 }
