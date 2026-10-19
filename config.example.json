@@ -7,5 +7,13 @@
     { "name": "local", "adapter": "local-agent", "bin": "codex", "model": "shingon-qwen3.8-27b-q4",
       "baseUrl": "http://192.168.1.110:8081/v1", "contextWindow": 32768,
       "roles": ["grunt"], "capabilities": { "is_agentic": true, "can_edit_files": true } }
-  ]
+  ],
+  "routing": {
+    "allowApi": false,
+    "preferTwoVendors": false,
+    "localDown": "frontier",
+    "cooldownMs": 60000,
+    "maxWaitMs": 300000
+  },
+  "options": {}
 }
