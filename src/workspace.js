@@ -94,7 +94,8 @@ export class Workspace {
 
   async resetHard(sha) {
     await gitOk(this.dir, ['reset', '-q', '--hard', sha]);
-    await gitOk(this.dir, ['clean', '-fdq']);
+    // -ff: also remove nested git repos an agent created (plain -fd skips them). No -x: ignored files stay.
+    await gitOk(this.dir, ['clean', '-ffdq']);
   }
 
   async runTests(command, { timeoutMs = 600000 } = {}) {

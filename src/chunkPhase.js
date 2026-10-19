@@ -21,8 +21,9 @@ export async function runChunk(ctx, chunk, index) {
   try {
     return await runChunkFrom(ctx, chunk, index, base);
   } catch (e) {
-    try { await ctx.ws.resetHard(base); } catch {}
-    ctx.log.event('chunk-error', { index, error: String(e?.message ?? e) });
+    let resetError = null;
+    try { await ctx.ws.resetHard(base); } catch (re) { resetError = String(re?.message ?? re); }
+    ctx.log.event('chunk-error', { index, error: String(e?.message ?? e), resetError });
     throw e;
   }
 }

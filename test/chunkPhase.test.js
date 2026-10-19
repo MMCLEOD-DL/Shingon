@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, existsSync } from 'node:fs';
+import { writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { runChunk, chunkRoles } from '../src/chunkPhase.js';
 import { git } from '../src/workspace.js';
@@ -206,4 +206,100 @@ test('an unexpected error mid-chunk rolls the workspace back to base and rethrow
   await assert.rejects(runChunk(ctx, PLAN.chunks[0], 0), /disk on fire/);
   assert.equal(await ctx.ws.head(), base);
   assert.ok(!existsSync(path.join(ctx.ws.dir, 'a.txt')));
+  assert.equal((await git(ctx.ws.dir, ['status', '--porcelain'])).stdout.trim(), '');
+});
+
+// --- Fix round 1 pins ---
+
+const porcelain = async (ws) => (await git(ws.dir, ['status', '--porcelain'])).stdout.trim();
+
+test('a nested git repo created by an agent is removed when the user rejects', async () => {
+  const nested = async (role, task, c, opts) => {
+    const sub = path.join(opts.cwd, 'vendor');
+    mkdirSync(sub, { recursive: true });
+    await git(sub, ['init', '-q']);
+    writeFileSync(path.join(sub, 'lib.js'), 'x');
+    await git(sub, ['add', '-A']);
+    await git(sub, ['commit', '-q', '-m', 'vendored']); // like a clone: a repo with a commit
+    return { text: 'ok' };
+  };
+  const t = team({ local: nested, author: nested, reviewer: () => block('tests fail') });
+  const ctx = await ctxFor(t, { localRounds: 1, frontierRounds: 1, testCommand: 'false' });
+  const base = await ctx.ws.head();
+  const r = await runChunk(ctx, PLAN.chunks[0], 0);
+  assert.equal(r.status, 'stopped');
+  assert.equal(await ctx.ws.head(), base);
+  assert.equal(await porcelain(ctx.ws), '');
+  assert.ok(!existsSync(path.join(ctx.ws.dir, 'vendor')));
+});
+
+test('a failed rollback is recorded in chunk-error and the original error is rethrown', async () => {
+  const events = [];
+  const t = team({ local: writes('a.txt') });
+  const ctx = await ctxFor(t, {}, { onEvent: (e) => events.push(e) });
+  ctx.ws.runTests = async () => { throw new Error('disk on fire'); };
+  ctx.ws.resetHard = async () => { throw new Error('reset broke'); };
+  await assert.rejects(runChunk(ctx, PLAN.chunks[0], 0), /disk on fire/);
+  const ev = events.find((e) => e.type === 'chunk-error');
+  assert.equal(ev.error, 'disk on fire');
+  assert.equal(ev.resetError, 'reset broke');
+});
+
+test('tests rerun on round 2 and FAILED output reaches the reviewer', async () => {
+  const reviews = [block('add more'), approve()];
+  const t = team({
+    local: (role, task, c, opts, n) => { writeFileSync(path.join(opts.cwd, `try${n}.txt`), 'x'); return { text: 'ok' }; },
+    reviewer: () => reviews.shift(),
+  });
+  const ctx = await ctxFor(t, { testCommand: 'if [ -f try1.txt ]; then echo SECOND-RUN-FAIL; exit 3; fi' });
+  const r = await runChunk(ctx, PLAN.chunks[0], 0);
+  assert.equal(r.status, 'done');
+  assert.match(t.reviewer.calls[0].task, /Tests: PASSED/);
+  assert.match(t.reviewer.calls[1].task, /Tests: FAILED \(exit 3\)/);
+  assert.match(t.reviewer.calls[1].task, /SECOND-RUN-FAIL/);
+});
+
+for (const [label, reply] of [['gives no VERDICT line', { text: 'looks fine to me' }], ['crashes', { ok: false, error: 'reviewer timed out' }]]) {
+  test(`fallback reviewer that ${label} escalates, never accepts; reject leaves 0 commits`, async () => {
+    const t = team({ local: writes('a.txt'), reviewer: () => reply });
+    const ctx = await ctxFor(t, { localRounds: 1, frontierRounds: 1, testCommand: 'true' });
+    const base = await ctx.ws.head();
+    const r = await runChunk(ctx, PLAN.chunks[0], 0);
+    assert.equal(r.status, 'stopped');
+    assert.equal(ctx.hookCalls.length, 1);
+    assert.equal(ctx.hookCalls[0].name, 'escalate');
+    assert.equal(await commitsSince(ctx.ws, base), '0');
+    assert.equal(await porcelain(ctx.ws), '');
+  });
+}
+
+test('deadlock with no test command and a plain BLOCK is accepted with a note, one commit', async () => {
+  const t = team({ local: writes('a.txt'), reviewer: () => block('naming nit') });
+  const ctx = await ctxFor(t, { localRounds: 1, frontierRounds: 1, testCommand: null });
+  const base = await ctx.ws.head();
+  const r = await runChunk(ctx, PLAN.chunks[0], 0);
+  assert.equal(r.status, 'done');
+  assert.match(r.note, /no tests configured/);
+  assert.match(r.note, /naming nit/);
+  assert.equal(ctx.hookCalls.length, 0);
+  assert.equal(await commitsSince(ctx.ws, base), '1');
+});
+
+test('an empty nested git init makes the chunk throw, and the rollback still leaves it clean', async () => {
+  // git add -A refuses a nested repo with no commit; that surfaces as a throw, not a blocked round.
+  const t = team({
+    local: async (role, task, c, opts) => {
+      const sub = path.join(opts.cwd, 'vendor');
+      mkdirSync(sub);
+      await git(sub, ['init', '-q']);
+      writeFileSync(path.join(sub, 'lib.js'), 'x');
+      return { text: 'ok' };
+    },
+  });
+  const ctx = await ctxFor(t);
+  const base = await ctx.ws.head();
+  await assert.rejects(runChunk(ctx, PLAN.chunks[0], 0), /does not have a commit checked out/);
+  assert.equal(await ctx.ws.head(), base);
+  assert.equal(await porcelain(ctx.ws), '');
+  assert.ok(!existsSync(path.join(ctx.ws.dir, 'vendor')));
 });

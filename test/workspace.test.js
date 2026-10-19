@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Workspace, git, slugify } from '../src/workspace.js';
@@ -93,6 +93,20 @@ test('resetHard drops commits, edits and untracked files', async () => {
   assert.equal(readFileSync(path.join(ws.dir, 'README.md'), 'utf8'), 'hello\n');
   assert.ok(!existsSync(path.join(ws.dir, 'a.txt')));
   assert.ok(!existsSync(path.join(ws.dir, 'stray.txt')));
+});
+
+test('resetHard removes an agent-created nested git repo but keeps ignored files', async () => {
+  const ws = await Workspace.create({ repoDir: await makeRepo({ '.gitignore': 'keep.log\n' }), baseDir: base(), taskId: 't' });
+  const b = await ws.head();
+  const sub = path.join(ws.dir, 'vendor');
+  mkdirSync(sub);
+  await git(sub, ['init', '-q']);
+  writeFileSync(path.join(sub, 'lib.js'), 'x');
+  writeFileSync(path.join(ws.dir, 'keep.log'), 'ignored');
+  await ws.resetHard(b);
+  assert.ok(!existsSync(sub));
+  assert.ok(existsSync(path.join(ws.dir, 'keep.log')));
+  assert.equal((await git(ws.dir, ['status', '--porcelain'])).stdout.trim(), '');
 });
 
 test('runTests reports pass, fail, and not-configured', async () => {
