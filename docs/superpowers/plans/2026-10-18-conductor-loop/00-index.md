@@ -129,4 +129,9 @@ resume({ workspaceDir, team, hooks, options }) -> RunOutcome
 
 // ctx object passed to phases (built in Task 9; Task 7/8 tests build it via test/helpers/fakes.js makeCtx)
 ctx = { request, team: { author, reviewer, local }, hooks, options, ws, log, state }
+
+// Final-review fixes (C1): src/secrets.js
+SCRUB_ENV; childEnv({ allow }) -> env      // parent env minus SCRUB_ENV keys; runCommand's default env
+secretValues(env) -> string[]; redact(x) -> x   // deep-walk; applied to events, state, prompts (callRole), escalations, hook payloads, outcomes
+new LocalAgentAdapter({ ..., envKey = 'LOCALAI_API_KEY' })   // only the local Codex harness gets envKey
 ```

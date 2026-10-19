@@ -3,6 +3,7 @@ import { mkdirSync, appendFileSync, writeFileSync, renameSync, readFileSync, exi
 import path from 'node:path';
 import { makeResult } from './result.js';
 import { clip } from './text.js';
+import { redact } from './secrets.js';
 
 export class RunLog {
   constructor(workspaceDir, { onEvent } = {}) {
@@ -14,7 +15,7 @@ export class RunLog {
   }
 
   event(type, data = {}) {
-    const entry = { ts: new Date().toISOString(), type, ...data };
+    const entry = redact({ ts: new Date().toISOString(), type, ...data });
     appendFileSync(this.transcript, JSON.stringify(entry) + '\n');
     try { this.onEvent?.(entry); } catch {}
     return entry;
@@ -22,7 +23,7 @@ export class RunLog {
 
   saveState(state) {
     const tmp = `${this.statePath}.tmp`;
-    writeFileSync(tmp, JSON.stringify(state, null, 2));
+    writeFileSync(tmp, JSON.stringify(redact(state), null, 2));
     renameSync(tmp, this.statePath);
   }
 
@@ -37,6 +38,9 @@ export class RunLog {
 }
 
 export async function callRole(log, participant, role, task, context = '', opts = {}) {
+  // Prompts leave for third-party vendors: no secret value may be in them.
+  task = redact(task);
+  context = redact(context);
   log.event('call', { participant: participant.name, role, task: clip(task, 1000) });
   let result;
   try {
@@ -46,7 +50,7 @@ export async function callRole(log, participant, role, task, context = '', opts 
   }
   log.event('result', {
     participant: participant.name, role, ok: result.ok, error: result.error,
-    verdict: result.verdict, costUsd: result.usage?.costUsd ?? null, text: clip(result.text, 2000),
+    verdict: result.verdict, costUsd: result.usage?.costUsd ?? null, text: clip(redact(result.text), 2000),
   });
   return result;
 }

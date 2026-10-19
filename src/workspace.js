@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { runCommand } from './exec.js';
 import { clip } from './text.js';
+import { childEnv, redact } from './secrets.js';
 
 // Fixed identity, no signing, no repo hooks: Conductor's own git calls must
 // never depend on (or trigger) anything in the user's git setup.
@@ -15,7 +16,7 @@ const GIT_FLAGS = [
 export function git(cwd, args, { timeoutMs = 60000 } = {}) {
   return runCommand({
     cmd: 'git', args: [...GIT_FLAGS, ...args], cwd, timeoutMs,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    env: { ...childEnv(), GIT_TERMINAL_PROMPT: '0' },
   });
 }
 
@@ -100,12 +101,13 @@ export class Workspace {
 
   async runTests(command, { timeoutMs = 600000 } = {}) {
     if (!command) return { ran: false, passed: null, code: null, output: '' };
-    const r = await runCommand({ cmd: 'sh', args: ['-c', command], cwd: this.dir, timeoutMs });
+    const r = await runCommand({ cmd: 'sh', args: ['-c', command], cwd: this.dir, timeoutMs, env: childEnv() });
     return {
       ran: true,
       passed: r.code === 0 && !r.timedOut,
       code: r.code,
-      output: clip(`${r.stdout}${r.stderr}${r.timedOut ? '\n[test command timed out]' : ''}`, 4000),
+      // Redact before clipping, so a key straddling the clip point cannot survive as a fragment.
+      output: clip(redact(`${r.stdout}${r.stderr}${r.timedOut ? '\n[test command timed out]' : ''}`), 4000),
     };
   }
 

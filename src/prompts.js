@@ -2,6 +2,10 @@
 // Every prompt the loop sends. Role system prompts and the VERDICT line format
 // come from roles.js; these are the task bodies.
 import { clip } from './text.js';
+import { redact } from './secrets.js';
+
+// Redact before clipping: a key split by the clip point would otherwise survive as a fragment.
+const show = (text, max) => clip(redact(typeof text === 'string' ? text : ''), max);
 
 export const IRREVERSIBLE_MARK = 'IRREVERSIBLE:';
 
@@ -13,7 +17,7 @@ const BLOCK_RULES =
 export function formatTests(tests) {
   if (!tests?.ran) return 'Tests: not configured for this project.';
   if (tests.passed) return 'Tests: PASSED';
-  return `Tests: FAILED (exit ${tests.code})\n${clip(tests.output, 4000)}`;
+  return `Tests: FAILED (exit ${tests.code})\n${show(tests.output, 4000)}`;
 }
 
 function planBlock(plan) {
@@ -37,7 +41,7 @@ export function planAuthor({ request, maxChunks, feedback }) {
 export function planReview({ request, planText }) {
   return [
     `User request:\n${request}`,
-    `Proposed plan:\n${clip(planText, 20000)}`,
+    `Proposed plan:\n${show(planText, 20000)}`,
     'Review this plan. Check: wrong approach, missing requirements, chunks too large or in the wrong order, unsafe changes.',
     BLOCK_RULES,
   ].join('\n\n');
@@ -59,7 +63,7 @@ export function chunkReview({ request, plan, chunk, index, total, diff, tests })
     `Overall request:\n${request}`,
     planBlock(plan),
     `Review chunk ${index + 1} of ${total}: ${chunk.title}\nInstructions given:\n${chunk.instructions}`,
-    `Diff for this chunk:\n${clip(diff, 30000) || '(no changes)'}`,
+    `Diff for this chunk:\n${show(diff, 30000) || '(no changes)'}`,
     formatTests(tests),
     'Check: does the diff complete this chunk, is it correct, are tests present and passing, is anything out of scope or unsafe?',
     BLOCK_RULES,
@@ -70,7 +74,7 @@ export function finalReview({ request, plan, diff, tests }) {
   return [
     `Overall request:\n${request}`,
     planBlock(plan),
-    `Full diff of the finished branch:\n${clip(diff, 40000) || '(no changes)'}`,
+    `Full diff of the finished branch:\n${show(diff, 40000) || '(no changes)'}`,
     formatTests(tests),
     'Review the whole branch: does it meet the request, do the chunks fit together, is anything missing, broken or unsafe?',
     BLOCK_RULES,

@@ -1,6 +1,9 @@
 import { spawn } from 'node:child_process';
+import { childEnv } from './secrets.js';
 
-export function runCommand({ cmd, args = [], cwd, input = null, timeoutMs = 120000, env = process.env } = {}) {
+export function runCommand({ cmd, args = [], cwd, input = null, timeoutMs = 120000, env } = {}) {
+  // Default: the parent env minus SCRUB_ENV keys (see secrets.js). Callers that need a key pass env explicitly.
+  env = env ?? childEnv();
   return new Promise((resolve) => {
     let stdout = '', stderr = '', timedOut = false, settled = false;
     let timer = null, grace = null, child;

@@ -1,5 +1,6 @@
 // test/config.test.js
 import { test } from 'node:test';
+import { SHELL_ENV_EXCLUDE } from '../src/adapters/localAgent.js';
 import assert from 'node:assert/strict';
 import { writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -59,7 +60,9 @@ test('buildAdapter forwards timeoutMs, extraConfig and provider', () => {
   assert.deepEqual(c.extraConfig, ['a=1']);
   const l = buildAdapter({ name: 'l', adapter: 'local-agent', model: 'm', provider: 'ollama', extraConfig: ['b=2'], timeoutMs: 5 });
   assert.equal(l.provider, 'ollama');
-  assert.deepEqual(l._codex.extraConfig, ['model_provider=ollama', 'model=m', 'b=2']);
+  assert.deepEqual(l._codex.extraConfig, ['model_provider=ollama', 'model=m', 'b=2', SHELL_ENV_EXCLUDE]);
+  assert.equal(l.envKey, 'LOCALAI_API_KEY');
+  assert.equal(buildAdapter({ name: 'l2', adapter: 'local-agent', model: 'm', envKey: 'OLLAMA_KEY' }).envKey, 'OLLAMA_KEY');
   assert.equal(l._codex.timeoutMs, 5);
   const k = buildAdapter({ name: 'k', adapter: 'claude-code' });
   assert.equal(k.timeoutMs, 120000);

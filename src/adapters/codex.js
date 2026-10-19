@@ -3,18 +3,20 @@ import { runCommand } from '../exec.js';
 import { normalize } from '../normalizer.js';
 import { getRolePreset } from '../roles.js';
 import { makeResult } from '../result.js';
+import { childEnv } from '../secrets.js';
 import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 export class CodexAdapter {
-  constructor({ bin = 'codex', model = null, timeoutMs = 120000, extraConfig = [], sandbox = null } = {}) {
+  constructor({ bin = 'codex', model = null, timeoutMs = 120000, extraConfig = [], sandbox = null, envAllow = [] } = {}) {
     this.kind = 'codex';
     this.bin = bin;
     this.model = model;
     this.timeoutMs = timeoutMs;
     this.extraConfig = extraConfig;
     this.sandbox = sandbox;
+    this.envAllow = envAllow; // SCRUB_ENV keys this CLI itself needs (the local provider key)
   }
 
   async run(role, task, context = '', opts = {}) {
@@ -36,6 +38,7 @@ export class CodexAdapter {
 
       const { stdout, stderr, code, timedOut } = await runCommand({
         cmd: this.bin, args, cwd: opts.cwd, timeoutMs: opts.timeoutMs ?? this.timeoutMs,
+        env: childEnv({ allow: this.envAllow }),
       });
 
       if (code !== 0 || timedOut) {

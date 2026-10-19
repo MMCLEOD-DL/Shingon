@@ -3,6 +3,7 @@ import { runCommand } from '../exec.js';
 import { normalize } from '../normalizer.js';
 import { getRolePreset } from '../roles.js';
 import { makeResult } from '../result.js';
+import { childEnv } from '../secrets.js';
 
 export class ClaudeCodeAdapter {
   constructor({ bin = 'claude', model = null, timeoutMs = 120000 } = {}) {
@@ -21,7 +22,7 @@ export class ClaudeCodeAdapter {
     if (opts.write) args.push('--permission-mode', 'acceptEdits');
 
     const { stdout, stderr, code, timedOut } = await runCommand({
-      cmd: this.bin, args, cwd: opts.cwd, timeoutMs: opts.timeoutMs ?? this.timeoutMs,
+      cmd: this.bin, args, cwd: opts.cwd, timeoutMs: opts.timeoutMs ?? this.timeoutMs, env: childEnv(),
     });
 
     if (code !== 0 || timedOut) {

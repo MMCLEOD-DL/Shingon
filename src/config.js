@@ -10,7 +10,7 @@ export function buildAdapter(spec) {
   switch (spec.adapter) {
     case 'claude-code': return new ClaudeCodeAdapter(opts);
     case 'codex': return new CodexAdapter({ ...opts, extraConfig: spec.extraConfig });
-    case 'local-agent': return new LocalAgentAdapter({ ...opts, provider: spec.provider, extraConfig: spec.extraConfig }); // throws if model missing
+    case 'local-agent': return new LocalAgentAdapter({ ...opts, provider: spec.provider, extraConfig: spec.extraConfig, envKey: spec.envKey }); // throws if model missing
     default:
       throw new Error(`Participant ${spec.name}: unknown adapter "${spec.adapter}" (expected claude-code | codex | local-agent)`);
   }

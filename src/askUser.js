@@ -1,9 +1,10 @@
 // src/askUser.js
 // The single path to the user. Fails closed: only an explicit 'approve' continues.
 import { buildEscalation } from './escalation.js';
+import { redact } from './secrets.js';
 
 export async function askUser(ctx, { kind, title, reason, recommendation }) {
-  const esc = buildEscalation({ kind, title, reason, recommendation });
+  const esc = redact(buildEscalation({ kind, title, reason, recommendation }));
   ctx.log.event('escalation', { kind, title, message: esc.message });
   let answer;
   try {

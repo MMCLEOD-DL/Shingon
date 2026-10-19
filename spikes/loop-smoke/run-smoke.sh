@@ -21,6 +21,8 @@ ssh -f -N -o ExitOnForwardFailure=yes -o ConnectTimeout=6 \
     -L 127.0.0.1:${LPORT}:127.0.0.1:8081 root@192.168.1.110 \
     && echo "tunnel up (127.0.0.1:${LPORT} -> CT110:8081)" || { echo "TUNNEL FAILED"; exit 1; }
 
+# Conductor scrubs LOCALAI_API_KEY from every child except the local Codex harness
+# (src/secrets.js) and redacts it from the transcript, prompts and hook payloads.
 export LOCALAI_API_KEY="$(ssh -o ConnectTimeout=6 root@192.168.1.110 \
     'grep -E "^LOCALAI_API_KEY=" /opt/shingon-localai/.env | cut -d= -f2-')"
 [ -n "${LOCALAI_API_KEY:-}" ] && echo "key loaded" || { echo "NO KEY"; cleanup; exit 1; }

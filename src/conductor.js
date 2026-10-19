@@ -8,6 +8,7 @@ import { runChunk } from './chunkPhase.js';
 import { verdictOf } from './review.js';
 import * as prompts from './prompts.js';
 import { buildSummary, plainReason } from './escalation.js';
+import { redact } from './secrets.js';
 
 export { DEFAULT_OPTIONS };
 
@@ -109,7 +110,7 @@ async function drive(ctx) {
     Object.assign(state, { status }, extra);
     log.saveState(state);
     log.event('finish', { status, ...extra });
-    return { status, workspaceDir: ws.dir, ...extra };
+    return redact({ status, workspaceDir: ws.dir, ...extra });
   };
 
   try {
@@ -161,7 +162,7 @@ async function drive(ctx) {
     if (finalReview.decision === 'BLOCK') notes.push(`Final review concern: ${plainReason(finalReview.reason)}`);
     const summary = buildSummary({ request: state.request, plan: state.plan, notes, files, tests });
 
-    const approved = await safeHook(log, 'approveResult', hooks.approveResult, { summary, files, tests, finalReview, diff });
+    const approved = await safeHook(log, 'approveResult', hooks.approveResult, redact({ summary, files, tests, finalReview, diff }));
     if (approved !== true) return finish('rejected', { reason: 'You did not approve the result.' });
 
     await assertOnBranch(ws);
