@@ -98,17 +98,20 @@ class Workspace {
 
 // Task 3
 parsePlan(text, { maxChunks }) -> { ok: true, plan: { summary, chunks: [{ title, instructions }] } } | { ok: false, error }
-prompts: planAuthor, planReview, chunkExec, chunkReview, finalReview
+prompts: planAuthor, planReview, chunkExec, chunkReview, finalReview   // planAuthor/chunkExec take feedbackKind
+// normalize(): the LAST VERDICT line of a reply wins (Ruling 12)
 
 // Task 4
-verdictOf(result) -> { decision: 'APPROVE' | 'BLOCK', reason }
+verdictOf(result) -> { decision: 'APPROVE' | 'BLOCK', reason, detail }   // detail = reviewer's full notes (clipped 6000)
 reviewLoop({ produce, review, maxRounds }) -> { status: 'approved' | 'exhausted', artifact, lastGood, rounds, lastReason, history }
-// produce(round, feedback) -> artifact; an artifact with .error skips review and counts as a BLOCK round
+// produce(round, feedback, feedbackKind) -> artifact; an artifact with .error skips review and counts as a BLOCK round
+// feedback = reason + "Reviewer's full notes"; feedbackKind = 'blocked' | 'failed' (null on round 1)
 // review(artifact, round) -> Result; lastGood = most recent artifact without .error (or null)
 
 // Task 5
-settleDeadlock({ reason, tests, produced }) -> { action: 'accept' | 'escalate', note, recommendation }
-buildEscalation({ kind, title, reason, recommendation }) -> { kind, title, message, options }
+settleDeadlock({ reason, tests, produced }) -> { action: 'accept' | 'escalate', situation, note, recommendation }
+// situation: 'unproduced' | 'unreviewed' | 'tests-failing' | 'irreversible' | 'disagree'
+buildEscalation({ kind, title, reason, recommendation, situation }) -> { kind, title, message, options }
 buildSummary({ request, plan, notes, files, tests }) -> string
 
 // Task 6
@@ -119,12 +122,12 @@ callAgent(ctx, participant, role, task, opts) -> Result         // callRole + re
 // state = { version: 1, taskId, request, repoDir, phase: 'plan'|'chunks'|'final'|'done', plan, chunkIndex, chunkShas, notes, status, landing? }
 
 // Task 7
-askUser(ctx, { kind, title, reason, recommendation }) -> 'approve' | 'reject'   // only exact 'approve' continues
+askUser(ctx, { kind, title, reason, recommendation, situation }) -> 'approve' | 'reject'   // only exact 'approve' continues
 runPlanPhase(ctx) -> { status: 'ok', plan, note } | { status: 'stopped' | 'failed', reason }
 
 // Task 8
 chunkRoles(index, team) -> { reviewer, fallback }
-runChunk(ctx, chunk, index) -> { status: 'done', sha, note } | { status: 'stopped', reason }
+runChunk(ctx, chunk, index) -> { status: 'done', sha, note } | { status: 'stopped' | 'failed', reason }   // failed = nothing usable produced; no question asked
 
 // Task 9
 DEFAULT_OPTIONS; validateTeam(team); validateHooks(hooks, options)

@@ -43,3 +43,12 @@ test('chunkReview includes the diff and test result, and clips huge diffs', () =
   assert.ok(big.length < 50000);
   assert.match(big, /chars clipped/);
 });
+
+test('failure feedback is not framed as a reviewer block (I4)', () => {
+  const plan = P.planAuthor({ request: 'r', maxChunks: 3, feedback: 'could not produce a result: plan has no chunks', feedbackKind: 'failed' });
+  assert.match(plan, /Your previous reply could not be used as a plan: plan has no chunks/);
+  assert.doesNotMatch(plan, /blocked/);
+  const exec = P.chunkExec({ request: 'r', plan: { summary: '', chunks: [{ title: 'A', instructions: 'a' }] }, chunk: { title: 'A', instructions: 'a' }, index: 0, total: 1, feedback: 'could not produce a result: local failed: timed out', feedbackKind: 'failed' });
+  assert.match(exec, /Your previous attempt did not finish \(local failed: timed out\)/);
+  assert.doesNotMatch(exec, /blocked by the reviewer/);
+});

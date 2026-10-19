@@ -20,12 +20,20 @@ export function formatTests(tests) {
   return `Tests: FAILED (exit ${tests.code})\n${show(tests.output, 4000)}`;
 }
 
+const PRODUCE_FAILED = /^could not produce a result: /;
+
+// feedbackKind: 'blocked' (a reviewer objected) or 'failed' (the attempt itself did not work).
+function feedbackText(feedback, feedbackKind, say) {
+  if (!feedback) return '';
+  return feedbackKind === 'failed' ? say.failed(String(feedback).replace(PRODUCE_FAILED, '')) : say.blocked(feedback);
+}
+
 function planBlock(plan) {
   return `Plan summary: ${plan.summary || '(none)'}\n` +
     plan.chunks.map((c, i) => `${i + 1}. ${c.title}`).join('\n');
 }
 
-export function planAuthor({ request, maxChunks, feedback }) {
+export function planAuthor({ request, maxChunks, feedback, feedbackKind = 'blocked' }) {
   return [
     `User request:\n${request}`,
     'You are planning work in the repository in your current directory. Read what you need; do not edit files.',
@@ -34,7 +42,10 @@ export function planAuthor({ request, maxChunks, feedback }) {
       `At most ${maxChunks} chunks.`,
     'End your reply with one ```json block of exactly this shape:\n' +
       '{"summary": "...", "chunks": [{"title": "...", "instructions": "..."}]}',
-    feedback ? `A reviewer blocked your previous plan:\n${feedback}\nRevise the plan to address it.` : '',
+    feedbackText(feedback, feedbackKind, {
+      blocked: (f) => `A reviewer blocked your previous plan:\n${f}\nRevise the plan to address it.`,
+      failed: (f) => `Your previous reply could not be used as a plan: ${f}\nReply again, ending with the \`\`\`json block described above.`,
+    }),
   ].filter(Boolean).join('\n\n');
 }
 
@@ -47,14 +58,17 @@ export function planReview({ request, planText }) {
   ].join('\n\n');
 }
 
-export function chunkExec({ request, plan, chunk, index, total, feedback }) {
+export function chunkExec({ request, plan, chunk, index, total, feedback, feedbackKind = 'blocked' }) {
   return [
     `Overall request:\n${request}`,
     planBlock(plan),
     `You are doing chunk ${index + 1} of ${total}: ${chunk.title}\n${chunk.instructions}`,
     'Work only inside the current directory. Make the edits, run the tests if there are any, then stop. ' +
       'Do not start other chunks. Do not commit; Conductor commits for you.',
-    feedback ? `Your previous attempt was blocked by the reviewer:\n${feedback}\nFix it. Your earlier edits are still in place.` : '',
+    feedbackText(feedback, feedbackKind, {
+      blocked: (f) => `Your previous attempt was blocked by the reviewer:\n${f}\nFix it. Your earlier edits are still in place.`,
+      failed: (f) => `Your previous attempt did not finish (${f}).\nSome earlier edits may still be in place: check the files, then complete the chunk.`,
+    }),
   ].filter(Boolean).join('\n\n');
 }
 

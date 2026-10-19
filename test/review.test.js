@@ -7,8 +7,8 @@ const approve = () => makeResult({ verdict: { decision: 'APPROVE', reason: '' } 
 const block = (reason) => makeResult({ verdict: { decision: 'BLOCK', reason } });
 
 test('verdictOf passes through a real verdict', () => {
-  assert.deepEqual(verdictOf(approve()), { decision: 'APPROVE', reason: '' });
-  assert.deepEqual(verdictOf(block('bug')), { decision: 'BLOCK', reason: 'bug' });
+  assert.deepEqual(verdictOf(approve()), { decision: 'APPROVE', reason: '', detail: '' });
+  assert.deepEqual(verdictOf(block('bug')), { decision: 'BLOCK', reason: 'bug', detail: '' });
 });
 
 test('verdictOf fails closed', () => {
@@ -72,4 +72,33 @@ test('producer error skips review, feeds the error back, and is not lastGood', a
 
 test('maxRounds below 1 throws', async () => {
   await assert.rejects(reviewLoop({ produce: async () => ({}), review: async () => approve(), maxRounds: 0 }), /maxRounds/);
+});
+
+test('verdictOf carries the reviewer\'s full notes as detail (I3)', () => {
+  const v = verdictOf(makeResult({ text: 'Long critique here.', verdict: { decision: 'BLOCK', reason: 'bug' } }));
+  assert.deepEqual(v, { decision: 'BLOCK', reason: 'bug', detail: 'Long critique here.' });
+  assert.ok(verdictOf(makeResult({ text: 'x'.repeat(10000), verdict: { decision: 'BLOCK', reason: 'r' } })).detail.length < 6100);
+});
+
+test('round 2 gets the reviewer body; history and lastReason keep the one-liner (I3)', async () => {
+  const seen = [];
+  const reviews = [makeResult({ text: 'Problem: f() returns null on empty input (see line 12).', verdict: { decision: 'BLOCK', reason: 'f() is wrong' } }), approve()];
+  const r = await reviewLoop({
+    produce: async (round, feedback, kind) => { seen.push({ feedback, kind }); return {}; },
+    review: async () => reviews.shift(),
+    maxRounds: 3,
+  });
+  assert.equal(seen[1].kind, 'blocked');
+  assert.match(seen[1].feedback, /^f\(\) is wrong\n\nReviewer's full notes:\nProblem: f\(\) returns null on empty input \(see line 12\)\.$/);
+  assert.equal(r.history[0].reason, 'f() is wrong');
+});
+
+test('a producer failure is fed back as kind "failed" (I4)', async () => {
+  const kinds = [];
+  await reviewLoop({
+    produce: async (round, feedback, kind) => { kinds.push(kind); return round === 1 ? { error: 'crashed' } : {}; },
+    review: async () => approve(),
+    maxRounds: 2,
+  });
+  assert.deepEqual(kinds, [null, 'failed']);
 });

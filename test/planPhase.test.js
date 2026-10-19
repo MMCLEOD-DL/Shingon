@@ -36,7 +36,8 @@ test('an unparsable plan is fed back to the author and not sent for review', asy
   const r = await runPlanPhase(await makeCtx({ team: t }));
   assert.equal(r.status, 'ok');
   assert.equal(t.reviewer.calls.length, 1);
-  assert.match(t.author.calls[1].task, /blocked your previous plan[\s\S]*no ```json plan block/);
+  assert.match(t.author.calls[1].task, /Your previous reply could not be used as a plan: no ```json plan block/);
+  assert.doesNotMatch(t.author.calls[1].task, /blocked your previous plan/);
 });
 
 test('a reversible deadlock is accepted with a note', async () => {

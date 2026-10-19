@@ -53,3 +53,11 @@ test('notes and recommendations never carry the IRREVERSIBLE marker; detection i
   const hit = settleDeadlock({ reason: 'IRREVERSIBLE: drops the users table', tests: pass });
   assert.match(hit.note, /hard-to-undo concern: drops the users table/);
 });
+
+test('every settlement names its situation (I4)', () => {
+  assert.equal(settleDeadlock({ reason: 'x', produced: false }).situation, 'unproduced');
+  assert.equal(settleDeadlock({ reason: 'reviewer failed: exit 1' }).situation, 'unreviewed');
+  assert.equal(settleDeadlock({ reason: 'x', tests: fail }).situation, 'tests-failing');
+  assert.equal(settleDeadlock({ reason: 'IRREVERSIBLE: x', tests: pass }).situation, 'irreversible');
+  assert.equal(settleDeadlock({ reason: 'naming', tests: pass }).situation, 'disagree');
+});

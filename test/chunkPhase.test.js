@@ -122,15 +122,19 @@ test('user approval of an escalated chunk commits it with a note', async () => {
   assert.equal(await commitsSince(ctx.ws, base), '1');
 });
 
-test('agents that crash every time never leave a partial commit', async () => {
+test('agents that crash every time never leave a partial commit, and the user is not asked a pointless question (I4)', async () => {
   const crash = (role, task, c, opts) => { writeFileSync(path.join(opts.cwd, 'partial.txt'), 'half'); return { ok: false, error: 'timed out' }; };
   const t = team({ local: crash, author: crash });
   const ctx = await ctxFor(t, { localRounds: 2, frontierRounds: 1 });
   const base = await ctx.ws.head();
   const r = await runChunk(ctx, PLAN.chunks[0], 0);
-  assert.equal(r.status, 'stopped');
+  assert.equal(r.status, 'failed');
+  assert.match(r.reason, /Step 1 \(Add a\) could not be completed: neither the local model nor claude produced a usable result/);
+  assert.match(r.reason, /resume/);
   assert.equal(t.reviewer.calls.filter((c) => c.role === 'reviewer').length, 0);
-  assert.match(ctx.hookCalls[0].arg.message, /nothing usable/);
+  assert.equal(ctx.hookCalls.length, 0);
+  assert.match(t.local.calls[1].task, /Your previous attempt did not finish \(local failed: timed out\)/);
+  assert.doesNotMatch(t.local.calls[1].task, /blocked by the reviewer/);
   assert.equal(await ctx.ws.head(), base);
   assert.ok(!existsSync(path.join(ctx.ws.dir, 'partial.txt')));
 });
@@ -144,14 +148,14 @@ test('reviewer runs read-only in the workspace with the agent timeout', async ()
   assert.deepEqual(t.reviewer.calls[0].opts, { cwd: ctx.ws.dir, write: false, timeoutMs: ctx.options.agentTimeoutMs });
 });
 
-test('user approving an escalation over a crashed last attempt still commits nothing partial', async () => {
+test('a crashed last attempt fails without asking, even with an approving hook; nothing partial is committed', async () => {
   const crash = (role, task, c, opts) => { writeFileSync(path.join(opts.cwd, 'partial.txt'), 'half'); return { ok: false, error: 'timed out' }; };
   const t = team({ local: crash, author: crash });
   const ctx = await ctxFor(t, { localRounds: 1, frontierRounds: 1 }, { escalate: async () => 'approve' });
   const base = await ctx.ws.head();
   const r = await runChunk(ctx, PLAN.chunks[0], 0);
-  assert.equal(r.status, 'stopped');
-  assert.match(r.reason, /nothing usable/);
+  assert.equal(r.status, 'failed');
+  assert.equal(ctx.hookCalls.length, 0);
   assert.equal(await ctx.ws.head(), base);
   assert.ok(!existsSync(path.join(ctx.ws.dir, 'partial.txt')));
   assert.equal((await git(ctx.ws.dir, ['status', '--porcelain'])).stdout.trim(), '');
@@ -299,13 +303,12 @@ test('an uncommitted nested git init every round is a blocked round, never a cra
   const ctx = await ctxFor(t, { localRounds: 2, frontierRounds: 1 });
   const base = await ctx.ws.head();
   const r = await runChunk(ctx, PLAN.chunks[0], 0);
-  assert.equal(r.status, 'stopped');
+  assert.equal(r.status, 'failed');
   assert.equal(t.local.calls.length, 2);
   assert.equal(t.author.calls.filter((c) => c.role === 'author').length, 1);
   assert.equal(t.reviewer.calls.filter((c) => c.role === 'reviewer').length, 0);
   assert.match(t.local.calls[1].task, /could not inspect the workspace/);
-  assert.equal(ctx.hookCalls.length, 1);
-  assert.match(ctx.hookCalls[0].arg.message, /nothing usable/);
+  assert.equal(ctx.hookCalls.length, 0);
   assert.equal(await commitsSince(ctx.ws, base), '0');
   assert.equal(await porcelain(ctx.ws), '');
   assert.ok(!existsSync(path.join(ctx.ws.dir, 'vendor')));
@@ -336,4 +339,35 @@ test('if the reset after an inspection failure itself fails, the chunk throws (i
   ctx.ws.resetHard = async () => { throw new Error('reset broke'); };
   await assert.rejects(runChunk(ctx, PLAN.chunks[0], 0), /reset broke/);
   assert.ok(events.some((e) => e.type === 'chunk-error'));
+});
+
+// ---- Final-review fixes: I3 (full critique reaches the fixer), I4 (honest escalations) ----
+
+test('the fixer receives the reviewer\'s full notes, not just the one-line reason (I3)', async () => {
+  const reviews = [
+    { text: 'Line 3 of a.txt is wrong: it must end with a newline, and add a test for empty input.', ...block('a.txt is wrong') },
+    approve(),
+  ];
+  const t = team({ local: writes('a.txt'), reviewer: () => reviews.shift() });
+  const ctx = await ctxFor(t);
+  const r = await runChunk(ctx, PLAN.chunks[0], 0);
+  assert.equal(r.status, 'done');
+  assert.match(t.local.calls[1].task, /blocked by the reviewer:\na\.txt is wrong\n\nReviewer's full notes:\nLine 3 of a\.txt is wrong/);
+  assert.match(t.local.calls[1].task, /add a test for empty input/);
+});
+
+test('an escalation because the reviewer crashed says so, not that the reviewers disagreed (I4)', async () => {
+  const t = team({ local: writes('a.txt'), reviewer: () => ({ ok: false, error: 'codex timed out' }) });
+  const ctx = await ctxFor(t, { localRounds: 1, frontierRounds: 1, testCommand: 'true' });
+  await runChunk(ctx, PLAN.chunks[0], 0);
+  const msg = ctx.hookCalls[0].arg.message;
+  assert.match(msg, /What happened: The AI reviewer could not check this step \(it failed or gave no clear answer\)/);
+  assert.doesNotMatch(msg, /could not agree/);
+});
+
+test('an escalation over failing tests names the failing tests (I4)', async () => {
+  const t = team({ local: writes('a.txt'), reviewer: () => block('still broken') });
+  const ctx = await ctxFor(t, { localRounds: 1, frontierRounds: 1, testCommand: 'false' });
+  await runChunk(ctx, PLAN.chunks[0], 0);
+  assert.match(ctx.hookCalls[0].arg.message, /What happened: The tests are failing/);
 });

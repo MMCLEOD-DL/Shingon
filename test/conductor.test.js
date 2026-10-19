@@ -359,3 +359,16 @@ test('a crash between land and finish: resume reports the landed branch, no dupl
   assert.equal((await git(repo, ['rev-parse', '--verify', '--quiet', 'conductor/x-2'])).code, 1);
   assert.equal(h.calls.length, 0);
 });
+
+test('a step nobody could produce fails the run (not "stopped") without asking the user (I4)', async () => {
+  const repo = await makeRepo();
+  const before = await refsOf(repo);
+  const t = makeTeam({ local: () => ({ ok: false, error: 'timed out' }) });
+  t.author = fakeParticipant({ name: 'claude', kind: 'claude-code', script: (role, task) => (role === 'author' && /chunk \d+ of/.test(task) ? { ok: false, error: 'rate limited' } : role === 'reviewer' ? approve() : planReply) });
+  const h = hooks();
+  const out = await runTask({ repoDir: repo, request: 'x', team: t, hooks: h, baseDir: base(), options: { localRounds: 1, frontierRounds: 1 } });
+  assert.equal(out.status, 'failed');
+  assert.match(out.reason, /could not be completed/);
+  assert.equal(h.calls.filter((c) => c.name === 'escalate').length, 0);
+  assert.equal(await refsOf(repo), before);
+});

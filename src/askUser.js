@@ -3,9 +3,9 @@
 import { buildEscalation } from './escalation.js';
 import { redact } from './secrets.js';
 
-export async function askUser(ctx, { kind, title, reason, recommendation }) {
-  const esc = redact(buildEscalation({ kind, title, reason, recommendation }));
-  ctx.log.event('escalation', { kind, title, message: esc.message });
+export async function askUser(ctx, { kind, title, reason, recommendation, situation }) {
+  const esc = redact(buildEscalation({ kind, title, reason, recommendation, situation }));
+  ctx.log.event('escalation', { kind, title, situation: situation ?? 'disagree', message: esc.message });
   let answer;
   try {
     answer = await ctx.hooks.escalate(esc);

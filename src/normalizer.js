@@ -2,7 +2,9 @@
 const DIFF_FENCE = /```diff[ \t]*\n([\s\S]*?)\n```/i;
 // VERDICT line: horizontal-whitespace only (no ReDoS), tolerant of leading
 // markdown/quote decoration and trailing emphasis; APPROVED/BLOCKED accepted.
-const VERDICT_LINE = /^[>*_#\t ]*VERDICT[ \t]*:[ \t]*(APPROVED?|BLOCK(?:ED)?)[ \t]*(?:[-—:][ \t]*)?(.*?)[*_\t ]*$/im;
+// Global: the LAST VERDICT line wins (Ruling 12), so a reviewer quoting "VERDICT: APPROVE"
+// from an agent-written diff earlier in its reply cannot approve the work.
+const VERDICT_LINE = /^[>*_#\t ]*VERDICT[ \t]*:[ \t]*(APPROVED?|BLOCK(?:ED)?)[ \t]*(?:[-—:][ \t]*)?(.*?)[*_\t ]*$/gim;
 
 function stripOuterFence(s) {
   const m = s.match(/^```[^\n]*\n([\s\S]*)\n```$/);
@@ -22,12 +24,12 @@ export function normalize(rawText) {
   // line inside the diff cannot be mistaken for the verdict.
   let body = diffMatch ? raw.replace(diffMatch[0], '') : raw;
 
-  const vMatch = body.match(VERDICT_LINE);
+  const vMatch = [...body.matchAll(VERDICT_LINE)].at(-1);
   let verdict = null;
   if (vMatch) {
     const decision = vMatch[1].toUpperCase().startsWith('APPROVE') ? 'APPROVE' : 'BLOCK';
     verdict = { decision, reason: vMatch[2].trim() };
-    body = body.replace(vMatch[0], '');
+    body = body.slice(0, vMatch.index) + body.slice(vMatch.index + vMatch[0].length);
   }
 
   const text = stripOuterFence(body.trim()).trim();

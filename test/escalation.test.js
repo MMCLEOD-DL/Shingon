@@ -66,3 +66,13 @@ test('summary notes are passed through plainReason (marker mid-string)', () => {
   assert.doesNotMatch(s, /IRREVERSIBLE/i);
   assert.match(s, /Concern: deletes the user table/);
 });
+
+test('What happened follows the situation, falling back to the disagreement wording (I4)', () => {
+  const msg = (kind, situation) => buildEscalation({ kind, title: 't', reason: 'r', recommendation: 'x', situation }).message;
+  assert.match(msg('chunk', 'unreviewed'), /could not check this step/);
+  assert.match(msg('plan', 'unreviewed'), /could not check the plan/);
+  assert.match(msg('chunk', 'tests-failing'), /tests are failing/);
+  assert.match(msg('chunk', 'irreversible'), /hard to undo/);
+  assert.match(msg('chunk', undefined), /could not agree on one step/);
+  assert.match(msg('final', 'unreviewed'), /final check/);
+});

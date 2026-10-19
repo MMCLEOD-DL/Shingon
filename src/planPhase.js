@@ -15,9 +15,9 @@ export async function runPlanPhase(ctx) {
 
   const loop = await reviewLoop({
     maxRounds: options.planRounds,
-    produce: async (round, feedback) => {
+    produce: async (round, feedback, feedbackKind) => {
       const r = await callAgent(ctx, team.author, 'author',
-        prompts.planAuthor({ request, maxChunks: options.maxChunks, feedback }), opts);
+        prompts.planAuthor({ request, maxChunks: options.maxChunks, feedback, feedbackKind }), opts);
       if (!r.ok) return { error: `author failed: ${r.error}` };
       const parsed = parsePlan(r.text, { maxChunks: options.maxChunks });
       return parsed.ok ? { plan: parsed.plan, text: r.text } : { error: parsed.error };
@@ -34,10 +34,10 @@ export async function runPlanPhase(ctx) {
   const lastReview = [...loop.history].reverse().find((h) => !h.reason.startsWith(PRODUCE_FAILED));
   const reason = lastReview?.reason ?? loop.lastReason;
   const settle = settleDeadlock({ reason });
-  log.event('deadlock', { phase: 'plan', action: settle.action, note: settle.note });
+  log.event('deadlock', { phase: 'plan', action: settle.action, situation: settle.situation, note: settle.note });
   if (settle.action === 'accept') return { status: 'ok', plan: loop.lastGood.plan, note: `Plan: ${settle.note}` };
 
-  const decision = await askUser(ctx, { kind: 'plan', title: 'the plan', reason, recommendation: settle.recommendation });
+  const decision = await askUser(ctx, { kind: 'plan', title: 'the plan', reason, recommendation: settle.recommendation, situation: settle.situation });
   if (decision === 'approve') {
     return { status: 'ok', plan: loop.lastGood.plan, note: `Plan: you approved it over the concern: ${reason}` };
   }

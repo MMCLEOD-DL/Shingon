@@ -38,8 +38,8 @@ async function runChunkFrom(ctx, chunk, index, base) {
   const readOpts = { cwd: ws.dir, write: false, timeoutMs: options.agentTimeoutMs };
   log.event('chunk', { index, title: chunk.title, base });
 
-  const attempt = (who, role) => async (round, feedback) => {
-    const r = await callAgent(ctx, who, role, prompts.chunkExec({ request, plan, chunk, index, total, feedback }), writeOpts);
+  const attempt = (who, role) => async (round, feedback, feedbackKind) => {
+    const r = await callAgent(ctx, who, role, prompts.chunkExec({ request, plan, chunk, index, total, feedback, feedbackKind }), writeOpts);
     if (!r.ok) return { error: `${who.name} failed: ${r.error}` };
     // Nothing an agent leaves behind may crash the run: a workspace we cannot
     // inspect is a blocked round, and the bad state is reset away before the next.
@@ -70,22 +70,29 @@ async function runChunkFrom(ctx, chunk, index, base) {
   if (loop.status !== 'approved') {
     // The workspace reflects the LAST attempt, so judge that one.
     const last = loop.artifact;
-    const settle = settleDeadlock({ reason: loop.lastReason, tests: last?.tests ?? null, produced: !last?.error });
-    log.event('deadlock', { phase: 'chunk', index, action: settle.action, note: settle.note });
+    if (!last || last.error) {
+      // Nothing usable exists, so there is no real choice to put to the user (I4):
+      // its edits are partial, never commit them, and fail so the step can be resumed.
+      log.event('deadlock', { phase: 'chunk', index, action: 'fail', note: loop.lastReason });
+      await ws.resetHard(base);
+      return {
+        status: 'failed',
+        reason: `Step ${index + 1} (${chunk.title}) could not be completed: neither the local model nor ${fallback.name} produced a usable result. ` +
+          'Your repository is unchanged; you can resume to retry this step.',
+      };
+    }
+    const settle = settleDeadlock({ reason: loop.lastReason, tests: last.tests ?? null });
+    log.event('deadlock', { phase: 'chunk', index, action: settle.action, situation: settle.situation, note: settle.note });
     if (settle.action === 'accept') {
       note = join(note, `${step}: ${settle.note}`);
     } else {
       const decision = await askUser(ctx, {
-        kind: 'chunk', title: `step ${index + 1}: ${chunk.title}`, reason: loop.lastReason, recommendation: settle.recommendation,
+        kind: 'chunk', title: `step ${index + 1}: ${chunk.title}`, reason: loop.lastReason,
+        recommendation: settle.recommendation, situation: settle.situation,
       });
       if (decision !== 'approve') {
         await ws.resetHard(base);
         return { status: 'stopped', reason: `You stopped the run at step ${index + 1} (${chunk.title}).` };
-      }
-      if (last?.error) {
-        // The last attempt crashed or timed out: its edits are partial, never commit them.
-        await ws.resetHard(base);
-        return { status: 'stopped', reason: `Step ${index + 1} (${chunk.title}) produced nothing usable to keep, so the run stopped there.` };
       }
       note = join(note, `${step}: you approved it over the concern: ${loop.lastReason}`);
     }

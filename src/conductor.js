@@ -153,6 +153,7 @@ async function drive(ctx) {
       for (let i = state.chunkIndex; i < total; i++) {
         const chunk = state.plan.chunks[i];
         const c = await runChunk(ctx, chunk, i);
+        if (c.status === 'failed') return finish('failed', { reason: c.reason });
         if (c.status !== 'done') return finish('stopped', { reason: c.reason });
         await assertOnBranch(ws);
         if (c.note) state.notes.push(c.note);
