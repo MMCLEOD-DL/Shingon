@@ -33,7 +33,7 @@ node -e '
   const [src, dst, url] = process.argv.slice(1);
   const c = JSON.parse(fs.readFileSync(src, "utf8"));
   for (const p of c.participants) {
-    if (p.adapter === "local-agent") p.extraConfig = [...(p.extraConfig || []), `model_providers.localai.base_url=${url}`];
+    if (p.adapter === "local-agent") p.baseUrl = url;
   }
   fs.writeFileSync(dst, JSON.stringify(c, null, 2));
 ' config.example.json "$CFG" "http://127.0.0.1:${LPORT}/v1" || { echo "CONFIG BUILD FAILED"; exit 1; }

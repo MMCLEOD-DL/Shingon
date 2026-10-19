@@ -67,3 +67,11 @@ test('buildAdapter forwards timeoutMs, extraConfig and provider', () => {
   const k = buildAdapter({ name: 'k', adapter: 'claude-code' });
   assert.equal(k.timeoutMs, 120000);
 });
+
+test('buildAdapter forwards baseUrl and contextWindow to the local agent home config', () => {
+  const l = buildAdapter({ name: 'l', adapter: 'local-agent', model: 'm', baseUrl: 'http://h:1/v1', contextWindow: 4096 });
+  assert.equal(l.baseUrl, 'http://h:1/v1');
+  assert.match(l._codex.homeConfig, /^model_context_window = 4096$/m);
+  assert.match(l._codex.homeConfig, /^base_url = "http:\/\/h:1\/v1"$/m);
+  assert.equal(buildAdapter({ name: 'c', adapter: 'codex' }).homeConfig, null);
+});
