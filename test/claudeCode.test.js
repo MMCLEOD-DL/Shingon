@@ -108,3 +108,12 @@ test('no permission-mode flag when not writing', async () => {
   const r = await new ClaudeCodeAdapter({ bin }).run('reviewer', 't');
   assert.doesNotMatch(r.text, /--permission-mode/);
 });
+
+test('opts.timeoutMs overrides the constructor timeout (T1)', async () => {
+  const bin = writeStubCli(tmp(), 'claude', `setTimeout(() => {}, 10000);`);
+  const t0 = Date.now();
+  const r = await new ClaudeCodeAdapter({ bin, timeoutMs: 60000 }).run('author', 't', '', { timeoutMs: 300 });
+  assert.equal(r.ok, false);
+  assert.equal(r.error, 'timed out');
+  assert.ok(Date.now() - t0 < 5000);
+});

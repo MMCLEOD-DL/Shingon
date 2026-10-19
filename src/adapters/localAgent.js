@@ -19,7 +19,7 @@ export class LocalAgentAdapter {
       timeoutMs,
       // The exclude goes last so no extraConfig entry can override it.
       extraConfig: [`model_provider=${provider}`, `model=${model}`, ...extraConfig, SHELL_ENV_EXCLUDE],
-      sandbox: 'workspace-write',
+      // No fixed sandbox: write:true gives workspace-write, write:false read-only (Codex's default rule).
       envAllow: [envKey], // only the Codex harness itself gets the provider key
     });
   }
