@@ -36,7 +36,9 @@ export function createTerminal({ input = process.stdin, output = process.stdout,
   let drawn = 0;
   const printed = new Set();
   let prompting = false;
-  let reader = null;
+  // On a terminal the reader starts now, so lines typed before the first question are queued
+  // (and drained by it) rather than read later as its answer.
+  let reader = isTTY ? lineReader(input) : null;
   let closed = false;
   const write = (s) => output.write(s);
   const nextLine = () => (closed ? Promise.resolve(null) : (reader ??= lineReader(input)).next());

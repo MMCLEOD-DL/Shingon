@@ -137,9 +137,13 @@ test('in-process with a terminal: the user approves and the result lands', async
   const s = await setup();
   try {
     const stdin = new PassThrough();
-    stdin.end('a\n');
     let text = '';
-    const stdout = new Writable({ write(c, e, cb) { text += c; cb(); } });
+    // The user answers once the approval question is on screen (earlier type-ahead is discarded).
+    const stdout = new Writable({ write(c, e, cb) {
+      text += c;
+      if (String(c).includes('[a] approve → new branch')) setImmediate(() => stdin.end('a\n'));
+      cb();
+    } });
     const code = await main(['add multiply', '--config', s.cfg, '--no-bell'], { cwd: s.repo, env: s.env, stdin, stdout, isTTY: true, onSignal: () => {}, exit: () => {} });
     assert.equal(code, 0, text);
     assert.match(text, /Done\. The result is on a new branch in your repository: conductor\/add-multiply/);

@@ -3,18 +3,22 @@ import assert from 'node:assert/strict';
 import { PassThrough, Writable } from 'node:stream';
 import { createTerminal, NO_TTY_ESCALATION, NO_TTY_GATE } from '../src/ui/terminal.js';
 
-function sink() {
+// A question is shown when the output ends with its "> " (or the note's ": ") prompt.
+const isPrompt = (s) => s.endsWith('> ') || s.endsWith('(one line): ');
+function sink(onPrompt = () => {}) {
   let text = '';
-  const out = new Writable({ write(chunk, enc, cb) { text += chunk.toString(); cb(); } });
+  const out = new Writable({ write(chunk, enc, cb) { const s = chunk.toString(); text += s; if (isPrompt(s)) onPrompt(); cb(); } });
   return { out, text: () => text };
 }
+// The user types each answer only once its question is on screen (type-ahead is discarded);
+// with no answers left, the next question sees end-of-input.
 function term({ answers = null, isTTY = true, bell = true } = {}) {
   const input = new PassThrough();
-  const o = sink();
-  if (answers != null) {
-    input.write(answers.map((a) => `${a}\n`).join(''));
-    input.end();
-  }
+  const queue = answers == null ? null : [...answers];
+  const o = sink(() => {
+    if (!queue) return;
+    setImmediate(() => (queue.length ? input.write(`${queue.shift()}\n`) : input.end()));
+  });
   return { t: createTerminal({ input, output: o.out, isTTY, bell }), text: o.text };
 }
 const ESC = { kind: 'chunk', title: 'step 2', message: 'Conductor needs your decision on: step 2', options: ['approve', 'reject'], transcript: '/runs/x/transcript.jsonl' };
@@ -112,9 +116,10 @@ test('bell can be turned off', async () => {
 
 test('type-ahead is discarded: a leftover answer cannot approve the gate', async () => {
   const input = new PassThrough();
-  const o = sink();
+  let first = true;
+  // At the first question the user types its answer twice; the spare line must not answer the gate.
+  const o = sink(() => { if (first) { first = false; setImmediate(() => input.write('a\na\n')); } });
   const t = createTerminal({ input, output: o.out, isTTY: true });
-  input.write('a\na\n');
   assert.equal(await t.escalate(ESC), 'approve');
   await new Promise((r) => setImmediate(r));
   const gate = t.approveResult(GATE);
@@ -139,4 +144,18 @@ test('null files, steps or payload fail closed without throwing', async () => {
   assert.equal(await n.t.approveChunk({ index: 0, title: 'x', total: 1, files: null }), false);
   assert.equal(await n.t.approvePlan({ steps: null }), false);
   assert.equal(await n.t.escalate(null), 'reject');
+});
+
+test('type-ahead before the FIRST prompt is discarded: it cannot approve the gate (C2)', async () => {
+  const input = new PassThrough();
+  const o = sink();
+  const t = createTerminal({ input, output: o.out, isTTY: true, bell: false });
+  input.write('a\n'); // typed while the run was working, long before any question
+  await new Promise((r) => setTimeout(r, 20));
+  t.onEvent({ type: 'phase', name: 'final' });
+  const gate = t.approveResult(GATE);
+  await new Promise((r) => setImmediate(r));
+  input.end();
+  assert.equal(await gate, false);
+  t.close();
 });
