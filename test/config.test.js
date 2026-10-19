@@ -75,3 +75,37 @@ test('buildAdapter forwards baseUrl and contextWindow to the local agent home co
   assert.match(l._codex.homeConfig, /^base_url = "http:\/\/h:1\/v1"$/m);
   assert.equal(buildAdapter({ name: 'c', adapter: 'codex' }).homeConfig, null);
 });
+
+import { writeFileSync as writeCfg, mkdtempSync as mkCfgDir } from 'node:fs';
+import { tmpdir as cfgTmp } from 'node:os';
+import cfgPath from 'node:path';
+
+const cfgFile = (obj) => {
+  const f = cfgPath.join(mkCfgDir(cfgPath.join(cfgTmp(), 'cfg-')), 'c.json');
+  writeCfg(f, JSON.stringify(obj));
+  return f;
+};
+const API_P = { name: 'claude-api', adapter: 'anthropic-api', model: 'm', roles: ['author', 'reviewer'] };
+
+test('buildAdapter builds the API adapters', () => {
+  const a = buildAdapter({ ...API_P, envKey: 'K1', baseUrl: 'http://x', maxTokens: 10, prices: { inputPerMTok: 1, outputPerMTok: 2 } });
+  assert.equal(a.kind, 'anthropic-api');
+  assert.equal(a.envKey, 'K1');
+  assert.equal(a.baseUrl, 'http://x');
+  assert.equal(buildAdapter({ name: 'o', adapter: 'openai-api', model: 'm' }).kind, 'openai-api');
+});
+
+test('loadConfig returns routing and options, and rejects unknown options', () => {
+  const ok = loadConfig(cfgFile({ participants: [API_P], routing: { allowApi: true }, options: { testCommand: 'npm test' } }));
+  assert.deepEqual(ok.routing, { allowApi: true });
+  assert.deepEqual(ok.options, { testCommand: 'npm test' });
+  const bare = loadConfig(cfgFile({ participants: [API_P] }));
+  assert.deepEqual(bare.routing, {});
+  assert.deepEqual(bare.options, {});
+  assert.throws(() => loadConfig(cfgFile({ participants: [API_P], options: { testComand: 'x' } })), /Unknown option "testComand"/);
+});
+
+test('API participants cannot edit files or be the local executor', () => {
+  assert.throws(() => loadConfig(cfgFile({ participants: [{ ...API_P, capabilities: { can_edit_files: true } }] })), /cannot edit files/);
+  assert.throws(() => loadConfig(cfgFile({ participants: [{ ...API_P, roles: ['grunt'] }] })), /cannot be the local executor/);
+});
