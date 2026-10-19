@@ -1,7 +1,7 @@
 // src/workspace.js
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, copyFileSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
-import { tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { runCommand } from './exec.js';
 import { clip } from './text.js';
@@ -45,6 +45,15 @@ export function slugify(s) {
 export const metaDirOf = (dir) => `${path.resolve(dir)}.conductor`;
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
 
+// Workspaces must survive a reboot (crash-safe & resumable), so not os.tmpdir():
+// $XDG_STATE_HOME/conductor/workspaces, else ~/.conductor/workspaces.
+export function defaultBaseDir(env = process.env) {
+  if (env.XDG_STATE_HOME) return path.join(env.XDG_STATE_HOME, 'conductor', 'workspaces');
+  return path.join(env.HOME || homedir(), '.conductor', 'workspaces');
+}
+
+const CLONE_TIMEOUT_MS = 15 * 60_000;
+
 async function gitCommonDir(repoDir) {
   const r = await git(repoDir, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
   return r.code === 0 ? r.stdout.trim() : null;
@@ -61,26 +70,71 @@ export class Workspace {
   static async create({ repoDir, baseDir, taskId }) {
     const probe = await git(repoDir, ['rev-parse', '--verify', 'HEAD']);
     if (probe.code !== 0) throw new Error(`${repoDir} is not a git repository with at least one commit`);
-    const dir = mkdtempSync(path.join(baseDir ?? tmpdir(), 'conductor-ws-'));
-    await gitOk(dir, ['clone', '--quiet', '--no-hardlinks', path.resolve(repoDir), '.']);
-    await gitOk(dir, ['remote', 'remove', 'origin']);
-    const branch = `conductor/${slugify(taskId)}`;
-    await gitOk(dir, ['checkout', '-q', '-b', branch]);
-    const baseSha = (await gitOk(dir, ['rev-parse', 'HEAD'])).trim();
-    const ws = new Workspace(dir, branch, baseSha);
-    mkdirSync(ws.metaDir, { recursive: true });
-    writeFileSync(path.join(ws.metaDir, 'base'), `${baseSha}\n`);
-    writeFileSync(path.join(ws.metaDir, 'repo.json'), JSON.stringify({
-      repoDir: path.resolve(repoDir), gitCommonDir: await gitCommonDir(repoDir),
-    }, null, 2));
-    ws.sealConfig();
-    return ws;
+    const root = baseDir ?? defaultBaseDir();
+    mkdirSync(root, { recursive: true });
+    const dir = mkdtempSync(path.join(root, 'conductor-ws-'));
+    try {
+      await gitOk(dir, ['clone', '--quiet', '--no-hardlinks', path.resolve(repoDir), '.'], { timeoutMs: CLONE_TIMEOUT_MS });
+      await gitOk(dir, ['remote', 'remove', 'origin']);
+      const branch = `conductor/${slugify(taskId)}`;
+      await gitOk(dir, ['checkout', '-q', '-b', branch]);
+      const baseSha = (await gitOk(dir, ['rev-parse', 'HEAD'])).trim();
+      const ws = new Workspace(dir, branch, baseSha);
+      // The clone is of committed HEAD: record what was left behind (m5).
+      const st = await git(repoDir, ['status', '--porcelain']);
+      const src = await git(repoDir, ['symbolic-ref', '-q', '--short', 'HEAD']);
+      ws.source = { sha: baseSha, branch: src.code === 0 ? src.stdout.trim() : null, dirty: st.code === 0 && st.stdout.trim() !== '' };
+      mkdirSync(ws.metaDir, { recursive: true });
+      writeFileSync(path.join(ws.metaDir, 'base'), `${baseSha}\n`);
+      writeFileSync(path.join(ws.metaDir, 'repo.json'), JSON.stringify({
+        repoDir: path.resolve(repoDir), gitCommonDir: await gitCommonDir(repoDir), source: ws.source,
+      }, null, 2));
+      ws.sealConfig();
+      return ws;
+    } catch (e) {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(metaDirOf(dir), { recursive: true, force: true });
+      throw e;
+    }
   }
 
   static async open(dir) {
-    const branch = (await gitOk(dir, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim();
-    const baseSha = readFileSync(path.join(metaDirOf(dir), 'base'), 'utf8').trim();
-    return new Workspace(dir, branch, baseSha);
+    const meta = metaDirOf(dir);
+    if (!existsSync(path.join(meta, 'base'))) throw new Error(`${dir} is not a Conductor workspace`);
+    const baseSha = readFileSync(path.join(meta, 'base'), 'utf8').trim();
+    const r = await git(dir, ['symbolic-ref', '-q', '--short', 'HEAD']);
+    const ws = new Workspace(dir, r.code === 0 ? r.stdout.trim() : null, baseSha); // null: detached HEAD
+    try { ws.source = JSON.parse(readFileSync(path.join(meta, 'repo.json'), 'utf8')).source ?? null; } catch { ws.source = null; }
+    return ws;
+  }
+
+  // Deletes the workspace and its metadata (after archiving what should be kept).
+  remove() {
+    rmSync(this.dir, { recursive: true, force: true });
+    rmSync(this.metaDir, { recursive: true, force: true });
+  }
+
+  async currentBranch() {
+    const r = await git(this.dir, ['symbolic-ref', '-q', '--short', 'HEAD']);
+    return r.code === 0 ? r.stdout.trim() : null;
+  }
+
+  async onOwnBranch() {
+    return (await this.currentBranch()) === this.branch;
+  }
+
+  // An agent can run git in the workspace. Never record, squash onto or land a
+  // branch other than the run's own: a switched or detached HEAD is an error.
+  async assertOnBranch() {
+    const cur = await this.currentBranch();
+    if (cur !== this.branch) {
+      throw new Error(`the workspace is no longer on its branch ${this.branch} (found ${cur ?? 'a detached HEAD'}); nothing was landed`);
+    }
+  }
+
+  // Put the run's branch back at `sha` and check it out (after an agent switched away).
+  async returnToBranch(sha) {
+    await gitOk(this.dir, ['checkout', '-q', '-f', '-B', this.branch, sha]);
   }
 
   get #configPath() { return path.join(this.dir, '.git', 'config'); }
@@ -135,15 +189,44 @@ export class Workspace {
     return this.head();
   }
 
+  // Stage the whole worktree into a throwaway index, so diff/listFiles/snapshot
+  // never touch the real index (no hidden `git add -A` side effect).
+  async #withScratchIndex(fn) {
+    const idx = path.join(this.metaDir, `scratch-index-${randomBytes(6).toString('hex')}`);
+    const opts = { env: { GIT_INDEX_FILE: idx } };
+    try {
+      const real = path.join(this.dir, '.git', 'index');
+      if (existsSync(real)) copyFileSync(real, idx);
+      else await gitOk(this.dir, ['read-tree', 'HEAD'], opts);
+      await gitOk(this.dir, ['add', '-A'], opts);
+      return await fn(opts);
+    } finally {
+      rmSync(idx, { force: true });
+    }
+  }
+
+  // fromSha..worktree, including uncommitted and untracked (not ignored) files.
   async diff(fromSha) {
-    await gitOk(this.dir, ['add', '-A']);
-    return gitOk(this.dir, [...DIFF, '--cached', fromSha]);
+    return this.#withScratchIndex((o) => gitOk(this.dir, [...DIFF, '--cached', fromSha], o));
   }
 
   async listFiles(fromSha) {
-    await gitOk(this.dir, ['add', '-A']);
-    const out = await gitOk(this.dir, [...DIFF, '--cached', '--name-only', fromSha]);
+    const out = await this.#withScratchIndex((o) => gitOk(this.dir, [...DIFF, '--cached', '--name-only', fromSha], o));
     return out.split('\n').filter(Boolean);
+  }
+
+  // A commit of the current worktree on top of HEAD, without moving HEAD or the index.
+  async snapshot() {
+    return this.#withScratchIndex(async (o) => {
+      const tree = (await gitOk(this.dir, ['write-tree'], o)).trim();
+      return (await gitOk(this.dir, ['commit-tree', tree, '-p', 'HEAD', '-m', 'conductor: round snapshot'])).trim();
+    });
+  }
+
+  // Ignored, untracked paths (wholly ignored directories collapsed to `dir/`).
+  async ignoredPaths() {
+    const out = await gitOk(this.dir, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--directory']);
+    return new Set(out.split('\0').filter(Boolean));
   }
 
   // Commit-to-commit: exactly what landing `toSha` would ship; never reads the worktree or index.
@@ -162,10 +245,21 @@ export class Workspace {
     return this.commitAll(message);
   }
 
-  async resetHard(sha) {
+  // keepIgnored: the ignoredPaths() recorded at the chunk base. Ignored paths that
+  // were not there are removed too (an agent's dist/ or build junk); the ones that
+  // were (node_modules, caches) stay, keeping Ruling 7's "do not wipe deps".
+  async resetHard(sha, { keepIgnored = null } = {}) {
     await gitOk(this.dir, ['reset', '-q', '--hard', sha]);
     // -ff: also remove nested git repos an agent created (plain -fd skips them). No -x: ignored files stay.
     await gitOk(this.dir, ['clean', '-ffdq']);
+    if (!keepIgnored) return;
+    for (const p of await this.ignoredPaths()) {
+      if (keepIgnored.has(p)) continue;
+      const rel = p.replace(/\/+$/, '');
+      const abs = path.resolve(this.dir, rel);
+      if (!rel || !abs.startsWith(this.dir + path.sep) || rel === '.git' || rel.startsWith('.git/')) continue;
+      rmSync(abs, { recursive: true, force: true }); // rm never follows a symlink: it removes the link
+    }
   }
 
   async runTests(command, { timeoutMs = 600000 } = {}) {

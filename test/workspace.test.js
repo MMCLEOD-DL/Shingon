@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, appendFileSync, chmodSync, rmSync, symlinkSync, lstatSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, appendFileSync, chmodSync, rmSync, symlinkSync, lstatSync, readdirSync } from 'node:fs';
 import { runCommand } from '../src/exec.js';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { Workspace, git, slugify } from '../src/workspace.js';
+import { Workspace, git, slugify, defaultBaseDir } from '../src/workspace.js';
 import { makeRepo, refsOf } from './helpers/gitRepo.js';
 
 const base = () => mkdtempSync(path.join(tmpdir(), 'wsbase-'));
@@ -274,4 +274,89 @@ test('findBranchAt finds a branch already at the sha', async () => {
   await git(repo, ['branch', 'conductor/x-2']);
   assert.equal(await Workspace.findBranchAt(repo, ['conductor/x', 'conductor/x-2'], head), 'conductor/x-2');
   assert.equal(await Workspace.findBranchAt(repo, ['conductor/x'], head), null);
+});
+
+// ---- Final-review fixes: Task 2 / Task 8 ledger minors, m4, m5 ----
+
+test('a failed clone leaves nothing behind in baseDir (T2)', async () => {
+  const repo = await makeRepo({ 'a.txt': 'blob that will vanish\n' });
+  const blob = (await git(repo, ['rev-parse', 'HEAD:a.txt'])).stdout.trim();
+  rmSync(path.join(repo, '.git', 'objects', blob.slice(0, 2), blob.slice(2)));
+  const b = base();
+  await assert.rejects(Workspace.create({ repoDir: repo, baseDir: b, taskId: 't' }), /git clone failed/);
+  assert.deepEqual(readdirSync(b), []);
+});
+
+test('open refuses a non-workspace and reports a detached HEAD as branch null (T2)', async () => {
+  await assert.rejects(Workspace.open(await makeRepo()), /is not a Conductor workspace/);
+  const ws = await Workspace.create({ repoDir: await makeRepo(), baseDir: base(), taskId: 't' });
+  await git(ws.dir, ['checkout', '-q', '--detach']);
+  assert.equal((await Workspace.open(ws.dir)).branch, null);
+});
+
+test('diff and listFiles leave the real index untouched (T2)', async () => {
+  const ws = await Workspace.create({ repoDir: await makeRepo(), baseDir: base(), taskId: 't' });
+  writeFileSync(path.join(ws.dir, 'new.txt'), 'new\n');
+  assert.match(await ws.diff(ws.baseSha), /\+new/);
+  assert.deepEqual(await ws.listFiles(ws.baseSha), ['new.txt']);
+  assert.equal((await git(ws.dir, ['diff', '--cached', '--quiet'])).code, 0);
+  assert.match((await git(ws.dir, ['status', '--porcelain'])).stdout, /^\?\? new\.txt/);
+  assert.deepEqual(readdirSync(ws.metaDir).filter((n) => n.startsWith('scratch-index')), []);
+});
+
+test('diff/listFiles: ignored files are excluded, deleted files are included (T2)', async () => {
+  const ws = await Workspace.create({ repoDir: await makeRepo({ '.gitignore': '*.log\n', 'gone.txt': 'bye\n' }), baseDir: base(), taskId: 't' });
+  writeFileSync(path.join(ws.dir, 'debug.log'), 'noise');
+  rmSync(path.join(ws.dir, 'gone.txt'));
+  assert.deepEqual(await ws.listFiles(ws.baseSha), ['gone.txt']);
+  const d = await ws.diff(ws.baseSha);
+  assert.match(d, /deleted file mode/);
+  assert.doesNotMatch(d, /debug\.log/);
+});
+
+test('a timed-out test run says so in its output (T2)', async () => {
+  const ws = await Workspace.create({ repoDir: await makeRepo(), baseDir: base(), taskId: 't' });
+  const r = await ws.runTests('sleep 10', { timeoutMs: 300 });
+  assert.match(r.output, /timed out/);
+});
+
+test('resetHard with keepIgnored removes new ignored paths but keeps the pre-existing ones (T8-M4)', async () => {
+  const ws = await Workspace.create({ repoDir: await makeRepo({ '.gitignore': 'node_modules/\ndist/\n' }), baseDir: base(), taskId: 't' });
+  mkdirSync(path.join(ws.dir, 'node_modules'));
+  writeFileSync(path.join(ws.dir, 'node_modules', 'x'), 'dep');
+  const keep = await ws.ignoredPaths();
+  mkdirSync(path.join(ws.dir, 'dist'));
+  writeFileSync(path.join(ws.dir, 'dist', 'new.js'), 'built');
+  const outside = mkdtempSync(path.join(tmpdir(), 'outside-'));
+  writeFileSync(path.join(outside, 'precious'), 'keep me');
+  symlinkSync(outside, path.join(ws.dir, 'dist', 'link'));
+  await ws.resetHard(ws.baseSha, { keepIgnored: keep });
+  assert.ok(!existsSync(path.join(ws.dir, 'dist')));
+  assert.ok(existsSync(path.join(ws.dir, 'node_modules', 'x')));
+  assert.ok(existsSync(path.join(outside, 'precious')), 'followed a symlink out of the workspace');
+});
+
+test('snapshot commits the worktree without moving HEAD or the index', async () => {
+  const ws = await Workspace.create({ repoDir: await makeRepo(), baseDir: base(), taskId: 't' });
+  writeFileSync(path.join(ws.dir, 'a.txt'), 'a\n');
+  const snap = await ws.snapshot();
+  assert.equal(await ws.head(), ws.baseSha);
+  assert.equal((await git(ws.dir, ['show', '--name-only', '--format=', snap])).stdout.trim(), 'a.txt');
+  assert.equal((await git(ws.dir, ['diff', '--cached', '--quiet'])).code, 0);
+});
+
+test('defaultBaseDir: $XDG_STATE_HOME/conductor/workspaces, else ~/.conductor/workspaces (m4)', () => {
+  assert.equal(defaultBaseDir({ XDG_STATE_HOME: '/x/state', HOME: '/h' }), path.join('/x/state', 'conductor', 'workspaces'));
+  assert.equal(defaultBaseDir({ HOME: '/h' }), path.join('/h', '.conductor', 'workspaces'));
+});
+
+test('create records the source branch and whether uncommitted work was left out (m5)', async () => {
+  const repo = await makeRepo();
+  const clean = await Workspace.create({ repoDir: repo, baseDir: base(), taskId: 't' });
+  assert.deepEqual(clean.source, { sha: clean.baseSha, branch: 'main', dirty: false });
+  writeFileSync(path.join(repo, 'wip.txt'), 'not committed');
+  const dirty = await Workspace.create({ repoDir: repo, baseDir: base(), taskId: 't' });
+  assert.equal(dirty.source.dirty, true);
+  assert.ok(!existsSync(path.join(dirty.dir, 'wip.txt')));
+  assert.deepEqual((await Workspace.open(dirty.dir)).source, dirty.source);
 });

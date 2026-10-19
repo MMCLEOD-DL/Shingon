@@ -75,14 +75,20 @@ participant.run(role, task, context = '', opts = {})
 
 // Task 2
 clip(text, max = 8000) -> string
+defaultBaseDir(env) -> $XDG_STATE_HOME/conductor/workspaces | ~/.conductor/workspaces   // Workspace.create's default baseDir
 class Workspace {
   static async create({ repoDir, baseDir, taskId }) -> Workspace
-  static async open(dir) -> Workspace
+  static async open(dir) -> Workspace          // throws "<dir> is not a Conductor workspace"; branch null when detached
+  source                                        // { sha, branch, dirty } of the real repo at create (m5)
+  remove()                                      // deletes the workspace and its metaDir
+  async currentBranch() / onOwnBranch() / assertOnBranch() / returnToBranch(sha)
+  async snapshot() -> sha                       // commit of the worktree on HEAD; HEAD and index untouched
+  async ignoredPaths() -> Set<string>
   baseSha                                       // clone-time HEAD (set by create; open reads <dir>.conductor/base)
   dir; branch; metaDir                          // metaDir = `${dir}.conductor`: base, state.json, transcript.jsonl, repo.json, git-config
   async head() -> sha
   async commitAll(message) -> sha | null
-  async diff(fromSha) -> string                 // fromSha..HEAD plus uncommitted
+  async diff(fromSha) -> string                 // fromSha..worktree (uncommitted + untracked), via a scratch index
   async listFiles(fromSha) -> string[]
   async diffRange(fromSha, toSha) -> string     // commit-to-commit (--no-ext-diff --no-textconv)
   async filesRange(fromSha, toSha) -> string[]
@@ -91,7 +97,7 @@ class Workspace {
   async checkRepo(repoDir) -> null | problem
   static async findBranchAt(repoDir, names, sha) -> name | null
   async squashSince(baseSha, message) -> sha | null
-  async resetHard(sha)
+  async resetHard(sha, { keepIgnored })          // keepIgnored: Set from ignoredPaths(); other ignored paths are removed
   async runTests(command, { timeoutMs }) -> { ran, passed, code, output }
   async land({ repoDir, branch, sha }) -> { ok, branch, error }   // fetches into a temp ref, verifies == sha, create-only update-ref
 }
@@ -127,7 +133,7 @@ runPlanPhase(ctx) -> { status: 'ok', plan, note } | { status: 'stopped' | 'faile
 
 // Task 8
 chunkRoles(index, team) -> { reviewer, fallback }
-runChunk(ctx, chunk, index) -> { status: 'done', sha, note } | { status: 'stopped' | 'failed', reason }   // failed = nothing usable produced; no question asked
+runChunk(ctx, chunk, index) -> { status: 'done', sha, note, tests } | { status: 'stopped' | 'failed', reason }   // failed = nothing usable produced; no question asked
 
 // Task 9
 DEFAULT_OPTIONS; validateTeam(team); validateHooks(hooks, options)

@@ -198,7 +198,7 @@ test('an approved chunk that changed nothing returns sha null and no commit', as
   const ctx = await ctxFor(t);
   const base = await ctx.ws.head();
   const r = await runChunk(ctx, PLAN.chunks[0], 0);
-  assert.deepEqual(r, { status: 'done', sha: null, note: null });
+  assert.deepEqual(r, { status: 'done', sha: null, note: null, tests: { ran: false, passed: null, code: null, output: '' } });
   assert.equal(await ctx.ws.head(), base);
 });
 
@@ -370,4 +370,69 @@ test('an escalation over failing tests names the failing tests (I4)', async () =
   const ctx = await ctxFor(t, { localRounds: 1, frontierRounds: 1, testCommand: 'false' });
   await runChunk(ctx, PLAN.chunks[0], 0);
   assert.match(ctx.hookCalls[0].arg.message, /What happened: The tests are failing/);
+});
+
+// ---- Final-review fixes: Task 8 / Task 9 ledger minors ----
+
+test('a rejected chunk removes an agent\'s new ignored build output but keeps pre-existing deps (T8-M4)', async () => {
+  const build = (role, task, c, opts) => {
+    mkdirSync(path.join(opts.cwd, 'dist'), { recursive: true });
+    writeFileSync(path.join(opts.cwd, 'dist', 'new.js'), 'built');
+    writeFileSync(path.join(opts.cwd, 'a.txt'), 'x');
+    return { text: 'ok' };
+  };
+  const t = team({ local: build, author: build, reviewer: () => block('tests fail') });
+  const ctx = await makeCtx({ team: t, files: { '.gitignore': 'node_modules/\ndist/\n' }, options: { localRounds: 1, frontierRounds: 1, testCommand: 'false' } });
+  ctx.state.plan = PLAN;
+  mkdirSync(path.join(ctx.ws.dir, 'node_modules'));
+  writeFileSync(path.join(ctx.ws.dir, 'node_modules', 'x'), 'dep');
+  const r = await runChunk(ctx, PLAN.chunks[0], 0);
+  assert.equal(r.status, 'stopped');
+  assert.ok(!existsSync(path.join(ctx.ws.dir, 'dist')));
+  assert.ok(existsSync(path.join(ctx.ws.dir, 'node_modules', 'x')));
+});
+
+test('a reset after an inspection failure keeps the earlier blocked rounds\' work (T8 re-review)', async () => {
+  const reviews = [block('add a test'), approve()];
+  const local = async (role, task, c, opts, n) => {
+    if (n === 0) writeFileSync(path.join(opts.cwd, 'round1.txt'), 'kept');
+    if (n === 1) { // an uncommitted nested repo makes the inspection fail
+      mkdirSync(path.join(opts.cwd, 'vendor'), { recursive: true });
+      await git(path.join(opts.cwd, 'vendor'), ['init', '-q']);
+      writeFileSync(path.join(opts.cwd, 'vendor', 'lib.js'), 'x');
+    }
+    if (n === 2) {
+      assert.ok(existsSync(path.join(opts.cwd, 'round1.txt')), 'round 3 lost round 1\'s work');
+      writeFileSync(path.join(opts.cwd, 'round3.txt'), 'x');
+    }
+    return { text: 'ok' };
+  };
+  const t = team({ local, reviewer: () => reviews.shift() });
+  const ctx = await ctxFor(t, { localRounds: 3 });
+  const base = await ctx.ws.head();
+  const r = await runChunk(ctx, PLAN.chunks[0], 0);
+  assert.equal(r.status, 'done');
+  assert.equal(t.local.calls.length, 3);
+  assert.equal(await commitsSince(ctx.ws, base), '1');
+  const files = (await git(ctx.ws.dir, ['show', '--name-only', '--format=', 'HEAD'])).stdout.trim().split('\n').sort();
+  assert.deepEqual(files, ['round1.txt', 'round3.txt']);
+});
+
+test('an agent that switches branches gets that attempt discarded and the next one runs on the run branch (T9)', async () => {
+  const events = [];
+  const local = async (role, task, c, opts, n) => {
+    if (n === 0) await git(opts.cwd, ['checkout', '-q', '-b', 'elsewhere']);
+    writeFileSync(path.join(opts.cwd, `try${n}.txt`), 'x');
+    return { text: 'ok' };
+  };
+  const t = team({ local });
+  const ctx = await ctxFor(t, {}, { onEvent: (e) => events.push(e) });
+  const base = await ctx.ws.head();
+  const r = await runChunk(ctx, PLAN.chunks[0], 0);
+  assert.equal(r.status, 'done');
+  assert.ok(events.some((e) => e.type === 'branch-switched'));
+  assert.match(t.local.calls[1].task, /switched the workspace off its branch/);
+  assert.equal(await ctx.ws.currentBranch(), ctx.ws.branch);
+  assert.deepEqual((await git(ctx.ws.dir, ['show', '--name-only', '--format=', 'HEAD'])).stdout.trim().split('\n'), ['try1.txt']);
+  assert.equal(await commitsSince(ctx.ws, base), '1');
 });

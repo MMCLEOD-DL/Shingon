@@ -40,20 +40,6 @@ export function validateHooks(hooks, options) {
   }
 }
 
-// An agent can run git in the workspace. Never record, squash onto or land a
-// branch other than the run's own: a switched or detached HEAD fails the run.
-async function currentBranch(ws) {
-  const r = await git(ws.dir, ['symbolic-ref', '-q', '--short', 'HEAD']);
-  return r.code === 0 ? r.stdout.trim() : null;
-}
-
-async function assertOnBranch(ws) {
-  const cur = await currentBranch(ws);
-  if (cur !== ws.branch) {
-    throw new Error(`the workspace is no longer on its branch ${ws.branch} (found ${cur ?? 'a detached HEAD'}); nothing was landed`);
-  }
-}
-
 // The workspace must sit exactly at `sha` with a clean tree; anything else
 // (a test command or agent that committed or left files) is reset away.
 async function holdAt(ws, log, sha, eventName) {
@@ -155,7 +141,7 @@ async function drive(ctx) {
         const c = await runChunk(ctx, chunk, i);
         if (c.status === 'failed') return finish('failed', { reason: c.reason });
         if (c.status !== 'done') return finish('stopped', { reason: c.reason });
-        await assertOnBranch(ws);
+        await ws.assertOnBranch();
         if (c.note) state.notes.push(c.note);
         state.chunkShas.push(await ws.head());
         state.chunkIndex = i + 1;
@@ -181,7 +167,7 @@ async function drive(ctx) {
 
     // Final whole-branch review, then the user's gate. What the user approves is
     // exactly approvedSha: diffs are commit-to-commit, and land ships that sha.
-    await assertOnBranch(ws);
+    await ws.assertOnBranch();
     log.event('phase', { name: 'final' });
     await holdAt(ws, log, approvedSha, 'final-reset');
     const diff = await ws.diffRange(ws.baseSha, approvedSha);
@@ -201,7 +187,7 @@ async function drive(ctx) {
     // The test command and the reviewer ran after the diff was taken: re-check.
     const tampered = ws.restoreConfigIfTampered();
     if (tampered) log.event('config-tampered', { participant: null, role: null, ...tampered });
-    await assertOnBranch(ws);
+    await ws.assertOnBranch();
     await holdAt(ws, log, approvedSha, 'final-drift');
 
     state.landing = { sha: approvedSha };

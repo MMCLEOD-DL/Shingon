@@ -246,31 +246,35 @@ test('a plan-phase failure gives the user a plain reason, details stay in the tr
   assert.match(transcript, /ECONNRESET/);
 });
 
-test('an agent switching the workspace branch fails the run instead of landing the wrong branch', async () => {
+test('an agent switching the workspace branch has that attempt discarded; its branch is never recorded or landed', async () => {
   const repo = await makeRepo();
-  const before = await refsOf(repo);
+  const events = [];
   const local = async (role, task, c, opts) => {
-    await git(opts.cwd, ['checkout', '-q', '-b', 'sneaky']);
+    await git(opts.cwd, ['checkout', '-q', '-B', 'sneaky']);
     writeFileSync(path.join(opts.cwd, `step${stepOf(task)}.txt`), 'x\n');
+    await git(opts.cwd, ['add', '-A']);
+    await git(opts.cwd, ['commit', '-q', '-m', 'sneaky work']);
     return { text: 'ok' };
   };
-  const out = await runTask({ repoDir: repo, request: 'x', team: makeTeam({ local }), hooks: hooks(), baseDir: base() });
-  assert.equal(out.status, 'failed');
-  assert.match(out.reason, /branch/);
-  assert.equal(await refsOf(repo), before);
+  const out = await runTask({ repoDir: repo, request: 'x', team: makeTeam({ local }), hooks: hooks({ onEvent: (e) => events.push(e) }), baseDir: base() });
+  assert.equal(out.status, 'landed');
+  assert.equal(out.branch, 'conductor/x');
+  assert.ok(events.some((e) => e.type === 'branch-switched' && e.found === 'sneaky'));
+  assert.equal((await git(repo, ['rev-parse', '--verify', '--quiet', 'sneaky'])).code, 1);
+  // The fake fallback author edits nothing, so nothing the switching agent wrote was shipped.
+  assert.equal((await git(repo, ['diff', '--name-only', 'main', out.branch])).stdout.trim(), '');
 });
 
-test('a detached workspace HEAD is refused before landing', async () => {
+test('a detached workspace HEAD is put back on the run branch; the detached attempt is not landed', async () => {
   const repo = await makeRepo();
-  const before = await refsOf(repo);
   const local = async (role, task, c, opts) => {
     writeFileSync(path.join(opts.cwd, `step${stepOf(task)}.txt`), 'x\n');
     if (stepOf(task) === 2) await git(opts.cwd, ['checkout', '-q', '--detach']);
     return { text: 'ok' };
   };
   const out = await runTask({ repoDir: repo, request: 'x', team: makeTeam({ local }), hooks: hooks(), baseDir: base() });
-  assert.equal(out.status, 'failed');
-  assert.equal(await refsOf(repo), before);
+  assert.equal(out.status, 'landed');
+  assert.deepEqual((await git(repo, ['diff', '--name-only', 'main', out.branch])).stdout.trim().split('\n'), ['step1.txt']);
 });
 
 // ---- Final-review fixes: I1 (approved == landed) and I2 (agent-writable .git) ----
