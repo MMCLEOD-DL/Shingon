@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, appendFileSync, chmodSync, rmSync, symlinkSync, lstatSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, appendFileSync, chmodSync, rmSync, symlinkSync, lstatSync, readdirSync, utimesSync, renameSync } from 'node:fs';
 import { runCommand } from '../src/exec.js';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { Workspace, git, slugify, defaultBaseDir } from '../src/workspace.js';
+import { Workspace, git, slugify, defaultBaseDir, isUnderTmp } from '../src/workspace.js';
 import { makeRepo, refsOf } from './helpers/gitRepo.js';
 
 const base = () => mkdtempSync(path.join(tmpdir(), 'wsbase-'));
@@ -18,7 +19,14 @@ test('slugify', () => {
 test('create clones HEAD onto a conductor branch with no remotes, real repo untouched', async () => {
   const repo = await makeRepo();
   const before = await refsOf(repo);
+  // N1: a stale stat makes a plain `git status` refresh (rewrite) the index; Conductor's reads must not.
+  const future = new Date(Date.now() + 60_000);
+  utimesSync(path.join(repo, 'README.md'), future, future);
+  const indexHash = () => createHash('sha256').update(readFileSync(path.join(repo, '.git', 'index'))).digest('hex');
+  const indexBefore = indexHash();
   const ws = await Workspace.create({ repoDir: repo, baseDir: base(), taskId: 'Add CSV' });
+  assert.equal(indexHash(), indexBefore, 'the real repo index was rewritten');
+  assert.ok(!existsSync(path.join(repo, '.git', 'index.lock')));
   assert.equal(ws.branch, 'conductor/add-csv');
   assert.equal(readFileSync(path.join(ws.dir, 'README.md'), 'utf8'), 'hello\n');
   assert.equal((await git(ws.dir, ['remote'])).stdout.trim(), '');
@@ -359,4 +367,40 @@ test('create records the source branch and whether uncommitted work was left out
   assert.equal(dirty.source.dirty, true);
   assert.ok(!existsSync(path.join(dirty.dir, 'wip.txt')));
   assert.deepEqual((await Workspace.open(dirty.dir)).source, dirty.source);
+});
+
+// ---- Re-review follow-up: N3, N4, N5 ----
+
+test('restoreConfigIfTampered handles .git/config replaced by a directory (N5)', async () => {
+  const ws = await Workspace.create({ repoDir: await makeRepo(), baseDir: base(), taskId: 't' });
+  const cfg = path.join(ws.dir, '.git', 'config');
+  const pristine = readFileSync(cfg, 'utf8');
+  rmSync(cfg);
+  mkdirSync(path.join(cfg, 'nested'), { recursive: true });
+  const t = ws.restoreConfigIfTampered();
+  assert.equal(t.found, 'not a regular file');
+  assert.equal(readFileSync(cfg, 'utf8'), pristine);
+});
+
+test('guardGitDir removes a planted commondir / config.worktree; a gitfile is unrepairable and poisons the workspace (N3)', async () => {
+  const ws = await Workspace.create({ repoDir: await makeRepo(), baseDir: base(), taskId: 't' });
+  assert.deepEqual(await ws.guardGitDir(), { gitdir: null, config: null });
+  writeFileSync(path.join(ws.dir, '.git', 'config.worktree'), '[filter "x"]\n\tclean = false\n');
+  const r = (await ws.guardGitDir()).gitdir;
+  assert.deepEqual(r.problems, ['.git/config.worktree was planted']);
+  assert.ok(!existsSync(path.join(ws.dir, '.git', 'config.worktree')));
+
+  const ws2 = await Workspace.create({ repoDir: await makeRepo(), baseDir: base(), taskId: 't' });
+  const moved = path.join(mkdtempSync(path.join(tmpdir(), 'moved-')), 'gitdir');
+  renameSync(path.join(ws2.dir, '.git'), moved);
+  writeFileSync(path.join(ws2.dir, '.git'), `gitdir: ${moved}\n`);
+  await assert.rejects(ws2.guardGitDir(), /no longer a real directory/);
+  await assert.rejects(ws2.head(), /tampered workspace/); // no git runs there any more
+  Workspace.unpoison(ws2.dir);
+});
+
+test('isUnderTmp spots a baseDir under the temp dir (N4)', () => {
+  assert.equal(isUnderTmp(base()), true);
+  assert.equal(isUnderTmp('/tmp'), true);
+  assert.equal(isUnderTmp('/var/lib/conductor-not-tmp'), false);
 });

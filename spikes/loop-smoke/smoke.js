@@ -2,7 +2,7 @@
 // spikes/loop-smoke/smoke.js — operator-run end-to-end smoke of the Plan 2 loop against real CLIs.
 // Usage: node spikes/loop-smoke/smoke.js <config.json>
 import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import path from 'node:path';
 import { loadConfig } from '../../src/config.js';
 import { runTask } from '../../src/conductor.js';
@@ -43,8 +43,9 @@ const out = await runTask({
   repoDir: repo,
   request: 'Add a multiply(a, b) function to math.js and a test for it in test.js.',
   team,
-  // Throwaway workspaces, kept for inspection (not the operator's ~/.conductor state dir).
-  baseDir: mkdtempSync(path.join(tmpdir(), 'smoke-ws-')),
+  // Not under /tmp (N4): Codex workspace-write can write there, which would expose <ws>.conductor/.
+  // Kept for inspection, apart from real runs' ~/.conductor/workspaces. The throwaway repo stays in tmp.
+  baseDir: path.join(homedir(), '.conductor', 'smoke-workspaces'),
   options: { testCommand: 'node test.js', maxChunks: 3, agentTimeoutMs: 900000, keepWorkspace: true },
   hooks: {
     onEvent: (e) => {

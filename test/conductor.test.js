@@ -563,3 +563,11 @@ test('resume from the final phase goes straight back to the gate (T9-M6)', async
   assert.equal(h.calls.filter((c) => c.name === 'approveResult').length, 1);
   assert.deepEqual((await git(repo, ['diff', '--name-only', 'main', again.branch])).stdout.trim().split('\n').sort(), ['step1.txt', 'step2.txt']);
 });
+
+test('a baseDir under the temp dir is flagged: basedir-warning event and a summary line (N4)', async () => {
+  const events = [];
+  const h = hooks({ onEvent: (e) => events.push(e) });
+  await runTask({ repoDir: await makeRepo(), request: 'x', team: makeTeam(), hooks: h, baseDir: base() });
+  assert.ok(events.some((e) => e.type === 'basedir-warning'));
+  assert.match(h.calls.find((c) => c.name === 'approveResult').arg.summary, /Warning: the workspace is under the temporary directory/);
+});

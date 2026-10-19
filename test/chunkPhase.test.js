@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { writeFileSync, existsSync, mkdirSync, mkdtempSync, cpSync, appendFileSync, renameSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { Workspace } from '../src/workspace.js';
 import path from 'node:path';
 import { runChunk, chunkRoles } from '../src/chunkPhase.js';
 import { git } from '../src/workspace.js';
@@ -435,4 +437,77 @@ test('an agent that switches branches gets that attempt discarded and the next o
   assert.equal(await ctx.ws.currentBranch(), ctx.ws.branch);
   assert.deepEqual((await git(ctx.ws.dir, ['show', '--name-only', '--format=', 'HEAD'])).stdout.trim().split('\n'), ['try1.txt']);
   assert.equal(await commitsSince(ctx.ws, base), '1');
+});
+
+// ---- Re-review follow-up: N3, N5 ----
+
+const plantFilter = (marker) => {
+  const d = mkdtempSync(path.join(tmpdir(), 'pwn-'));
+  const hook = path.join(d, 'clean.sh');
+  writeFileSync(hook, `#!/bin/sh\ntouch '${marker}'\ncat\n`, { mode: 0o755 });
+  return { d, config: `[filter "pwn"]\n\tclean = ${hook}\n\trequired = true\n` };
+};
+
+test('a planted .git/commondir with a filter.clean never fires; the round is discarded and the next recovers (N3)', async () => {
+  const marker = path.join(mkdtempSync(path.join(tmpdir(), 'mk-')), 'filter-ran');
+  const events = [];
+  const local = (role, task, c, opts, n) => {
+    if (n === 0) {
+      const { d, config } = plantFilter(marker);
+      const common = path.join(d, 'common');
+      cpSync(path.join(opts.cwd, '.git'), common, { recursive: true });
+      appendFileSync(path.join(common, 'config'), config);
+      writeFileSync(path.join(opts.cwd, '.gitattributes'), '* filter=pwn\n');
+      writeFileSync(path.join(opts.cwd, '.git', 'commondir'), `${common}\n`);
+    }
+    writeFileSync(path.join(opts.cwd, `try${n}.txt`), 'x');
+    return { text: 'ok' };
+  };
+  const t = team({ local });
+  const ctx = await ctxFor(t, {}, { onEvent: (e) => events.push(e) });
+  const base = await ctx.ws.head();
+  const r = await runChunk(ctx, PLAN.chunks[0], 0);
+  assert.equal(r.status, 'done');
+  assert.ok(!existsSync(marker), 'the planted filter ran');
+  assert.ok(events.some((e) => e.type === 'gitdir-tampered' && e.repaired === true));
+  assert.ok(!existsSync(path.join(ctx.ws.dir, '.git', 'commondir')));
+  assert.match(t.local.calls[1].task, /tampered with the workspace git directory/);
+  assert.equal(t.reviewer.calls.filter((c) => /Review chunk/.test(c.task)).length, 1); // round 1 never reviewed
+  assert.deepEqual((await git(ctx.ws.dir, ['show', '--name-only', '--format=', 'HEAD'])).stdout.trim().split('\n'), ['try1.txt']);
+  assert.equal(await commitsSince(ctx.ws, base), '1');
+});
+
+test('a .git replaced by a gitfile is unrepairable: the chunk fails and the planted filter never fires (N3)', async () => {
+  const marker = path.join(mkdtempSync(path.join(tmpdir(), 'mk-')), 'filter-ran');
+  const events = [];
+  const local = (role, task, c, opts) => {
+    const { d, config } = plantFilter(marker);
+    const moved = path.join(d, 'gitdir');
+    renameSync(path.join(opts.cwd, '.git'), moved);
+    appendFileSync(path.join(moved, 'config'), config);
+    writeFileSync(path.join(opts.cwd, '.git'), `gitdir: ${moved}\n`);
+    writeFileSync(path.join(opts.cwd, '.gitattributes'), '* filter=pwn\n');
+    writeFileSync(path.join(opts.cwd, 'a.txt'), 'x');
+    return { text: 'ok' };
+  };
+  const ctx = await ctxFor(team({ local }), {}, { onEvent: (e) => events.push(e) });
+  await assert.rejects(runChunk(ctx, PLAN.chunks[0], 0), /git directory was tampered with/);
+  assert.ok(!existsSync(marker), 'the planted filter ran');
+  assert.ok(events.some((e) => e.type === 'gitdir-tampered' && e.repaired === false));
+  Workspace.unpoison(ctx.ws.dir);
+});
+
+test('.git/config replaced by a directory is restored, not a crash (N5)', async () => {
+  const events = [];
+  const local = (role, task, c, opts) => {
+    const cfg = path.join(opts.cwd, '.git', 'config');
+    rmSync(cfg);
+    mkdirSync(cfg);
+    writeFileSync(path.join(opts.cwd, 'a.txt'), 'x');
+    return { text: 'ok' };
+  };
+  const ctx = await ctxFor(team({ local }), {}, { onEvent: (e) => events.push(e) });
+  const r = await runChunk(ctx, PLAN.chunks[0], 0);
+  assert.equal(r.status, 'done');
+  assert.ok(events.some((e) => e.type === 'config-tampered' && e.found === 'not a regular file'));
 });

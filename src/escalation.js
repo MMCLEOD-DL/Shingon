@@ -43,7 +43,7 @@ export function buildEscalation({ kind, title, reason, recommendation, situation
   return { kind, title, message, options: ['approve', 'reject'] };
 }
 
-export function buildSummary({ request, plan, notes = [], files = [], tests = null, source = null }) {
+export function buildSummary({ request, plan, notes = [], files = [], tests = null, source = null, warnings = [] }) {
   const steps = (plan?.chunks ?? []).map((c, i) => `  ${i + 1}. ${c.title}`);
   const shown = files.slice(0, 30).join(', ');
   const more = files.length > 30 ? ` + ${files.length - 30} more` : '';
@@ -60,6 +60,7 @@ export function buildSummary({ request, plan, notes = [], files = [], tests = nu
     const where = source.branch ? `on branch ${source.branch}` : 'on a detached HEAD';
     lines.push(`Started from commit ${source.sha.slice(0, 7)} ${where}${source.dirty ? '; your uncommitted changes were not included.' : '.'}`);
   }
+  lines.push(...warnings);
   if (notes.length) lines.push('Notes:', ...notes.map((n) => `  - ${plainReason(n)}`));
   return lines.join('\n');
 }

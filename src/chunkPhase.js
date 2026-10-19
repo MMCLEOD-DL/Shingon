@@ -54,6 +54,11 @@ async function runChunkFrom(ctx, chunk, index, base, reset) {
         await reset(snap ?? base);
         return { error: `${who.name} switched the workspace off its branch; that attempt was discarded` };
       }
+      if (r.gitdirTampered) {
+        // Redirect files were removed; reset whatever the agent left to the round base (N3).
+        await reset(snap ?? base);
+        return { error: r.error };
+      }
       if (!r.ok) return { error: `${who.name} failed: ${r.error}` };
       // Nothing an agent leaves behind may crash the run: a workspace we cannot
       // inspect is a blocked round, and the bad state is reset away before the next.

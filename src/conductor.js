@@ -1,7 +1,7 @@
 // src/conductor.js
 import path from 'node:path';
 import { mkdirSync, copyFileSync, existsSync, constants as fsConstants } from 'node:fs';
-import { Workspace } from './workspace.js';
+import { Workspace, isUnderTmp } from './workspace.js';
 import { RunLog, callAgent } from './runlog.js';
 import { DEFAULT_OPTIONS } from './options.js';
 import { runPlanPhase } from './planPhase.js';
@@ -9,13 +9,16 @@ import { runChunk } from './chunkPhase.js';
 import { verdictOf } from './review.js';
 import * as prompts from './prompts.js';
 import { buildSummary, plainReason } from './escalation.js';
-import { redact } from './secrets.js';
+import { redact, REDACTED } from './secrets.js';
 
 export { DEFAULT_OPTIONS };
 
 const FINISHED = new Set(['landed', 'rejected', 'stopped']);
 const SUFFIXES = ['', '-2', '-3', '-4', '-5', '-6', '-7', '-8', '-9'];
 const RESUMABLE_PHASES = new Set(['plan', 'chunks', 'final']);
+const TMP_BASEDIR_WARNING = 'Warning: the workspace is under the temporary directory, where AI agents can also write; ' +
+  'use the default location (~/.conductor/workspaces) for real work.';
+const CREDENTIAL_WARNING = 'Warning: this change contains something that looks like a credential (shown as [redacted]); check it before approving.';
 const INTERNAL_PROBLEM = 'Conductor hit an internal problem and stopped. Your repository was not changed. ' +
   'Details are in the run transcript; you can resume.';
 
@@ -83,13 +86,17 @@ export async function runTask({ repoDir, request, team, hooks, options = {}, bas
     log = new RunLog(ws.metaDir, { onEvent: hooks.onEvent });
     state = {
       version: 1, taskId: ws.branch, request, repoDir: path.resolve(repoDir), options: opts, source: ws.source,
-      phase: 'plan', plan: null, chunkIndex: 0, chunkShas: [], notes: [], status: 'running',
+      phase: 'plan', plan: null, chunkIndex: 0, chunkShas: [], notes: [], warnings: [], status: 'running',
     };
+    if (isUnderTmp(path.dirname(ws.dir))) state.warnings.push(TMP_BASEDIR_WARNING); // N4
     log.saveState(state);
   } catch (e) {
     return redact({ status: 'failed', workspaceDir: ws.dir, reason: `Conductor could not write its run state, so it did not start: ${message(e)}` });
   }
   log.event('start', { request, workspace: ws.dir, branch: ws.branch });
+  if (state.warnings.includes(TMP_BASEDIR_WARNING)) {
+    log.event('basedir-warning', { baseDir: path.dirname(ws.dir), detail: 'baseDir is under the temp dir, inside Codex workspace-write\'s default writable roots' });
+  }
   if (ws.source?.dirty) {
     log.event('warning', { kind: 'uncommitted-changes', detail: 'the repository has uncommitted or untracked changes; the run starts from the last commit without them' });
   }
@@ -129,6 +136,7 @@ export async function resume({ workspaceDir, repoDir, team, hooks, options = {} 
   let log;
   let state;
   try {
+    Workspace.unpoison(workspaceDir);
     ws = await Workspace.open(workspaceDir);
     log = new RunLog(ws.metaDir, { onEvent: hooks?.onEvent });
     state = log.loadState();
@@ -145,7 +153,8 @@ export async function resume({ workspaceDir, repoDir, team, hooks, options = {} 
   validateHooks(hooks, opts);
 
   try {
-    const tampered = ws.restoreConfigIfTampered();
+    const { gitdir, config: tampered } = await ws.guardGitDir(); // throws (and poisons) if unrepairable
+    if (gitdir) log.event('gitdir-tampered', { participant: null, role: null, ...gitdir });
     if (tampered) log.event('config-tampered', { participant: null, role: null, ...tampered });
     ws = new Workspace(ws.dir, state.taskId, ws.baseSha);
     const problem = await stateProblem(state, ws);
@@ -273,7 +282,9 @@ async function drive(ctx) {
     const finalReview = verdictOf(r);
     const notes = [...state.notes];
     if (finalReview.decision === 'BLOCK') notes.push(`Final review concern: ${plainReason(finalReview.reason)}`);
-    const summary = buildSummary({ request: state.request, plan: state.plan, notes, files, tests, source: state.source });
+    const warnings = [...(state.warnings ?? [])];
+    if (redact(diff).includes(REDACTED)) warnings.push(CREDENTIAL_WARNING); // N2: redaction hides it; the file still lands
+    const summary = buildSummary({ request: state.request, plan: state.plan, notes, files, tests, source: state.source, warnings });
 
     // The hook never sees the raw IRREVERSIBLE marker (m2).
     const shownReview = { ...finalReview, reason: plainReason(finalReview.reason), detail: plainReason(finalReview.detail) };

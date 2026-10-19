@@ -47,10 +47,10 @@ test('runCommand and runTests do not pass LOCALAI_API_KEY to children', async ()
   const r = await runCommand({ cmd: 'sh', args: ['-c', 'echo "[$LOCALAI_API_KEY]"'] });
   assert.equal(r.stdout.trim(), '[]');
   const ws = await Workspace.create({ repoDir: await makeRepo(), baseDir: tmp(), taskId: 't' });
-  const t = await ws.runTests('echo "local=[$LOCALAI_API_KEY] x=$X_API_KEY"');
+  const t = await ws.runTests('echo "local=[$LOCALAI_API_KEY] x=[$X_API_KEY]"', {});
   assert.match(t.output, /local=\[\]/);
+  assert.match(t.output, /x=\[\]/); // N2: every secret-named var is dropped from the test env
   assert.ok(!t.output.includes(X_KEY));
-  assert.ok(t.output.includes(REDACTED));
 });
 
 // A stub that reports the env var it sees in its final message.
@@ -105,4 +105,19 @@ test('a local envKey that is a frontier auth key is never scrubbed (frontier CLI
   new LocalAgentAdapter({ model: 'm', envKey: 'OPENAI_API_KEY' });
   assert.ok(!SCRUB_ENV.includes('OPENAI_API_KEY'));
   assert.equal(childEnv().OPENAI_API_KEY, 'sk-test-openai-0123456789');
+});
+
+test('the test command gets no secret-named vars; frontier CLIs keep their keys (N2)', async () => {
+  process.env.GH_TOKEN = 'ghp_test0123456789';
+  const ws = await Workspace.create({ repoDir: await makeRepo(), baseDir: tmp(), taskId: 't' });
+  await ws.runTests('printf "%s" "$ANTHROPIC_API_KEY" > leaked.txt; printf "%s" "$GH_TOKEN" >> leaked.txt', {});
+  const { readFileSync: rf } = await import('node:fs');
+  const leaked = rf(path.join(ws.dir, 'leaked.txt'), 'utf8');
+  assert.ok(!leaked.includes('sk-test-anthropic-0123456789'));
+  assert.equal(leaked, '');
+  assert.equal(childEnv().ANTHROPIC_API_KEY, 'sk-test-anthropic-0123456789');
+  const { strictChildEnv } = await import('../src/secrets.js');
+  assert.equal(strictChildEnv().ANTHROPIC_API_KEY, undefined);
+  assert.equal(strictChildEnv().LOCALAI_API_KEY, undefined);
+  assert.ok(strictChildEnv().PATH);
 });

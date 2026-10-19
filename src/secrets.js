@@ -26,6 +26,14 @@ export function childEnv({ allow = [], env = process.env } = {}) {
   return out;
 }
 
+// For children that need no credentials at all (the test command, N2): also drops
+// every secret-looking name. The frontier CLIs keep using childEnv().
+export function strictChildEnv({ env = process.env } = {}) {
+  const out = childEnv({ env });
+  for (const k of Object.keys(out)) if (SECRET_NAME.test(k)) delete out[k];
+  return out;
+}
+
 export function secretValues(env = process.env) {
   const values = new Set();
   for (const [k, v] of Object.entries(env)) {

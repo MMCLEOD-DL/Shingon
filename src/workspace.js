@@ -1,11 +1,11 @@
 // src/workspace.js
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, copyFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, copyFileSync, lstatSync, realpathSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { runCommand } from './exec.js';
 import { clip } from './text.js';
-import { childEnv, redact } from './secrets.js';
+import { childEnv, strictChildEnv, redact } from './secrets.js';
 
 // Fixed identity, no signing, no repo hooks: Conductor's own git calls must
 // never depend on (or trigger) anything in the user's git setup. Agents can write
@@ -22,11 +22,27 @@ const GIT_FLAGS = [
 const DIFF = ['diff', '--no-ext-diff', '--no-textconv'];
 const ZERO_SHA = '0'.repeat(40);
 
+// Workspaces whose git directory was tampered with beyond repair (N3): Conductor
+// never runs git in them again, so a planted filter or hook can never fire.
+const POISONED = new Map();
+
 export function git(cwd, args, { timeoutMs = 60000, env = {} } = {}) {
+  const why = POISONED.get(path.resolve(cwd ?? '.'));
+  if (why) return Promise.resolve({ stdout: '', stderr: `refusing to run git in a tampered workspace: ${why}`, code: -1, timedOut: false });
   return runCommand({
     cmd: 'git', args: [...GIT_FLAGS, ...args], cwd, timeoutMs,
-    env: { ...childEnv(), GIT_TERMINAL_PROMPT: '0', ...env },
+    // GIT_OPTIONAL_LOCKS=0: reads (status...) never refresh or lock an index, in
+    // particular the real repo's (N1: only land() may write there).
+    env: { ...childEnv(), GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', ...env },
   });
+}
+
+// N4: a baseDir under the temp dir is inside Codex workspace-write's default
+// writable roots, so the agent could reach <ws>.conductor/.
+export function isUnderTmp(dir) {
+  const real = (p) => { try { return realpathSync(p); } catch { return path.resolve(p); } };
+  const d = real(dir);
+  return [tmpdir(), '/tmp'].map(real).some((t) => d === t || d.startsWith(t + path.sep));
 }
 
 async function gitOk(cwd, args, opts) {
@@ -86,7 +102,7 @@ export class Workspace {
       const baseSha = (await gitOk(dir, ['rev-parse', 'HEAD'])).trim();
       const ws = new Workspace(dir, branch, baseSha);
       // The clone is of committed HEAD: record what was left behind (m5).
-      const st = await git(repoDir, ['status', '--porcelain']);
+      const st = await git(repoDir, ['--no-optional-locks', 'status', '--porcelain']);
       const src = await git(repoDir, ['symbolic-ref', '-q', '--short', 'HEAD']);
       ws.source = { sha: baseSha, branch: src.code === 0 ? src.stdout.trim() : null, dirty: st.code === 0 && st.stdout.trim() !== '' };
       mkdirSync(ws.metaDir, { recursive: true });
@@ -102,6 +118,9 @@ export class Workspace {
       throw e;
     }
   }
+
+  // resume is a deliberate re-entry: forget an in-process poison mark, then re-check (guardGitDir).
+  static unpoison(dir) { POISONED.delete(path.resolve(dir)); }
 
   static async open(dir) {
     const meta = metaDirOf(dir);
@@ -156,11 +175,49 @@ export class Workspace {
   restoreConfigIfTampered() {
     const sealed = readFileSync(this.#sealedConfigPath);
     let current = null;
-    try { current = readFileSync(this.#configPath); } catch {}
-    if (current && sha256(current) === sha256(sealed)) return null;
-    rmSync(this.#configPath, { force: true }); // never write through a planted symlink
+    let found = 'missing';
+    try {
+      const st = lstatSync(this.#configPath);
+      if (st.isFile()) { current = readFileSync(this.#configPath); found = sha256(current); } else found = 'not a regular file';
+    } catch {}
+    if (current && found === sha256(sealed)) return null;
+    // recursive: an agent may have replaced the file with a directory (N5); rm never follows a symlink.
+    rmSync(this.#configPath, { recursive: true, force: true });
     writeFileSync(this.#configPath, sealed);
-    return { expected: sha256(sealed), found: current ? sha256(current) : 'missing' };
+    return { expected: sha256(sealed), found };
+  }
+
+  // N3: after every agent call, the git dir must still be this workspace's own:
+  // a real <ws>/.git directory, no commondir / config.worktree redirect, and
+  // git-common-dir resolving to it. Planted redirect files are removed and the
+  // sealed config restored (it must be readable for git to run at all); returns
+  // { gitdir: null | { problems, repaired }, config: null | restoreConfigIfTampered() }.
+  // Unrepairable: the workspace is poisoned (no git runs in it again) and this throws.
+  async guardGitDir() {
+    const gitDir = path.join(this.dir, '.git');
+    const problems = [];
+    let st = null;
+    try { st = lstatSync(gitDir); } catch {}
+    if (!st || !st.isDirectory()) {
+      const why = `${gitDir} is no longer a real directory`;
+      POISONED.set(this.dir, why);
+      throw new Error(`the workspace git directory was tampered with: ${why}`);
+    }
+    for (const f of ['commondir', 'config.worktree']) {
+      const p = path.join(gitDir, f);
+      let exists = false;
+      try { lstatSync(p); exists = true; } catch {}
+      if (exists) { problems.push(`.git/${f} was planted`); rmSync(p, { recursive: true, force: true }); }
+    }
+    const config = this.restoreConfigIfTampered();
+    const r = await git(this.dir, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+    const real = (p) => { try { return realpathSync(p); } catch { return p; } };
+    if (r.code !== 0 || real(r.stdout.trim()) !== real(gitDir)) {
+      const why = `git-common-dir is ${r.code === 0 ? r.stdout.trim() : 'unreadable'}, not ${gitDir}`;
+      POISONED.set(this.dir, why);
+      throw new Error(`the workspace git directory was tampered with: ${why}`);
+    }
+    return { gitdir: problems.length ? { problems, repaired: true } : null, config };
   }
 
   // Resume must land into the repo the run was created from, and nowhere else.
@@ -273,7 +330,8 @@ export class Workspace {
 
   async runTests(command, { timeoutMs = 600000 } = {}) {
     if (!command) return { ran: false, passed: null, code: null, output: '' };
-    const r = await runCommand({ cmd: 'sh', args: ['-c', command], cwd: this.dir, timeoutMs, env: childEnv() });
+    // Strict env (N2): the test command runs agent-authored code and needs no credentials.
+    const r = await runCommand({ cmd: 'sh', args: ['-c', command], cwd: this.dir, timeoutMs, env: strictChildEnv() });
     return {
       ran: true,
       passed: r.code === 0 && !r.timedOut,

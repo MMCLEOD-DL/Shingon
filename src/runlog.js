@@ -82,9 +82,25 @@ export async function callRole(log, participant, role, task, context = '', opts 
 // Every agent call the loop makes. An agent may have written the workspace's
 // .git/config (core.fsmonitor, diff drivers, filters...) so that Conductor's next
 // own git call runs its commands: restore the sealed config before anything else runs.
+// The git dir itself is checked first (N3): a gitfile or commondir redirect would
+// make even the config restore, and every later git call, act on another repo.
+// A repaired git-dir tamper turns the call into ok:false with `gitdirTampered`,
+// so it counts as a failed attempt / BLOCK; an unrepairable one throws.
 export async function callAgent(ctx, participant, role, task, opts = {}) {
-  const result = await callRole(ctx.log, participant, role, task, '', opts);
-  const tampered = ctx.ws.restoreConfigIfTampered();
+  let result = await callRole(ctx.log, participant, role, task, '', opts);
+  let gitdir;
+  let tampered;
+  try {
+    ({ gitdir, config: tampered } = await ctx.ws.guardGitDir());
+  } catch (e) {
+    ctx.log.event('gitdir-tampered', { participant: participant.name, role, repaired: false, detail: String(e?.message ?? e) });
+    throw e;
+  }
   if (tampered) ctx.log.event('config-tampered', { participant: participant.name, role, ...tampered });
+  if (gitdir) {
+    ctx.log.event('gitdir-tampered', { participant: participant.name, role, ...gitdir });
+    result = makeResult({ ok: false, error: `${participant.name} tampered with the workspace git directory (${gitdir.problems.join('; ')}); that attempt was discarded` });
+    result.gitdirTampered = true;
+  }
   return result;
 }

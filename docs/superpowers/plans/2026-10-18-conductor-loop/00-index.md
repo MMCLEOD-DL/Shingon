@@ -75,6 +75,8 @@ participant.run(role, task, context = '', opts = {})
 
 // Task 2
 clip(text, max = 8000) -> string
+isUnderTmp(dir) -> boolean   // N4: runTask logs basedir-warning + summary line
+git(cwd, args) always sets GIT_OPTIONAL_LOCKS=0 (N1); refuses to run in a poisoned workspace
 defaultBaseDir(env) -> $XDG_STATE_HOME/conductor/workspaces | ~/.conductor/workspaces   // Workspace.create's default baseDir
 class Workspace {
   static async create({ repoDir, baseDir, taskId }) -> Workspace
@@ -93,7 +95,9 @@ class Workspace {
   async diffRange(fromSha, toSha) -> string     // commit-to-commit (--no-ext-diff --no-textconv)
   async filesRange(fromSha, toSha) -> string[]
   async isClean() -> boolean
-  restoreConfigIfTampered() -> null | { expected, found }   // restores the sealed .git/config
+  restoreConfigIfTampered() -> null | { expected, found }   // restores the sealed .git/config (also when replaced by a directory)
+  async guardGitDir() -> { gitdir: null | { problems, repaired }, config }   // N3: real .git dir, no commondir/config.worktree, git-common-dir == <ws>/.git; throws + poisons if unrepairable
+  static unpoison(dir)
   async checkRepo(repoDir) -> null | problem
   static async findBranchAt(repoDir, names, sha) -> name | null
   async squashSince(baseSha, message) -> sha | null
@@ -118,13 +122,13 @@ reviewLoop({ produce, review, maxRounds }) -> { status: 'approved' | 'exhausted'
 settleDeadlock({ reason, tests, produced, evidence }) -> { action: 'accept' | 'escalate', situation, note, recommendation }
 // situation: 'unproduced' | 'unreviewed' | 'tests-failing' | 'irreversible' | 'disagree'
 buildEscalation({ kind, title, reason, recommendation, situation }) -> { kind, title, message, options }
-buildSummary({ request, plan, notes, files, tests, source }) -> string   // source adds "Started from commit … on branch …"
+buildSummary({ request, plan, notes, files, tests, source, warnings }) -> string   // warnings: tmp baseDir (N4), credential in the diff (N2)   // source adds "Started from commit … on branch …"
 
 // Task 6
 DEFAULT_OPTIONS (src/options.js)   // + keepWorkspace: false
 class RunLog { constructor(metaDir, { onEvent }); event(type, data); saveState(state); loadState() -> state | null }   // metaDir = ws.metaDir
 callRole(log, participant, role, task, context, opts) -> Result   // never throws
-callAgent(ctx, participant, role, task, opts) -> Result         // callRole + restore a tampered .git/config (logs config-tampered)
+callAgent(ctx, participant, role, task, opts) -> Result         // callRole + guardGitDir (gitdir-tampered -> ok:false, gitdirTampered) + config restore (config-tampered)
 // state = { version: 1, taskId, request, repoDir, phase: 'plan'|'chunks'|'final'|'done', plan, chunkIndex, chunkShas, notes, status, source, landing? }
 
 // Task 7
@@ -151,6 +155,7 @@ ctx = { request, team: { author, reviewer, local }, hooks, options, ws, log, sta
 
 // Final-review fixes (C1): src/secrets.js
 SCRUB_ENV; childEnv({ allow }) -> env      // parent env minus SCRUB_ENV keys; runCommand's default env
+strictChildEnv() -> env                     // also drops every KEY/TOKEN/SECRET/PASSWORD/CREDENTIAL name; used by runTests (N2)
 secretValues(env) -> string[]; redact(x) -> x   // deep-walk; applied to events, state, prompts (callRole), escalations, hook payloads, outcomes
 new LocalAgentAdapter({ ..., envKey = 'LOCALAI_API_KEY' })   // only the local Codex harness gets envKey
 ```
