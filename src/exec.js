@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
 import { childEnv } from './secrets.js';
 
+const LIVE = new Set(); // every running child, for Ctrl-C
+
 export function runCommand({ cmd, args = [], cwd, input = null, timeoutMs = 120000, env } = {}) {
   // Default: the parent env minus SCRUB_ENV keys (see secrets.js). Callers that need a key pass env explicitly.
   env = env ?? childEnv();
@@ -11,6 +13,7 @@ export function runCommand({ cmd, args = [], cwd, input = null, timeoutMs = 1200
     const finish = (code) => {
       if (settled) return;
       settled = true;
+      LIVE.delete(child);
       if (timer) clearTimeout(timer);
       if (grace) clearTimeout(grace);
       resolve({ stdout, stderr, code: code ?? -1, timedOut });
@@ -22,6 +25,7 @@ export function runCommand({ cmd, args = [], cwd, input = null, timeoutMs = 1200
       resolve({ stdout, stderr: String(err?.message ?? err), code: -1, timedOut });
       return;
     }
+    LIVE.add(child);
 
     timer = setTimeout(() => {
       timedOut = true;
@@ -45,4 +49,11 @@ export function runCommand({ cmd, args = [], cwd, input = null, timeoutMs = 1200
     if (input != null) child.stdin?.write(input);
     child.stdin?.end();
   });
+}
+
+// Ctrl-C (bin/conductor.js): end every agent we started, with its whole process group.
+export function killAllChildren(signal = 'SIGKILL') {
+  for (const child of LIVE) {
+    try { process.kill(-child.pid, signal); } catch { try { child.kill(signal); } catch {} }
+  }
 }

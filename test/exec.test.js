@@ -1,7 +1,7 @@
 // test/exec.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runCommand } from '../src/exec.js';
+import { runCommand, killAllChildren } from '../src/exec.js';
 
 const node = process.execPath;
 
@@ -59,4 +59,14 @@ test('null input does not hang a child that reads stdin to EOF', async () => {
   });
   assert.equal(r.code, 0);
   assert.equal(r.timedOut, false);
+});
+
+test('killAllChildren ends every live child; their runs resolve', async () => {
+  const p = runCommand({ cmd: 'node', args: ['-e', 'setInterval(() => {}, 1000)'], timeoutMs: 60000 });
+  await new Promise((r) => setTimeout(r, 200));
+  const t0 = Date.now();
+  killAllChildren();
+  const r = await p;
+  assert.notEqual(r.code, 0);
+  assert.ok(Date.now() - t0 < 5000);
 });

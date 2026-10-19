@@ -1,0 +1,157 @@
+// src/cli/main.js
+import path from 'node:path';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { parseCli, USAGE } from './args.js';
+import { findConfig } from './config.js';
+import { listRuns } from './runs.js';
+import { loadConfig } from '../config.js';
+import { buildTeam } from '../team.js';
+import { runTask, resume } from '../conductor.js';
+import { createTerminal } from '../ui/terminal.js';
+import { RunLog } from '../runlog.js';
+import { metaDirOf, defaultBaseDir } from '../workspace.js';
+import { runCommand, killAllChildren } from '../exec.js';
+import { REASON_TEXT } from '../router.js';
+import { redact } from '../secrets.js';
+
+export const EXIT = Object.freeze({ landed: 0, rejected: 1, stopped: 1, failed: 2, paused: 3, usage: 64, interrupted: 130 });
+const NOT_A_REPO = 'Run conductor inside a git repository: the folder of the project you want changed.';
+const INTERRUPTED = 'Stopped. Your repository is unchanged. To continue later, run:  conductor resume';
+
+async function repoRoot(cwd) {
+  const r = await runCommand({ cmd: 'git', args: ['rev-parse', '--show-toplevel'], cwd, timeoutMs: 15000 });
+  return r.code === 0 ? r.stdout.trim() : null;
+}
+
+function version() {
+  const pkg = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'package.json');
+  return JSON.parse(readFileSync(pkg, 'utf8')).version;
+}
+
+function reportLines(report) {
+  return report.map((x) => `  ${x.ok ? '✓' : '✗'} ${x.name} (${x.kind})${x.ok ? '' : `: ${REASON_TEXT[x.reason] ?? x.reason}${x.detail ? ` (${x.detail})` : ''}`}`);
+}
+
+function outcomeText(out) {
+  const lines = [];
+  if (out.status === 'landed') {
+    lines.push(`Done. The result is on a new branch in your repository: ${out.branch}`,
+      `See what changed:  git log --stat ${out.branch}`, `Merge it when you are happy:  git merge ${out.branch}`);
+  } else if (out.status === 'rejected') {
+    lines.push(`Not approved. Your repository is unchanged.${out.note ? ' Your note was saved with the run log.' : ''}`);
+  } else {
+    lines.push(out.reason ?? `The run ended: ${out.status}.`);
+    if ((out.status === 'failed' || out.status === 'paused') && out.workspaceDir) lines.push('To continue from where it stopped, run:  conductor resume');
+  }
+  const log = out.transcript ?? (out.workspaceDir ? path.join(metaDirOf(out.workspaceDir), 'transcript.jsonl') : null);
+  if (log) lines.push(`Full log: ${log}`);
+  return lines.join('\n');
+}
+
+export async function main(argv, {
+  cwd = process.cwd(), env = process.env, stdin = process.stdin, stdout = process.stdout,
+  isTTY = Boolean(stdin.isTTY && stdout.isTTY),
+  onSignal = (handler) => process.once('SIGINT', handler), exit = (code) => process.exit(code),
+} = {}) {
+  const print = (s) => stdout.write(`${s}\n`);
+  const cli = parseCli(argv);
+  if (cli.error) { print(`${cli.error}\n\n${USAGE}`); return EXIT.usage; }
+  if (cli.command === 'help') { print(USAGE); return 0; }
+  if (cli.command === 'version') { print(version()); return 0; }
+
+  const repoDir = await repoRoot(cwd);
+  if (!repoDir) { print(NOT_A_REPO); return EXIT.usage; }
+  // One location for listing, resuming and new runs (the library default unless the env overrides it).
+  const baseDir = env.CONDUCTOR_BASE_DIR || defaultBaseDir(env);
+
+  if (cli.command === 'runs') {
+    const runs = listRuns({ baseDir, repoDir });
+    if (!runs.length) { print('No unfinished runs for this repository.'); return 0; }
+    for (const r of runs) print(`${r.status.padEnd(7)} ${r.done}/${r.total ?? '?'} steps  ${r.request}  (${r.workspaceDir})`);
+    return 0;
+  }
+
+  let config;
+  try {
+    config = loadConfig(findConfig({ flag: cli.flags.config, cwd, env }));
+  } catch (e) {
+    print(`Conductor could not read its config: ${e.message}`);
+    return EXIT.usage;
+  }
+
+  let workspaceDir = null;
+  let seed = null;
+  if (cli.command === 'resume') {
+    workspaceDir = cli.workspaceDir ? path.resolve(cwd, cli.workspaceDir) : listRuns({ baseDir, repoDir })[0]?.workspaceDir ?? null;
+    if (!workspaceDir) { print('There is no unfinished Conductor run for this repository.'); return 1; }
+    try {
+      const s = JSON.parse(readFileSync(path.join(metaDirOf(workspaceDir), 'state.json'), 'utf8'));
+      if (s.plan?.chunks) seed = { chunks: s.plan.chunks.map((c) => c.title), done: s.chunkShas?.length ?? 0 };
+    } catch {
+      // resume() itself explains an unusable state
+    }
+  }
+
+  const term = createTerminal({ input: stdin, output: stdout, isTTY, bell: cli.flags.bell });
+  if (seed) term.model.seed(seed);
+  term.say('Checking which AI models are available…');
+  let built;
+  try {
+    built = await buildTeam(config.participants, { routing: config.routing, env });
+  } catch (e) {
+    term.say(`Conductor could not check the AI models: ${redact(String(e?.message ?? e))}`);
+    term.close();
+    return EXIT.failed;
+  }
+  if (cli.command === 'doctor' || !built.ok) {
+    term.say(reportLines(built.report).join('\n'));
+    if (built.ok) {
+      term.say(`Author: ${built.team.author.name} · Reviewer: ${built.team.reviewer.name} · Local: ${built.team.local.name}`);
+      for (const w of built.warnings) term.say(`Note: ${w}`);
+    } else {
+      term.say(built.error);
+    }
+    term.close();
+    return built.ok ? 0 : EXIT.failed;
+  }
+  for (const w of built.warnings) term.say(`Note: ${w}`);
+
+  // Ctrl-C (Ruling 5): stop the agents, record it, leave the run resumable, exit 130.
+  onSignal(() => {
+    killAllChildren();
+    if (workspaceDir) {
+      try { new RunLog(metaDirOf(workspaceDir)).event('interrupted', {}); } catch {}
+    }
+    term.say(`\n${INTERRUPTED}`);
+    term.close();
+    exit(EXIT.interrupted);
+  });
+
+  const f = cli.flags;
+  const overrides = {
+    ...(f.testCommand ? { testCommand: f.testCommand } : {}),
+    ...(f.approvePlan ? { approvePlan: true } : {}),
+    ...(f.approveEachChunk ? { approveEachChunk: true } : {}),
+    ...(f.watchDiffs ? { watchDiffs: true } : {}),
+    ...(f.keepWorkspace ? { keepWorkspace: true } : {}),
+    allowSameVendor: built.allowSameVendor,
+  };
+  const hooks = {
+    onEvent: (e) => { if (e.type === 'start' && e.workspace) workspaceDir = e.workspace; term.onEvent(e); },
+    escalate: term.escalate, approveResult: term.approveResult, approveChunk: term.approveChunk, approvePlan: term.approvePlan,
+  };
+  let out;
+  try {
+    out = cli.command === 'resume'
+      ? await resume({ workspaceDir, repoDir, team: built.team, hooks, options: overrides, warnings: built.warnings })
+      : await runTask({ repoDir, request: cli.request, team: built.team, hooks, options: { ...config.options, ...overrides }, baseDir, warnings: built.warnings });
+  } catch (e) {
+    term.say(`Conductor could not start: ${e.message}`);
+    term.close();
+    return EXIT.usage;
+  }
+  term.say(`\n${outcomeText(out)}`);
+  term.close();
+  return EXIT[out.status] ?? EXIT.failed;
+}
