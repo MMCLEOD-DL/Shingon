@@ -33,7 +33,7 @@ export async function runPlanPhase(ctx) {
   // Settle on the last valid plan, judged by the last real review of a plan.
   const lastReview = [...loop.history].reverse().find((h) => !h.reason.startsWith(PRODUCE_FAILED));
   const reason = lastReview?.reason ?? loop.lastReason;
-  const settle = settleDeadlock({ reason });
+  const settle = settleDeadlock({ reason, evidence: 'tests do not apply to a plan' });
   log.event('deadlock', { phase: 'plan', action: settle.action, situation: settle.situation, note: settle.note });
   if (settle.action === 'accept') return { status: 'ok', plan: loop.lastGood.plan, note: `Plan: ${settle.note}` };
 

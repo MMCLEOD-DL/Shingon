@@ -113,3 +113,11 @@ test('a reviewer that throws every round escalates once and never auto-accepts',
   assert.equal(escs.length, 1);
   assert.match(escs[0].arg.message, /codex crashed/);
 });
+
+test('an accepted plan deadlock does not claim "no tests configured" (m3)', async () => {
+  const t = team({ author: planReply, reviewer: () => block('I would name it differently') });
+  const r = await runPlanPhase(await makeCtx({ team: t, options: { planRounds: 1, testCommand: 'npm test' } }));
+  assert.equal(r.status, 'ok');
+  assert.match(r.note, /tests do not apply to a plan/);
+  assert.doesNotMatch(r.note, /no tests configured/);
+});

@@ -8,4 +8,5 @@ export const DEFAULT_OPTIONS = Object.freeze({
   testTimeoutMs: 600000,
   agentTimeoutMs: 1800000,
   approveEachChunk: false,
+  keepWorkspace: false,   // true: keep the workspace after landed/rejected (the transcript is always kept in <baseDir>/logs)
 });

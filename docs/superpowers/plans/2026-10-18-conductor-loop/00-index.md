@@ -115,17 +115,17 @@ reviewLoop({ produce, review, maxRounds }) -> { status: 'approved' | 'exhausted'
 // review(artifact, round) -> Result; lastGood = most recent artifact without .error (or null)
 
 // Task 5
-settleDeadlock({ reason, tests, produced }) -> { action: 'accept' | 'escalate', situation, note, recommendation }
+settleDeadlock({ reason, tests, produced, evidence }) -> { action: 'accept' | 'escalate', situation, note, recommendation }
 // situation: 'unproduced' | 'unreviewed' | 'tests-failing' | 'irreversible' | 'disagree'
 buildEscalation({ kind, title, reason, recommendation, situation }) -> { kind, title, message, options }
-buildSummary({ request, plan, notes, files, tests }) -> string
+buildSummary({ request, plan, notes, files, tests, source }) -> string   // source adds "Started from commit … on branch …"
 
 // Task 6
-DEFAULT_OPTIONS (src/options.js)
+DEFAULT_OPTIONS (src/options.js)   // + keepWorkspace: false
 class RunLog { constructor(metaDir, { onEvent }); event(type, data); saveState(state); loadState() -> state | null }   // metaDir = ws.metaDir
 callRole(log, participant, role, task, context, opts) -> Result   // never throws
 callAgent(ctx, participant, role, task, opts) -> Result         // callRole + restore a tampered .git/config (logs config-tampered)
-// state = { version: 1, taskId, request, repoDir, phase: 'plan'|'chunks'|'final'|'done', plan, chunkIndex, chunkShas, notes, status, landing? }
+// state = { version: 1, taskId, request, repoDir, phase: 'plan'|'chunks'|'final'|'done', plan, chunkIndex, chunkShas, notes, status, source, landing? }
 
 // Task 7
 askUser(ctx, { kind, title, reason, recommendation, situation }) -> 'approve' | 'reject'   // only exact 'approve' continues
@@ -138,10 +138,13 @@ runChunk(ctx, chunk, index) -> { status: 'done', sha, note, tests } | { status: 
 // Task 9
 DEFAULT_OPTIONS; validateTeam(team); validateHooks(hooks, options)
 // hooks: escalate(esc) -> 'approve'|'reject'; approveResult({ summary, files, tests, finalReview, diff }) -> true lands;
-//        approveChunk({ index, title, total }) -> true continues (needed if approveEachChunk); onEvent(entry)
+//        approveChunk({ index, title, total, files, note, tests }) -> true continues (needed if approveEachChunk); onEvent(entry)
+// approveResult's finalReview = { decision, reason, detail } with the IRREVERSIBLE marker stripped
 runTask({ repoDir, request, team, hooks, options, baseDir }) -> RunOutcome
 resume({ workspaceDir, repoDir, team, hooks, options }) -> RunOutcome   // repoDir required; must match the run's recorded repo
-// RunOutcome: { status: 'landed' | 'rejected' | 'stopped' | 'failed', branch?, reason?, workspaceDir }
+// RunOutcome: { status: 'landed' | 'rejected' | 'stopped' | 'failed', branch?, reason?, workspaceDir, transcript? }
+// after landed/rejected (unless keepWorkspace) the workspace is deleted: workspaceDir null, transcript = <baseDir>/logs/<taskId>.jsonl
+// runTask/resume resolve with 'failed' (plain reason) for anything past input validation; finish sets phase 'done' for landed/rejected/stopped
 
 // ctx object passed to phases (built in Task 9; Task 7/8 tests build it via test/helpers/fakes.js makeCtx)
 ctx = { request, team: { author, reviewer, local }, hooks, options, ws, log, state }

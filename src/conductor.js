@@ -1,6 +1,7 @@
 // src/conductor.js
 import path from 'node:path';
-import { Workspace, git } from './workspace.js';
+import { mkdirSync, copyFileSync, existsSync, constants as fsConstants } from 'node:fs';
+import { Workspace } from './workspace.js';
 import { RunLog, callAgent } from './runlog.js';
 import { DEFAULT_OPTIONS } from './options.js';
 import { runPlanPhase } from './planPhase.js';
@@ -14,6 +15,9 @@ export { DEFAULT_OPTIONS };
 
 const FINISHED = new Set(['landed', 'rejected', 'stopped']);
 const SUFFIXES = ['', '-2', '-3', '-4', '-5', '-6', '-7', '-8', '-9'];
+const RESUMABLE_PHASES = new Set(['plan', 'chunks', 'final']);
+const INTERNAL_PROBLEM = 'Conductor hit an internal problem and stopped. Your repository was not changed. ' +
+  'Details are in the run transcript; you can resume.';
 
 export function validateTeam(team) {
   const { author, reviewer, local } = team ?? {};
@@ -58,65 +62,148 @@ async function safeHook(log, name, fn, arg) {
   }
 }
 
+const message = (e) => String(e?.message ?? e);
+
 export async function runTask({ repoDir, request, team, hooks, options = {}, baseDir }) {
   const opts = { ...DEFAULT_OPTIONS, ...options };
   validateTeam(team);
   validateHooks(hooks, opts);
   if (typeof request !== 'string' || !request.trim()) throw new Error('request must be a non-empty string');
+  await Workspace.assertRepo(repoDir);
 
-  const ws = await Workspace.create({ repoDir, baseDir, taskId: request });
-  const log = new RunLog(ws.metaDir, { onEvent: hooks.onEvent });
-  const state = {
-    version: 1, taskId: ws.branch, request, repoDir: path.resolve(repoDir), options: opts,
-    phase: 'plan', plan: null, chunkIndex: 0, chunkShas: [], notes: [], status: 'running',
-  };
-  log.saveState(state);
+  let ws;
+  try {
+    ws = await Workspace.create({ repoDir, baseDir, taskId: request });
+  } catch (e) {
+    return redact({ status: 'failed', workspaceDir: null, reason: `Could not make a working copy of your repository: ${message(e)}` });
+  }
+  let log;
+  let state;
+  try {
+    log = new RunLog(ws.metaDir, { onEvent: hooks.onEvent });
+    state = {
+      version: 1, taskId: ws.branch, request, repoDir: path.resolve(repoDir), options: opts, source: ws.source,
+      phase: 'plan', plan: null, chunkIndex: 0, chunkShas: [], notes: [], status: 'running',
+    };
+    log.saveState(state);
+  } catch (e) {
+    return redact({ status: 'failed', workspaceDir: ws.dir, reason: `Conductor could not write its run state, so it did not start: ${message(e)}` });
+  }
   log.event('start', { request, workspace: ws.dir, branch: ws.branch });
+  if (ws.source?.dirty) {
+    log.event('warning', { kind: 'uncommitted-changes', detail: 'the repository has uncommitted or untracked changes; the run starts from the last commit without them' });
+  }
   return drive({ request, team, hooks, options: opts, ws, log, state });
+}
+
+// A run state resume can safely continue (T9-M3). Returns a problem or null.
+async function stateProblem(state, ws) {
+  if (!['running', 'failed'].includes(state.status)) return `its status is ${state.status}`;
+  if (!RESUMABLE_PHASES.has(state.phase)) return `its phase is ${state.phase}`;
+  if (typeof state.taskId !== 'string' || !state.taskId.startsWith('conductor/')) return 'its branch name is missing';
+  if (typeof state.request !== 'string' || !state.request.trim()) return 'its request is missing';
+  if (!Array.isArray(state.chunkShas) || !Number.isInteger(state.chunkIndex) || state.chunkIndex !== state.chunkShas.length) {
+    return 'its record of completed steps is inconsistent';
+  }
+  if (state.phase !== 'plan' && !state.plan?.chunks?.length) return 'it has no plan';
+  let prev = ws.baseSha;
+  for (const sha of state.chunkShas) {
+    if (typeof sha !== 'string' || !(await ws.isAncestor(prev, sha))) return 'a completed step is missing from the workspace';
+    prev = sha;
+  }
+  return null;
 }
 
 // repoDir: the repository the caller expects this run to land in. It must match
 // the one recorded when the workspace was created (Ruling 11 / I2).
+// Always resolves: anything that stops a resume is a 'failed' outcome with a plain reason.
 export async function resume({ workspaceDir, repoDir, team, hooks, options = {} }) {
   validateTeam(team);
   if (typeof repoDir !== 'string' || !repoDir) throw new Error('resume needs the repoDir the run belongs to');
-  let ws = await Workspace.open(workspaceDir);
-  const log = new RunLog(ws.metaDir, { onEvent: hooks?.onEvent });
-  const state = log.loadState();
-  if (!state) throw new Error(`no Conductor run state in ${workspaceDir}`);
+  const refuse = (detail, log, dir = workspaceDir) => {
+    try { log?.event('resume-refused', { detail }); } catch {}
+    return redact({ status: 'failed', workspaceDir: dir, reason: `Conductor will not resume this run: ${detail}. Nothing was changed.` });
+  };
+
+  let ws;
+  let log;
+  let state;
+  try {
+    ws = await Workspace.open(workspaceDir);
+    log = new RunLog(ws.metaDir, { onEvent: hooks?.onEvent });
+    state = log.loadState();
+  } catch (e) {
+    return refuse(message(e), log);
+  }
+  if (!state) return refuse(`there is no Conductor run state in ${workspaceDir}`, log);
   if (FINISHED.has(state.status)) {
-    return { status: state.status, workspaceDir: ws.dir, branch: state.branch, reason: state.reason };
+    return redact({ status: state.status, workspaceDir: ws.dir, branch: state.branch, reason: state.reason });
   }
   const repoProblem = (await ws.checkRepo(repoDir)) ?? (path.resolve(repoDir) === state.repoDir ? null : 'the run state names a different repository');
-  if (repoProblem) {
-    log.event('resume-refused', { detail: repoProblem });
-    return redact({ status: 'failed', workspaceDir: ws.dir, reason: `Conductor will not resume this run: ${repoProblem}. Nothing was changed.` });
-  }
-  const tampered = ws.restoreConfigIfTampered();
-  if (tampered) log.event('config-tampered', { participant: null, role: null, ...tampered });
+  if (repoProblem) return refuse(repoProblem, log, ws.dir);
   const opts = { ...DEFAULT_OPTIONS, ...state.options, ...options };
   validateHooks(hooks, opts);
+
+  try {
+    const tampered = ws.restoreConfigIfTampered();
+    if (tampered) log.event('config-tampered', { participant: null, role: null, ...tampered });
+    ws = new Workspace(ws.dir, state.taskId, ws.baseSha);
+    const problem = await stateProblem(state, ws);
+    if (problem) return refuse(`its saved state is not usable (${problem})`, log, ws.dir);
+    // Put the run's own branch back at the last completed chunk (an agent may have
+    // switched branches before the crash); anything after it is a half-done step.
+    const at = state.chunkShas.at(-1) ?? ws.baseSha;
+    await ws.returnToBranch(at);
+    await ws.resetHard(at);
+  } catch (e) {
+    log.event('resume-error', { detail: message(e) });
+    return redact({ status: 'failed', workspaceDir: ws.dir, reason: 'Conductor could not prepare the workspace to resume. Details are in the run transcript.' });
+  }
   state.options = opts;
   state.status = 'running';
-  // If an agent switched branches before the crash, go back to the run's own branch.
-  if (state.taskId && ws.branch !== state.taskId) {
-    const co = await git(ws.dir, ['checkout', '-q', '-f', state.taskId]);
-    if (co.code !== 0) throw new Error(`cannot return the workspace to branch ${state.taskId}: ${co.stderr.trim()}`);
-    ws = new Workspace(ws.dir, state.taskId, ws.baseSha);
-  }
-  // Anything after the last completed chunk is a half-done step: discard it.
-  await ws.resetHard(state.chunkShas.at(-1) ?? ws.baseSha);
   log.event('resume', { phase: state.phase, chunkIndex: state.chunkIndex });
   return drive({ request: state.request, team, hooks, options: opts, ws, log, state });
+}
+
+// After a landed or rejected run nothing is left to resume: keep the transcript
+// at <baseDir>/logs/<taskId>.jsonl and delete the workspace (m4).
+function archive(ws, log, state) {
+  const logsDir = path.join(path.dirname(ws.dir), 'logs');
+  mkdirSync(logsDir, { recursive: true });
+  const stem = state.taskId.replace(/[^A-Za-z0-9._-]+/g, '-');
+  for (let n = 1; n < 1000; n++) {
+    const dest = path.join(logsDir, `${stem}${n === 1 ? '' : `-${n}`}.jsonl`);
+    if (existsSync(dest)) continue;
+    try {
+      copyFileSync(log.transcript, dest, fsConstants.COPYFILE_EXCL);
+    } catch (e) {
+      if (e?.code === 'EEXIST') continue;
+      throw e;
+    }
+    ws.remove();
+    return dest;
+  }
+  throw new Error('no free transcript name');
 }
 
 async function drive(ctx) {
   const { team, hooks, options, ws, log, state } = ctx;
   const finish = (status, extra = {}) => {
     Object.assign(state, { status }, extra);
-    log.saveState(state);
-    log.event('finish', { status, ...extra });
-    return redact({ status, workspaceDir: ws.dir, ...extra });
+    if (FINISHED.has(status)) state.phase = 'done';
+    // Neither may stop drive from resolving: the outcome still reaches the caller.
+    try { log.saveState(state); } catch (e) { try { log.event('state-error', { detail: message(e) }); } catch {} }
+    try { log.event('finish', { status, ...extra }); } catch {}
+    const out = { status, workspaceDir: ws.dir, ...extra };
+    if ((status === 'landed' || status === 'rejected') && options.keepWorkspace !== true) {
+      try {
+        out.transcript = archive(ws, log, state);
+        out.workspaceDir = null;
+      } catch (e) {
+        try { log.event('cleanup-error', { detail: message(e) }); } catch {}
+      }
+    }
+    return redact(out);
   };
 
   try {
@@ -138,16 +225,22 @@ async function drive(ctx) {
       const total = state.plan.chunks.length;
       for (let i = state.chunkIndex; i < total; i++) {
         const chunk = state.plan.chunks[i];
+        const prevSha = state.chunkShas.at(-1) ?? ws.baseSha;
         const c = await runChunk(ctx, chunk, i);
         if (c.status === 'failed') return finish('failed', { reason: c.reason });
         if (c.status !== 'done') return finish('stopped', { reason: c.reason });
         await ws.assertOnBranch();
         if (c.note) state.notes.push(c.note);
-        state.chunkShas.push(await ws.head());
+        const sha = await ws.head();
+        state.chunkShas.push(sha);
         state.chunkIndex = i + 1;
         log.saveState(state);
         if (options.approveEachChunk && i < total - 1) {
-          const ok = await safeHook(log, 'approveChunk', hooks.approveChunk, { index: i, title: chunk.title, total });
+          // Give the user something to judge (m1): what changed, any note, the tests.
+          const ok = await safeHook(log, 'approveChunk', hooks.approveChunk, redact({
+            index: i, title: chunk.title, total,
+            files: await ws.filesRange(prevSha, sha), note: c.note ? plainReason(c.note) : null, tests: c.tests ?? null,
+          }));
           if (ok !== true) return finish('stopped', { reason: `You stopped the run after step ${i + 1}.` });
         }
       }
@@ -179,9 +272,11 @@ async function drive(ctx) {
     const finalReview = verdictOf(r);
     const notes = [...state.notes];
     if (finalReview.decision === 'BLOCK') notes.push(`Final review concern: ${plainReason(finalReview.reason)}`);
-    const summary = buildSummary({ request: state.request, plan: state.plan, notes, files, tests });
+    const summary = buildSummary({ request: state.request, plan: state.plan, notes, files, tests, source: state.source });
 
-    const approved = await safeHook(log, 'approveResult', hooks.approveResult, redact({ summary, files, tests, finalReview, diff }));
+    // The hook never sees the raw IRREVERSIBLE marker (m2).
+    const shownReview = { ...finalReview, reason: plainReason(finalReview.reason), detail: plainReason(finalReview.detail) };
+    const approved = await safeHook(log, 'approveResult', hooks.approveResult, redact({ summary, files, tests, finalReview: shownReview, diff }));
     if (approved !== true) return finish('rejected', { reason: 'You did not approve the result.' });
 
     // The test command and the reviewer ran after the diff was taken: re-check.
@@ -195,10 +290,20 @@ async function drive(ctx) {
     for (const suffix of SUFFIXES) {
       const landed = await ws.land({ repoDir: state.repoDir, branch: `${ws.branch}${suffix}`, sha: approvedSha });
       if (landed.ok) return finish('landed', { branch: landed.branch });
-      if (!/already exists/.test(landed.error)) return finish('failed', { reason: landed.error });
+      if (!/already exists/.test(landed.error)) {
+        log.event('land-failed', { detail: landed.error });
+        return finish('failed', { reason: `Could not create the result branch in your repository: ${landed.error}; the finished work is kept in ${ws.dir}.` });
+      }
     }
-    return finish('failed', { reason: `every branch name ${ws.branch}[-2..-9] is taken; the result is kept in ${ws.dir}` });
+    return finish('failed', { reason: `Could not create the result branch in your repository: every branch name ${ws.branch}[-2..-9] is taken; the finished work is kept in ${ws.dir}.` });
   } catch (e) {
-    return finish('failed', { reason: String(e?.message ?? e) });
+    const detail = message(e);
+    try { log.event('run-error', { detail }); } catch {}
+    // The branch-guard sentence is already plain; everything else gets plain words (m8).
+    if (/is no longer on its branch/.test(detail)) return finish('failed', { reason: detail });
+    if (state.landing) {
+      return finish('failed', { reason: 'Conductor hit an internal problem while creating the result branch in your repository. Details are in the run transcript; resume to finish.' });
+    }
+    return finish('failed', { reason: INTERNAL_PROBLEM });
   }
 }

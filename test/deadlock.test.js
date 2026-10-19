@@ -61,3 +61,7 @@ test('every settlement names its situation (I4)', () => {
   assert.equal(settleDeadlock({ reason: 'IRREVERSIBLE: x', tests: pass }).situation, 'irreversible');
   assert.equal(settleDeadlock({ reason: 'naming', tests: pass }).situation, 'disagree');
 });
+
+test('evidence overrides the test wording in an accept note (m3)', () => {
+  assert.match(settleDeadlock({ reason: 'naming', evidence: 'tests do not apply to a plan' }).note, /\(reversible, tests do not apply to a plan\)/);
+});

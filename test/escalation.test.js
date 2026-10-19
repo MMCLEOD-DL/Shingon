@@ -76,3 +76,10 @@ test('What happened follows the situation, falling back to the disagreement word
   assert.match(msg('chunk', undefined), /could not agree on one step/);
   assert.match(msg('final', 'unreviewed'), /final check/);
 });
+
+test('summary says which commit it started from and whether uncommitted work was left out (m5)', () => {
+  const plan = { chunks: [] };
+  assert.match(buildSummary({ request: 'r', plan, source: { sha: 'abcdef0123', branch: 'main', dirty: false } }), /Started from commit abcdef0 on branch main\.$/m);
+  assert.match(buildSummary({ request: 'r', plan, source: { sha: 'abcdef0123', branch: null, dirty: true } }), /on a detached HEAD; your uncommitted changes were not included\./);
+  assert.doesNotMatch(buildSummary({ request: 'r', plan }), /Started from/);
+});

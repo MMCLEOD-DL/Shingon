@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, readFileSync, existsSync, mkdtempSync, appendFileSync } from 'node:fs';
+import { writeFileSync, readFileSync, existsSync, mkdtempSync, appendFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { runTask, resume, validateTeam } from '../src/conductor.js';
@@ -70,7 +70,10 @@ test('a rejected result leaves the real repo exactly as it was', async () => {
   assert.equal(out.status, 'rejected');
   assert.equal(await refsOf(repo), before);
   assert.equal((await git(repo, ['status', '--porcelain'])).stdout, '');
-  assert.ok(existsSync(out.workspaceDir));
+  // m4: nothing left to resume, so the workspace is deleted and the transcript kept.
+  assert.equal(out.workspaceDir, null);
+  assert.match(out.transcript, /logs[/\\]conductor-x\.jsonl$/);
+  assert.match(readFileSync(out.transcript, 'utf8'), /"type":"finish"/);
 });
 
 test('a throwing final gate is a rejection, not a landing', async () => {
@@ -122,11 +125,11 @@ test('resume after a crash discards the half-done chunk and continues', async ()
   // Simulate a crash mid-step-2: state still "running", half-written file in the workspace.
   const statePath = path.join(`${stopped.workspaceDir}.conductor`, 'state.json');
   const st = JSON.parse(readFileSync(statePath, 'utf8'));
-  writeFileSync(statePath, JSON.stringify({ ...st, status: 'running' }));
+  writeFileSync(statePath, JSON.stringify({ ...st, status: 'running', phase: 'chunks' }));
   writeFileSync(path.join(stopped.workspaceDir, 'half.txt'), 'partial');
 
   const second = makeTeam();
-  const out = await resume({ workspaceDir: stopped.workspaceDir, repoDir: repo, team: second, hooks: hooks(), options: { approveEachChunk: false } });
+  const out = await resume({ workspaceDir: stopped.workspaceDir, repoDir: repo, team: second, hooks: hooks(), options: { approveEachChunk: false, keepWorkspace: true } });
   assert.equal(out.status, 'landed');
   assert.equal(second.local.calls.length, 1);
   assert.match(second.local.calls[0].task, /chunk 2 of 2/);
@@ -138,7 +141,7 @@ test('resume after a crash discards the half-done chunk and continues', async ()
 
 test('resume of a finished run returns its outcome without calling agents', async () => {
   const repo = await makeRepo();
-  const done = await runTask({ repoDir: repo, request: 'x', team: makeTeam(), hooks: hooks(), baseDir: base() });
+  const done = await runTask({ repoDir: repo, request: 'x', team: makeTeam(), hooks: hooks(), baseDir: base(), options: { keepWorkspace: true } });
   const t = makeTeam();
   const again = await resume({ workspaceDir: done.workspaceDir, repoDir: repo, team: t, hooks: hooks() });
   assert.equal(again.status, 'landed');
@@ -227,7 +230,7 @@ test('a genuine throw inside a chunk fails the run; resume keeps completed chunk
   writeFileSync(path.join(wsDir, '.git', 'HEAD'), `ref: refs/heads/${st.taskId}\n`);
   crash = false;
   const t2 = makeTeam({ local });
-  const again = await resume({ workspaceDir: wsDir, repoDir: repo, team: t2, hooks: hooks() });
+  const again = await resume({ workspaceDir: wsDir, repoDir: repo, team: t2, hooks: hooks(), options: { keepWorkspace: true } });
   assert.equal(again.status, 'landed');
   assert.equal(t2.local.calls.length, 1);
   assert.match(t2.local.calls[0].task, /chunk 2 of 2/);
@@ -310,7 +313,7 @@ test('an agent that rewrites .git/config is caught: config restored, payload nev
     writeFileSync(path.join(opts.cwd, `step${stepOf(task)}.txt`), 'x\n');
     return { text: 'ok' };
   };
-  const out = await runTask({ repoDir: repo, request: 'x', team: makeTeam({ local }), hooks: hooks({ onEvent: (e) => events.push(e) }), baseDir: base() });
+  const out = await runTask({ repoDir: repo, request: 'x', team: makeTeam({ local }), hooks: hooks({ onEvent: (e) => events.push(e) }), baseDir: base(), options: { keepWorkspace: true } });
   assert.equal(out.status, 'landed');
   assert.ok(!existsSync(marker), 'payload executed');
   const tampered = events.filter((e) => e.type === 'config-tampered');
@@ -375,4 +378,188 @@ test('a step nobody could produce fails the run (not "stopped") without asking t
   assert.match(out.reason, /could not be completed/);
   assert.equal(h.calls.filter((c) => c.name === 'escalate').length, 0);
   assert.equal(await refsOf(repo), before);
+});
+
+// ---- Final-review fixes: Task 9 ledger minors, m1, m2, m4, m5, m8 ----
+
+test('validateTeam needs can_edit_files; validateHooks needs escalate, and approveChunk when asked (T9-M6)', async () => {
+  const { validateHooks } = await import('../src/conductor.js');
+  const t = makeTeam();
+  const { Participant } = await import('../src/participant.js');
+  const readOnly = new Participant({ name: 'ro', adapter: { kind: 'local-agent', run: async () => ({}) }, roles: ['grunt'] });
+  assert.throws(() => validateTeam({ ...t, local: readOnly }), /can_edit_files/);
+  assert.throws(() => validateHooks({ approveResult: async () => true }, {}), /escalate/);
+  assert.throws(() => validateHooks({ escalate: async () => 'reject', approveResult: async () => true }, { approveEachChunk: true }), /approveChunk/);
+});
+
+test('happy path: phase "done", source line in the summary, workspace removed, transcript kept (T9-M4, m4, m5)', async () => {
+  const repo = await makeRepo();
+  writeFileSync(path.join(repo, 'wip.txt'), 'uncommitted');
+  const h = hooks();
+  const events = [];
+  h.onEvent = (e) => events.push(e);
+  const b = base();
+  const out = await runTask({ repoDir: repo, request: 'x', team: makeTeam(), hooks: h, baseDir: b });
+  assert.equal(out.status, 'landed');
+  assert.equal(out.workspaceDir, null);
+  assert.deepEqual(readdirSync(b).sort(), ['logs']);
+  const transcript = readFileSync(out.transcript, 'utf8');
+  assert.equal(out.transcript, path.join(b, 'logs', 'conductor-x.jsonl'));
+  assert.match(transcript.trim().split('\n').at(-1), /"type":"finish"/);
+  const gate = h.calls.find((c) => c.name === 'approveResult').arg;
+  assert.match(gate.summary, /Started from commit [0-9a-f]{7} on branch main; your uncommitted changes were not included\./);
+  assert.ok(events.some((e) => e.type === 'warning' && e.kind === 'uncommitted-changes'));
+  // A second run with the same name does not overwrite the first transcript.
+  const again = await runTask({ repoDir: repo, request: 'x', team: makeTeam(), hooks: hooks(), baseDir: b });
+  assert.equal(again.transcript, path.join(b, 'logs', 'conductor-x-2.jsonl'));
+});
+
+test('keepWorkspace keeps the workspace; its final state says phase "done" (m4, T9-M4)', async () => {
+  const out = await runTask({ repoDir: await makeRepo(), request: 'x', team: makeTeam(), hooks: hooks(), baseDir: base(), options: { keepWorkspace: true } });
+  assert.equal(out.status, 'landed');
+  assert.ok(existsSync(out.workspaceDir));
+  const st = JSON.parse(readFileSync(path.join(`${out.workspaceDir}.conductor`, 'state.json'), 'utf8'));
+  assert.equal(st.phase, 'done');
+  assert.equal(st.status, 'landed');
+});
+
+test('approveChunk gets files, a plain note and the tests (m1)', async () => {
+  const seen = [];
+  const reviewer = (role, task) => (/Review chunk 1/.test(task) ? block('IRREVERSIBLE: renames a thing') : approve());
+  const h = hooks({ approveChunk: async (arg) => { seen.push(arg); return true; }, escalate: async () => 'approve' });
+  const team = makeTeam({ reviewer });
+  // The fallback author also writes the step file, so the approved chunk has content.
+  team.author = fakeParticipant({
+    name: 'claude', kind: 'claude-code',
+    script: (role, task, c, opts) => {
+      if (role === 'reviewer') return approve();
+      if (!/chunk \d+ of/.test(task)) return planReply;
+      writeFileSync(path.join(opts.cwd, `step${stepOf(task)}.txt`), 'x\n');
+      return { text: 'ok' };
+    },
+  });
+  const out = await runTask({ repoDir: await makeRepo(), request: 'x', team, hooks: h, baseDir: base(), options: { approveEachChunk: true, testCommand: 'true', localRounds: 1, frontierRounds: 1 } });
+  assert.equal(out.status, 'landed');
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].index, 0);
+  assert.equal(seen[0].total, 2);
+  assert.deepEqual(seen[0].files, ['step1.txt']);
+  assert.equal(seen[0].tests.passed, true);
+  assert.match(seen[0].note, /renames a thing/);
+  assert.doesNotMatch(seen[0].note, /IRREVERSIBLE/);
+});
+
+test('approveResult never sees the raw IRREVERSIBLE marker (m2)', async () => {
+  const reviewer = (role, task) => (/Full diff of the finished branch/.test(task)
+    ? { text: 'IRREVERSIBLE: this drops a column', ...block('IRREVERSIBLE: drops a column') } : approve());
+  const h = hooks({ approveResult: async (arg) => { h.calls.push({ name: 'approveResult', arg }); return false; } });
+  await runTask({ repoDir: await makeRepo(), request: 'x', team: makeTeam({ reviewer }), hooks: h, baseDir: base() });
+  const gate = h.calls.find((c) => c.name === 'approveResult').arg;
+  assert.equal(gate.finalReview.reason, 'drops a column');
+  assert.doesNotMatch(JSON.stringify(gate), /IRREVERSIBLE/);
+});
+
+test('an unexpected error gets a plain reason; the detail stays in the transcript (m8)', async () => {
+  const repo = await makeRepo();
+  let wsDir = null;
+  const h = hooks({
+    onEvent: (e) => { if (e.type === 'start') wsDir = e.workspace; },
+    approveChunk: async () => { writeFileSync(path.join(wsDir, '.git', 'HEAD'), 'garbage\n'); return true; },
+  });
+  const out = await runTask({ repoDir: repo, request: 'x', team: makeTeam(), hooks: h, baseDir: base(), options: { approveEachChunk: true } });
+  assert.equal(out.status, 'failed');
+  assert.match(out.reason, /^Conductor hit an internal problem and stopped\. Your repository was not changed\./);
+  assert.doesNotMatch(out.reason, /git|fatal/);
+  assert.match(readFileSync(path.join(`${wsDir}.conductor`, 'transcript.jsonl'), 'utf8'), /"type":"run-error"/);
+});
+
+test('a land failure says the branch could not be created and where the work is kept (m8)', async () => {
+  const real = Workspace.prototype.land;
+  Workspace.prototype.land = async function ({ branch }) { return { ok: false, branch, error: 'fetch failed: disk full' }; };
+  let out;
+  try {
+    out = await runTask({ repoDir: await makeRepo(), request: 'x', team: makeTeam(), hooks: hooks(), baseDir: base() });
+  } finally {
+    Workspace.prototype.land = real;
+  }
+  assert.equal(out.status, 'failed');
+  assert.match(out.reason, /^Could not create the result branch in your repository: fetch failed: disk full; the finished work is kept in /);
+  assert.ok(out.reason.includes(out.workspaceDir));
+});
+
+test('all of conductor/x and -2..-9 taken: failed, says where the work is, and no ref moves (T9-M6)', async () => {
+  const repo = await makeRepo();
+  for (const s of ['', '-2', '-3', '-4', '-5', '-6', '-7', '-8', '-9']) await git(repo, ['branch', `conductor/x${s}`]);
+  const before = await refsOf(repo);
+  const out = await runTask({ repoDir: repo, request: 'x', team: makeTeam(), hooks: hooks(), baseDir: base() });
+  assert.equal(out.status, 'failed');
+  assert.match(out.reason, /every branch name conductor\/x\[-2\.\.-9\] is taken/);
+  assert.ok(out.reason.includes(out.workspaceDir));
+  assert.equal(await refsOf(repo), before);
+});
+
+test('runTask: a working copy that cannot be made, or a run state that cannot be written, is a failed outcome (T9-M5, T9c)', async () => {
+  const broken = await makeRepo({ 'a.txt': 'blob that will vanish\n' });
+  const blob = (await git(broken, ['rev-parse', 'HEAD:a.txt'])).stdout.trim();
+  const { rmSync } = await import('node:fs');
+  rmSync(path.join(broken, '.git', 'objects', blob.slice(0, 2), blob.slice(2)));
+  const a = await runTask({ repoDir: broken, request: 'x', team: makeTeam(), hooks: hooks(), baseDir: base() });
+  assert.equal(a.status, 'failed');
+  assert.match(a.reason, /^Could not make a working copy of your repository/);
+
+  const { RunLog } = await import('../src/runlog.js');
+  const real = RunLog.prototype.saveState;
+  RunLog.prototype.saveState = () => { throw new Error('ENOSPC'); };
+  let b;
+  try {
+    b = await runTask({ repoDir: await makeRepo(), request: 'x', team: makeTeam(), hooks: hooks(), baseDir: base() });
+  } finally {
+    RunLog.prototype.saveState = real;
+  }
+  assert.equal(b.status, 'failed');
+  assert.match(b.reason, /could not write its run state/);
+});
+
+test('resume validates the saved state and never rejects on a broken workspace (T9-M3, T9b)', async () => {
+  const repo = await makeRepo();
+  const stopped = await runTask({ repoDir: repo, request: 'x', team: makeTeam(), hooks: hooks({ approveChunk: async () => false }), baseDir: base(), options: { approveEachChunk: true } });
+  const statePath = path.join(`${stopped.workspaceDir}.conductor`, 'state.json');
+  const st = JSON.parse(readFileSync(statePath, 'utf8'));
+  const t = makeTeam();
+  const tryState = async (over) => {
+    writeFileSync(statePath, JSON.stringify({ ...st, status: 'running', phase: 'chunks', ...over }));
+    return resume({ workspaceDir: stopped.workspaceDir, repoDir: repo, team: t, hooks: hooks() });
+  };
+  for (const over of [{ phase: 'nonsense' }, { chunkIndex: 5 }, { chunkShas: ['0'.repeat(40)], chunkIndex: 1 }, { plan: null }]) {
+    const out = await tryState(over);
+    assert.equal(out.status, 'failed', JSON.stringify(over));
+    assert.match(out.reason, /saved state is not usable/);
+  }
+  assert.equal(t.local.calls.length + t.author.calls.length + t.reviewer.calls.length, 0);
+  writeFileSync(statePath, JSON.stringify({ ...st, status: 'running', phase: 'chunks' }));
+  const headFile = path.join(stopped.workspaceDir, '.git', 'HEAD');
+  writeFileSync(headFile, 'garbage\n');
+  const bad = await resume({ workspaceDir: stopped.workspaceDir, repoDir: repo, team: t, hooks: hooks() });
+  assert.equal(bad.status, 'failed');
+  const notWs = await resume({ workspaceDir: base(), repoDir: repo, team: t, hooks: hooks() });
+  assert.equal(notWs.status, 'failed');
+  assert.match(notWs.reason, /not a Conductor workspace/);
+});
+
+test('resume from the final phase goes straight back to the gate (T9-M6)', async () => {
+  const repo = await makeRepo();
+  const first = await runTask({ repoDir: repo, request: 'x', team: makeTeam(), hooks: hooks({ approveResult: async () => { throw new Error('ui died'); } }), baseDir: base(), options: { keepWorkspace: true } });
+  assert.equal(first.status, 'rejected');
+  // Simulate a crash at the gate: the run was still in its final phase.
+  const statePath = path.join(`${first.workspaceDir}.conductor`, 'state.json');
+  const st = JSON.parse(readFileSync(statePath, 'utf8'));
+  writeFileSync(statePath, JSON.stringify({ ...st, status: 'running', phase: 'final' }));
+  const t = makeTeam();
+  const h = hooks();
+  const again = await resume({ workspaceDir: first.workspaceDir, repoDir: repo, team: t, hooks: h });
+  assert.equal(again.status, 'landed');
+  assert.equal(t.local.calls.length, 0);
+  assert.equal(t.author.calls.length, 0);
+  assert.equal(h.calls.filter((c) => c.name === 'approveResult').length, 1);
+  assert.deepEqual((await git(repo, ['diff', '--name-only', 'main', again.branch])).stdout.trim().split('\n').sort(), ['step1.txt', 'step2.txt']);
 });

@@ -8,7 +8,8 @@ const UNREVIEWED = /^(reviewer failed|reviewer gave no VERDICT)/;
 
 // situation says WHY it ended this way, so the user is told what really happened:
 // 'unproduced' | 'unreviewed' | 'tests-failing' | 'irreversible' | 'disagree'.
-export function settleDeadlock({ reason, tests = null, produced = true }) {
+// evidence: overrides the test-based wording (the plan phase never runs tests, m3).
+export function settleDeadlock({ reason, tests = null, produced = true, evidence = null }) {
   const r = String(reason ?? '');
   const shown = plainReason(r); // user-facing text never carries the marker; detection below uses raw r
   const escalate = (situation, note, recommendation) => ({ action: 'escalate', situation, note, recommendation });
@@ -18,6 +19,6 @@ export function settleDeadlock({ reason, tests = null, produced = true }) {
   if (r.toUpperCase().includes(IRREVERSIBLE_MARK)) {
     return escalate('irreversible', `The reviewer flagged a hard-to-undo concern: ${shown}`, 'Reject, unless you are sure this change is what you want; it is hard to undo.');
   }
-  const evidence = tests?.ran ? 'tests pass' : 'no tests configured';
-  return { action: 'accept', situation: 'disagree', note: `Accepted over an unresolved reviewer objection (reversible, ${evidence}): ${shown}`, recommendation: null };
+  const why = evidence ?? (tests?.ran ? 'tests pass' : 'no tests configured');
+  return { action: 'accept', situation: 'disagree', note: `Accepted over an unresolved reviewer objection (reversible, ${why}): ${shown}`, recommendation: null };
 }

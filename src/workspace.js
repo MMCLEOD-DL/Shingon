@@ -67,9 +67,14 @@ export class Workspace {
     this.metaDir = metaDirOf(this.dir);
   }
 
-  static async create({ repoDir, baseDir, taskId }) {
+  // Input validation, done before anything is created.
+  static async assertRepo(repoDir) {
     const probe = await git(repoDir, ['rev-parse', '--verify', 'HEAD']);
     if (probe.code !== 0) throw new Error(`${repoDir} is not a git repository with at least one commit`);
+  }
+
+  static async create({ repoDir, baseDir, taskId }) {
+    await Workspace.assertRepo(repoDir);
     const root = baseDir ?? defaultBaseDir();
     mkdirSync(root, { recursive: true });
     const dir = mkdtempSync(path.join(root, 'conductor-ws-'));
@@ -171,6 +176,10 @@ export class Workspace {
 
   async head() {
     return (await gitOk(this.dir, ['rev-parse', 'HEAD'])).trim();
+  }
+
+  async isAncestor(a, b) {
+    return (await git(this.dir, ['merge-base', '--is-ancestor', a, b])).code === 0;
   }
 
   async isClean() {
