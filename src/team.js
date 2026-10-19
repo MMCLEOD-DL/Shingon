@@ -17,6 +17,9 @@ const uniq = (list) => [...new Set(list)];
 
 export async function buildTeam(participants, { routing = {}, health = checkHealth, env = process.env, board = new HealthBoard(), sleep } = {}) {
   const r = { ...ROUTING_DEFAULTS, ...routing };
+  // Paid API use needs an explicit true: a string such as "false" must not switch it on.
+  r.allowApi = r.allowApi === true;
+  r.preferTwoVendors = r.preferTwoVendors === true;
   const secrets = [...new Set([...secretValues(), ...secretValues(env)])].sort((a, b) => b.length - a.length);
   const scrub = (x) => (x == null ? x : redact(String(x), secrets));
   const named = (n) => participants.find((p) => p.name === n);

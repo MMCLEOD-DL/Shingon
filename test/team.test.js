@@ -128,3 +128,13 @@ test('probe text is redacted in the report and the error', async () => {
   assert.ok(!JSON.stringify(l).includes(SECRET));
   assert.match(l.error, /\[redacted\]/);
 });
+
+test('allowApi / preferTwoVendors turn on only for exactly true (I4)', async () => {
+  for (const v of ['false', 'true', 1, 'yes']) {
+    const r = await buildTeam([claude({ probe: DOWN }), codex(), local(), claudeApi()], { routing: { allowApi: v, preferTwoVendors: v }, env: NOENV });
+    assert.ok(!r.report.some((x) => x.name === 'claude-api'), `allowApi ${JSON.stringify(v)} must not probe a paid API`);
+    assert.ok(!r.team.author.candidates.concat(r.team.reviewer.candidates).some((c) => c.name === 'claude-api'), `allowApi ${JSON.stringify(v)} must not seat a paid API`);
+  }
+  const twoOnly = await buildTeam([claude({ probe: DOWN }), codex(), local(), claudeApi()], { routing: { allowApi: true, preferTwoVendors: 'false' }, env: NOENV });
+  assert.equal(twoOnly.team.reviewer.name, 'codex', 'preferTwoVendors "false" must not put the API first');
+});

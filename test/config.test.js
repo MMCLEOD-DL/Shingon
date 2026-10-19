@@ -109,3 +109,12 @@ test('API participants cannot edit files or be the local executor', () => {
   assert.throws(() => loadConfig(cfgFile({ participants: [{ ...API_P, capabilities: { can_edit_files: true } }] })), /cannot edit files/);
   assert.throws(() => loadConfig(cfgFile({ participants: [{ ...API_P, roles: ['grunt'] }] })), /cannot be the local executor/);
 });
+
+test('routing.allowApi and routing.preferTwoVendors must be true or false (I4)', () => {
+  for (const key of ['allowApi', 'preferTwoVendors']) {
+    for (const v of ['false', 1, null]) {
+      assert.throws(() => loadConfig(cfgFile({ participants: [API_P], routing: { [key]: v } })), new RegExp(`routing\\.${key} must be true or false`));
+    }
+    assert.equal(loadConfig(cfgFile({ participants: [API_P], routing: { [key]: false } })).routing[key], false);
+  }
+});

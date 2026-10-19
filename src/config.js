@@ -34,6 +34,12 @@ export function loadConfig(filePath) {
   for (const k of Object.keys(options)) {
     if (!Object.hasOwn(DEFAULT_OPTIONS, k)) throw new Error(`Unknown option "${k}" in config (known: ${Object.keys(DEFAULT_OPTIONS).join(', ')})`);
   }
+  const routing = parsed.routing ?? {};
+  for (const k of ['allowApi', 'preferTwoVendors']) {
+    if (Object.hasOwn(routing, k) && typeof routing[k] !== 'boolean') {
+      throw new Error(`routing.${k} must be true or false (without quotes), but the config has ${JSON.stringify(routing[k])}`);
+    }
+  }
   const participants = parsed.participants.map((spec) => {
     if (isApiKind(spec.adapter)) {
       if (spec.capabilities?.can_edit_files) throw new Error(`Participant ${spec.name}: API participants cannot edit files`);
@@ -51,5 +57,5 @@ export function loadConfig(filePath) {
     if (byName.has(p.name)) throw new Error(`Duplicate participant name: ${p.name}`);
     byName.set(p.name, p);
   }
-  return { participants, byName, routing: parsed.routing ?? {}, options };
+  return { participants, byName, routing, options };
 }
