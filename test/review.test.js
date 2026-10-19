@@ -134,3 +134,12 @@ test('round-1 error then exhaustion leaves lastGood null (T4)', async () => {
 test('a review that throws rejects reviewLoop (contract: callers wrap reviews with callRole) (T4)', async () => {
   await assert.rejects(reviewLoop({ produce: async () => ({}), review: async () => { throw new Error('kaput'); }, maxRounds: 2 }), /kaput/);
 });
+
+test('a fatal producer error ends the loop at once', async () => {
+  let calls = 0;
+  const r = await reviewLoop({ produce: async () => { calls++; return { error: 'backend down', fatal: true }; }, review: async () => approve(), maxRounds: 3 });
+  assert.equal(r.status, 'exhausted');
+  assert.equal(r.rounds, 1);
+  assert.equal(calls, 1);
+  assert.match(r.lastReason, /backend down/);
+});

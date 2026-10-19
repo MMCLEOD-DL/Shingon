@@ -3,6 +3,7 @@ import { runCommand } from '../exec.js';
 import { normalize } from '../normalizer.js';
 import { getRolePreset } from '../roles.js';
 import { makeResult } from '../result.js';
+import { summarizeFailure, isInfrastructureFailure } from '../health.js';
 import { childEnv } from '../secrets.js';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -51,7 +52,13 @@ export class CodexAdapter {
       });
 
       if (code !== 0 || timedOut) {
-        return makeResult({ text: stdout, ok: false, error: timedOut ? 'timed out' : (stderr || `exit ${code}`) });
+        // Classify the summary, not raw stderr: Codex echoes the prompt there, and a task may mention "401".
+        const reason = summarizeFailure(stderr);
+        return makeResult({
+          text: stdout, ok: false,
+          error: timedOut ? 'timed out' : (reason || `exit ${code}`),
+          failure: !timedOut && isInfrastructureFailure(reason) ? 'infrastructure' : null,
+        });
       }
       if (!existsSync(outFile)) {
         return makeResult({ text: stdout, ok: false, error: 'codex produced no output file' });

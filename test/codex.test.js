@@ -91,3 +91,16 @@ test('removes its temp output dir on success and failure', async () => {
   assert.equal(r2.ok, false);
   assert.equal(existsSync(path.dirname(readFileSync(marker, 'utf8'))), false);
 });
+
+test('a failed run reports a short reason and flags a dead backend as infrastructure', async () => {
+  const bin = writeStubCli(tmp(), 'codex', `
+    process.stderr.write('OpenAI Codex v0.163.0\\nuser\\n' + args[1] + '\\nERROR: Reconnecting... 5/5\\nERROR: stream disconnected before completion: response.failed event received\\n');
+    process.exit(1);
+  `);
+  const r = await new CodexAdapter({ bin }).run('grunt', 'a long task prompt');
+  assert.equal(r.ok, false);
+  assert.equal(r.error, 'ERROR: stream disconnected before completion: response.failed event received');
+  assert.equal(r.failure, 'infrastructure');
+  const bad = writeStubCli(tmp(), 'codex', `process.stderr.write('ERROR: model refused the tool call\\n'); process.exit(1);`);
+  assert.equal((await new CodexAdapter({ bin: bad }).run('grunt', 't')).failure, null);
+});

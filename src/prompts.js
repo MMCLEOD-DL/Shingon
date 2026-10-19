@@ -7,6 +7,7 @@ import { redact } from './secrets.js';
 // Redact before clipping: a key split by the clip point would otherwise survive as a fragment.
 const show = (text, max) => clip(redact(typeof text === 'string' ? text : ''), max);
 const TEXT_MAX = 8000; // request, chunk instructions, feedback
+const FAILURE_MAX = 600; // a failed attempt's reason: the agent needs the gist, not a log
 
 export const IRREVERSIBLE_MARK = 'IRREVERSIBLE:';
 
@@ -28,7 +29,7 @@ function feedbackText(feedback, feedbackKind, say) {
   if (!feedback) return '';
   // Clip the combined feedback (reason + reviewer's full notes).
   const raw = feedbackKind === 'failed' ? String(feedback).replace(PRODUCE_FAILED, '') : String(feedback);
-  const f = show(raw, TEXT_MAX);
+  const f = show(raw, feedbackKind === 'failed' ? FAILURE_MAX : TEXT_MAX);
   return feedbackKind === 'failed' ? say.failed(f) : say.blocked(f);
 }
 

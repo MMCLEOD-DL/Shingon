@@ -511,3 +511,23 @@ test('.git/config replaced by a directory is restored, not a crash (N5)', async 
   assert.equal(r.status, 'done');
   assert.ok(events.some((e) => e.type === 'config-tampered' && e.found === 'not a regular file'));
 });
+
+test('a dead local backend skips the remaining local rounds and goes straight to fallback', async () => {
+  const t = team({ local: () => ({ ok: false, error: 'ERROR: stream disconnected', failure: 'infrastructure' }) });
+  const ctx = await ctxFor(t, { localRounds: 3 });
+  const r = await runChunk(ctx, PLAN.chunks[0], 0);
+  assert.equal(r.status, 'done');
+  assert.equal(t.local.calls.length, 1);
+  assert.match(r.note, /done by claude/);
+});
+
+test('an ordinary local failure still retries, with a short capped reason', async () => {
+  const t = team({ local: (role, task, c, opts, n) => (n < 2 ? { ok: false, error: 'boom ' + 'y'.repeat(5000) } : writes('a.txt')(role, task, c, opts)) });
+  const ctx = await ctxFor(t, { localRounds: 3 });
+  const r = await runChunk(ctx, PLAN.chunks[0], 0);
+  assert.equal(r.status, 'done');
+  assert.equal(t.local.calls.length, 3);
+  const note = t.local.calls[1].task.split('Your previous attempt did not finish')[1];
+  assert.ok(note && note.length < 800, `retry note is ${note?.length} chars`);
+  assert.equal(t.local.calls[2].task.split('did not finish').length, 2); // no nesting
+});

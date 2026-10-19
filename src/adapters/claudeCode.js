@@ -3,6 +3,7 @@ import { runCommand } from '../exec.js';
 import { normalize } from '../normalizer.js';
 import { getRolePreset } from '../roles.js';
 import { makeResult } from '../result.js';
+import { summarizeFailure, isInfrastructureFailure } from '../health.js';
 import { childEnv } from '../secrets.js';
 
 export class ClaudeCodeAdapter {
@@ -26,7 +27,12 @@ export class ClaudeCodeAdapter {
     });
 
     if (code !== 0 || timedOut) {
-      return makeResult({ text: stdout, ok: false, error: timedOut ? 'timed out' : (stderr || `exit ${code}`) });
+      const reason = summarizeFailure(stderr);
+      return makeResult({
+        text: stdout, ok: false,
+        error: timedOut ? 'timed out' : (reason || `exit ${code}`),
+        failure: !timedOut && isInfrastructureFailure(reason) ? 'infrastructure' : null,
+      });
     }
 
     let obj;

@@ -11,6 +11,7 @@ export function makeResult(partial = {}) {
     usage: { costUsd: usage.costUsd ?? null, raw: usage.raw ?? null },
     ok: partial.ok ?? true,
     error: partial.error ?? null,
+    failure: partial.failure ?? null, // 'infrastructure' when the backend itself is down: retrying is pointless
   };
 }
 

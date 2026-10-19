@@ -37,6 +37,7 @@ export async function reviewLoop({ produce, review, maxRounds }) {
     }
     history.push({ round, ...v });
     lastReason = v.reason;
+    if (artifact?.fatal) return { status: 'exhausted', artifact, lastGood, rounds: round, lastReason, history };
     if (v.decision === 'APPROVE') return { status: 'approved', artifact, lastGood, rounds: round, lastReason, history };
     // The fixer gets the reviewer's whole critique, not just the one-liner.
     feedback = v.detail ? `${v.reason}\n\nReviewer's full notes:\n${v.detail}` : v.reason;
