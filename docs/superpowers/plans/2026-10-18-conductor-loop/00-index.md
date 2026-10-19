@@ -75,6 +75,7 @@ participant.run(role, task, context = '', opts = {})
 
 // Task 2
 clip(text, max = 8000) -> string
+metaDirOf(dir) -> `${dir}.conductor`; Workspace.assertRepo(repoDir); ws.isAncestor(a, b) -> boolean
 isUnderTmp(dir) -> boolean   // N4: runTask logs basedir-warning + summary line
 git(cwd, args) always sets GIT_OPTIONAL_LOCKS=0 (N1); refuses to run in a poisoned workspace
 defaultBaseDir(env) -> $XDG_STATE_HOME/conductor/workspaces | ~/.conductor/workspaces   // Workspace.create's default baseDir
@@ -155,6 +156,8 @@ ctx = { request, team: { author, reviewer, local }, hooks, options, ws, log, sta
 
 // Final-review fixes (C1): src/secrets.js
 SCRUB_ENV; childEnv({ allow }) -> env      // parent env minus SCRUB_ENV keys; runCommand's default env
+addScrubEnv(name)   // never ANTHROPIC_API_KEY / OPENAI_API_KEY / CLAUDE_CODE_OAUTH_TOKEN; REDACTED = '[redacted]'
+SHELL_ENV_EXCLUDE (localAgent.js); new CodexAdapter({ ..., envAllow })   // SCRUB_ENV keys that CLI may keep
 strictChildEnv() -> env                     // also drops every KEY/TOKEN/SECRET/PASSWORD/CREDENTIAL name; used by runTests (N2)
 secretValues(env) -> string[]; redact(x) -> x   // deep-walk; applied to events, state, prompts (callRole), escalations, hook payloads, outcomes
 new LocalAgentAdapter({ ..., envKey = 'LOCALAI_API_KEY' })   // only the local Codex harness gets envKey
