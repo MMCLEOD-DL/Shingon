@@ -11,7 +11,7 @@
 - Escalations:
 
 ## Observations
-- Plan JSON parsed first time? 
+- Plan JSON parsed first time?
 - Did the local model edit files via the Codex harness inside the workspace?
 - Reviewer verdict lines present every time?
 - Any adapter failures (classifyFailure reason)?

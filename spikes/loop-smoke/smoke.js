@@ -32,18 +32,25 @@ await git(repo, ['commit', '-q', '-m', 'init']);
 
 const t0 = Date.now();
 const secs = () => `${Math.round((Date.now() - t0) / 1000)}s`;
-const SHOW = new Set(['phase', 'chunk', 'chunk-fallback', 'deadlock', 'result', 'hook-error', 'finish']);
+const SHOW = new Set([
+  'phase', 'chunk', 'chunk-fallback', 'chunk-done', 'deadlock', 'result', 'hook-error', 'finish',
+  // the failure events an operator needs to diagnose a failed smoke
+  'chunk-error', 'inspect-failed', 'plan-failed', 'escalation', 'decision', 'run-error', 'land-failed',
+  'config-tampered', 'branch-switched', 'final-reset', 'final-drift', 'warning',
+]);
 
 const out = await runTask({
   repoDir: repo,
   request: 'Add a multiply(a, b) function to math.js and a test for it in test.js.',
   team,
-  options: { testCommand: 'node test.js', maxChunks: 3, agentTimeoutMs: 900000 },
+  // Throwaway workspaces, kept for inspection (not the operator's ~/.conductor state dir).
+  baseDir: mkdtempSync(path.join(tmpdir(), 'smoke-ws-')),
+  options: { testCommand: 'node test.js', maxChunks: 3, agentTimeoutMs: 900000, keepWorkspace: true },
   hooks: {
     onEvent: (e) => {
       if (!SHOW.has(e.type)) return;
       const who = e.participant ?? e.name ?? e.title ?? e.status ?? '';
-      const what = e.verdict?.decision ?? (e.ok === false ? `FAILED: ${e.error}` : e.action ?? '');
+      const what = e.verdict?.decision ?? (e.ok === false ? `FAILED: ${e.error}` : e.action ?? e.decision ?? e.error ?? e.detail ?? e.sha ?? '');
       console.log(`[${secs()}] ${e.type} ${who} ${what}`.trimEnd());
     },
     escalate: async (esc) => {
