@@ -117,8 +117,8 @@ test('doctor, help, bad usage, not a repository', async () => {
   try {
     const d = await spawnBin(['doctor', '--config', s.cfg], { cwd: s.repo, env: s.env });
     assert.equal(d.code, 0, d.out);
-    assert.match(d.out, /✓ claude \(claude-code\)/);
-    assert.match(d.out, /✓ local \(local-agent\)/);
+    assert.match(d.out, /✓ claude \(claude-code\): installed \(sign-in is checked when it is first used\)/);
+    assert.match(d.out, /✓ local \(local-agent\)\n/, 'the local model was really tested, so no "installed" caveat');
     assert.match(d.out, /Author: claude · Reviewer: codex · Local: local/);
     assert.equal((await spawnBin([], { cwd: s.repo, env: s.env })).code, 0);
     const bad = await spawnBin(['x', '--bogus'], { cwd: s.repo, env: s.env });
@@ -149,4 +149,26 @@ test('in-process with a terminal: the user approves and the result lands', async
     assert.match(text, /Done\. The result is on a new branch in your repository: conductor\/add-multiply/);
     assert.equal((await git(s.repo, ['show', '--name-only', '--format=', 'conductor/add-multiply'])).stdout.trim(), 'multiply.txt');
   } finally { await s.close(); }
+});
+
+test('"could not start" is redacted (cheap fix)', async () => {
+  const s = await setup();
+  const secret = 'sekrit-value-0123456789';
+  process.env.CONDUCTOR_E2E_TOKEN = secret;
+  try {
+    // routing.local names a participant that cannot be the local executor: runTask throws with its name.
+    const cfg = JSON.parse(readFileSync(s.cfg, 'utf8'));
+    cfg.participants[1].name = secret;
+    cfg.routing = { local: secret };
+    writeFileSync(s.cfg, JSON.stringify(cfg));
+    let text = '';
+    const stdout = new Writable({ write(c, e, cb) { text += c; cb(); } });
+    const code = await main(['add multiply', '--config', s.cfg], { cwd: s.repo, env: s.env, stdin: new PassThrough(), stdout, isTTY: false, onSignal: () => {}, exit: () => {} });
+    assert.equal(code, 64, text);
+    assert.match(text, /Conductor could not start: \[redacted\] must be able to play grunt/);
+    assert.ok(!text.includes(secret));
+  } finally {
+    delete process.env.CONDUCTOR_E2E_TOKEN;
+    await s.close();
+  }
 });

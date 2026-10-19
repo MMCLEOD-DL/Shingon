@@ -25,7 +25,10 @@ before anything reaches your code.
 
        node /path/to/conductor/bin/conductor.js doctor
 
-   You will see a ✓ or ✗ for each model, and which one will plan, review and code.
+   You will see a ✓ or ✗ for each model, and which one will plan, review and code. For
+   `claude` and `codex` a ✓ only means the program is **installed** (it answers
+   `--version`); whether it is signed in is found out the first time Conductor uses it. The
+   local model gets a real test request, so its ✓ means it answered.
 
 (If you make `bin/conductor.js` available as `conductor` on your PATH, the commands below work
 as written.)
@@ -49,7 +52,7 @@ Other commands:
 |---|---|
 | `conductor resume` | carry on with the latest unfinished run in this project |
 | `conductor runs` | list the unfinished runs in this project |
-| `conductor doctor` | check which models are available |
+| `conductor doctor` | check which models are installed (subscriptions) or answering (local model) |
 
 Add `--approve-plan` to see the plan and say yes before any work starts.
 
@@ -58,7 +61,9 @@ carries on from the last finished step.
 
 ## When a model is unavailable
 
-- If one subscription is signed out or rate-limited, Conductor switches to the other one.
+- If one subscription is signed out, out of its usage limit or rate-limited, Conductor
+  switches to the other one. A signed-out model stays out for the rest of the run; one that
+  is rate-limited or briefly unreachable is tried again after `cooldownMs`.
 - If only one company's models are left, the run carries on, and the summary tells you the
   cross-checking was weaker.
 - If the local model is down, the subscription models do every step. This costs more of your
@@ -72,11 +77,13 @@ carries on from the last finished step.
 - `participants`: your models. Each one has an `adapter`: `claude-code`, `codex`,
   `local-agent`, `anthropic-api` or `openai-api`.
 - `routing`:
-  - `allowApi` (default `false`);
-  - `preferTwoVendors` (default `false`): use a paid API for the second opinion instead of
-    letting one company review its own work;
+  - `allowApi` (default `false`; must be `true` or `false`, not `"true"`);
+  - `preferTwoVendors` (default `false`; `true` or `false`): use a paid API for the second
+    opinion instead of letting one company review its own work. It has no effect unless
+    `allowApi` is `true`;
   - `localDown`: `"frontier"` (default) or `"pause"`;
-  - `cooldownMs` and `maxWaitMs`: how long to wait out a rate limit;
+  - `cooldownMs`: how long a rate-limited or unreachable model rests before it is tried
+    again; `maxWaitMs`: the longest Conductor waits when every model is resting;
   - `author`, `reviewer`, `local`: which participant to prefer for each job.
 - `options`:
   - `testCommand`;

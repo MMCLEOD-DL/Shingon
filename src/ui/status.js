@@ -4,6 +4,14 @@
 import { REASON_TEXT } from '../router.js';
 
 const ICON = { done: '✓', running: '⟳', paused: '⏸', failed: '✗', queued: ' ' };
+// How the final-check line reads once the run has finished (status of the 'finish' event).
+const FINAL_ENDINGS = {
+  done: { icon: ICON.done, text: 'done' },
+  rejected: { icon: ICON.failed, text: 'not approved' },
+  paused: { icon: ICON.paused, text: 'paused' },
+  failed: { icon: ICON.failed, text: 'failed' },
+  stopped: { icon: ICON.failed, text: 'stopped' },
+};
 const LABEL = 10;
 const TITLE = 22;
 const DETAIL_COL = LABEL + 1 + TITLE; // plan/final labels pad to this so details line up
@@ -94,7 +102,8 @@ export class StatusModel {
         this.sawSameVendor = true;
         break;
       case 'finish':
-        if (this.final) this.final.status = 'done';
+        // Only a landed run ticks the final check; any other ending says how it ended.
+        if (this.final) this.final.status = e.status === 'landed' ? 'done' : e.status !== 'done' && Object.hasOwn(FINAL_ENDINGS, e.status) ? e.status : 'stopped';
         break;
       default:
         break;
@@ -120,8 +129,9 @@ export class StatusModel {
     });
     if (this.final) {
       const f = this.final;
-      const detail = f.status === 'done' ? 'done' : f.status === 'gate' ? 'waiting for your approval' : `${f.reviewer ?? 'the reviewer'} checking the whole change…`;
-      out.push(line(f.status === 'done' ? ICON.done : ICON.running, pad('Final check', DETAIL_COL), detail));
+      const ended = FINAL_ENDINGS[f.status];
+      const detail = ended ? ended.text : f.status === 'gate' ? 'waiting for your approval' : `${f.reviewer ?? 'the reviewer'} checking the whole change…`;
+      out.push(line(ended ? ended.icon : ICON.running, pad('Final check', DETAIL_COL), detail));
     }
     out.push(`  frontier cost reported so far: ~$${this.costUsd.toFixed(2)} · local steps: ${this.localSteps}`);
     for (const t of this.notices.slice(-MAX_NOTICES)) out.push(`  ${t}`);

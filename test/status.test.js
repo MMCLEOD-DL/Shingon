@@ -68,6 +68,17 @@ test('the final check, waiting for approval, then done', () => {
   assert.equal(run(ev).at(-2), '  ✓ Final check                       done');
 });
 
+test('only a landed run ticks the final check', () => {
+  const ev = [...PLAN, { type: 'phase', name: 'final' }, { type: 'result', participant: 'codex', servedBy: 'codex', role: 'reviewer', ok: true }];
+  const ending = (status) => run([...ev, { type: 'finish', status }]).at(-2);
+  assert.equal(ending('rejected'), '  ✗ Final check                       not approved');
+  assert.equal(ending('paused'), '  ⏸ Final check                       paused');
+  assert.equal(ending('failed'), '  ✗ Final check                       failed');
+  assert.equal(ending('stopped'), '  ✗ Final check                       stopped');
+  assert.equal(ending('something-new'), '  ✗ Final check                       stopped');
+  for (const status of ['rejected', 'paused', 'failed', 'stopped', 'done', undefined]) assert.ok(!ending(status).includes('✓'), String(status));
+});
+
 test('routing notices: plain words, last three only, same-vendor once', () => {
   const lines = run([
     ...PLAN,

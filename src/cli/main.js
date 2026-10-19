@@ -14,6 +14,7 @@ import { metaDirOf, defaultBaseDir } from '../workspace.js';
 import { runCommand, killAllChildren } from '../exec.js';
 import { REASON_TEXT } from '../router.js';
 import { redact } from '../secrets.js';
+import { isSubscriptionKind } from '../vendors.js';
 
 export const EXIT = Object.freeze({ landed: 0, rejected: 1, stopped: 1, failed: 2, paused: 3, usage: 64, interrupted: 130 });
 const NOT_A_REPO = 'Run conductor inside a git repository: the folder of the project you want changed.';
@@ -29,8 +30,11 @@ function version() {
   return JSON.parse(readFileSync(pkg, 'utf8')).version;
 }
 
+// A subscription's ✓ only means its program runs (`--version`): its sign-in is first tested by a real call.
+const SUBSCRIPTION_OK = ': installed (sign-in is checked when it is first used)';
+
 function reportLines(report) {
-  return report.map((x) => `  ${x.ok ? '✓' : '✗'} ${x.name} (${x.kind})${x.ok ? '' : `: ${REASON_TEXT[x.reason] ?? x.reason}${x.detail ? ` (${x.detail})` : ''}`}`);
+  return report.map((x) => `  ${x.ok ? '✓' : '✗'} ${x.name} (${x.kind})${x.ok ? (isSubscriptionKind(x.kind) ? SUBSCRIPTION_OK : '') : `: ${REASON_TEXT[x.reason] ?? x.reason}${x.detail ? ` (${x.detail})` : ''}`}`);
 }
 
 function outcomeText(out) {
@@ -147,7 +151,7 @@ export async function main(argv, {
       ? await resume({ workspaceDir, repoDir, team: built.team, hooks, options: overrides, warnings: built.warnings })
       : await runTask({ repoDir, request: cli.request, team: built.team, hooks, options: { ...config.options, ...overrides }, baseDir, warnings: built.warnings });
   } catch (e) {
-    term.say(`Conductor could not start: ${e.message}`);
+    term.say(`Conductor could not start: ${redact(String(e?.message ?? e))}`);
     term.close();
     return EXIT.usage;
   }
