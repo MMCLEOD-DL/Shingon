@@ -114,7 +114,7 @@ These come straight from the operator. Failing any of them is a failure of the p
 - **Previews [call]:** at first the operator opens previews on his own network and shows them in meetings. Remote client links are later work, and need their own security review.
 
 ### 4.3 Council
-- Runs on the **finished build** (or on the finished change, see §4.7), reviewing the whole app against the brief and the data policy.
+- Runs on the **finished build** (or on the finished change, see §4.8), reviewing the whole app against the brief and the data policy.
 - **Members** [call, from the research and the quality bar]:
 
 | Member | Tool (the source of truth) | LLM's job | Can block? |
@@ -123,7 +123,7 @@ These come straight from the operator. Failing any of them is a failure of the p
 | **Legal / data** | Licence scanner (code fingerprints and dependency licences); data-flow check of outbound network destinations against the data policy | Explain risks in plain English; check retention and personal-data handling against the policy and UK GDPR basics | Yes for a licence conflict or a policy breach; otherwise warns |
 | **Correctness** | The full test suite, including the acceptance examples from the brief | Check the brief is fully covered; look for untested paths around money or permissions | Yes |
 | **Design** | Screenshots of every page at desktop and mobile widths, plus an automated accessibility scan | Judge against the house visual system; flag clunky flows | Yes for broken or unusable layouts; otherwise warns |
-| **Reliability** | Deploy into a fresh throwaway machine (see §4.8), run backup then restore, kill and restart services, check that health alerts fire | Explain any gap | Yes |
+| **Reliability** | Deploy into a fresh throwaway machine (see §4.7), run backup then restore, kill and restart services, check that health alerts fire | Explain any gap | Yes |
 | **Efficiency** | Timed tests or load checks, before and after | Flag regressions, always with numbers | **Advisory only** |
 
 - **Rules** [call, from the research]:
@@ -162,12 +162,12 @@ These come straight from the operator. Failing any of them is a failure of the p
 - **The backup destination varies by project [operator].** It is a field in the data policy profile (§6): client-owned storage, operator-run storage, or a cloud bucket. Backups are always encrypted, and never kept only on the same box. **[call]** Client-owned storage is the default suggestion. The Legal/data member checks the destination against the policy.
 - Operating-system and dependency security updates are surfaced to the operator, who approves them, and they go out through the safe-update path (§2.4).
 
-### 4.8 Test machines [operator: approved]
+### 4.7 Test machines [operator: approved]
 - The factory **may create and destroy its own throwaway machines** (Proxmox VMs/LXCs) without asking each time. This is for builds, previews, council deploy tests and pre-ship test deploys.
 - **[call]** This permission is confined to a set-aside area: a dedicated Proxmox pool, a range of IDs, a resource cap, and a token with rights only inside that pool. Everything outside it (the operator's existing containers, the network and firewall) stays off-limits and still needs the operator.
 - Every machine the factory creates is labelled with its run, cleaned up when the run ends, and swept if a run crashes.
 
-### 4.7 Change requests [operator]
+### 4.8 Change requests [operator]
 - A client change ("add mileage claims") becomes a change brief, and goes through Build, Council, Operator approval and Ship as an **update**.
 - **[call]** The council reviews the **whole app** again, not only the diff.
 - Every update takes a backup first and rolls back automatically if the health checks fail.
@@ -199,7 +199,7 @@ These come straight from the operator. Failing any of them is a failure of the p
   - a demo-data seeder for previews.
 - **[call]** The foundation is built and maintained as **its own project** through careful, reviewed work, not generated per build. It is the factory's most important asset.
 - **[call]** The operator and Claude Code build the foundation in hand-steered sessions, because the factory can't build from nothing until Phase 5.
-- **[call]** The foundation is **versioned**. Each client app records the version it was built on. Security and bug fixes to the foundation reach live apps through the normal change-request path (§4.7): council review, operator approval, and a safe update. The factory tells the operator which live apps are behind on a security fix.
+- **[call]** The foundation is **versioned**. Each client app records the version it was built on. Security and bug fixes to the foundation reach live apps through the normal change-request path (§4.8): council review, operator approval, and a safe update. The factory tells the operator which live apps are behind on a security fix.
 - **Optional modules** are added per brief when needed: **OCR** with both local and cloud engines (the data policy decides which), PDF and spreadsheet report export, and scheduled jobs.
 - **[call]** Local OCR must work acceptably on a modest CPU-only machine: no graphics card is assumed on a client box. Staff confirm every reading anyway (§2.5).
 
