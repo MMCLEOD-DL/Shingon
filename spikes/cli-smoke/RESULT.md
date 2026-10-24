@@ -1,6 +1,17 @@
 # CLI smoke — result
 
-**Status:** RUN 1 PARTIAL. The whole loop worked on real models, but the gate failed closed because the run had no terminal (`!` gives no TTY). Gate not yet tested by hand: run 2 must be in a real terminal.
+**Status:** RUN 2 PASSED (2026-10-24, real terminal via the Proxmox xterm.js console). The gate was answered by hand (`v`, then `a`) and the change landed on a branch. Run 1 (via `!`) had failed closed for lack of a TTY, as designed.
+
+## Run 2 — 2026-10-24 (Proxmox xterm.js console, real TTY)
+- The desktop worker on .109 was **not started** (operator forgot), so local was unreachable.
+- Outcome: `landed` on branch `conductor/add-a-multiply-a-b-function-to-math-js-a` in the throwaway repo. The diff was correct: `multiply` plus 4 asserts.
+- Elapsed: about 81 s.
+- Timeline:
+  - Plan: claude drafted it for about $0.23, and codex approved it.
+  - Step 1: local failed at once with "not reachable". It went straight to the fallback with no retries (the dead-backend fix from Plan 2). Claude did the step for about $0.34, and codex approved it.
+  - Final review: codex approved. The operator pressed `v`, then `a`, and the change landed.
+- Total frontier cost reported: about $0.57.
+- Confirmed: the gate's `v`/`a` work, a dead local backend fails over cleanly, and the run still lands.
 
 ## Run 1 — 2026-10-19 (via `!`, no TTY)
 - `doctor`:
@@ -25,9 +36,11 @@
   - The step line shows `? ✎ …` for a moment, before the editor is known. It now says `starting…`.
   - "What was done (1 steps)" should be singular for one step. It now is.
 - Not yet checked:
-  - Whether `v` shows the diff and `a` lands a branch. This needs a real terminal.
   - Quota and sign-in detection against real CLI output. No limit was hit.
   - Ctrl-C followed by resume.
+
+## Product follow-ups
+- **Wake the workers before a run.** This was an operator request after run 2. The full product should remember which workers earlier runs used (for example the .109 desktop worker) and wake or start them before it begins, instead of silently falling back to a paid frontier model. At minimum, `doctor` and the start of a run should say plainly that local is down and offer to start it.
 
 ## Operator follow-ups (outside the code)
 - Install bubblewrap on the host that runs Codex. Codex currently uses its bundled copy.
