@@ -262,6 +262,14 @@ Each phase is its own plan, and each delivers something usable on its own.
 - Self-serve use by a tech-illiterate person, without an operator in the loop.
 - A friendlier interface than the terminal.
 - Public distribution of Conductor (this needs the operator's go-ahead first, plus security hardening).
+- **"Ask me anything" [operator, 2026-10-25]:** the factory should eventually build almost anything, up to and including complex agentic software and video games. The planned route keeps the same core (three-headed build loop, council, operator approval) and adds:
+  - **one foundation per kind of software**, for example a game-engine starter or an agent-framework starter, each its own project like the web foundation;
+  - **council members per kind**, for example a playtester agent for games, and for agentic software an adversarial-prompt and runaway-cost reviewer;
+  - **a "what kind of thing is this?" step** at the brief, which picks the foundation and the council.
+
+  Unsupported kinds are refused rather than built badly.
+  - **[call] Suggested order:** web apps proven first, through the expenses tracker; then agentic software; then games, which need the most operator playtesting because "is it fun" isn't tool-checkable.
+- **Near-term widening (web):** more optional modules, for example payments, Xero/QuickBooks, calendar sync, SMS, and connectors to client systems.
 
 ---
 
