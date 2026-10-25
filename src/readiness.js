@@ -15,6 +15,18 @@ const seconds = (ms) => Math.round((ms ?? 0) / 1000);
 const plain = (reason) => REASON_TEXT[reason] ?? reason ?? 'not available';
 const methodText = (m) => WAKE_METHOD_TEXT[m] ?? m;
 const sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// Only these mean the machine or its model server may be switched off; waking cannot fix anything else.
+const REACHABILITY = new Set(['unavailable', 'worker-offline']);
+const unreachable = (reason) => REACHABILITY.has(reason || 'unavailable');
+const withDetail = (s) => `${plain(s.reason)}${s.detail ? ` (${s.detail})` : ''}`;
+// What to do when the worker answers but something else is wrong.
+const FIX_TEXT = Object.freeze({
+  unauthorized: 'Check the key Conductor gives it (the environment variable named in its config) and that its model server accepts it, then try again.',
+  'model-missing': 'Install that model on its model server, or correct the model name in the config, then try again.',
+  'version-skew': 'Update its program, then try again.',
+  'rate-limit': 'Wait a while, then try again.',
+});
+const fixText = (reason) => FIX_TEXT[reason] ?? 'Fix that, then run "conductor doctor" to check it.';
 
 export function workersToCheck(participants, recalled = [], { local = null } = {}) {
   const locals = participants.filter(isLocal);
@@ -47,6 +59,8 @@ export async function ensureWorkers(workers, { health = checkHealth, wake = wake
     });
     let h = await probe(p, probeTimeout(p));
     if (h.ok) return status(h);
+    // A refused key or a missing model is not a sleeping machine: report it straight away.
+    if (!unreachable(h.reason)) return status(h, { woke: 'not-tried' });
     if (w.method === 'warn') return status(h, { woke: 'not-configured' });
 
     onProgress({ type: 'waking', name: p.name, method: w.method });
@@ -98,6 +112,7 @@ export function progressText(e) {
 
 export function downMessage(s) {
   const who = s.local === false ? `The worker "${s.name}"` : `The local model "${s.name}"`;
+  if (!unreachable(s.reason)) return `${who} is not working: ${withDetail(s)}. ${fixText(s.reason)}`;
   const tried = s.woke === 'failed' ? `Conductor tried to wake it, but ${s.wakeDetail}.`
     : s.woke === 'sent' ? `Conductor tried ${methodText(s.method)} and waited ${seconds(s.waitedMs)} seconds.`
       : 'Conductor has no way to wake it set up.';
@@ -106,7 +121,7 @@ export function downMessage(s) {
 
 export function workerLine(s, lastUsedAt = null) {
   let line = `  ${s.ok ? '✓' : '✗'} ${s.name} (${s.kind})`;
-  if (!s.ok) line += `: ${plain(s.reason)}`;
+  if (!s.ok) line += `: ${withDetail(s)}`;
   if (s.woke === 'sent') line += s.ok ? ` — woke it with ${methodText(s.method)}` : ` — tried ${methodText(s.method)} and waited ${seconds(s.waitedMs)} s`;
   if (s.woke === 'failed') line += ` — tried ${methodText(s.method)}: ${s.wakeDetail}`;
   if (Number.isFinite(lastUsedAt)) line += ` · last used ${new Date(lastUsedAt).toISOString().slice(0, 10)}`;

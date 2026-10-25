@@ -8,6 +8,7 @@ import { AnthropicApiAdapter, OpenAiApiAdapter } from './adapters/api.js';
 import { DEFAULT_OPTIONS } from './options.js';
 import { isApiKind } from './vendors.js';
 import { normalizeWake } from './wake.js';
+import { addScrubEnv } from './secrets.js';
 
 export function buildAdapter(spec) {
   const opts = { bin: spec.bin, model: spec.model, timeoutMs: spec.timeoutMs };
@@ -49,12 +50,15 @@ export function loadConfig(filePath) {
       if (spec.capabilities?.can_edit_files) throw new Error(`Participant ${spec.name}: API participants cannot edit files`);
       if (spec.roles?.includes('grunt')) throw new Error(`Participant ${spec.name}: API participants cannot be the local executor (grunt)`);
     }
+    const wake = normalizeWake(spec.wake, spec.name);
+    // A wake variable reaches only the wake command: every other child loses it, and its value is redacted.
+    for (const n of wake.env ?? []) addScrubEnv(n);
     return new Participant({
       name: spec.name,
       adapter: buildAdapter(spec),
       roles: spec.roles,
       capabilities: spec.capabilities ?? {},
-      wake: normalizeWake(spec.wake, spec.name),
+      wake,
     });
   });
   const byName = new Map();

@@ -48,7 +48,7 @@ export function normalizeWake(raw, participantName) {
     out.port = port;
   } else if (method === 'command') {
     if (typeof raw.cmd !== 'string' || !raw.cmd.trim()) fail(name, 'wake.cmd must name the program to run');
-    out.cmd = raw.cmd;
+    out.cmd = raw.cmd.trim();
     const args = raw.args ?? [];
     if (!Array.isArray(args) || !args.every((a) => typeof a === 'string')) fail(name, 'wake.args must be a list of words, such as ["-i", "/path/to/key", "wake@192.168.1.109"]');
     out.args = Object.freeze([...args]);
@@ -101,7 +101,7 @@ export function sendMagicPacket({ mac, broadcast = WAKE_DEFAULTS.broadcast, port
 }
 
 // The operator's own start program: no secret-looking variables except the ones the block names,
-// output summarized and redacted (Review Focus 4), killed after timeoutMs.
+// output redacted, then summarized, then redacted again (Review Focus 4), killed after timeoutMs.
 export async function runWakeCommand(wake, { run = runCommand, env = process.env } = {}) {
   const picked = {};
   for (const name of wake.env ?? []) if (typeof env[name] === 'string') picked[name] = env[name];
@@ -114,7 +114,7 @@ export async function runWakeCommand(wake, { run = runCommand, env = process.env
   const ok = r.code === 0 && !r.timedOut;
   let detail = '';
   if (r.timedOut) detail = `its start command did not finish within ${Math.round(timeoutMs / 1000)} seconds`;
-  else if (!ok) detail = `its start command failed: ${summarizeFailure(r.stderr || r.stdout) || `exit code ${r.code}`}`;
+  else if (!ok) detail = `its start command failed: ${summarizeFailure(redact(r.stderr || r.stdout, secrets)) || `exit code ${r.code}`}`;
   return { ok, detail: redact(detail, secrets) };
 }
 

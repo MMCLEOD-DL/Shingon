@@ -127,3 +127,17 @@ test('wakeWorker: warn does nothing; wol and command report plainly; nothing thr
   assert.deepEqual(await wakeWorker(cmd, { runCmd: async () => ({ ok: true, detail: '' }) }), { attempted: true, ok: true, detail: 'ran its start command' });
   assert.deepEqual(await wakeWorker(cmd, { runCmd: async () => ({ ok: false, detail: 'its start command failed: exit code 1' }) }), { attempted: true, ok: false, detail: 'its start command failed: exit code 1' });
 });
+
+test('runWakeCommand: a secret straddling the 300-character cut never leaks, even partly (final review 2)', async () => {
+  const secret = 'QZJ7wv93Pk2LmN8rT4yH';
+  const prefix = 'ERROR: ' + 'x'.repeat(300 - 7 - 10); // the cut falls ten characters into the secret
+  const bin = stub(`console.error(${JSON.stringify(prefix)} + process.env.WAKE_PASS_FR2 + ' tail'); process.exit(1);`);
+  const env = { ...process.env, WAKE_PASS_FR2: secret };
+  const r = await runWakeCommand(cmdWake(bin, { env: ['WAKE_PASS_FR2'] }), { env });
+  assert.equal(r.ok, false);
+  for (let n = 4; n <= secret.length; n++) assert.ok(!r.detail.includes(secret.slice(0, n)), `leaked ${n} characters: ${r.detail.slice(-40)}`);
+});
+
+test('normalizeWake trims wake.cmd (final review 5)', () => {
+  assert.equal(cmdWake('  /usr/local/bin/wake-desktop \n').cmd, '/usr/local/bin/wake-desktop');
+});

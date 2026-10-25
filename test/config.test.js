@@ -135,3 +135,24 @@ test('every participant gets a normalized wake; localDown is validated', () => {
   const h = writeConfig({ participants: [{ name: 'l', adapter: 'local-agent', model: 'm', roles: ['grunt'], wake: { method: 'nope' } }] });
   assert.throws(() => loadConfig(h), /Participant l: wake\.method/);
 });
+
+test('wake.env names are scrubbed from every other child and their values redacted (final review 1)', async () => {
+  const { childEnv, redact, REDACTED } = await import('../src/secrets.js');
+  const { runWakeCommand } = await import('../src/wake.js');
+  const f = writeConfig({ participants: [
+    { name: 'local', adapter: 'local-agent', model: 'm', roles: ['grunt'], wake: { method: 'command', cmd: 'wake-it', env: ['WAKE_HOST_FR1'] } },
+  ] });
+  const env = { ...process.env, WAKE_HOST_FR1: '192.168.1.109' };
+  const { byName } = loadConfig(f);
+  assert.equal(childEnv({ env }).WAKE_HOST_FR1, undefined, 'agents and tests never inherit it');
+  let seen = null;
+  await runWakeCommand(byName.get('local').wake, { env, run: async (o) => { seen = o.env; return { code: 0, stdout: '', stderr: '' }; } });
+  assert.equal(seen.WAKE_HOST_FR1, '192.168.1.109', 'the wake command still gets it');
+  const saved = process.env.WAKE_HOST_FR1;
+  process.env.WAKE_HOST_FR1 = '192.168.1.109';
+  try {
+    assert.equal(redact('ssh wake@192.168.1.109'), `ssh wake@${REDACTED}`);
+  } finally {
+    if (saved === undefined) delete process.env.WAKE_HOST_FR1; else process.env.WAKE_HOST_FR1 = saved;
+  }
+});

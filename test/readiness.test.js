@@ -141,3 +141,40 @@ test('ensureWorkers marks locals and non-locals', async () => {
   const r = await ensureWorkers([w('local'), w('gpu-box', { roles: ['reviewer'] })], { health: async () => OK });
   assert.deepEqual(r.map((x) => [x.name, x.local]), [['local', true], ['gpu-box', false]]);
 });
+
+test('a key refusal is not a sleeping machine: no wake, no wait, the real cause (final review 3c/3b)', async () => {
+  const c = clock();
+  let woke = 0;
+  let probes = 0;
+  const KEY = { ok: false, reason: 'unauthorized', detail: 'the local model server refused the key (HTTP 401)' };
+  const [s] = await ensureWorkers([w('local', { wake: { method: 'wol', mac: '00:11:22:33:44:55', hint: 'Turn on the desktop.' } })], {
+    health: async () => { probes++; return KEY; }, wake: async () => { woke++; return { attempted: true, ok: true, detail: '' }; }, now: c.now, sleep: c.sleep,
+  });
+  assert.equal(woke, 0, 'no wake attempted');
+  assert.equal(probes, 1, 'no polling');
+  assert.equal(s.waitedMs, 0);
+  assert.equal(c.now(), 0, 'no waiting');
+  const msg = downMessage(s);
+  assert.match(msg, /not signed in, or its key was refused \(the local model server refused the key \(HTTP 401\)\)/);
+  assert.doesNotMatch(msg, /wake|Turn on the desktop|Start the machine/i);
+  assert.match(msg, /key/i);
+  const missing = downMessage({ ...s, reason: 'model-missing', detail: 'the local model server has no model named m' });
+  assert.match(missing, /the model is not installed \(the local model server has no model named m\)/);
+  assert.doesNotMatch(missing, /wake|Start the machine/i);
+});
+
+test('unreachable still wakes as before (final review 3c)', async () => {
+  const c = clock();
+  let woke = 0;
+  const answers = [{ ok: false, reason: 'unavailable', detail: 'could not reach the local model server (ECONNREFUSED)' }, OK];
+  const [s] = await ensureWorkers([w('local', { wake: { method: 'wol', mac: '00:11:22:33:44:55' } })], {
+    health: async () => answers.shift(), wake: async () => { woke++; return { attempted: true, ok: true, detail: '' }; }, now: c.now, sleep: c.sleep,
+  });
+  assert.equal(woke, 1);
+  assert.deepEqual({ ok: s.ok, woke: s.woke }, { ok: true, woke: 'sent' });
+});
+
+test('workerLine shows the probe detail (final review 3a)', () => {
+  assert.equal(workerLine({ name: 'local', kind: 'local-agent', ok: false, reason: 'unauthorized', detail: 'the local model server refused the key (HTTP 401)', woke: 'not-tried' }),
+    '  ✗ local (local-agent): not signed in, or its key was refused (the local model server refused the key (HTTP 401))');
+});
