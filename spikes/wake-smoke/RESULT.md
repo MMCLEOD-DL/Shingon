@@ -30,3 +30,15 @@
      your explicit go-ahead. Plan 4 only provides the config hook.
 2. Carried over: install bubblewrap on the host that runs Codex; check the Codex model-metadata warning.
 3. Packaging for others is still out of scope: **notify the operator before going live as a product**.
+
+## Code follow-ups (from the Plan 4 final review, deferred)
+- **Missing local-agent program.** When the program is missing, it is still reported as "unavailable". So Conductor wakes the machine, waits up to 180 s, then says "turn on the desktop". Fix: add a `not-installed` probe reason in `src/adapters/localAgent.js`, with REASON_TEXT and fix advice, and update the localAgent test.
+- **Misleading `[w]` label.** For problems a wake can't fix (bad key, missing model), the consent question still offers "[w] try to wake it again", which now only re-checks. Pass `warn` as the method in that case.
+- **`wake.env` accepts PATH/HOME/USER/SHELL/TMPDIR/LANG.** Listing one strips it from every agent. Add a deny-list in `normalizeWake`.
+- **Lost detail.** For a reachability failure, the consent and Note messages drop the probe detail (doctor shows it). Use `withDetail` there too.
+- **Test gaps from the per-task reviews:**
+  - mid-run no-TTY exit 3;
+  - rememberWorkers on throw/Ctrl-C;
+  - unclassified-failure re-probe;
+  - a recalled-but-unconfigured worker;
+  - a root-safe unwritable-memory test.
