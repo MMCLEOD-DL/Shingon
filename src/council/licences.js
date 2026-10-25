@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { makeFinding } from './findings.js';
 import { runTool, skipped, TOOL_LABEL } from './tools.js';
+import { isIntroduced } from './security.js';
 import { lockPackages, readLock, lockDelta, hasLicenceData } from './lockfile.js';
 
 export const PERMISSIVE = Object.freeze(['MIT', 'MIT-0', 'ISC', '0BSD', 'BSD-2-Clause', 'BSD-3-Clause', 'Apache-2.0', 'Unlicense', 'CC0-1.0', 'Zlib', 'BlueOak-1.0.0', 'Python-2.0', 'BSL-1.0', 'CC-BY-3.0', 'CC-BY-4.0']);
@@ -50,12 +51,17 @@ export function splitAccept(accept) {
 
 export function licenceFindings(packages, { introduced, accept = [] }) {
   const { ids, packages: acceptedPkgs } = splitAccept(accept);
-  const seen = new Set();
-  const out = [];
+  // The same name@version can sit at several lockfile paths with different dev flags: merge
+  // them, and treat the package as shipped if ANY copy is non-dev.
+  const merged = new Map();
   for (const p of packages) {
-    const key = `${p.name}@${p.version}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const k = `${p.name}@${p.version}`;
+    const prev = merged.get(k);
+    if (!prev) merged.set(k, { ...p });
+    else { prev.dev = prev.dev && p.dev; prev.license = prev.license ?? p.license; }
+  }
+  const out = [];
+  for (const [key, p] of merged) {
     if (acceptedPkgs.has(key.toLowerCase())) continue;
     const kind = classifyLicence(p.license, { accept: ids });
     if (kind === 'permissive') continue;
@@ -73,9 +79,18 @@ export function licenceFindings(packages, { introduced, accept = [] }) {
   return out;
 }
 
+function scancodeRanges(f) {
+  const out = [];
+  const add = (m) => { const a = Number(m?.start_line); const b = Number(m?.end_line ?? m?.start_line); if (Number.isInteger(a) && a > 0 && Number.isInteger(b) && b >= a) out.push([a, b]); };
+  for (const d of Array.isArray(f.license_detections) ? f.license_detections : []) for (const m of Array.isArray(d?.matches) ? d.matches : []) add(m);
+  for (const m of Array.isArray(f.licenses) ? f.licenses : []) add(m);
+  for (const m of Array.isArray(f.matches) ? f.matches : []) add(m);
+  return out;
+}
+
 // `code` is the scanner's exit code. A crashed scanner must never look clean: unparseable output
 // always throws (JSON.parse), and a failure exit with no scanned files throws too.
-export function parseScancode(text, { accept = [], code = 0 } = {}) {
+export function parseScancode(text, { accept = [], code = 0, input = null } = {}) {
   const data = JSON.parse(text);
   if (!Array.isArray(data?.files)) throw new Error('ScanCode gave no file list');
   const failed = code !== 0 && code !== null && code !== undefined;
@@ -88,10 +103,17 @@ export function parseScancode(text, { accept = [], code = 0 } = {}) {
     const kind = classifyLicence(expr, { accept });
     if (kind === 'permissive') continue;
     const file = String(f.path ?? '').replace(/^\.\//, '');
+    // With line numbers, only a match on a line this run added counts as introduced; with none,
+    // the changed-file rule stands.
+    let preExisting = false;
+    if (input) {
+      const ranges = scancodeRanges(f);
+      if (ranges.length) preExisting = !ranges.some(([a, b]) => isIntroduced(input, file, a, b));
+    }
     out.push(makeFinding({ member: 'legal', tool: 'scancode', grade: kind === 'copyleft' ? 'blocking' : 'warning',
       title: `${file} contains text matching ${expr}`,
       detail: 'This may be code copied from a copyleft project. If it is, it cannot ship: rewrite or remove it.',
-      file, locked: false }));
+      file, locked: false, preExisting }));
   }
   return out;
 }
@@ -138,7 +160,7 @@ async function collectScancode(input) {
       member: 'legal', name: 'scancode', label, bin: 'scancode', cwd: input.dir, options: input.options, env: input.env,
       args: ['--license', '--strip-root', '--quiet', '-n', '2', '--json-pp', '{report}', scanDir],
       install: 'Install: pipx install scancode-toolkit (free, runs on this machine; slow on big changes).',
-      parse: (t, { code } = {}) => parseScancode(t, { accept, code }),
+      parse: (t, { code } = {}) => parseScancode(t, { accept, code, input }),
     });
   } finally {
     try { rmSync(scanDir, { recursive: true, force: true }); } catch {}

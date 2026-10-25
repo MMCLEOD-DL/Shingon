@@ -142,3 +142,22 @@ test('LEGAL.collect: a missing base lockfile fails closed (every package counts 
   assert.deepEqual(runs[0].findings.map((f) => [f.grade, f.locked, f.preExisting]), [['blocking', true, false]]);
 });
 
+
+test('licenceFindings: a dev copy listed first cannot mask a shipped copy of the same name@version', () => {
+  const pkgs = [
+    { name: 'gpl-lib', version: '1.0.0', license: 'GPL-3.0-only', dev: true },
+    { name: 'gpl-lib', version: '1.0.0', license: 'GPL-3.0-only', dev: false },
+  ];
+  const f = licenceFindings(pkgs, { introduced: new Set(['gpl-lib']), accept: [] });
+  assert.deepEqual(f.map((x) => [x.grade, x.locked]), [['blocking', true]]);
+});
+
+test('parseScancode: matches respect which lines this run added', () => {
+  const det = (path, s, e) => ({ path, type: 'file', detected_license_expression_spdx: 'GPL-3.0-or-later',
+    license_detections: s ? [{ matches: [{ start_line: s, end_line: e }] }] : [] });
+  const text = JSON.stringify({ files: [det('new.js', 5, 8), det('old.js', 1, 3), det('nolines.js', 0, 0)] });
+  const input = { changed: new Set(['new.js', 'old.js', 'nolines.js']), added: new Map([['new.js', new Set([6, 7])], ['old.js', new Set([40])], ['nolines.js', new Set([1])]]) };
+  const f = parseScancode(text, { accept: [], input });
+  assert.deepEqual(f.map((x) => [x.file, x.grade, x.preExisting]), [
+    ['new.js', 'blocking', false], ['old.js', 'warning', true], ['nolines.js', 'blocking', false]]);
+});
