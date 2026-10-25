@@ -45,3 +45,17 @@ export const GITLEAKS_AKIA = `${WALK}
   }
   fs.writeFileSync(args[args.indexOf('--report-path') + 1], JSON.stringify(hits));
 `;
+
+// ScanCode: reads the directory given as the last argument and reports GPL for any file that
+// contains the GPL's name, written to --json-pp. Paths are relative (as with --strip-root).
+export const SCANCODE_GPL = `
+  const fs = require('fs'), path = require('path');
+  const root = args[args.length - 1];
+  const files = [];
+  const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+    const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else files.push(p); } };
+  walk(root);
+  const out = { files: files.map((p) => ({ path: path.relative(root, p), type: 'file',
+    detected_license_expression_spdx: fs.readFileSync(p, 'utf8').includes('GNU General Public License') ? 'GPL-3.0-or-later' : null })) };
+  fs.writeFileSync(args[args.indexOf('--json-pp') + 1], JSON.stringify(out));
+`;
