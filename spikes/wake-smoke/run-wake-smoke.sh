@@ -59,6 +59,6 @@ node "$ROOT/bin/conductor.js" "Add a multiply(a, b) function to math.js and a te
   --config "$CFG" --test "node test.js"
 rc=$?
 echo "conductor exit: $rc"
-echo "== remembered workers ==" && cat "$CONDUCTOR_BASE_DIR/.workers.json"
+echo "== remembered workers ==" && cat "$CONDUCTOR_BASE_DIR/.workers.json" 2>/dev/null || echo "(nothing remembered yet)"
 [ $rc -eq 0 ] && git --no-pager log --oneline --all
 exit $rc

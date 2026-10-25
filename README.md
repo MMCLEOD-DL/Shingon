@@ -86,11 +86,15 @@ participant in the config can say how to wake it with a `wake` block:
   words that tell you what to start by hand.
 - `"method": "wol"`: send a Wake-on-LAN signal to its `mac` address (optional `broadcast`,
   default `255.255.255.255`, and `port`, default `9`). The machine must have Wake-on-LAN
-  switched on, and Conductor must run on the same network.
+  switched on, and Conductor must run on the same network. Leave out `broadcast` and `port`
+  unless your network needs them.
 - `"method": "command"`: run a program you choose, for example a restricted `ssh` that starts
   the model server: `"cmd"`, `"args"`, and `"env"` (the names of environment variables the
   program may see; it sees no other secrets). It is stopped after `timeoutMs` (default 60 s).
-  The values of those variables are hidden from anything Conductor prints or records.
+  Only that program gets those variables: Claude Code, Codex, the local agent and your tests
+  never do. Their values are hidden from anything Conductor prints or records when they are
+  at least 8 characters long (shorter ones are hidden only in what the wake program prints).
+  Put passwords and keys in `env`, never in `args`: the words in `args` are not hidden.
 
 After waking, Conductor waits up to `waitMs` (default 180 s), checking every `pollMs`
 (default 5 s).
@@ -102,10 +106,15 @@ After waking, Conductor waits up to `waitMs` (default 180 s), checking every `po
 
 How this behaves:
 
+- Conductor only wakes a model it cannot reach. If the model answers but something else is
+  wrong (its key is refused, or the model is not installed), Conductor says so straight away.
 - If the model is still down after waking, Conductor asks (see above) unless `localDown` is
   `"frontier"` (go ahead without asking) or `"pause"` (never cover for it).
+- If you say "go ahead" before the run, that covers the whole run: you are not asked again
+  if the local model stops answering later.
 - With no terminal to ask you, a stop before the run starts exits with code 1, and a stop
-  during the run pauses it with exit code 3.
+  during the run pauses it with exit code 3. With `localDown` set to `"pause"`, a stop before
+  the run starts exits with code 2.
 - `conductor doctor` wakes your models but never asks anything.
 - `conductor resume` asks again. Your earlier answer does not carry over to a resumed run.
 
@@ -121,7 +130,9 @@ safe.
   - `preferTwoVendors` (default `false`; `true` or `false`): use a paid API for the second
     opinion instead of letting one company review its own work. It has no effect unless
     `allowApi` is `true`;
-  - `localDown`: `"ask"` (default: ask you first), `"frontier"` (let Claude/Codex cover without asking) or `"pause"` (never cover; stop or pause instead);
+  - `localDown`: `"ask"` (default: ask you first), `"frontier"` (let Claude/Codex cover without asking) or `"pause"` (never cover; stop or pause instead).
+    Any other value stops Conductor with an error when it reads the config (older versions
+    quietly treated it as `"frontier"`);
   - `cooldownMs`: how long a rate-limited or unreachable model rests before it is tried
     again; `maxWaitMs`: the longest Conductor waits when every model is resting;
   - `author`, `reviewer`, `local`: which participant to prefer for each job.
