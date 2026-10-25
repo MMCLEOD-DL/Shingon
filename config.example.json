@@ -6,12 +6,13 @@
       "roles": ["author", "reviewer"], "capabilities": { "is_agentic": true, "can_edit_files": true } },
     { "name": "local", "adapter": "local-agent", "bin": "codex", "model": "shingon-qwen3.8-27b-q4",
       "baseUrl": "http://192.168.1.110:8081/v1", "contextWindow": 32768,
+      "wake": { "method": "warn", "hint": "Turn on the desktop PC (192.168.1.109) and start its LocalAI worker." },
       "roles": ["grunt"], "capabilities": { "is_agentic": true, "can_edit_files": true } }
   ],
   "routing": {
     "allowApi": false,
     "preferTwoVendors": false,
-    "localDown": "frontier",
+    "localDown": "ask",
     "cooldownMs": 60000,
     "maxWaitMs": 300000
   },

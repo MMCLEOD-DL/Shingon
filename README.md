@@ -66,11 +66,51 @@ carries on from the last finished step.
   is rate-limited or briefly unreachable is tried again after `cooldownMs`.
 - If only one company's models are left, the run carries on, and the summary tells you the
   cross-checking was weaker.
-- If the local model is down, the subscription models do every step. This costs more of your
-  subscription, and the summary says so.
+- Before every run (and in `conductor doctor`) Conductor checks the local model and tries to
+  wake it if you have set that up (see **Waking the local model**). If it still is not
+  answering, Conductor tells you what is wrong and **asks** before Claude or Codex do its
+  steps, because that uses your subscription. You can try again, go ahead, or stop. Without a
+  terminal to ask you, Conductor stops and nothing is spent.
+- If the local model stops answering **during** a run, Conductor asks once. If you say no,
+  the run pauses; start the local model and run `conductor resume`.
 - If no model is left, the run **pauses**. Run `conductor resume` when one is back.
 - Paid API keys are used **only** if you set `"allowApi": true` under `routing` in the config.
   The run tells you the moment it starts using one, and the summary says how much it cost.
+
+## Waking the local model
+
+Conductor remembers which models your earlier runs used, and checks them before each run. Each
+participant in the config can say how to wake it with a `wake` block:
+
+- `"method": "warn"` (the default): just check it, and if it is down show your `hint`, the
+  words that tell you what to start by hand.
+- `"method": "wol"`: send a Wake-on-LAN signal to its `mac` address (optional `broadcast`,
+  default `255.255.255.255`, and `port`, default `9`). The machine must have Wake-on-LAN
+  switched on, and Conductor must run on the same network.
+- `"method": "command"`: run a program you choose, for example a restricted `ssh` that starts
+  the model server: `"cmd"`, `"args"`, and `"env"` (the names of environment variables the
+  program may see; it sees no other secrets). It is stopped after `timeoutMs` (default 60 s).
+  The values of those variables are hidden from anything Conductor prints or records.
+
+After waking, Conductor waits up to `waitMs` (default 180 s), checking every `pollMs`
+(default 5 s).
+
+```json
+"wake": { "method": "wol", "mac": "aa:bb:cc:dd:ee:ff", "broadcast": "192.168.1.255",
+          "hint": "Turn on the desktop PC and start its LocalAI worker." }
+```
+
+How this behaves:
+
+- If the model is still down after waking, Conductor asks (see above) unless `localDown` is
+  `"frontier"` (go ahead without asking) or `"pause"` (never cover for it).
+- With no terminal to ask you, a stop before the run starts exits with code 1, and a stop
+  during the run pauses it with exit code 3.
+- `conductor doctor` wakes your models but never asks anything.
+- `conductor resume` asks again. Your earlier answer does not carry over to a resumed run.
+
+What Conductor remembers is kept in `.workers.json` in its workspaces folder. Deleting it is
+safe.
 
 ## Settings (`config.json`)
 
@@ -81,7 +121,7 @@ carries on from the last finished step.
   - `preferTwoVendors` (default `false`; `true` or `false`): use a paid API for the second
     opinion instead of letting one company review its own work. It has no effect unless
     `allowApi` is `true`;
-  - `localDown`: `"frontier"` (default) or `"pause"`;
+  - `localDown`: `"ask"` (default: ask you first), `"frontier"` (let Claude/Codex cover without asking) or `"pause"` (never cover; stop or pause instead);
   - `cooldownMs`: how long a rate-limited or unreachable model rests before it is tried
     again; `maxWaitMs`: the longest Conductor waits when every model is resting;
   - `author`, `reviewer`, `local`: which participant to prefer for each job.

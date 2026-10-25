@@ -39,6 +39,7 @@ test('config.example.json loads into three Participants', () => {
   assert.ok(byName.get('claude'));
   assert.ok(byName.get('codex'));
   assert.ok(byName.get('local'));
+  assert.equal(byName.get('local').wake.method, 'warn');
 });
 
 test('duplicate participant names throw', () => {
