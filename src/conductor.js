@@ -1,7 +1,7 @@
 // src/conductor.js
 import path from 'node:path';
 import { mkdirSync, copyFileSync, existsSync, constants as fsConstants } from 'node:fs';
-import { Workspace, isUnderTmp } from './workspace.js';
+import { Workspace, isUnderTmp, git } from './workspace.js';
 import { RunLog, callAgent } from './runlog.js';
 import { DEFAULT_OPTIONS } from './options.js';
 import { runPlanPhase } from './planPhase.js';
@@ -13,6 +13,10 @@ import { redact, REDACTED } from './secrets.js';
 import { vendorOf } from './vendors.js';
 import { SAME_VENDOR_WARNING } from './team.js';
 import { clip } from './text.js';
+import { runCouncilRound, validateCouncilOptions } from './council/index.js';
+import { fixChunk, reportText } from './council/report.js';
+import { MEMBER_LABEL } from './council/findings.js';
+import { askUser } from './askUser.js';
 
 export { DEFAULT_OPTIONS };
 
@@ -24,6 +28,8 @@ const TMP_BASEDIR_WARNING = 'Warning: the workspace is under the temporary direc
 const CREDENTIAL_WARNING = 'Warning: this change contains something that looks like a credential (shown as [redacted]); check it before approving.';
 const INTERNAL_PROBLEM = 'Conductor hit an internal problem and stopped. Your repository was not changed. ' +
   'Details are in the run transcript; you can resume.';
+const COUNCIL_STOPPED = 'You stopped the run because the council still found problems that must be fixed. Your repository is unchanged.';
+const COUNCIL_SQUASHED = "Your steps were combined into one commit, because the council found a possible secret in an earlier step's commit: this keeps it out of your repository's history.";
 const pausedReason = (why) => `Conductor paused: ${why}. Your repository is unchanged and the finished steps are kept; run "conductor resume" when it is available again.`;
 
 export function validateTeam(team, { allowSameVendor = false } = {}) {
@@ -81,6 +87,7 @@ export async function runTask({ repoDir, request, team, hooks, options = {}, bas
   const opts = { ...DEFAULT_OPTIONS, ...options };
   validateTeam(team, opts);
   validateHooks(hooks, opts);
+  validateCouncilOptions(opts);
   if (typeof request !== 'string' || !request.trim()) throw new Error('request must be a non-empty string');
   await Workspace.assertRepo(repoDir);
 
@@ -162,6 +169,7 @@ export async function resume({ workspaceDir, repoDir, team, hooks, options = {},
   if (repoProblem) return refuse(repoProblem, log, ws.dir);
   const opts = { ...DEFAULT_OPTIONS, ...state.options, ...options };
   validateHooks(hooks, opts);
+  validateCouncilOptions(opts);
 
   try {
     const { gitdir, config: tampered } = await ws.guardGitDir(); // throws (and poisons) if unrepairable
@@ -255,98 +263,148 @@ async function drive(ctx) {
       log.saveState(state);
     }
 
-    if (state.phase === 'chunks') {
-      const total = state.plan.chunks.length;
-      for (let i = state.chunkIndex; i < total; i++) {
-        const chunk = state.plan.chunks[i];
-        const prevSha = state.chunkShas.at(-1) ?? ws.baseSha;
-        const c = await runChunk(ctx, chunk, i);
-        if (c.status === 'failed') return finish('failed', { reason: c.reason });
-        if (c.status === 'paused') return finish('paused', { reason: pausedReason(c.reason) });
-        if (c.status !== 'done') return finish('stopped', { reason: c.reason });
-        await ws.assertOnBranch();
-        if (c.note) state.notes.push(c.note);
-        const sha = await ws.head();
-        state.chunkShas.push(sha);
-        state.chunkIndex = i + 1;
+    for (;;) {
+      if (state.phase === 'chunks') {
+        const total = state.plan.chunks.length;
+        for (let i = state.chunkIndex; i < total; i++) {
+          const chunk = state.plan.chunks[i];
+          const prevSha = state.chunkShas.at(-1) ?? ws.baseSha;
+          const c = await runChunk(ctx, chunk, i);
+          if (c.status === 'failed') return finish('failed', { reason: c.reason });
+          if (c.status === 'paused') return finish('paused', { reason: pausedReason(c.reason) });
+          if (c.status !== 'done') return finish('stopped', { reason: c.reason });
+          await ws.assertOnBranch();
+          if (c.note) state.notes.push(c.note);
+          if (chunk.councilFix && c.vendor) {
+            state.council.fixVendors = [...new Set([...(state.council.fixVendors ?? []), c.vendor])];
+          }
+          const sha = await ws.head();
+          state.chunkShas.push(sha);
+          state.chunkIndex = i + 1;
+          log.saveState(state);
+          if (options.approveEachChunk && i < total - 1) {
+            // Give the user something to judge (m1): what changed, any note, the tests.
+            const ok = await safeHook(log, 'approveChunk', hooks.approveChunk, redact({
+              index: i, title: chunk.title, total,
+              files: await ws.filesRange(prevSha, sha), note: c.note ? plainReason(c.note) : null, tests: c.tests ?? null,
+            }));
+            if (ok !== true) return finish('stopped', { reason: `You stopped the run after step ${i + 1}.` });
+          }
+        }
+        state.phase = 'final';
         log.saveState(state);
-        if (options.approveEachChunk && i < total - 1) {
-          // Give the user something to judge (m1): what changed, any note, the tests.
-          const ok = await safeHook(log, 'approveChunk', hooks.approveChunk, redact({
-            index: i, title: chunk.title, total,
-            files: await ws.filesRange(prevSha, sha), note: c.note ? plainReason(c.note) : null, tests: c.tests ?? null,
-          }));
-          if (ok !== true) return finish('stopped', { reason: `You stopped the run after step ${i + 1}.` });
+      }
+
+      // A crash between land and finish: the branch may already be there (T9-M1).
+      let approvedSha = state.chunkShas.at(-1) ?? ws.baseSha;
+      if (state.landing?.sha === approvedSha && approvedSha !== ws.baseSha) {
+        const already = await Workspace.findBranchAt(state.repoDir, SUFFIXES.map((x) => `${state.taskId}${x}`), approvedSha);
+        if (already) {
+          log.event('landed-before-crash', { branch: already, sha: approvedSha });
+          return finish('landed', { branch: already });
         }
       }
-      state.phase = 'final';
+      delete state.landing; // nothing was landed: this is a fresh pass through the gate
+
+      // Final whole-branch review, then the user's gate. What the user approves is
+      // exactly approvedSha: diffs are commit-to-commit, and land ships that sha.
+      await ws.assertOnBranch();
+      log.event('phase', { name: 'final' });
+      await holdAt(ws, log, approvedSha, 'final-reset');
+      const diff = await ws.diffRange(ws.baseSha, approvedSha);
+      const files = await ws.filesRange(ws.baseSha, approvedSha);
+      const tests = await ws.runTests(options.testCommand, { timeoutMs: options.testTimeoutMs });
+      const r = await callAgent(ctx, team.reviewer, 'reviewer',
+        prompts.finalReview({ request: state.request, plan: state.plan, diff, tests, base: ws.baseSha }),
+        { cwd: ws.dir, write: false, timeoutMs: options.agentTimeoutMs });
+      if (r.failure === 'no-participant') return finish('paused', { reason: pausedReason(r.error) });
+      const finalReview = verdictOf(r);
+
+      // Council v1 (factory spec §4.3, §8 item 2): after the final review, before the gate.
+      let council = null;
+      if (options.council) {
+        const round = await runCouncilRound(ctx, { files, tests, diff });
+        if (round.status === 'paused') return finish('paused', { reason: pausedReason(round.reason) });
+        council = round.report;
+        if (council.verdict === 'blocked') {
+          if (state.council.fixRounds < options.councilFixRounds) {
+            // Bounce back through the normal step loop, then review everything again.
+            state.council.fixRounds += 1;
+            const chunk = fixChunk(council, state.council.fixRounds);   // carries councilFix: N
+            state.plan.chunks.push(chunk);
+            state.phase = 'chunks';
+            log.saveState(state);
+            log.event('council-fix', { round: state.council.fixRounds, title: chunk.title, blocking: council.blocking.length });
+            continue;
+          }
+          const decision = await askUser(ctx, {
+            kind: 'council', title: 'the council review', situation: 'stuck',
+            reason: council.blocking.map((f) => `${MEMBER_LABEL[f.member]}: ${f.title}${f.why ? ` (${f.why})` : ''}`).join('; '),
+            recommendation: 'Reject, unless you have read each problem above and are sure it is safe to ship anyway.',
+          });
+          if (decision !== 'approve') return finish('stopped', { reason: COUNCIL_STOPPED });
+          council = { ...council, overridden: true };
+          council.text = reportText(council);
+        }
+        // Ruling 10: a possible secret was seen in a step's commit. Land one commit with exactly the approved
+        // files, so a secret a fix step removed is not in the history land() fetches into the real repository.
+        if (state.council.secretSeen && state.council.squashedAt !== approvedSha && state.chunkShas.length > 1 && files.length) {
+          await holdAt(ws, log, approvedSha, 'council-squash-reset');   // drop anything the tests or tools left behind
+          const treeOf = async (sha) => (await git(ws.dir, ['rev-parse', `${sha}^{tree}`])).stdout.trim();
+          const squashed = await ws.squashSince(ws.baseSha, `conductor: ${clip(state.request.split('\n')[0], 72)} (steps combined)`);
+          if (!squashed || (await treeOf(squashed)) !== (await treeOf(approvedSha))) {
+            throw new Error('combining the steps into one commit did not keep the files the same');
+          }
+          log.event('council-squash', { from: approvedSha, to: squashed, steps: state.chunkShas.length });
+          // Every completed step now points at the combined commit: stateProblem's ancestor chain still holds on resume.
+          state.chunkShas = state.chunkShas.map(() => squashed);
+          state.council.squashedAt = squashed;
+          if (!state.notes.includes(COUNCIL_SQUASHED)) state.notes.push(COUNCIL_SQUASHED);
+          log.saveState(state);
+          approvedSha = squashed;   // the gate approves, and land() ships, exactly this commit
+        }
+      }
+      const notes = [...state.notes];
+      if (finalReview.decision === 'BLOCK') notes.push(`Final review concern: ${plainReason(finalReview.reason)}`);
+      const warnings = [...(state.warnings ?? [])];
+      if (state.usage?.apiCalls) {
+        const n = state.usage.apiCalls;
+        const cost = state.usage.apiCostUsd > 0 ? `, about $${state.usage.apiCostUsd.toFixed(2)}.` : ' (the cost was not reported).';
+        warnings.push(`Paid API use this run: ${n} call${n === 1 ? '' : 's'}${cost}`);
+      }
+      if (state.flags?.sameVendor && !warnings.includes(SAME_VENDOR_WARNING)) warnings.push(SAME_VENDOR_WARNING);
+      if (redact(diff).includes(REDACTED)) warnings.push(CREDENTIAL_WARNING); // N2: redaction hides it; the file still lands
+      const summary = buildSummary({ request: state.request, plan: state.plan, notes, files, tests, source: state.source, warnings, council: council?.text ?? null });
+
+      // The hook never sees the raw IRREVERSIBLE marker (m2).
+      const shownReview = { ...finalReview, reason: plainReason(finalReview.reason), detail: plainReason(finalReview.detail) };
+      const approved = await safeHook(log, 'approveResult', hooks.approveResult, redact({ summary, files, tests, finalReview: shownReview, diff, council }));
+      if (approved !== true) {
+        // "[n] reject with a note" (spec §8): keep the user's words with the run.
+        const raw = approved && typeof approved === 'object' && typeof approved.note === 'string' ? approved.note.trim() : '';
+        const note = raw ? clip(redact(raw), 2000) : null;
+        if (note) log.event('gate-note', { note });
+        return finish('rejected', { reason: 'You did not approve the result.', ...(note ? { note } : {}) });
+      }
+
+      // The test command and the reviewer ran after the diff was taken: re-check.
+      const tampered = ws.restoreConfigIfTampered();
+      if (tampered) log.event('config-tampered', { participant: null, role: null, ...tampered });
+      await ws.assertOnBranch();
+      await holdAt(ws, log, approvedSha, 'final-drift');
+
+      state.landing = { sha: approvedSha };
       log.saveState(state);
-    }
-
-    // A crash between land and finish: the branch may already be there (T9-M1).
-    const approvedSha = state.chunkShas.at(-1) ?? ws.baseSha;
-    if (state.landing?.sha === approvedSha && approvedSha !== ws.baseSha) {
-      const already = await Workspace.findBranchAt(state.repoDir, SUFFIXES.map((x) => `${state.taskId}${x}`), approvedSha);
-      if (already) {
-        log.event('landed-before-crash', { branch: already, sha: approvedSha });
-        return finish('landed', { branch: already });
+      for (const suffix of SUFFIXES) {
+        const landed = await ws.land({ repoDir: state.repoDir, branch: `${ws.branch}${suffix}`, sha: approvedSha });
+        if (landed.ok) return finish('landed', { branch: landed.branch });
+        if (!/already exists/.test(landed.error)) {
+          log.event('land-failed', { detail: landed.error });
+          return finish('failed', { reason: `Could not create the result branch in your repository: ${landed.error}; the finished work is kept in ${ws.dir}.` });
+        }
       }
+      return finish('failed', { reason: `Could not create the result branch in your repository: every branch name ${ws.branch}[-2..-9] is taken; the finished work is kept in ${ws.dir}.` });
     }
-    delete state.landing; // nothing was landed: this is a fresh pass through the gate
-
-    // Final whole-branch review, then the user's gate. What the user approves is
-    // exactly approvedSha: diffs are commit-to-commit, and land ships that sha.
-    await ws.assertOnBranch();
-    log.event('phase', { name: 'final' });
-    await holdAt(ws, log, approvedSha, 'final-reset');
-    const diff = await ws.diffRange(ws.baseSha, approvedSha);
-    const files = await ws.filesRange(ws.baseSha, approvedSha);
-    const tests = await ws.runTests(options.testCommand, { timeoutMs: options.testTimeoutMs });
-    const r = await callAgent(ctx, team.reviewer, 'reviewer',
-      prompts.finalReview({ request: state.request, plan: state.plan, diff, tests, base: ws.baseSha }),
-      { cwd: ws.dir, write: false, timeoutMs: options.agentTimeoutMs });
-    if (r.failure === 'no-participant') return finish('paused', { reason: pausedReason(r.error) });
-    const finalReview = verdictOf(r);
-    const notes = [...state.notes];
-    if (finalReview.decision === 'BLOCK') notes.push(`Final review concern: ${plainReason(finalReview.reason)}`);
-    const warnings = [...(state.warnings ?? [])];
-    if (state.usage?.apiCalls) {
-      const n = state.usage.apiCalls;
-      const cost = state.usage.apiCostUsd > 0 ? `, about $${state.usage.apiCostUsd.toFixed(2)}.` : ' (the cost was not reported).';
-      warnings.push(`Paid API use this run: ${n} call${n === 1 ? '' : 's'}${cost}`);
-    }
-    if (state.flags?.sameVendor && !warnings.includes(SAME_VENDOR_WARNING)) warnings.push(SAME_VENDOR_WARNING);
-    if (redact(diff).includes(REDACTED)) warnings.push(CREDENTIAL_WARNING); // N2: redaction hides it; the file still lands
-    const summary = buildSummary({ request: state.request, plan: state.plan, notes, files, tests, source: state.source, warnings });
-
-    // The hook never sees the raw IRREVERSIBLE marker (m2).
-    const shownReview = { ...finalReview, reason: plainReason(finalReview.reason), detail: plainReason(finalReview.detail) };
-    const approved = await safeHook(log, 'approveResult', hooks.approveResult, redact({ summary, files, tests, finalReview: shownReview, diff }));
-    if (approved !== true) {
-      // "[n] reject with a note" (spec §8): keep the user's words with the run.
-      const raw = approved && typeof approved === 'object' && typeof approved.note === 'string' ? approved.note.trim() : '';
-      const note = raw ? clip(redact(raw), 2000) : null;
-      if (note) log.event('gate-note', { note });
-      return finish('rejected', { reason: 'You did not approve the result.', ...(note ? { note } : {}) });
-    }
-
-    // The test command and the reviewer ran after the diff was taken: re-check.
-    const tampered = ws.restoreConfigIfTampered();
-    if (tampered) log.event('config-tampered', { participant: null, role: null, ...tampered });
-    await ws.assertOnBranch();
-    await holdAt(ws, log, approvedSha, 'final-drift');
-
-    state.landing = { sha: approvedSha };
-    log.saveState(state);
-    for (const suffix of SUFFIXES) {
-      const landed = await ws.land({ repoDir: state.repoDir, branch: `${ws.branch}${suffix}`, sha: approvedSha });
-      if (landed.ok) return finish('landed', { branch: landed.branch });
-      if (!/already exists/.test(landed.error)) {
-        log.event('land-failed', { detail: landed.error });
-        return finish('failed', { reason: `Could not create the result branch in your repository: ${landed.error}; the finished work is kept in ${ws.dir}.` });
-      }
-    }
-    return finish('failed', { reason: `Could not create the result branch in your repository: every branch name ${ws.branch}[-2..-9] is taken; the finished work is kept in ${ws.dir}.` });
   } catch (e) {
     const detail = message(e);
     try { log.event('run-error', { detail }); } catch {}

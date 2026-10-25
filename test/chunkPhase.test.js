@@ -200,7 +200,7 @@ test('an approved chunk that changed nothing returns sha null and no commit', as
   const ctx = await ctxFor(t);
   const base = await ctx.ws.head();
   const r = await runChunk(ctx, PLAN.chunks[0], 0);
-  assert.deepEqual(r, { status: 'done', sha: null, note: null, tests: { ran: false, passed: null, code: null, output: '' } });
+  assert.deepEqual(r, { status: 'done', sha: null, note: null, tests: { ran: false, passed: null, code: null, output: '' }, vendor: 'local' });
   assert.equal(await ctx.ws.head(), base);
 });
 

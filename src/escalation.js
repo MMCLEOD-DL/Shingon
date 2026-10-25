@@ -18,6 +18,10 @@ const WHAT_HAPPENED = {
   final: {
     disagree: 'The final check of the finished work raised a concern.',
   },
+  council: {
+    stuck: 'The council of specialist reviewers still found problems that must be fixed, after every allowed round of fixes.',
+    disagree: 'The council of specialist reviewers found problems that must be fixed.',
+  },
 };
 
 function whatHappened(kind, situation) {
@@ -43,7 +47,7 @@ export function buildEscalation({ kind, title, reason, recommendation, situation
   return { kind, title, message, options: ['approve', 'reject'] };
 }
 
-export function buildSummary({ request, plan, notes = [], files = [], tests = null, source = null, warnings = [] }) {
+export function buildSummary({ request, plan, notes = [], files = [], tests = null, source = null, warnings = [], council = null }) {
   const steps = (plan?.chunks ?? []).map((c, i) => `  ${i + 1}. ${c.title}`);
   const shown = files.slice(0, 30).join(', ');
   const more = files.length > 30 ? ` + ${files.length - 30} more` : '';
@@ -61,6 +65,7 @@ export function buildSummary({ request, plan, notes = [], files = [], tests = nu
     lines.push(`Started from commit ${source.sha.slice(0, 7)} ${where}${source.dirty ? '; your uncommitted changes were not included.' : '.'}`);
   }
   lines.push(...warnings);
+  if (council) lines.push(council);
   if (notes.length) lines.push('Notes:', ...notes.map((n) => `  - ${plainReason(n)}`));
   return lines.join('\n');
 }

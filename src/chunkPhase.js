@@ -207,5 +207,5 @@ async function runChunkFrom(ctx, chunk, index, base, reset) {
   const done = { index, sha, files: await ws.filesRange(base, sha ?? base), by: loop.artifact?.producedBy ?? null };
   if (options.watchDiffs) done.diff = clip(await ws.diffRange(base, sha ?? base), 20000);
   log.event('chunk-done', done);
-  return { status: 'done', sha, note, tests: loop.artifact?.tests ?? null };
+  return { status: 'done', sha, note, tests: loop.artifact?.tests ?? null, vendor: loop.artifact?.vendor ?? null };
 }

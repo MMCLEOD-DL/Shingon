@@ -88,3 +88,11 @@ test('the summary counts one step in the singular', () => {
   assert.match(buildSummary({ request: 'r', plan: { chunks: [{ title: 'a' }] } }), /What was done \(1 step\):/);
   assert.match(buildSummary({ request: 'r', plan: { chunks: [{ title: 'a' }, { title: 'b' }] } }), /What was done \(2 steps\):/);
 });
+
+test('the council escalation and the council section of the summary', () => {
+  const e = buildEscalation({ kind: 'council', title: 'the council review', situation: 'stuck', reason: 'Security: Untrusted input reaches eval()', recommendation: 'Reject.' });
+  assert.match(e.message, /What happened: The council of specialist reviewers still found problems that must be fixed, after every allowed round of fixes\./);
+  const s = buildSummary({ request: 'r', plan: { chunks: [] }, warnings: ['W'], notes: ['N'], council: 'Council report: approved, nothing to fix\n  Round 1 · checked by codex' });
+  assert.match(s, /W\nCouncil report: approved, nothing to fix\n {2}Round 1 · checked by codex\nNotes:/);
+  assert.doesNotMatch(buildSummary({ request: 'r', plan: { chunks: [] } }), /Council report/);
+});
