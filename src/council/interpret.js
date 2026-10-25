@@ -12,7 +12,11 @@ export const ID_PREFIX = Object.freeze({ security: 'S', legal: 'L', correctness:
 export const MAX_SENT = 40;
 export const MAX_EXTRA = 10;
 
-const text = (v, max) => (typeof v === 'string' ? clip(redact(v), max) : null);
+const text = (v, max) => {
+  if (typeof v !== 'string') return null;
+  const t = clip(redact(v), max).trim();
+  return t || null;
+};
 
 export function parseInterpretation(reply) {
   const s = typeof reply === 'string' ? reply : '';
@@ -44,7 +48,19 @@ export function parseInterpretation(reply) {
 
 export function applyInterpretation(findings, ids, reply, { member }) {
   const byId = new Map();
-  for (const e of reply.findings ?? []) if (!byId.has(e.id)) byId.set(e.id, e);
+  // Conflicting duplicates: never a dismissal; keep the highest grade; first non-empty text.
+  const groups = new Map();
+  for (const e of reply.findings ?? []) groups.set(e.id, [...(groups.get(e.id) ?? []), e]);
+  for (const [id, es] of groups) {
+    if (es.length === 1) { byId.set(id, es[0]); continue; }
+    const grades = es.map((e) => e.grade).filter((g) => GRADES.includes(g));
+    byId.set(id, {
+      id, decision: 'keep',
+      grade: grades.length ? grades.sort((a, b) => GRADES.indexOf(a) - GRADES.indexOf(b))[0] : null,
+      why: es.map((e) => e.why).find(Boolean) ?? null,
+      fix: es.map((e) => e.fix).find(Boolean) ?? null,
+    });
+  }
   const out = findings.map((orig, i) => {
     const f = { ...orig };
     const e = ids[i] ? byId.get(ids[i]) : undefined;
@@ -72,7 +88,8 @@ export function applyInterpretation(findings, ids, reply, { member }) {
 }
 
 export async function interpretMember(ctx, { member, label, findings, notes, input }) {
-  const order = findings.map((_, i) => i).sort((a, b) => GRADES.indexOf(findings[a].grade) - GRADES.indexOf(findings[b].grade) || a - b);
+  // Only this member's own findings are ever shown to the model.
+  const order = findings.map((_, i) => i).filter((i) => findings[i].member === member).sort((a, b) => GRADES.indexOf(findings[a].grade) - GRADES.indexOf(findings[b].grade) || a - b);
   const ids = findings.map(() => null);
   const items = [];
   order.slice(0, MAX_SENT).forEach((idx, n) => {

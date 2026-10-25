@@ -140,3 +140,49 @@ test('secrets in the interpreter reply never survive (why, fix, extras)', async 
   assert.ok(!JSON.stringify(r).includes(key));
 });
 
+
+test('a whitespace-only reason does not set a finding aside', () => {
+  const err = sem({ grade: 'blocking', title: 'eval' });
+  const p = parseInterpretation(fence({ findings: [{ id: 'S1', decision: 'dismiss', why: '  ' }] }));
+  assert.equal(p.findings[0].why, null);
+  const out = applyInterpretation([err], ['S1'], { ok: true, findings: [{ id: 'S1', decision: 'dismiss', grade: null, why: '  ', fix: null }], extra: [] }, { member: 'security' });
+  assert.deepEqual([out[0].grade, out[0].dismissed], ['blocking', false]);
+});
+
+test('conflicting duplicate ids: no dismissal, highest grade (clamped), first non-empty text', () => {
+  const err = sem({ grade: 'blocking', title: 'eval' });
+  const warn = sem({ title: 'weak hash' });
+  const reply = { ok: true, extra: [], findings: [
+    { id: 'S1', decision: 'dismiss', grade: 'note', why: 'fixture', fix: null },
+    { id: 'S1', decision: 'keep', grade: 'warning', why: null, fix: 'fix it' },
+    { id: 'S2', decision: 'keep', grade: 'blocking', why: 'bad', fix: null },
+    { id: 'S2', decision: 'dismiss', grade: 'note', why: 'ok', fix: null },
+  ] };
+  const out = applyInterpretation([err, warn], ['S1', 'S2'], reply, { member: 'security' });
+  assert.deepEqual(out.map((f) => [f.grade, f.dismissed]), [['warning', false], ['warning', false]]);
+  assert.equal(out[0].why, 'fixture');
+  assert.equal(out[0].fix, 'fix it');
+});
+
+test('dismiss-everything reply with 12 extras: only locked survive, 10 extras, none blocking', () => {
+  const locked = makeFinding({ member: 'correctness', tool: 'tests', grade: 'blocking', locked: true, title: 'tests fail' });
+  const a = sem({ grade: 'blocking', title: 'a' });
+  const b = sem({ title: 'b' });
+  const reply = { ok: true, findings: ['X1', 'X2', 'X3'].map((id) => ({ id, decision: 'dismiss', grade: 'note', why: 'all fine', fix: null })),
+    extra: Array.from({ length: 12 }, (_, i) => ({ title: `e${i}`, why: 'w', grade: 'blocking', file: null })) };
+  const out = applyInterpretation([locked, a, b], ['X1', 'X2', 'X3'], reply, { member: 'security' });
+  assert.equal(out.length, 13);
+  assert.deepEqual(out.slice(0, 3).map((f) => f.dismissed), [false, true, true]);
+  assert.equal(out[0].grade, 'blocking');
+  assert.ok(out.slice(3).every((f) => f.grade !== 'blocking' && !f.evidence));
+});
+
+test('interpretMember never shows another member\'s findings to the model', async () => {
+  const ctx = await ctxWith(() => ({ text: fence({ findings: [] }) }));
+  const other = makeFinding({ member: 'legal', tool: 'licences', grade: 'blocking', title: 'LEGAL-ONLY-TITLE' });
+  const r = await interpretMember(ctx, { member: 'security', label: 'Security', findings: [other, sem()], notes: [], input: input(ctx) });
+  const task = ctx.team.reviewer.calls[0].task;
+  assert.doesNotMatch(task, /LEGAL-ONLY-TITLE/);
+  assert.match(task, /S1 \[warning\] Semgrep/);
+  assert.equal(r.findings.length, 2);
+});
