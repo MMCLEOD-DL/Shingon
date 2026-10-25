@@ -71,7 +71,8 @@ async function testsAtBase({ ws, options }, head) {
   }
 }
 
-// Files this change added or renamed (renames shown as delete + add): fully introduced.
+// Files this change added or renamed: fully introduced. --no-renames makes git print a rename as
+// delete + add, so only 'A' entries appear (git never prints R/C here).
 async function addedFiles(ws, head) {
   const r = await git(ws.dir, ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', '--name-status', '-z', ws.baseSha, head]);
   if (r.code !== 0) return null;
@@ -80,7 +81,6 @@ async function addedFiles(ws, head) {
   for (let i = 0; i + 1 < t.length; i += 2) {
     const s = t[i][0];
     if (s === 'A') out.add(t[i + 1]);
-    else if (s === 'R' || s === 'C') { out.add(t[i + 2]); i++; }
   }
   return out;
 }
@@ -112,6 +112,7 @@ export async function runCouncilRound(ctx, { files, tests, diff, members = MEMBE
   let findings = [];
   const toolRuns = [];
   const names = new Set();
+  const interpretedBy = new Set();
   for (const m of members) {
     log.event('council-member', { member: m.member, stage: 'tools' });
     let runs;
@@ -138,6 +139,7 @@ export async function runCouncilRound(ctx, { files, tests, diff, members = MEMBE
       by = out.by;
       interpreted = out.interpreted;
       if (interpreted && by) names.add(by);
+      if (interpreted) interpretedBy.add(m.member);
     }
     findings = findings.concat(mine);
     log.event('council-member-done', { member: m.member, ...tally(mine), by, interpreted });
@@ -146,7 +148,7 @@ export async function runCouncilRound(ctx, { files, tests, diff, members = MEMBE
   for (const f of findings) {
     log.event('council-finding', { member: f.member, tool: f.tool, grade: f.grade, title: f.title, file: f.file, line: f.line, preExisting: f.preExisting, dismissed: f.dismissed });
   }
-  const report = buildReport({ round, findings, toolRuns, by: [...names].join(', ') || null, history: earlier });
+  const report = buildReport({ round, findings, toolRuns, by: [...names].join(', ') || null, history: earlier, interpreted: interpretedBy });
   c.round = round;
   c.secretSeen = c.secretSeen || hidden.size > 0;
   c.history = [...earlier, { round, sha: head, fixRounds: c.fixRounds, blocking: report.blocking.map((f) => ({ key: findingKey(f), title: f.title, member: f.member })) }];

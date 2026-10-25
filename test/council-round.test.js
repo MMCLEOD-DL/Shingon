@@ -181,3 +181,23 @@ test('the one-off base test run puts the workspace back even when the test comma
   assert.equal(await ctx.ws.head(), head);
   assert.ok(existsSync(path.join(ctx.ws.dir, 'a.js')));
 });
+
+test('carry-over (a): with diff.noprefix, a file under a top-level b/ directory still gets its added lines right', async () => {
+  const res = (line) => ({ check_id: 'r', path: 'b/old.js', start: { line }, extra: { message: `Bad L${line}`, severity: 'ERROR' } });
+  const body = printJson({ results: [res(1), res(3)], errors: [] });
+  const events = [];
+  const team = {
+    author: fakeParticipant({ name: 'claude', kind: 'claude-code', script: () => ({ text: 'x' }) }),
+    reviewer: fakeParticipant({ name: 'codex', kind: 'codex', script: () => ({ text: fence({ findings: [] }) }) }),
+    local: fakeParticipant({ name: 'local', kind: 'local-agent', roles: ['grunt'], script: () => ({ text: 'x' }) }),
+  };
+  const ctx = await makeCtx({ team, files: { 'b/old.js': 'l1\nl2\n' }, hooks: { onEvent: (e) => events.push(e) },
+    options: { council: true, councilTools: councilStubs(mkdtempSync(path.join(tmpdir(), 'crnd-')), { semgrep: body }) } });
+  ctx.state.plan = { summary: 'S', chunks: [{ title: 'One', instructions: 'i' }] };
+  execFileSync('git', ['config', 'diff.noprefix', 'true'], { cwd: ctx.ws.dir });
+  writeFileSync(path.join(ctx.ws.dir, 'b/old.js'), 'l1\nl2\nl3\n');
+  await ctx.ws.commitAll('step');
+  const out = await runCouncilRound(ctx, { files: ['b/old.js'], tests: null, diff: '', members: [SECURITY] });
+  assert.deepEqual(out.report.blocking.map((f) => f.title), ['Bad L3'], 'the added line blocks');
+  assert.deepEqual(out.report.warnings.map((f) => [f.title, f.preExisting]), [['Bad L1', true]], 'the old line is already there');
+});

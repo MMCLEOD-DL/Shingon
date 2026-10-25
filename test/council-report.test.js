@@ -75,3 +75,20 @@ test('fixChunk carries every blocking finding with its evidence, and nothing els
   const huge = buildReport({ round: 1, findings: Array.from({ length: 60 }, (_, i) => F({ member: 'security', grade: 'blocking', title: `b${i}`, detail: 'x'.repeat(2000) })), toolRuns: [], by: null });
   assert.ok(fixChunk(huge, 2).instructions.length <= 7100);
 });
+
+test('"fixed during the review" needs the check to have run and the finding to be gone entirely', () => {
+  const prior = { round: 1, blocking: [{ key: findingKey(evalF), title: evalF.title, member: 'security' }] };
+  const run = (status) => [{ tool: 'semgrep', status, note: null }];
+  const resolvedFor = (findings, toolRuns) => buildReport({ round: 2, findings, toolRuns, by: null, history: [prior] }).resolved;
+  assert.deepEqual(resolvedFor([], run('ran')), ['[Security] Untrusted input reaches eval()'], 'genuinely fixed');
+  assert.deepEqual(resolvedFor([], run('error')), [], 'the scanner errored: proves nothing');
+  assert.deepEqual(resolvedFor([], []), [], 'the scanner is missing from this round');
+  assert.deepEqual(resolvedFor([{ ...evalF, grade: 'warning' }], run('ran')), [], 'only downgraded');
+  assert.deepEqual(resolvedFor([{ ...evalF, grade: 'blocking', dismissed: true }], run('ran')), [], 'set aside as a false alarm is not "fixed"');
+});
+
+test('fixChunk says "is" for one leftover problem and "are" for several', () => {
+  const mk = (n) => buildReport({ round: 1, findings: Array.from({ length: n }, (_, i) => F({ member: 'security', grade: 'blocking', title: `b${i}`, detail: 'x'.repeat(2000) })), toolRuns: [], by: null });
+  const t = fixChunk(mk(60), 1).instructions;
+  assert.match(t, /\(\d+ more problems are listed in the council report\.\)$/);
+});

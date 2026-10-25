@@ -25,8 +25,8 @@ export function testFindings(tests, baseTests = null) {
   }
   return [makeFinding({
     member: 'correctness', tool: 'tests', grade: 'blocking', locked: true,
-    title: `The tests fail (exit code ${tests.code})`,
-    detail: tests.output,
+    title: 'The tests fail', // stable key across rounds; the exit code is in the detail
+    detail: `${tests.code === -1 || tests.code === null || tests.code === undefined ? 'the test command timed out' : `exit code ${tests.code}`}\n${tests.output}`,
   })];
 }
 

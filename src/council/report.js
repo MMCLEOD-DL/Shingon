@@ -19,16 +19,24 @@ const byMember = (list) => list
   .sort((a, b) => (ORDER.indexOf(a[0].member) - ORDER.indexOf(b[0].member)) || a[1] - b[1])
   .map(([f]) => f);
 
-export function buildReport({ round, findings, toolRuns, by, history = [], overridden = false }) {
+export function buildReport({ round, findings, toolRuns, by, history = [], overridden = false, interpreted = null }) {
   const live = findings.filter((f) => !f.dismissed);
   const grade = (g) => byMember(live.filter((f) => f.grade === g));
   const blocking = grade('blocking');
   const nowKeys = new Set(blocking.map(findingKey));
+  // Fixed = the check that found it ran again this round and the finding is gone from ALL live
+  // findings (not merely downgraded or set aside). A tool that errored or went missing proves nothing.
+  const liveKeys = new Set(findings.map(findingKey)); // includes set-aside ones: those are not fixed
+  const ranTools = new Set((toolRuns ?? []).filter((r) => r.status === 'ran').map((r) => r.tool));
+  const checkRan = (key) => {
+    const [member, tool] = key.split('|');
+    return tool === 'ai' ? Boolean(interpreted?.has(member)) : ranTools.has(tool);
+  };
   const resolved = [];
   const seen = new Set();
   for (const h of history) {
     for (const b of h.blocking ?? []) {
-      if (nowKeys.has(b.key) || seen.has(b.key)) continue;
+      if (nowKeys.has(b.key) || liveKeys.has(b.key) || !checkRan(b.key) || seen.has(b.key)) continue;
       seen.add(b.key);
       resolved.push(`[${MEMBER_LABEL[b.member] ?? b.member}] ${b.title}`);
     }
@@ -84,7 +92,7 @@ export function fixChunk(report, fixRound) {
     const reserve = 60;
     if (text.length + 1 + block.length + (rest > 0 ? reserve : 0) > FIX_MAX) {
       const k = all.length - i;
-      text += `\n(${k} more problems are listed in the council report.)`;
+      text += `\n(${k} more problem${k === 1 ? ' is' : 's are'} listed in the council report.)`;
       break;
     }
     text += `\n${block}`;

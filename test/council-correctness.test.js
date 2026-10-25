@@ -13,7 +13,8 @@ test('failing tests: one locked blocking finding carrying the output', () => {
   assert.equal(f.grade, 'blocking');
   assert.equal(f.locked, true);
   assert.equal(f.tool, 'tests');
-  assert.equal(f.title, 'The tests fail (exit code 1)');
+  assert.equal(f.title, 'The tests fail');
+  assert.match(f.detail, /^exit code 1\n/);
   assert.match(f.detail, /expected 12\.40/);
   assert.deepEqual(testFindings({ ran: true, passed: true, code: 0, output: '' }), []);
   const [none] = testFindings({ ran: false, passed: null, code: null, output: '' });
