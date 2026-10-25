@@ -675,6 +675,18 @@ test('local unreachable mid-run: no, a non-true answer or a throwing hook pauses
   }
 });
 
+test('declining discards partial local edits before pausing', async () => {
+  const t = team({ local: (role, task, c, opts) => { writeFileSync(path.join(opts.cwd, 'partial.txt'), 'half'); return { ok: false, failure: 'timeout', error: 'the local model did not finish in time' }; } });
+  t.local.adapter.probe = async () => ({ ok: false, reason: 'unavailable' });
+  const ctx = await ctxFor(t, { confirmLocalFallback: true }, { confirmLocalFallback: async () => false });
+  const base = await ctx.ws.head();
+  const r = await runChunk(ctx, PLAN.chunks[0], 0);
+  assert.equal(r.status, 'paused');
+  assert.equal(await ctx.ws.head(), base);
+  assert.ok(await ctx.ws.isClean());
+  assert.ok(!existsSync(path.join(ctx.ws.dir, 'partial.txt')));
+});
+
 test('a hook can say why it declined (localDown "pause")', async () => {
   const t = team({ local: UNREACHABLE });
   const ctx = await ctxFor(t, { confirmLocalFallback: true }, { confirmLocalFallback: async () => ({ reason: LOCAL_PAUSE_SETTING_REASON }) });

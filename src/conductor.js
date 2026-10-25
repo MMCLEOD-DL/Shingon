@@ -181,6 +181,8 @@ export async function resume({ workspaceDir, repoDir, team, hooks, options = {},
   }
   state.warnings ??= [];
   for (const w of warnings) if (!state.warnings.includes(w)) state.warnings.push(w);
+  // Consent covers one run of the process: a resumed run asks again if the local model is still down.
+  if (state.flags) delete state.flags.localFallbackOk;
   state.options = opts;
   state.status = 'running';
   log.event('resume', { phase: state.phase, chunkIndex: state.chunkIndex });

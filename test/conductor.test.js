@@ -686,3 +686,34 @@ test('confirmLocalFallback without its hook is a programming error', async () =>
   await assert.rejects(runTask({ repoDir: await makeRepo(), request: 'x', team: makeTeam(), hooks: hooks(), baseDir: base(), options: { confirmLocalFallback: true } }),
     /hooks\.confirmLocalFallback is required when confirmLocalFallback is set/);
 });
+
+test('consent to a local fallback does not survive resume: asked again', async () => {
+  const repo = await makeRepo();
+  const down = () => ({ ok: false, failure: 'no-participant', error: 'no AI model is available for local (local: not reachable)' });
+  const mk = () => {
+    const t = makeTeam({ local: down });
+    t.author = fakeParticipant({
+      name: 'claude', kind: 'claude-code',
+      script: (role, task, c, opts) => {
+        if (role === 'reviewer') return approve();
+        if (role !== 'author' || !/chunk \d+ of/.test(task)) return planReply;
+        writeFileSync(path.join(opts.cwd, `fe${stepOf(task)}.txt`), 'x\n');
+        return { text: 'ok' };
+      },
+    });
+    return t;
+  };
+  let asked = 0;
+  const yes = async () => { asked++; return true; };
+  const first = await runTask({ repoDir: repo, request: 'x', team: mk(), hooks: hooks({ confirmLocalFallback: yes, approveChunk: async () => false }), baseDir: base(), options: { approveEachChunk: true, confirmLocalFallback: true, testCommand: 'true' } });
+  assert.equal(first.status, 'stopped');
+  assert.equal(asked, 1);
+  // Make it resumable as after a crash after step 1 (a stopped run is final).
+  const statePath = path.join(`${first.workspaceDir}.conductor`, 'state.json');
+  const st = JSON.parse(readFileSync(statePath, 'utf8'));
+  assert.equal(st.flags.localFallbackOk, true, 'consent was saved with the run state');
+  writeFileSync(statePath, JSON.stringify({ ...st, status: 'running', phase: 'chunks' }));
+  const out = await resume({ workspaceDir: first.workspaceDir, repoDir: repo, team: mk(), hooks: hooks({ confirmLocalFallback: yes }), options: { approveEachChunk: false, keepWorkspace: true } });
+  assert.equal(out.status, 'landed', out.reason);
+  assert.equal(asked, 2, 'the resumed run asked again');
+});
