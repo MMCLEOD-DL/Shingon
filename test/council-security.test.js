@@ -199,3 +199,35 @@ test('a crashed scanner is an error, never a clean run', async () => {
   assert.deepEqual(runs.map((r) => r.status), ['error', 'error', 'error', 'ran']);
   assert.ok(runs.slice(0, 3).every((r) => r.findings.length === 1 && r.findings[0].grade === 'warning'));
 });
+
+test('fix round 1: failed Semgrep, header-like added lines, missing line, gitleaks args', async () => {
+  const failed = { results: [], errors: [{ level: 'error', type: 'Fatal error', message: 'Failed to download p/default' }] };
+  assert.throws(() => parseSemgrep(JSON.stringify(failed), { changed: new Set() }), /Failed to download/);
+  assert.throws(() => parseSemgrep('{"results":[],"errors":[]}', { changed: new Set() }, { code: 2 }), /exit code 2/);
+  assert.deepEqual(parseSemgrep('{"results":[],"errors":[{"level":"warn"}]}', { changed: new Set() }, { code: 0 }), []);
+  const repo = await makeRepo();
+  const bad = `console.log(${JSON.stringify(JSON.stringify(failed))}); process.exit(2);`;
+  const runs = await SECURITY.collect(await input(repo, { options: { councilTools: councilStubs(tmp(), { semgrep: bad }) } }));
+  assert.equal(runs[0].status, 'error');
+
+  const u0 = ['diff --git a/a.js b/a.js', '--- a/a.js', '+++ b/a.js', '@@ -2 +2 @@', '--- x', '+++ counter',
+    '@@ -9,0 +10,2 @@', '+one', '++ two', '\\ No newline at end of file',
+    'diff --git a/b.js b/b.js', '--- a/b.js', '+++ b/b.js', '@@ -1,0 +1 @@', '+y'].join('\n');
+  const added = addedLines(u0);
+  assert.deepEqual([...added.keys()], ['a.js', 'b.js']);
+  assert.deepEqual([...added.get('a.js')], [2, 10, 11]);
+  assert.deepEqual([...added.get('b.js')], [1]);
+
+  const noLine = JSON.stringify({ results: [{ check_id: 'r', path: 'a.js', extra: { message: 'm', severity: 'ERROR' } }] });
+  assert.equal(parseSemgrep(noLine, { changed: new Set(['a.js']), added })[0].grade, 'blocking');
+  assert.equal(parseSemgrep(noLine, { changed: new Set(['z.js']), added })[0].preExisting, true);
+
+  const echo = `console.log(JSON.stringify(args)); require('fs').writeFileSync(args[args.indexOf('--report-path') + 1], '[]');`;
+  const g = await SECURITY.collect(await input(repo, { options: { councilTools: councilStubs(tmp(), { gitleaks: echo }) } }));
+  assert.equal(g[1].status, 'ran');
+  // the stub prints its args on stdout; the report is what gets parsed, so check them via a second stub
+  const probe = `require('fs').writeFileSync(args[args.indexOf('--report-path') + 1], JSON.stringify([{ RuleID: 'r', Description: args.join(' '), File: 'a.js', StartLine: 1 }]));`;
+  const g2 = await SECURITY.collect(await input(repo, { files: ['a.js'], options: { councilTools: councilStubs(tmp(), { gitleaks: probe }) } }));
+  assert.equal(g2[1].findings[0].title, 'Possible secret (detect --no-git --source . --report-format json --report-path ' + g2[1].findings[0].title.split('--report-path ')[1]);
+  assert.match(g2[1].findings[0].title, /--no-git .*--redact --no-banner --exit-code 0\)$/);
+});

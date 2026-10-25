@@ -19,11 +19,22 @@ export function unquoteGitPath(s) {
   return Buffer.from(bytes).toString('utf8');
 }
 
-// From `git diff -U0` text: the line numbers each file gained.
+// From `git diff -U0` text: the line numbers each file gained. File headers (+++ / ---) are
+// only read outside a hunk; inside one, exactly the counts in its @@ header are consumed, so an
+// added line whose text starts with "++ " is not mistaken for a header.
 export function addedLines(text) {
   const out = new Map();
   let cur = null;
+  let del = 0;
+  let add = 0;
+  let next = 0;
   for (const line of String(text).split('\n')) {
+    if (del > 0 || add > 0) {
+      if (line.startsWith('-') && del > 0) { del--; continue; }
+      if (line.startsWith('+') && add > 0) { add--; if (cur !== null) out.get(cur).add(next++); continue; }
+      if (line.startsWith('\\')) continue; // "\ No newline at end of file"
+      del = 0; add = 0; // malformed hunk: fall through and read the line normally
+    }
     if (line.startsWith('+++ ')) {
       let p = line.slice(4).replace(/\t+$/, '');
       if (p === '/dev/null') { cur = null; continue; }
@@ -32,11 +43,11 @@ export function addedLines(text) {
       if (!out.has(cur)) out.set(cur, new Set());
       continue;
     }
-    const m = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
-    if (m && cur !== null) {
-      const c = Number(m[1]);
-      const d = m[2] === undefined ? 1 : Number(m[2]);
-      for (let i = 0; i < d; i++) out.get(cur).add(c + i);
+    const m = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
+    if (m) {
+      del = m[1] === undefined ? 1 : Number(m[1]);
+      next = Number(m[2]);
+      add = m[3] === undefined ? 1 : Number(m[3]);
     }
   }
   return out;
@@ -53,9 +64,12 @@ export function isIntroduced({ changed, added }, file, start, end = start) {
 
 const stripDot = (p) => String(p ?? '').replace(/^\.\//, '');
 
-export function parseSemgrep(text, { changed, added }) {
+export function parseSemgrep(text, { changed, added }, { code = 0 } = {}) {
   const data = JSON.parse(text);
   if (!Array.isArray(data?.results)) throw new Error('Semgrep gave no results list');
+  const fatal = (Array.isArray(data.errors) ? data.errors : []).find((e) => e?.level === 'error');
+  if (fatal) throw new Error(`Semgrep reported an error: ${String(fatal.message ?? fatal.type ?? 'unknown').split('\n')[0]}`);
+  if (code !== 0 && code !== null && code !== undefined && data.results.length === 0) throw new Error(`Semgrep failed with no results (exit code ${code})`);
   return data.results.map((r) => {
     const extra = r.extra ?? {};
     const file = stripDot(r.path);
@@ -65,7 +79,8 @@ export function parseSemgrep(text, { changed, added }) {
       grade: { ERROR: 'blocking', WARNING: 'warning' }[extra.severity] ?? 'note',
       title: String(extra.message ?? '').split('\n')[0] || r.check_id,
       detail: `rule ${r.check_id}`, file, line: start,
-      preExisting: !isIntroduced({ changed, added }, file, start, r.end?.line ?? start),
+      // no line number: cannot tell, so fail closed (introduced if the file changed)
+      preExisting: !(Number.isInteger(start) ? isIntroduced({ changed, added }, file, start, r.end?.line ?? start) : isIntroduced({ changed, added: null }, file, 0)),
     });
   });
 }
@@ -125,7 +140,7 @@ export const SECURITY = {
     const semgrep = await runTool({ ...base, name: 'semgrep', label: TOOL_LABEL.semgrep, bin: 'semgrep',
       args: ['scan', '--config', input.options.councilSemgrepConfig, '--json', '--quiet', '--metrics=off', '--disable-version-check', '.'],
       install: 'Install: pipx install semgrep (free, runs on this machine).',
-      parse: (t) => parseSemgrep(t, input) });
+      parse: (t, r) => parseSemgrep(t, input, r) });
     const gitleaks = await runTool({ ...base, name: 'gitleaks', label: TOOL_LABEL.gitleaks, bin: 'gitleaks',
       args: ['detect', '--no-git', '--source', '.', '--report-format', 'json', '--report-path', '{report}', '--redact', '--no-banner', '--exit-code', '0'],
       install: 'Install: the gitleaks release for Linux from github.com/gitleaks/gitleaks (free, runs on this machine).',
