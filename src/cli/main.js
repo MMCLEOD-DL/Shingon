@@ -119,6 +119,14 @@ export async function main(argv, {
     term.close();
     return built.ok ? 0 : EXIT.failed;
   }
+  // Interim (Plan 4 Task 5; Task 8 replaces this with the consent question): never let the
+  // subscription cover a down local model without the operator's say-so.
+  if (built.localDown) {
+    const d = built.localDown;
+    term.say(`The local model ${d.name} is not available (${d.detail ?? REASON_TEXT[d.reason] ?? d.reason}). Start the local model, then run Conductor again.`);
+    term.close();
+    return EXIT.stopped;
+  }
   for (const w of built.warnings) term.say(`Note: ${w}`);
 
   // Ctrl-C (Ruling 5): stop the agents, record it, leave the run resumable, exit 130.

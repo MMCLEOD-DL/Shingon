@@ -172,3 +172,18 @@ test('"could not start" is redacted (cheap fix)', async () => {
     await s.close();
   }
 });
+
+test('local down without consent: the run stops before anything is spent', async () => {
+  const s = await setup();
+  try {
+    const cfg = JSON.parse(readFileSync(s.cfg, 'utf8'));
+    cfg.participants[2].baseUrl = 'http://127.0.0.1:9/v1'; // nothing listens there: connection refused
+    writeFileSync(s.cfg, JSON.stringify(cfg));
+    const before = await refsOf(s.repo);
+    const r = await spawnBin(['add multiply', '--config', s.cfg], { cwd: s.repo, env: s.env });
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /Start the local model, then run/);
+    assert.doesNotMatch(r.out, /Plan agreed/, 'no agent was called');
+    assert.deepEqual(await refsOf(s.repo), before);
+  } finally { await s.close(); }
+});

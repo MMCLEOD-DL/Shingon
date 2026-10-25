@@ -1,6 +1,7 @@
 // src/team.js
 // Preflight + preference (spec §7): probe everyone, pick author and reviewer from different
 // vendors, order each Seat's fallbacks by the ladder, and say plainly when the run is degraded.
+// A down local model is reported, not covered, unless routing.localDown is 'frontier'.
 import { checkHealth } from './health.js';
 import { HealthBoard, Seat, REASON_TEXT } from './router.js';
 import { redact, secretValues } from './secrets.js';
@@ -11,7 +12,7 @@ export const LOCAL_DOWN_WARNING = 'The local model was not available, so the sub
 export const API_KEY_BILLING_WARNING = 'ANTHROPIC_API_KEY is set in your environment, so Claude Code may charge your Anthropic API account instead of your subscription.';
 
 const PROBE_TIMEOUT_MS = { 'local-agent': 60000 }; // the first local call may load the model
-const ROUTING_DEFAULTS = { allowApi: false, preferTwoVendors: false, localDown: 'frontier', cooldownMs: 60000, maxWaitMs: 300000 };
+const ROUTING_DEFAULTS = { allowApi: false, preferTwoVendors: false, localDown: 'ask', cooldownMs: 60000, maxWaitMs: 300000 };
 
 const uniq = (list) => [...new Set(list)];
 
@@ -51,9 +52,13 @@ export async function buildTeam(participants, { routing = {}, health = checkHeal
   const warnings = [];
   const local = (r.local && named(r.local)) || locals[0];
   if (!local) return fail('The config has no local model (a participant with the "grunt" role).');
+  // A down local model is reported, not covered, unless routing.localDown is 'frontier' (factory spec §4.2):
+  // covering uses the operator's subscription, so the CLI asks first.
+  let localDown = null;
   if (!healthy(local)) {
     if (r.localDown === 'pause') return fail(`The local model ${local.name} is not available (${why(local)}). Start it, then run Conductor again.`);
-    warnings.push(LOCAL_DOWN_WARNING);
+    if (r.localDown === 'frontier') warnings.push(LOCAL_DOWN_WARNING);
+    else localDown = { name: local.name, reason: entry(local)?.reason || 'unavailable', detail: entry(local)?.detail ?? null };
   }
 
   const okSubs = subs.filter(healthy);
@@ -86,5 +91,5 @@ export async function buildTeam(participants, { routing = {}, health = checkHeal
     }),
     local: new Seat({ name: local.name, candidates: [local], ...seatOpts }),
   };
-  return { ok: true, team, warnings, report, allowSameVendor };
+  return { ok: true, team, warnings, report, allowSameVendor, localDown };
 }

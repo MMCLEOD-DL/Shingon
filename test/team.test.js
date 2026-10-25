@@ -71,14 +71,25 @@ test('preferTwoVendors puts an other-vendor API ahead of the same-vendor subscri
   assert.doesNotThrow(() => validateTeam(r.team));
 });
 
-test('local down: frontier covers with a warning, or pause when configured', async () => {
+test('local down: ask by default, frontier covers with a warning when configured, or pause', async () => {
   const down = { ok: false, reason: 'unavailable', detail: 'could not reach the local model server (ECONNREFUSED)' };
-  const r = await buildTeam([claude(), codex(), local({ probe: down })], { env: NOENV });
-  assert.equal(r.ok, true);
-  assert.deepEqual(r.warnings, [LOCAL_DOWN_WARNING]);
+  const ask = await buildTeam([claude(), codex(), local({ probe: down })], { env: NOENV });
+  assert.equal(ask.ok, true);
+  assert.deepEqual(ask.warnings, [], 'no warning until the operator agrees');
+  assert.deepEqual(ask.localDown, { name: 'local', reason: 'unavailable', detail: 'could not reach the local model server (ECONNREFUSED)' });
+  assert.equal(ask.team.local.name, 'local');
+  const fr = await buildTeam([claude(), codex(), local({ probe: down })], { routing: { localDown: 'frontier' }, env: NOENV });
+  assert.equal(fr.ok, true);
+  assert.deepEqual(fr.warnings, [LOCAL_DOWN_WARNING]);
+  assert.equal(fr.localDown, null);
   const p2 = await buildTeam([claude(), codex(), local({ probe: down })], { routing: { localDown: 'pause' }, env: NOENV });
   assert.equal(p2.ok, false);
   assert.match(p2.error, /local model local is not available \(could not reach the local model server/);
+});
+
+test('local healthy: localDown is null', async () => {
+  const r = await buildTeam([claude(), codex(), local()], { env: NOENV });
+  assert.equal(r.localDown, null);
 });
 
 test('nothing healthy: a plain error and the full report', async () => {
