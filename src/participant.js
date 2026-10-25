@@ -1,8 +1,9 @@
 // src/participant.js
 import { isResult } from './result.js';
+import { normalizeWake } from './wake.js';
 
 export class Participant {
-  constructor({ name, adapter, roles, capabilities = {} }) {
+  constructor({ name, adapter, roles, capabilities = {}, wake = null }) {
     if (!name) throw new Error('Participant requires a name');
     if (!adapter || typeof adapter.run !== 'function') throw new Error(`Participant ${name} needs an adapter with run()`);
     if (!Array.isArray(roles) || roles.length === 0) throw new Error(`Participant ${name} needs at least one role`);
@@ -10,6 +11,8 @@ export class Participant {
     this.adapter = adapter;
     this.roles = roles;
     this.capabilities = { is_agentic: false, can_edit_files: false, ...capabilities };
+    // How to wake this participant's machine before a run (factory spec §4.2); warn-only by default.
+    this.wake = wake ?? normalizeWake(null, name);
   }
 
   canPlay(role) {

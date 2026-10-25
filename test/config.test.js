@@ -118,3 +118,19 @@ test('routing.allowApi and routing.preferTwoVendors must be true or false (I4)',
     assert.equal(loadConfig(cfgFile({ participants: [API_P], routing: { [key]: false } })).routing[key], false);
   }
 });
+
+test('every participant gets a normalized wake; localDown is validated', () => {
+  const f = writeConfig({ participants: [
+    { name: 'claude', adapter: 'claude-code', roles: ['author', 'reviewer'] },
+    { name: 'local', adapter: 'local-agent', model: 'm', roles: ['grunt'], wake: { method: 'wol', mac: '00:11:22:33:44:55', hint: 'Turn on the desktop PC.' } },
+  ], routing: { localDown: 'ask' } });
+  const { byName } = loadConfig(f);
+  assert.equal(byName.get('claude').wake.method, 'warn');
+  assert.equal(byName.get('local').wake.mac, '00:11:22:33:44:55');
+  for (const v of ['frontiers', true, 'ASK']) {
+    const g = writeConfig({ participants: [{ name: 'c', adapter: 'claude-code', roles: ['author'] }], routing: { localDown: v } });
+    assert.throws(() => loadConfig(g), /routing\.localDown must be "ask", "frontier" or "pause", but the config has/, String(v));
+  }
+  const h = writeConfig({ participants: [{ name: 'l', adapter: 'local-agent', model: 'm', roles: ['grunt'], wake: { method: 'nope' } }] });
+  assert.throws(() => loadConfig(h), /Participant l: wake\.method/);
+});

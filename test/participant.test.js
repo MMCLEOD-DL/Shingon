@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Participant } from '../src/participant.js';
 import { makeResult } from '../src/result.js';
+import { normalizeWake } from '../src/wake.js';
 
 const fakeAdapter = { kind: 'fake', async run(role) { return makeResult({ text: `ran ${role}` }); } };
 
@@ -43,4 +44,9 @@ test('forwards opts to the adapter', async () => {
   const p = new Participant({ name: 'p', adapter, roles: ['grunt'] });
   await p.run('grunt', 't', 'c', { cwd: '/w', write: true });
   assert.deepEqual(seen, { cwd: '/w', write: true });
+});
+
+test('a Participant built without wake gets the warn-only default', () => {
+  const p = new Participant({ name: 'p', roles: ['grunt'], adapter: { kind: 'x', run: async () => null } });
+  assert.deepEqual(p.wake, normalizeWake(null, 'p'));
 });

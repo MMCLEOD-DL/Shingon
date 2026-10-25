@@ -7,6 +7,7 @@ import { Participant } from './participant.js';
 import { AnthropicApiAdapter, OpenAiApiAdapter } from './adapters/api.js';
 import { DEFAULT_OPTIONS } from './options.js';
 import { isApiKind } from './vendors.js';
+import { normalizeWake } from './wake.js';
 
 export function buildAdapter(spec) {
   const opts = { bin: spec.bin, model: spec.model, timeoutMs: spec.timeoutMs };
@@ -40,6 +41,9 @@ export function loadConfig(filePath) {
       throw new Error(`routing.${k} must be true or false (without quotes), but the config has ${JSON.stringify(routing[k])}`);
     }
   }
+  if (Object.hasOwn(routing, 'localDown') && !['ask', 'frontier', 'pause'].includes(routing.localDown)) {
+    throw new Error(`routing.localDown must be "ask", "frontier" or "pause", but the config has ${JSON.stringify(routing.localDown)}`);
+  }
   const participants = parsed.participants.map((spec) => {
     if (isApiKind(spec.adapter)) {
       if (spec.capabilities?.can_edit_files) throw new Error(`Participant ${spec.name}: API participants cannot edit files`);
@@ -50,6 +54,7 @@ export function loadConfig(filePath) {
       adapter: buildAdapter(spec),
       roles: spec.roles,
       capabilities: spec.capabilities ?? {},
+      wake: normalizeWake(spec.wake, spec.name),
     });
   });
   const byName = new Map();
