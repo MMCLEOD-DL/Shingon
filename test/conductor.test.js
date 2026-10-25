@@ -681,3 +681,8 @@ test('reject with a note keeps the note; only exactly true lands', async () => {
   assert.equal('note' in objTrue, false);
   assert.equal(await refsOf(repo), before);
 });
+
+test('confirmLocalFallback without its hook is a programming error', async () => {
+  await assert.rejects(runTask({ repoDir: await makeRepo(), request: 'x', team: makeTeam(), hooks: hooks(), baseDir: base(), options: { confirmLocalFallback: true } }),
+    /hooks\.confirmLocalFallback is required when confirmLocalFallback is set/);
+});

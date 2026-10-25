@@ -6,9 +6,38 @@ import { callAgent, noteSameVendor } from './runlog.js';
 import { vendorOf } from './vendors.js';
 import { clip } from './text.js';
 import { askUser } from './askUser.js';
+import { checkHealth } from './health.js';
+import { redact } from './secrets.js';
+import { LOCAL_DOWN_WARNING } from './team.js';
 
 // Local failures that the same prompt to the same backend cannot fix: go to the fallback now.
 export const LOCAL_FATAL = new Set(['infrastructure', 'timeout', 'context-overflow', 'no-participant']);
+
+// The local model cannot be reached at all: the frontier may not cover for it without consent (factory spec §4.2).
+export const LOCAL_UNREACHABLE = new Set(['infrastructure', 'no-participant']);
+export const LOCAL_DECLINED_REASON = 'the local model stopped answering, and you chose not to use your subscription for its steps';
+export const LOCAL_PAUSE_SETTING_REASON = 'the local model stopped answering, and your settings say to pause instead of using your subscription';
+const LOCAL_RECHECK_TIMEOUT_MS = 60000; // the same budget as the pre-run local probe
+
+// A Seat's real adapter sits on its first candidate; a plain Participant carries it directly.
+const localAdapterOf = (local) => (local.candidates?.[0] ?? local).adapter;
+
+// Is the local model down, rather than failing at the work? Sure for an unreachable failure; for an
+// ambiguous one (a hang ends as 'timeout') ask the model server once. A context overflow is always the work.
+async function localWentDown(ctx, index, artifact) {
+  if (artifact?.localDown) return true;
+  if (!artifact?.localFailed || artifact.localFailure === 'context-overflow') return false;
+  let h;
+  try {
+    h = await checkHealth(localAdapterOf(ctx.team.local), { timeoutMs: LOCAL_RECHECK_TIMEOUT_MS });
+  } catch {
+    h = { ok: false, reason: 'unavailable' };
+  }
+  const down = h?.ok !== true;
+  ctx.log.event('local-recheck', { index, ok: !down, reason: down ? (h?.reason || 'unavailable') : '' });
+  if (down) artifact.localDown = true;
+  return down;
+}
 
 // Rotate vendors: the frontier that reviews a chunk is never the one that implements its fallback.
 export function chunkRoles(index, team) {
@@ -69,7 +98,14 @@ async function runChunkFrom(ctx, chunk, index, base, reset) {
       if (!r.ok) {
         // A frontier seat with no model left pauses the run; the local seat just falls back.
         if (r.failure === 'no-participant' && who !== team.local) return { error: r.error, pause: r.error };
-        return { error: `${who.name} failed: ${r.error}`, fatal: who === team.local && LOCAL_FATAL.has(r.failure) };
+        const isLocal = who === team.local;
+        return {
+          error: `${who.name} failed: ${r.error}`,
+          fatal: isLocal && LOCAL_FATAL.has(r.failure),
+          localFailed: isLocal,
+          localFailure: isLocal ? r.failure : null,
+          localDown: isLocal && LOCAL_UNREACHABLE.has(r.failure),
+        };
       }
       // Nothing an agent leaves behind may crash the run: a workspace we cannot
       // inspect is a blocked round, and the bad state is reset away before the next.
@@ -99,6 +135,29 @@ async function runChunkFrom(ctx, chunk, index, base, reset) {
   if (loop.status === 'paused') {
     await reset();
     return { status: 'paused', reason: loop.lastReason };
+  }
+
+  // Mid-run consent (factory spec §4.2): the local model went down, so covering for it spends the
+  // operator's subscription. Asked once per run; only exactly true goes ahead.
+  if (loop.status !== 'approved' && options.confirmLocalFallback && !state.flags?.localFallbackOk && (await localWentDown(ctx, index, loop.artifact))) {
+    let answer;
+    try {
+      answer = await ctx.hooks.confirmLocalFallback(redact({ index, title: chunk.title, reason: loop.lastReason }));
+    } catch (e) {
+      log.event('hook-error', { hook: 'confirmLocalFallback', error: String(e?.message ?? e) });
+      answer = undefined;
+    }
+    if (answer !== true) {
+      log.event('local-fallback-declined', { index });
+      await reset();
+      const why = typeof answer?.reason === 'string' && answer.reason ? answer.reason : LOCAL_DECLINED_REASON;
+      return { status: 'paused', reason: why };
+    }
+    state.flags ??= {};
+    state.flags.localFallbackOk = true;
+    state.warnings ??= [];
+    if (!state.warnings.includes(LOCAL_DOWN_WARNING)) state.warnings.push(LOCAL_DOWN_WARNING);
+    log.event('local-fallback-approved', { index });
   }
 
   if (loop.status !== 'approved') {

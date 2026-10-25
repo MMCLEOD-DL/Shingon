@@ -52,6 +52,9 @@ export function validateHooks(hooks, options) {
   if (options.approvePlan && typeof hooks.approvePlan !== 'function') {
     throw new Error('hooks.approvePlan is required when approvePlan is set');
   }
+  if (options.confirmLocalFallback && typeof hooks.confirmLocalFallback !== 'function') {
+    throw new Error('hooks.confirmLocalFallback is required when confirmLocalFallback is set');
+  }
 }
 
 // The workspace must sit exactly at `sha` with a clean tree; anything else

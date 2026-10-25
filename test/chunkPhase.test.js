@@ -633,3 +633,105 @@ test('chunk-done carries files and who did it; the diff only with watchDiffs', a
     else assert.equal('diff' in done, false);
   }
 });
+
+import { LOCAL_DECLINED_REASON, LOCAL_PAUSE_SETTING_REASON } from '../src/chunkPhase.js';
+import { LOCAL_DOWN_WARNING } from '../src/team.js';
+
+const UNREACHABLE = () => ({ ok: false, failure: 'no-participant', error: 'no AI model is available for local (local: not reachable)' });
+const collect = (events) => (e) => events.push(e);
+
+test('local unreachable mid-run: asks once; yes falls back and records consent', async () => {
+  const asked = [];
+  const events = [];
+  const t = team({ local: UNREACHABLE });
+  const ctx = await ctxFor(t, { confirmLocalFallback: true }, { onEvent: collect(events), confirmLocalFallback: async (q) => { asked.push(q); return true; } });
+  const r1 = await runChunk(ctx, PLAN.chunks[0], 0);
+  assert.equal(r1.status, 'done');
+  assert.equal(asked.length, 1);
+  assert.equal(asked[0].index, 0);
+  assert.equal(asked[0].title, 'Add a');
+  assert.match(asked[0].reason, /not reachable/);
+  assert.equal(ctx.state.flags.localFallbackOk, true);
+  assert.ok(ctx.state.warnings.includes(LOCAL_DOWN_WARNING));
+  assert.ok(events.some((e) => e.type === 'local-fallback-approved' && e.index === 0));
+  assert.ok(events.some((e) => e.type === 'chunk-fallback'));
+  const r2 = await runChunk(ctx, PLAN.chunks[1], 1);
+  assert.equal(r2.status, 'done');
+  assert.equal(asked.length, 1, 'a second step does not ask again');
+});
+
+test('local unreachable mid-run: no, a non-true answer or a throwing hook pauses at the step base with no frontier edit (Review Focus 5)', async () => {
+  for (const hook of [async () => false, async () => 'yes', async () => { throw new Error('tty gone'); }]) {
+    const events = [];
+    const t = team({ local: UNREACHABLE });
+    const ctx = await ctxFor(t, { confirmLocalFallback: true }, { onEvent: collect(events), confirmLocalFallback: hook });
+    const base = await ctx.ws.head();
+    const r = await runChunk(ctx, PLAN.chunks[0], 0);
+    assert.deepEqual(r, { status: 'paused', reason: LOCAL_DECLINED_REASON });
+    assert.equal(t.author.calls.filter((c) => c.opts.write).length, 0, 'the frontier never edited');
+    assert.equal(await ctx.ws.head(), base);
+    assert.ok(events.some((e) => e.type === 'local-fallback-declined'));
+    assert.equal(ctx.state.flags?.localFallbackOk, undefined);
+  }
+});
+
+test('a hook can say why it declined (localDown "pause")', async () => {
+  const t = team({ local: UNREACHABLE });
+  const ctx = await ctxFor(t, { confirmLocalFallback: true }, { confirmLocalFallback: async () => ({ reason: LOCAL_PAUSE_SETTING_REASON }) });
+  assert.deepEqual(await runChunk(ctx, PLAN.chunks[0], 0), { status: 'paused', reason: LOCAL_PAUSE_SETTING_REASON });
+});
+
+test('local failing on the work itself (context overflow) still falls back without asking or probing', async () => {
+  let asked = 0;
+  let probed = 0;
+  const t = team({ local: () => ({ ok: false, failure: 'context-overflow', error: 'prompt is too long' }) });
+  t.local.adapter.probe = async () => { probed++; return { ok: false, reason: 'unavailable' }; };
+  const ctx = await ctxFor(t, { confirmLocalFallback: true }, { confirmLocalFallback: async () => { asked++; return false; } });
+  const r = await runChunk(ctx, PLAN.chunks[0], 0);
+  assert.equal(r.status, 'done');
+  assert.equal(asked, 0);
+  assert.equal(probed, 0);
+});
+
+const TIMED_OUT = () => ({ ok: false, failure: 'timeout', error: 'the local model did not finish in time' });
+
+test('local times out and a fresh probe says it is down: the operator is asked', async () => {
+  const events = [];
+  const asked = [];
+  const t = team({ local: TIMED_OUT });
+  t.local.adapter.probe = async ({ timeoutMs }) => { assert.equal(timeoutMs, 60000); return { ok: false, reason: 'unavailable', detail: 'the local model did not answer in time' }; };
+  const ctx = await ctxFor(t, { confirmLocalFallback: true }, { onEvent: collect(events), confirmLocalFallback: async (q) => { asked.push(q); return false; } });
+  const r = await runChunk(ctx, PLAN.chunks[0], 0);
+  assert.deepEqual(r, { status: 'paused', reason: LOCAL_DECLINED_REASON });
+  assert.equal(asked.length, 1);
+  assert.ok(events.some((e) => e.type === 'local-recheck' && e.ok === false && e.reason === 'unavailable'));
+  assert.equal(t.author.calls.filter((c) => c.opts.write).length, 0);
+});
+
+test('local times out but a fresh probe says it is up: falls back without asking', async () => {
+  const events = [];
+  let asked = 0;
+  const t = team({ local: TIMED_OUT });
+  t.local.adapter.probe = async () => ({ ok: true, reason: '' });
+  const ctx = await ctxFor(t, { confirmLocalFallback: true }, { onEvent: collect(events), confirmLocalFallback: async () => { asked++; return false; } });
+  const r = await runChunk(ctx, PLAN.chunks[0], 0);
+  assert.equal(r.status, 'done');
+  assert.equal(asked, 0);
+  assert.ok(events.some((e) => e.type === 'local-recheck' && e.ok === true));
+  assert.ok(events.some((e) => e.type === 'chunk-fallback'));
+});
+
+test('a probe that throws counts as down', async () => {
+  let asked = 0;
+  const t = team({ local: TIMED_OUT });
+  t.local.adapter.probe = async () => { throw new Error('socket hang up'); };
+  const ctx = await ctxFor(t, { confirmLocalFallback: true }, { confirmLocalFallback: async () => { asked++; return true; } });
+  assert.equal((await runChunk(ctx, PLAN.chunks[0], 0)).status, 'done');
+  assert.equal(asked, 1);
+});
+
+test('confirmLocalFallback off (the library default): unreachable local falls back as before', async () => {
+  const t = team({ local: UNREACHABLE });
+  const ctx = await ctxFor(t);
+  assert.equal((await runChunk(ctx, PLAN.chunks[0], 0)).status, 'done');
+});

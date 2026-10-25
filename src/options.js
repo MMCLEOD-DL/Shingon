@@ -13,4 +13,5 @@ export const DEFAULT_OPTIONS = Object.freeze({
   allowSameVendor: false, // set by buildTeam when only one AI vendor is healthy (the summary then says so)
   watchDiffs: false,      // true: chunk-done events carry the step's diff (--watch-diffs)
   approvePlan: false,     // true: the user approves the agreed plan before any step runs (spec §8 stop point 1)
+  confirmLocalFallback: false, // true: ask (hooks.confirmLocalFallback) before the frontier does a step because the local model is down (factory spec §4.2)
 });
