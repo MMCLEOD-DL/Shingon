@@ -22,6 +22,7 @@ import { isSubscriptionKind } from '../vendors.js';
 export const EXIT = Object.freeze({ landed: 0, rejected: 1, stopped: 1, failed: 2, paused: 3, usage: 64, interrupted: 130 });
 const NOT_A_REPO = 'Run conductor inside a git repository: the folder of the project you want changed.';
 const INTERRUPTED = 'Stopped. Your repository is unchanged. To continue later, run:  conductor resume';
+const INTERRUPTED_BEFORE_START = 'Stopped before anything started. Your repository is unchanged.';
 export const STOPPED_BEFORE_START = 'Conductor did not start, so none of your subscription was used. Start the local model, then run the same command again (or run "conductor doctor" to check it).';
 
 async function repoRoot(cwd) {
@@ -112,6 +113,15 @@ export async function main(argv, {
 
   const term = createTerminal({ input: stdin, output: stdout, isTTY, bell: cli.flags.bell });
   if (seed) term.model.seed(seed);
+  // Ctrl-C (Ruling 5). One handler for the whole command; what it does changes once the run starts.
+  // Until then (checking, waking, asking) there is no run state: stop any wake program and leave.
+  let onInterrupt = () => {
+    killAllChildren();
+    term.say(`\n${cli.command === 'resume' ? INTERRUPTED : INTERRUPTED_BEFORE_START}`);
+    term.close();
+    exit(EXIT.interrupted);
+  };
+  onSignal(() => onInterrupt());
   term.say('Checking which AI models are available…');
   // Factory spec §4.2: check (and wake) the workers before buildTeam, earlier runs' workers first.
   const memoryFile = memoryFileFor(baseDir);
@@ -201,8 +211,8 @@ export async function main(argv, {
     rememberWorkers(memoryFile, tracker.used());
   };
 
-  // Ctrl-C (Ruling 5): stop the agents, record it, leave the run resumable, exit 130.
-  onSignal(() => {
+  // Ctrl-C once the run starts: stop the agents, record it, leave the run resumable, exit 130.
+  onInterrupt = () => {
     killAllChildren();
     remember();
     if (workspaceDir) {
@@ -211,7 +221,7 @@ export async function main(argv, {
     term.say(`\n${INTERRUPTED}`);
     term.close();
     exit(EXIT.interrupted);
-  });
+  };
 
   const localDownSetting = config.routing?.localDown ?? 'ask';
   const f = cli.flags;

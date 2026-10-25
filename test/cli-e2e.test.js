@@ -309,3 +309,45 @@ test('local dies mid-run with localDown "pause": paused without a question, and 
     assert.match(io.text(), /Conductor paused: the local model stopped answering, and your settings say to pause instead of using your subscription/);
   } finally { delete process.env.STUB_LOCAL_FAIL; await s.close(); }
 });
+
+test('doctor with the local worker staying down: exit 0, reported down, never asks (final review 6)', async () => {
+  const s = await setup({ local: { up: false } });
+  try {
+    // Answers "stop" if it were ever asked, so a regression fails on the assertion instead of hanging.
+    const io = scripted([[CONSENT, 's']]);
+    const code = await inProcess(s, ['doctor'], io);
+    assert.equal(code, 0, io.text());
+    assert.match(io.text(), /✗ local \(local-agent\): its GPU worker is not connected/);
+    assert.ok(!io.text().includes(CONSENT), 'doctor never asks');
+  } finally { await s.close(); }
+});
+
+test('Ctrl-C while waking: the wake command is stopped and Conductor exits 130 (final review 4)', async () => {
+  const pidFile = path.join(tmp(), 'wake.pid');
+  const starter = writeStubCli(tmp(), 'start-worker', `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000);`);
+  const s = await setup({ local: { up: false }, wake: { method: 'command', cmd: starter, waitMs: 10000, pollMs: 500 } });
+  try {
+    const before = await refsOf(s.repo);
+    // Ctrl-C only once the wake program is really running (it has written its pid).
+    const child = spawn(process.execPath, [BIN, 'add multiply', '--config', s.cfg], { cwd: s.repo, env: s.env, stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { out += d; });
+    const closed = new Promise((res) => child.on('close', (code) => res(code)));
+    for (let i = 0; i < 200 && !existsSync(pidFile); i++) await new Promise((res) => setTimeout(res, 50));
+    assert.ok(existsSync(pidFile), `the wake program never started: ${out}`);
+    const pid = Number(readFileSync(pidFile, 'utf8'));
+    child.kill('SIGINT');
+    const code = await closed;
+    let alive = true;
+    for (let i = 0; i < 40 && alive; i++) {
+      try { process.kill(pid, 0); await new Promise((res) => setTimeout(res, 50)); } catch { alive = false; }
+    }
+    if (alive) try { process.kill(pid, 'SIGKILL'); } catch {}
+    assert.equal(alive, false, 'the detached wake command was left running');
+    assert.equal(code, 130, out);
+    assert.match(out, /Stopped before anything started\. Your repository is unchanged\./);
+    assert.doesNotMatch(out, /conductor resume/, 'a new run has nothing to resume');
+    assert.deepEqual(await refsOf(s.repo), before);
+  } finally { await s.close(); }
+});
