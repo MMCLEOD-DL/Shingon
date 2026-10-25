@@ -56,6 +56,9 @@ Other commands:
 
 Add `--approve-plan` to see the plan and say yes before any work starts.
 
+Add `--council` to have three specialist reviewers check the finished work first (see
+**The council**).
+
 Press **Ctrl-C** at any time to stop. Your project is untouched, and `conductor resume`
 carries on from the last finished step.
 
@@ -76,6 +79,70 @@ carries on from the last finished step.
 - If no model is left, the run **pauses**. Run `conductor resume` when one is back.
 - Paid API keys are used **only** if you set `"allowApi": true` under `routing` in the config.
   The run tells you the moment it starts using one, and the summary says how much it cost.
+
+## The council (optional extra checks)
+
+Add `--council` to have three specialist reviewers check the finished work before you see it:
+
+- **Security**: scans the code for common security holes, leaked passwords or keys, and
+  dependencies with known security problems.
+- **Legal**: checks that every dependency the change adds uses a licence you can hand to a
+  client (MIT, Apache, BSD, ISC and similar). Copyleft licences (GPL, AGPL, LGPL, MPL) and
+  missing or unknown licences block the change. Dependencies used only while developing are
+  listed as warnings. It reads licences from `package-lock.json`; an old-format lockfile
+  (version 1) has none, so the check is skipped until you update it with npm 7 or later.
+- **Correctness**: checks that the tests pass and that the change really does what you asked.
+  A failing test command shows up as a finding titled "The tests fail", whose detail starts
+  with the exit code (or says the test command timed out).
+
+Each reviewer runs real checking tools first. An AI from the other company then reads the
+results, sets aside false alarms and explains the real problems in plain English. The AI on
+its own can only warn you, never block, and it cannot turn a tool's warning into a block.
+A reason made only of blank space never sets a finding aside, and if the AI contradicts
+itself, Conductor keeps the finding.
+
+If a reviewer finds a problem that must be fixed, Conductor fixes it as an extra step and
+runs all the checks again, up to 3 times. If something is still wrong after that, it asks
+you. These fix steps are never paused for your approval, even with `approveEachChunk` on. When
+it is done, the summary you approve includes a **council report**: what was fixed, what is
+still worth knowing, and which checks could not run. "Fixed during the review" lists only
+problems whose check ran again and no longer reports them. A finding the AI set aside as a
+false alarm is not counted as fixed.
+
+Problems that were already in your project before this change are listed as warnings and
+never block it: code lines this change did not add (even in a file it edited), dependencies it
+did not add or update, and tests that were already failing before it started (Conductor runs
+the tests once on the starting point to check). A file the change adds or renames counts as
+fully new. A line the change moved or re-indented counts as new. The ScanCode licence scanner
+is judged line by line too, when it reports line numbers.
+
+If the secret scanner finds a password or key that the change added, it blocks. Once the fix
+removes it, Conductor combines the run's steps into one commit before you approve, so the key
+is not left in your repository's history either. (Gitleaks checks the finished files, so a key
+added and removed between two steps before the council runs is not caught.)
+
+**Tools it uses (all free, all optional; run `conductor doctor` to see which you have, even
+when it cannot reach your models):**
+
+| Check | Tool | Install |
+|---|---|---|
+| Code scan | Semgrep | `pipx install semgrep` |
+| Leaked secrets | Gitleaks | release binary from github.com/gitleaks/gitleaks |
+| Dependency security | npm audit | comes with Node.js |
+| Copied licensed code | ScanCode | `pipx install scancode-toolkit` |
+
+A missing tool is listed under "Checks that did not run". It never stops a run.
+
+**Settings** (under `options` in `config.json` or a project's `conductor.json`):
+
+- `council`: `true` turns it on for every run;
+- `councilFixRounds`: how many times problems go back to be fixed (default 3);
+- `councilAcceptLicences`: licences you accept for **this** project, for example
+  `["LGPL-3.0-only"]`, or one exact package as `name@version`, for example
+  `["some-lib@1.2.0"]` (the only way to accept a package with no licence);
+- `councilTools`: a tool's path if it is not on your PATH, or `false` to turn a check off;
+- `councilSemgrepConfig`: Semgrep rules (default `p/default`, downloaded from Semgrep's
+  registry; point it at a local rules file to work fully offline).
 
 ## Waking the local model
 
@@ -143,7 +210,9 @@ safe.
   - round limits: `planRounds`, `localRounds`, `frontierRounds`;
   - timeouts: `agentTimeoutMs`, `localTimeoutMs`, `testTimeoutMs`;
   - `keepWorkspace`;
-  - `watchDiffs`.
+  - `watchDiffs`;
+  - the council: `council`, `councilFixRounds`, `councilAcceptLicences`, `councilTools`,
+    `councilSemgrepConfig` (see **The council**).
 
 ## Safety
 

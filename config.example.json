@@ -16,5 +16,10 @@
     "cooldownMs": 60000,
     "maxWaitMs": 300000
   },
-  "options": {}
+  "options": {
+    "council": false,
+    "councilFixRounds": 3,
+    "councilAcceptLicences": [],
+    "councilTools": {}
+  }
 }
