@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough, Writable } from 'node:stream';
-import { createTerminal, NO_TTY_ESCALATION, NO_TTY_GATE } from '../src/ui/terminal.js';
+import { createTerminal, NO_TTY_ESCALATION, NO_TTY_GATE, NO_TTY_LOCAL } from '../src/ui/terminal.js';
 
 // A question is shown when the output ends with its "> " (or the note's ": ") prompt.
 const isPrompt = (s) => s.endsWith('> ') || s.endsWith('(one line): ');
@@ -158,4 +158,56 @@ test('type-ahead before the FIRST prompt is discarded: it cannot approve the gat
   input.end();
   assert.equal(await gate, false);
   t.close();
+});
+
+const DOWN_MSG = 'The local model "local" is not answering: its GPU worker is not connected.';
+
+test('local consent before a run: wait, frontier, stop; message shown, bell rung', async () => {
+  for (const [answer, expected] of [['w', 'wait'], ['f', 'frontier'], ['s', 'stop']]) {
+    const { t, text } = term({ answers: [answer] });
+    assert.equal(await t.confirmLocalFallback({ message: DOWN_MSG, method: 'wol' }), expected);
+    assert.match(text(), /its GPU worker is not connected/);
+    assert.match(text(), /\[w\] try to wake it again · \[f\] go ahead without it \(Claude\/Codex do its steps; uses your subscription\) · \[s\] stop > /);
+    assert.ok(text().includes('\x07'));
+  }
+});
+
+test('local consent: with no wake method set up, [w] only promises to check again', async () => {
+  for (const args of [{ message: DOWN_MSG }, { message: DOWN_MSG, method: 'warn' }]) {
+    const { t, text } = term({ answers: ['w'] });
+    assert.equal(await t.confirmLocalFallback(args), 'wait');
+    assert.match(text(), /\[w\] check again \(after you have started it\) · \[f\] go ahead without it/);
+    assert.doesNotMatch(text(), /try to wake it again/);
+  }
+  const cmd = term({ answers: ['s'] });
+  await cmd.t.confirmLocalFallback({ message: DOWN_MSG, method: 'command' });
+  assert.match(cmd.text(), /\[w\] try to wake it again/);
+});
+
+test('local consent mid-run: no wait option; p pauses; an unknown answer is asked again', async () => {
+  const { t, text } = term({ answers: ['w', 'p'] });
+  assert.equal(await t.confirmLocalFallback({ message: DOWN_MSG, midRun: true }), 'stop');
+  assert.match(text(), /Please type one of: f, p/);
+  assert.match(text(), /\[p\] pause \(start it, then run: conductor resume\) > /);
+  const f = term({ answers: ['f'] });
+  assert.equal(await f.t.confirmLocalFallback({ message: DOWN_MSG, midRun: true }), 'frontier');
+});
+
+test('local consent fails closed: EOF and no terminal both stop, and say why', async () => {
+  const eof = term({ answers: [] });
+  assert.equal(await eof.t.confirmLocalFallback({ message: DOWN_MSG }), 'stop');
+  const noTty = term({ isTTY: false });
+  assert.equal(await noTty.t.confirmLocalFallback({ message: DOWN_MSG }), 'stop');
+  assert.ok(noTty.text().includes(NO_TTY_LOCAL));
+  assert.ok(noTty.text().includes(DOWN_MSG), 'the operator is still told what is wrong');
+});
+
+test('local consent: type-ahead cannot answer it', async () => {
+  const input = new PassThrough();
+  let text = '';
+  const out = new Writable({ write(c, e, cb) { text += c; if (String(c).endsWith('> ')) setImmediate(() => input.write('s\n')); cb(); } });
+  const t = createTerminal({ input, output: out, isTTY: true });
+  input.write('f\n'); // typed before the question
+  await new Promise((r) => setImmediate(r));
+  assert.equal(await t.confirmLocalFallback({ message: DOWN_MSG }), 'stop');
 });

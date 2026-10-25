@@ -6,6 +6,16 @@ import { StatusModel } from './status.js';
 
 export const NO_TTY_ESCALATION = 'There is no terminal to ask you, so Conductor answered "reject" to stay safe. Run Conductor in a terminal to answer questions.';
 export const NO_TTY_GATE = 'There is no terminal to ask you, so the result was not approved and nothing was added to your repository. Run Conductor in a terminal to approve results.';
+export const NO_TTY_LOCAL = 'There is no terminal to ask you, so Conductor did not use your subscription in place of the local model. Start the local model, or run Conductor in a terminal to choose.';
+
+// [w] must not promise a wake that will not happen: with warn-only, Conductor can only check again.
+const WAIT_LABEL = Object.freeze({
+  warn: '[w] check again (after you have started it)',
+  wol: '[w] try to wake it again',
+  command: '[w] try to wake it again',
+});
+const FRONTIER_BEFORE = '[f] go ahead without it (Claude/Codex do its steps; uses your subscription)';
+const FRONTIER_MID_RUN = '[f] carry on without it (Claude/Codex do its steps; uses your subscription)';
 
 const CLEAR_DOWN = '\x1b[J';
 const up = (n) => (n > 0 ? `\x1b[${n}F` : '\r');
@@ -137,6 +147,19 @@ export function createTerminal({ input = process.stdin, output = process.stdout,
     return (await ask('[a] go ahead · [r] stop > ', ['a', 'r'])) === 'a';
   });
 
+  // The local model is down: may the subscription models do its steps? (factory spec §4.2)
+  // Fails closed: no terminal, end of input, [s] and [p] all answer 'stop'.
+  const confirmLocalFallback = prompt(async ({ message, midRun = false, method = 'warn' }) => {
+    say(`\n${message ?? 'The local model is not answering.'}\n`);
+    if (!isTTY) { say(NO_TTY_LOCAL); return 'stop'; }
+    if (midRun) {
+      const a = await ask(`${FRONTIER_MID_RUN} · [p] pause (start it, then run: conductor resume) > `, ['f', 'p']);
+      return a === 'f' ? 'frontier' : 'stop';
+    }
+    const a = await ask(`${WAIT_LABEL[method] ?? WAIT_LABEL.warn} · ${FRONTIER_BEFORE} · [s] stop > `, ['w', 'f', 's']);
+    return a === 'w' ? 'wait' : a === 'f' ? 'frontier' : 'stop';
+  });
+
   function onEvent(e) {
     model.apply(e);
     if (e?.type === 'chunk-done' && typeof e.diff === 'string') say(`--- Step ${e.index + 1} changes ---\n${e.diff}`);
@@ -145,7 +168,7 @@ export function createTerminal({ input = process.stdin, output = process.stdout,
   }
 
   return {
-    onEvent, escalate, approveResult, approveChunk, approvePlan, say, model,
+    onEvent, escalate, approveResult, approveChunk, approvePlan, confirmLocalFallback, say, model,
     close: () => { closed = true; reader?.close(); reader = null; },
   };
 }
