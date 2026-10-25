@@ -52,6 +52,13 @@ function reportLines(report, statuses = [], lastUsed = new Map()) {
   return lines;
 }
 
+// The optional council tools, shown by `conductor doctor` only.
+function councilLines(config, env) {
+  return ['Council checks (used with --council):',
+    ...councilToolStatus({ options: { ...DEFAULT_OPTIONS, ...config.options }, env })
+      .map((t) => `  ${t.ok ? '✓' : '✗'} ${t.label}${t.ok ? '' : `: ${t.why}`}`)].join('\n');
+}
+
 function outcomeText(out) {
   const lines = [];
   if (out.status === 'landed') {
@@ -157,6 +164,7 @@ export async function main(argv, {
     term.say(reportLines(built.report, statuses, lastUsed).join('\n'));
     downNotes();
     term.say(built.error);
+    if (cli.command === 'doctor') term.say(councilLines(config, env));
     term.close();
     return EXIT.failed;
   };
@@ -167,9 +175,7 @@ export async function main(argv, {
     term.say(`Author: ${built.team.author.name} · Reviewer: ${built.team.reviewer.name} · Local: ${built.team.local.name}`);
     for (const w of built.warnings) term.say(`Note: ${w}`);
     downNotes();
-    term.say(['Council checks (used with --council):',
-      ...councilToolStatus({ options: { ...DEFAULT_OPTIONS, ...config.options }, env })
-        .map((t) => `  ${t.ok ? '✓' : '✗'} ${t.label}${t.ok ? '' : `: ${t.why}`}`)].join('\n'));
+    term.say(councilLines(config, env));
     term.close();
     return 0;
   }

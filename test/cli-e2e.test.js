@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import http from 'node:http';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -367,7 +367,14 @@ test('doctor lists the council checks; --council runs them and the report reache
     const cfg = councilConfig(s.cfg, { semgrep: false, gitleaks: gl, 'npm-audit': false, scancode: false });
     const d = await spawnBin(['doctor', '--config', cfg], { cwd: s.repo, env: s.env });
     assert.equal(d.code, 0, d.out);
-    assert.match(d.out, /Council checks \(used with --council\):\n {2}✗ Semgrep \(code scanner\): turned off in the config\n {2}✓ Gitleaks \(secret scanner\)\n/);
+    assert.match(d.out, /Council checks \(used with --council\):\n {2}✗ Semgrep \(code scanner\): turned off in the config\n {2}✓ Gitleaks \(secret scanner\)\n {2}✗ npm audit \(dependency security check\): turned off in the config\n {2}✗ ScanCode \(licence scanner\): turned off in the config\n/);
+
+    // a tool that is neither off nor on PATH is "not installed"
+    const noPath = councilConfig(s.cfg, {});
+    const onlyGit = tmp();
+    symlinkSync(execFileSync('which', ['git'], { encoding: 'utf8' }).trim(), path.join(onlyGit, 'git'));
+    const n = await spawnBin(['doctor', '--config', noPath], { cwd: s.repo, env: { ...s.env, PATH: onlyGit } });
+    assert.match(n.out, /✗ Semgrep \(code scanner\): not installed/);
 
     const off = councilConfig(s.cfg, { semgrep: false, gitleaks: false, 'npm-audit': false, scancode: false });
     const r = await spawnBin(['add multiply', '--config', off, '--council'], { cwd: s.repo, env: s.env });
@@ -375,5 +382,22 @@ test('doctor lists the council checks; --council runs them and the report reache
     assert.match(r.out, /✓ Council \(round 1\) +approved/);
     assert.match(r.out, /Council report: approved, nothing to fix/);
     assert.match(r.out, /Semgrep \(code scanner\) is turned off in the config\./);
+  } finally { await s.close(); }
+});
+
+test('doctor lists the council checks even when the team cannot be built; a normal run does not', async () => {
+  const s = await setup();
+  try {
+    const c = JSON.parse(readFileSync(s.cfg, 'utf8'));
+    for (const p of c.participants) if (p.name !== 'local') p.bin = '/nonexistent/' + p.name;
+    c.options = { councilTools: { semgrep: false, gitleaks: false, 'npm-audit': false, scancode: false } };
+    const bad = path.join(tmp(), 'conductor.json');
+    writeFileSync(bad, JSON.stringify(c));
+    const d = await spawnBin(['doctor', '--config', bad], { cwd: s.repo, env: s.env });
+    assert.equal(d.code, 2, d.out);
+    assert.match(d.out, /Council checks \(used with --council\):\n {2}✗ Semgrep/);
+    const r = await spawnBin(['add multiply', '--config', bad], { cwd: s.repo, env: s.env });
+    assert.equal(r.code, 2, r.out);
+    assert.doesNotMatch(r.out, /Council checks/);
   } finally { await s.close(); }
 });
