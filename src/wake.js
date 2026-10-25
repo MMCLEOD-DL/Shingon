@@ -1,6 +1,11 @@
 // src/wake.js
 // Waking a worker before a run (factory spec §4.2). Warn-only unless the config asks.
 
+import dgram from 'node:dgram';
+import { runCommand } from './exec.js';
+import { strictChildEnv, redact, secretValues } from './secrets.js';
+import { summarizeFailure } from './health.js';
+
 export const WAKE_DEFAULTS = Object.freeze({ method: 'warn', waitMs: 180000, pollMs: 5000, broadcast: '255.255.255.255', port: 9, timeoutMs: 60000 });
 export const DEFAULT_WAKE_HINT = 'Start the machine that runs this model, and its model server, then try again.';
 
@@ -53,4 +58,86 @@ export function normalizeWake(raw, participantName) {
     out.timeoutMs = wholeMs(raw, 'timeoutMs', 1000, 600000, name);
   }
   return Object.freeze(out);
+}
+
+export const WAKE_METHOD_TEXT = Object.freeze({ warn: 'none set up', wol: 'Wake-on-LAN', command: 'its start command' });
+
+// Six 0xff bytes, then the six MAC bytes sixteen times: 102 bytes.
+export function magicPacket(mac) {
+  const bytes = Buffer.from(String(mac).replace(/[:-]/g, ''), 'hex');
+  if (bytes.length !== 6) throw new Error('a network card address has six bytes');
+  return Buffer.concat([Buffer.alloc(6, 0xff), ...Array(16).fill(bytes)]);
+}
+
+export function sendMagicPacket({ mac, broadcast = WAKE_DEFAULTS.broadcast, port = WAKE_DEFAULTS.port }, { createSocket = dgram.createSocket } = {}) {
+  const packet = magicPacket(mac);
+  return new Promise((resolve, reject) => {
+    let socket = null;
+    let settled = false;
+    // Settles exactly once and closes the socket on every path.
+    const done = (err) => {
+      if (settled) return;
+      settled = true;
+      try { socket?.close(); } catch {}
+      if (err) reject(err);
+      else resolve();
+    };
+    try {
+      socket = createSocket('udp4');
+      socket.once('error', done);
+      socket.once('listening', () => {
+        try {
+          socket.setBroadcast(true);
+          socket.send(packet, port, broadcast, (err) => done(err ?? null));
+        } catch (e) {
+          done(e);
+        }
+      });
+      socket.bind();
+    } catch (e) {
+      done(e);
+    }
+  });
+}
+
+// The operator's own start program: no secret-looking variables except the ones the block names,
+// output summarized and redacted (Review Focus 4), killed after timeoutMs.
+export async function runWakeCommand(wake, { run = runCommand, env = process.env } = {}) {
+  const picked = {};
+  for (const name of wake.env ?? []) if (typeof env[name] === 'string') picked[name] = env[name];
+  const childEnv = { ...strictChildEnv({ env }), ...picked };
+  // Every named value is a secret, even when its name does not look like one.
+  const named = Object.values(picked).filter((v) => v.length > 0);
+  const secrets = [...new Set([...secretValues(env), ...named])].sort((a, b) => b.length - a.length);
+  const timeoutMs = wake.timeoutMs ?? WAKE_DEFAULTS.timeoutMs;
+  const r = await run({ cmd: wake.cmd, args: [...(wake.args ?? [])], env: childEnv, timeoutMs });
+  const ok = r.code === 0 && !r.timedOut;
+  let detail = '';
+  if (r.timedOut) detail = `its start command did not finish within ${Math.round(timeoutMs / 1000)} seconds`;
+  else if (!ok) detail = `its start command failed: ${summarizeFailure(r.stderr || r.stdout) || `exit code ${r.code}`}`;
+  return { ok, detail: redact(detail, secrets) };
+}
+
+// Sends the wake and reports what happened; never waits for the worker (readiness does) and never throws.
+export async function wakeWorker(participant, { send = sendMagicPacket, runCmd = runWakeCommand } = {}) {
+  const wake = participant.wake ?? normalizeWake(null, participant.name);
+  if (wake.method === 'wol') {
+    try {
+      await send(wake);
+      return { attempted: true, ok: true, detail: 'sent a Wake-on-LAN signal' };
+    } catch (e) {
+      return { attempted: true, ok: false, detail: `could not send the Wake-on-LAN signal (${e?.code ?? e?.message ?? e})` };
+    }
+  }
+  if (wake.method === 'command') {
+    try {
+      const r = await runCmd(wake);
+      return r?.ok === true
+        ? { attempted: true, ok: true, detail: 'ran its start command' }
+        : { attempted: true, ok: false, detail: r?.detail || 'its start command failed' };
+    } catch (e) {
+      return { attempted: true, ok: false, detail: redact(`its start command failed: ${e?.message ?? e}`) };
+    }
+  }
+  return { attempted: false, ok: false, detail: '' };
 }

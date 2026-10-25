@@ -42,3 +42,88 @@ test('an env NAME is validated, its value is never read or echoed', () => {
     assert.doesNotMatch(JSON.stringify(w), /sekrit/);
   } finally { delete process.env.WAKE_SECRET_TEST; }
 });
+
+import dgram from 'node:dgram';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { writeStubCli } from './helpers/stubCli.js';
+import { magicPacket, sendMagicPacket, runWakeCommand, wakeWorker } from '../src/wake.js';
+
+test('magicPacket: 6 x 0xff then the MAC 16 times', () => {
+  const b = magicPacket('01:23:45:67:89:ab');
+  assert.equal(b.length, 102);
+  assert.deepEqual([...b.subarray(0, 6)], [255, 255, 255, 255, 255, 255]);
+  for (let i = 0; i < 16; i++) assert.deepEqual([...b.subarray(6 + i * 6, 12 + i * 6)], [0x01, 0x23, 0x45, 0x67, 0x89, 0xab]);
+});
+
+test('sendMagicPacket delivers the packet over UDP (to 127.0.0.1 in tests)', async () => {
+  const server = dgram.createSocket('udp4');
+  const got = new Promise((resolve) => server.on('message', (m) => resolve(m)));
+  await new Promise((r) => server.bind(0, '127.0.0.1', r));
+  try {
+    await sendMagicPacket({ mac: '01:23:45:67:89:ab', broadcast: '127.0.0.1', port: server.address().port });
+    assert.deepEqual(await got, magicPacket('01:23:45:67:89:ab'));
+  } finally { server.close(); }
+});
+
+test('sendMagicPacket rejects on a socket error and closes the socket', async () => {
+  let closed = false;
+  const fake = () => {
+    const handlers = {};
+    return {
+      on: (ev, fn) => { handlers[ev] = fn; },
+      once: (ev, fn) => { handlers[ev] = fn; },
+      bind: () => setImmediate(() => handlers.listening?.()),
+      setBroadcast: () => {},
+      send: (buf, port, host, cb) => cb(Object.assign(new Error('nope'), { code: 'ENETUNREACH' })),
+      close: () => { closed = true; },
+    };
+  };
+  await assert.rejects(sendMagicPacket({ mac: '01:23:45:67:89:ab', broadcast: '192.168.1.255', port: 9 }, { createSocket: fake }), /nope/);
+  assert.equal(closed, true);
+});
+
+const stub = (body) => writeStubCli(mkdtempSync(path.join(tmpdir(), 'wk-')), 'start-worker', body);
+const cmdWake = (cmd, extra = {}) => normalizeWake({ method: 'command', cmd, ...extra }, 'local');
+
+test('runWakeCommand: success, and only named env vars reach the program', async () => {
+  const bin = stub(`console.log(JSON.stringify({ named: process.env.WAKE_TOKEN_T ?? null, other: process.env.OTHER_SECRET_T ?? null, home: Boolean(process.env.PATH) }));`);
+  const env = { ...process.env, WAKE_TOKEN_T: 'tok-1234567890', OTHER_SECRET_T: 'other-1234567890' };
+  let seen = null;
+  const run = async (o) => { seen = o.env; return (await import('../src/exec.js')).runCommand(o); };
+  const r = await runWakeCommand(cmdWake(bin, { env: ['WAKE_TOKEN_T'] }), { env, run });
+  assert.deepEqual(r, { ok: true, detail: '' });
+  assert.equal(seen.WAKE_TOKEN_T, 'tok-1234567890');
+  assert.equal(seen.OTHER_SECRET_T, undefined, 'strictChildEnv drops other secrets');
+});
+
+test('runWakeCommand: a failure is summarized and redacted (Review Focus 4)', async () => {
+  const bin = stub(`console.error('ERROR: auth failed for token ' + process.env.WAKE_PLAIN_NAME); process.exit(3);`);
+  const env = { ...process.env, WAKE_PLAIN_NAME: 'plainvalue-0987654321' };
+  const r = await runWakeCommand(cmdWake(bin, { env: ['WAKE_PLAIN_NAME'] }), { env });
+  assert.equal(r.ok, false);
+  assert.match(r.detail, /^its start command failed: ERROR: auth failed for token \[redacted\]/);
+  assert.doesNotMatch(r.detail, /plainvalue/);
+});
+
+test('runWakeCommand: a hung program is killed at timeoutMs (Review Focus 4)', async () => {
+  const bin = stub('setInterval(() => {}, 1000);');
+  const t0 = Date.now();
+  const r = await runWakeCommand(cmdWake(bin, { timeoutMs: 1000 }));
+  assert.equal(r.ok, false);
+  assert.equal(r.detail, 'its start command did not finish within 1 seconds');
+  assert.ok(Date.now() - t0 < 8000);
+});
+
+test('wakeWorker: warn does nothing; wol and command report plainly; nothing throws', async () => {
+  const p = (wake) => ({ name: 'local', wake });
+  assert.deepEqual(await wakeWorker(p(normalizeWake(null, 'local'))), { attempted: false, ok: false, detail: '' });
+  const wol = p(normalizeWake({ method: 'wol', mac: '01:23:45:67:89:ab' }, 'local'));
+  assert.deepEqual(await wakeWorker(wol, { send: async () => {} }), { attempted: true, ok: true, detail: 'sent a Wake-on-LAN signal' });
+  const failed = await wakeWorker(wol, { send: async () => { throw Object.assign(new Error('x'), { code: 'EACCES' }); } });
+  assert.deepEqual(failed, { attempted: true, ok: false, detail: 'could not send the Wake-on-LAN signal (EACCES)' });
+  const cmd = p(cmdWake('/bin/true'));
+  assert.deepEqual(await wakeWorker(cmd, { runCmd: async () => ({ ok: true, detail: '' }) }), { attempted: true, ok: true, detail: 'ran its start command' });
+  assert.deepEqual(await wakeWorker(cmd, { runCmd: async () => ({ ok: false, detail: 'its start command failed: exit code 1' }) }), { attempted: true, ok: false, detail: 'its start command failed: exit code 1' });
+});
