@@ -62,6 +62,9 @@ test('addedLines reads git diff -U0, including quoted and spaced paths; isIntrod
   assert.equal(isIntroduced(ctx, 'src/a.js', 1, 4), true, 'a multi-line result that reaches an added line');
   assert.equal(isIntroduced(ctx, 'old.js', 1), false);
   assert.equal(isIntroduced({ changed: new Set(['old.js']), added: null }, 'old.js', 1), true, 'no line information: the whole changed file counts');
+  const whole = { changed: new Set(['new.bin', 'src/a.js']), added, wholeFiles: new Set(['new.bin']) };
+  assert.equal(isIntroduced(whole, 'new.bin', 1), true, 'an added or renamed file with no added text lines is fully introduced');
+  assert.equal(isIntroduced(whole, 'src/a.js', 1, 3), false, 'wholeFiles does not widen other files');
 });
 
 test('lockDelta: new names and changed versions only', () => {

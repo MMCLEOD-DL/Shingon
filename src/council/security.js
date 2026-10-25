@@ -53,9 +53,11 @@ export function addedLines(text) {
   return out;
 }
 
-export function isIntroduced({ changed, added }, file, start, end = start) {
+// wholeFiles (optional): files this change added or renamed; they count as fully introduced
+// whatever the line set says (a new binary file or a pure rename has no added text lines).
+export function isIntroduced({ changed, added, wholeFiles }, file, start, end = start) {
   if (!changed.has(file)) return false;
-  if (!added) return true;
+  if (!added || wholeFiles?.has(file)) return true;
   const lines = added.get(file);
   if (!lines) return false;
   for (let l = start; l <= end; l++) if (lines.has(l)) return true;
@@ -64,7 +66,7 @@ export function isIntroduced({ changed, added }, file, start, end = start) {
 
 const stripDot = (p) => String(p ?? '').replace(/^\.\//, '');
 
-export function parseSemgrep(text, { changed, added }, { code = 0 } = {}) {
+export function parseSemgrep(text, { changed, added, wholeFiles }, { code = 0 } = {}) {
   const data = JSON.parse(text);
   if (!Array.isArray(data?.results)) throw new Error('Semgrep gave no results list');
   const fatal = (Array.isArray(data.errors) ? data.errors : []).find((e) => e?.level === 'error');
@@ -80,13 +82,13 @@ export function parseSemgrep(text, { changed, added }, { code = 0 } = {}) {
       title: String(extra.message ?? '').split('\n')[0] || r.check_id,
       detail: `rule ${r.check_id}`, file, line: start,
       // no line number: cannot tell, so fail closed (introduced if the file changed)
-      preExisting: !(Number.isInteger(start) ? isIntroduced({ changed, added }, file, start, r.end?.line ?? start) : isIntroduced({ changed, added: null }, file, 0)),
+      preExisting: !(Number.isInteger(start) ? isIntroduced({ changed, added, wholeFiles }, file, start, r.end?.line ?? start) : isIntroduced({ changed, added: null }, file, 0)),
     });
   });
 }
 
 // Never reads Secret or Match. Blank output is a clean run only when the tool did not fail.
-export function parseGitleaks(text, { changed, added }, { code = 0 } = {}) {
+export function parseGitleaks(text, { changed, added, wholeFiles }, { code = 0 } = {}) {
   if (text === null || text === undefined || !String(text).trim()) {
     if (code !== 0 && code !== null && code !== undefined) throw new Error(`Gitleaks wrote no report (exit code ${code})`);
     return [];
@@ -99,7 +101,7 @@ export function parseGitleaks(text, { changed, added }, { code = 0 } = {}) {
       member: 'security', tool: 'gitleaks', grade: 'blocking',
       title: `Possible secret (${h.Description || h.RuleID})`,
       detail: `rule ${h.RuleID}`, file, line: h.StartLine,
-      preExisting: !isIntroduced({ changed, added }, file, h.StartLine, h.EndLine ?? h.StartLine),
+      preExisting: !isIntroduced({ changed, added, wholeFiles }, file, h.StartLine, h.EndLine ?? h.StartLine),
     });
   });
 }
