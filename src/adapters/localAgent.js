@@ -65,6 +65,7 @@ export class LocalAgentAdapter {
     if (v.code !== 0 || v.timedOut) return { ok: false, reason: 'unavailable', detail: `${this.bin} is not installed or does not run` };
     const key = process.env[this.envKey];
     let res;
+    let body = '';
     try {
       res = await fetch(`${String(this.baseUrl).replace(/\/+$/, '')}/chat/completions`, {
         method: 'POST',
@@ -73,7 +74,7 @@ export class LocalAgentAdapter {
         redirect: 'error', // never resend the key to wherever a redirect points
         signal: AbortSignal.timeout(timeoutMs),
       });
-      await res.text();
+      body = await res.text();
     } catch (e) {
       const detail = e?.name === 'TimeoutError'
         ? 'the local model did not answer in time'
@@ -83,6 +84,10 @@ export class LocalAgentAdapter {
     if (res.ok) return { ok: true, reason: '' };
     if (res.status === 401 || res.status === 403) return { ok: false, reason: 'unauthorized', detail: `the local model server refused the key (HTTP ${res.status})` };
     if (res.status === 404) return { ok: false, reason: 'model-missing', detail: `the local model server has no model named ${this.model}` };
+    // LocalAI on CT110 is up but its GPU worker (the .109 desktop) is not connected (Ruling 7).
+    if (res.status >= 500 && /no healthy nodes/i.test(body)) {
+      return { ok: false, reason: 'worker-offline', detail: 'the local model server is running, but no GPU worker is connected to it' };
+    }
     return { ok: false, reason: 'unavailable', detail: `the local model server answered HTTP ${res.status}` };
   }
 }

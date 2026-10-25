@@ -188,3 +188,20 @@ test('probe does not follow a redirect (the key stays with the configured server
     for (const s of [redirector, target]) { s.closeAllConnections(); await new Promise((r) => s.close(r)); }
   }
 });
+
+async function withBodyServer(status, body, fn) {
+  const server = http.createServer((req, res) => { req.resume(); req.on('end', () => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(body); }); });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try { return await fn(`http://127.0.0.1:${server.address().port}/v1`); } finally { server.closeAllConnections(); await new Promise((r) => server.close(r)); }
+}
+
+test('probe: LocalAI with no GPU worker is "worker-offline", other 5xx stay "unavailable"', async () => {
+  await withBodyServer(500, '{"error":{"message":"no healthy nodes available"}}', async (baseUrl) => {
+    const r = await new LocalAgentAdapter({ bin: okBin(), model: 'm', baseUrl }).probe();
+    assert.deepEqual(r, { ok: false, reason: 'worker-offline', detail: 'the local model server is running, but no GPU worker is connected to it' });
+  });
+  await withBodyServer(500, '{"error":"boom"}', async (baseUrl) => {
+    const r = await new LocalAgentAdapter({ bin: okBin(), model: 'm', baseUrl }).probe();
+    assert.equal(r.reason, 'unavailable');
+  });
+});

@@ -12,6 +12,7 @@ export const REASON_TEXT = Object.freeze({
   'version-skew': 'its program is out of date',
   unavailable: 'not reachable',
   'model-missing': 'the model is not installed',
+  'worker-offline': 'its GPU worker is not connected',
 });
 const plain = (reason) => REASON_TEXT[reason] ?? reason ?? 'not available';
 
