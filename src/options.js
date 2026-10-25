@@ -13,5 +13,11 @@ export const DEFAULT_OPTIONS = Object.freeze({
   allowSameVendor: false, // set by buildTeam when only one AI vendor is healthy (the summary then says so)
   watchDiffs: false,      // true: chunk-done events carry the step's diff (--watch-diffs)
   approvePlan: false,     // true: the user approves the agreed plan before any step runs (spec §8 stop point 1)
+  council: false,             // true: Security, Legal and Correctness check the finished change before the gate (--council)
+  councilFixRounds: 3,        // how many times blocking council findings go back to be fixed before you are asked
+  councilToolTimeoutMs: 600000,
+  councilTools: Object.freeze({}),          // { semgrep: "/path/to/semgrep" | false }: a path not on PATH, or false to turn a check off
+  councilAcceptLicences: Object.freeze([]), // licences you accept for THIS project despite the permissive-only rule, e.g. ["LGPL-3.0-only"]
+  councilSemgrepConfig: 'p/default',        // Semgrep rules: a registry pack, or a local rules file to run fully offline
   confirmLocalFallback: false, // true: ask (hooks.confirmLocalFallback) before the frontier does a step because the local model is down (factory spec §4.2)
 });
