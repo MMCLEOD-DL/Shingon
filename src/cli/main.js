@@ -6,7 +6,10 @@ import { parseCli, USAGE } from './args.js';
 import { findConfig } from './config.js';
 import { listRuns } from './runs.js';
 import { loadConfig } from '../config.js';
-import { buildTeam } from '../team.js';
+import { buildTeam, LOCAL_DOWN_WARNING } from '../team.js';
+import { LOCAL_PAUSE_SETTING_REASON } from '../chunkPhase.js';
+import { memoryFileFor, readWorkerMemory, recallWorkers, rememberWorkers, createUsageTracker } from '../workerMemory.js';
+import { workersToCheck, ensureWorkers, cachedHealth, progressText, downMessage, workerLine } from '../readiness.js';
 import { runTask, resume } from '../conductor.js';
 import { createTerminal } from '../ui/terminal.js';
 import { RunLog } from '../runlog.js';
@@ -19,6 +22,7 @@ import { isSubscriptionKind } from '../vendors.js';
 export const EXIT = Object.freeze({ landed: 0, rejected: 1, stopped: 1, failed: 2, paused: 3, usage: 64, interrupted: 130 });
 const NOT_A_REPO = 'Run conductor inside a git repository: the folder of the project you want changed.';
 const INTERRUPTED = 'Stopped. Your repository is unchanged. To continue later, run:  conductor resume';
+export const STOPPED_BEFORE_START = 'Conductor did not start, so none of your subscription was used. Start the local model, then run the same command again (or run "conductor doctor" to check it).';
 
 async function repoRoot(cwd) {
   const r = await runCommand({ cmd: 'git', args: ['rev-parse', '--show-toplevel'], cwd, timeoutMs: 15000 });
@@ -33,8 +37,16 @@ function version() {
 // A subscription's ✓ only means its program runs (`--version`): its sign-in is first tested by a real call.
 const SUBSCRIPTION_OK = ': installed (sign-in is checked when it is first used)';
 
-function reportLines(report) {
-  return report.map((x) => `  ${x.ok ? '✓' : '✗'} ${x.name} (${x.kind})${x.ok ? (isSubscriptionKind(x.kind) ? SUBSCRIPTION_OK : '') : `: ${REASON_TEXT[x.reason] ?? x.reason}${x.detail ? ` (${x.detail})` : ''}`}`);
+function reportLines(report, statuses = [], lastUsed = new Map()) {
+  const statusOf = (name) => statuses.find((s) => s.name === name);
+  const lines = report.map((x) => {
+    const s = statusOf(x.name);
+    if (s) return workerLine(s, lastUsed.get(x.name) ?? null);
+    return `  ${x.ok ? '✓' : '✗'} ${x.name} (${x.kind})${x.ok ? (isSubscriptionKind(x.kind) ? SUBSCRIPTION_OK : '') : `: ${REASON_TEXT[x.reason] ?? x.reason}${x.detail ? ` (${x.detail})` : ''}`}`;
+  });
+  // A remembered worker buildTeam does not probe (for example a self-hosted reviewer) is still shown.
+  for (const s of statuses) if (!report.some((x) => x.name === s.name)) lines.push(workerLine(s, lastUsed.get(s.name) ?? null));
+  return lines;
 }
 
 function outcomeText(out) {
@@ -57,6 +69,7 @@ export async function main(argv, {
   cwd = process.cwd(), env = process.env, stdin = process.stdin, stdout = process.stdout,
   isTTY = Boolean(stdin.isTTY && stdout.isTTY),
   onSignal = (handler) => process.once('SIGINT', handler), exit = (code) => process.exit(code),
+  wakeDeps = {},
 } = {}) {
   const print = (s) => stdout.write(`${s}\n`);
   const cli = parseCli(argv);
@@ -100,38 +113,98 @@ export async function main(argv, {
   const term = createTerminal({ input: stdin, output: stdout, isTTY, bell: cli.flags.bell });
   if (seed) term.model.seed(seed);
   term.say('Checking which AI models are available…');
-  let built;
-  try {
-    built = await buildTeam(config.participants, { routing: config.routing, env });
-  } catch (e) {
+  // Factory spec §4.2: check (and wake) the workers before buildTeam, earlier runs' workers first.
+  const memoryFile = memoryFileFor(baseDir);
+  const recalled = recallWorkers(readWorkerMemory(memoryFile), config.participants);
+  const lastUsed = new Map(recalled.map((x) => [x.participant.name, x.lastUsedAt]));
+  const workers = workersToCheck(config.participants, recalled, { local: config.routing?.local ?? null });
+  const check = (list) => ensureWorkers(list, {
+    onProgress: (e) => { const t = progressText(e); if (t) term.say(t); },
+    ...wakeDeps,
+  });
+  let statuses = [];
+  // Checked workers answer from their readiness result; matched by name, so a re-checked one counts too.
+  const build = () => buildTeam(config.participants, { routing: config.routing, env, health: cachedHealth(statuses, config.participants) });
+  const couldNotCheck = (e) => {
     term.say(`Conductor could not check the AI models: ${redact(String(e?.message ?? e))}`);
     term.close();
     return EXIT.failed;
-  }
-  if (cli.command === 'doctor' || !built.ok) {
-    term.say(reportLines(built.report).join('\n'));
-    if (built.ok) {
-      term.say(`Author: ${built.team.author.name} · Reviewer: ${built.team.reviewer.name} · Local: ${built.team.local.name}`);
-      for (const w of built.warnings) term.say(`Note: ${w}`);
-    } else {
-      term.say(built.error);
+  };
+  let built;
+  try {
+    if (workers.length) {
+      term.say('Checking the local workers…');
+      statuses = await check(workers);
     }
-    term.close();
-    return built.ok ? 0 : EXIT.failed;
+    built = await build();
+  } catch (e) {
+    return couldNotCheck(e);
   }
-  // Interim (Plan 4 Task 5; Task 8 replaces this with the consent question): never let the
-  // subscription cover a down local model without the operator's say-so.
-  if (built.localDown) {
-    const d = built.localDown;
-    term.say(`The local model ${d.name} is not available (${d.detail ?? REASON_TEXT[d.reason] ?? d.reason}). Start the local model, then run Conductor again.`);
+  const downNotes = () => { for (const s of statuses) if (!s.ok) term.say(`Note: ${downMessage(s)}`); };
+  const notBuilt = () => {
+    term.say(reportLines(built.report, statuses, lastUsed).join('\n'));
+    downNotes();
+    term.say(built.error);
     term.close();
-    return EXIT.stopped;
+    return EXIT.failed;
+  };
+  if (!built.ok) return notBuilt();
+  if (cli.command === 'doctor') {
+    // Ruling 5: doctor checks and wakes like a run, but never asks: it spends nothing.
+    term.say(reportLines(built.report, statuses, lastUsed).join('\n'));
+    term.say(`Author: ${built.team.author.name} · Reviewer: ${built.team.reviewer.name} · Local: ${built.team.local.name}`);
+    for (const w of built.warnings) term.say(`Note: ${w}`);
+    downNotes();
+    term.close();
+    return 0;
+  }
+
+  // The local model is down and routing.localDown is "ask": nothing is spent until the operator says so.
+  let approvedFallback = false;
+  while (built.localDown) {
+    const { name } = built.localDown;
+    const participant = config.byName.get(name);
+    const status = statuses.find((s) => s.name === name) ?? {
+      name, kind: participant?.adapter.kind ?? 'local-agent', local: true, ok: false,
+      reason: built.localDown.reason, detail: built.localDown.detail, woke: 'not-configured', wakeDetail: '', waitedMs: 0,
+      hint: participant?.wake?.hint, method: participant?.wake?.method ?? 'warn',
+    };
+    const choice = await term.confirmLocalFallback({ message: downMessage(status), method: status.method });
+    if (choice === 'frontier') {
+      approvedFallback = true;
+      built.warnings.push(LOCAL_DOWN_WARNING);
+      break;
+    }
+    if (choice !== 'wait' || !participant) {
+      term.say(STOPPED_BEFORE_START);
+      term.close();
+      return EXIT.stopped;
+    }
+    try {
+      term.say('Checking the local workers…');
+      const [fresh] = await check([participant]);
+      statuses = [...statuses.filter((s) => s.name !== name), fresh];
+      built = await build();
+    } catch (e) {
+      return couldNotCheck(e);
+    }
+    if (!built.ok) return notBuilt();
   }
   for (const w of built.warnings) term.say(`Note: ${w}`);
+
+  // Who served calls this run, remembered exactly once however the run ends (sync, never throws).
+  const tracker = createUsageTracker(config.byName);
+  let remembered = false;
+  const remember = () => {
+    if (remembered) return;
+    remembered = true;
+    rememberWorkers(memoryFile, tracker.used());
+  };
 
   // Ctrl-C (Ruling 5): stop the agents, record it, leave the run resumable, exit 130.
   onSignal(() => {
     killAllChildren();
+    remember();
     if (workspaceDir) {
       try { new RunLog(metaDirOf(workspaceDir)).event('interrupted', {}); } catch {}
     }
@@ -140,6 +213,7 @@ export async function main(argv, {
     exit(EXIT.interrupted);
   });
 
+  const localDownSetting = config.routing?.localDown ?? 'ask';
   const f = cli.flags;
   const overrides = {
     ...(f.testCommand ? { testCommand: f.testCommand } : {}),
@@ -148,10 +222,19 @@ export async function main(argv, {
     ...(f.watchDiffs ? { watchDiffs: true } : {}),
     ...(f.keepWorkspace ? { keepWorkspace: true } : {}),
     allowSameVendor: built.allowSameVendor,
+    // Task 7: ask mid-run, unless covering is the operator's standing choice or he already agreed for this run.
+    confirmLocalFallback: localDownSetting !== 'frontier' && !approvedFallback,
   };
   const hooks = {
-    onEvent: (e) => { if (e.type === 'start' && e.workspace) workspaceDir = e.workspace; term.onEvent(e); },
+    onEvent: (e) => { tracker.onEvent(e); if (e.type === 'start' && e.workspace) workspaceDir = e.workspace; term.onEvent(e); },
     escalate: term.escalate, approveResult: term.approveResult, approveChunk: term.approveChunk, approvePlan: term.approvePlan,
+    // The hook contract is "exactly true continues"; the terminal answers 'frontier' | 'stop'.
+    confirmLocalFallback: localDownSetting === 'pause'
+      ? async () => ({ reason: LOCAL_PAUSE_SETTING_REASON })
+      : async ({ index, title, reason }) => (await term.confirmLocalFallback({
+        message: `The local model stopped answering during step ${index + 1} (${title}): ${reason}`,
+        midRun: true,
+      })) === 'frontier',
   };
   let out;
   try {
@@ -159,10 +242,12 @@ export async function main(argv, {
       ? await resume({ workspaceDir, repoDir, team: built.team, hooks, options: overrides, warnings: built.warnings })
       : await runTask({ repoDir, request: cli.request, team: built.team, hooks, options: { ...config.options, ...overrides }, baseDir, warnings: built.warnings });
   } catch (e) {
+    remember();
     term.say(`Conductor could not start: ${redact(String(e?.message ?? e))}`);
     term.close();
     return EXIT.usage;
   }
+  remember();
   term.say(`\n${outcomeText(out)}`);
   term.close();
   return EXIT[out.status] ?? EXIT.failed;

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import http from 'node:http';
-import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,7 +10,9 @@ import { PassThrough, Writable } from 'node:stream';
 import { writeStubCli } from './helpers/stubCli.js';
 import { makeRepo, refsOf } from './helpers/gitRepo.js';
 import { git, metaDirOf } from '../src/workspace.js';
-import { main } from '../src/cli/main.js';
+import { main, STOPPED_BEFORE_START } from '../src/cli/main.js';
+import { NO_TTY_LOCAL } from '../src/ui/terminal.js';
+import { LOCAL_DOWN_WARNING } from '../src/team.js';
 
 const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'conductor.js');
 const tmp = () => mkdtempSync(path.join(tmpdir(), 'e2e-'));
@@ -31,14 +33,18 @@ const CODEX = `
   const fs = require('fs');
   const out = args[args.indexOf('-o') + 1];
   if (args.includes('model_provider=localai')) {
+    if (process.env.STUB_LOCAL_FAIL) { console.error('ERROR: stream disconnected before completion'); process.exit(1); }
     if (process.env.STUB_LOCAL_HANG) { setInterval(() => {}, 1000); }
     else { fs.writeFileSync('multiply.txt', 'local did it\\n'); fs.writeFileSync(out, 'Edited multiply.txt.'); }
   } else if ((args[1] || '').includes('REVIEWER')) fs.writeFileSync(out, 'Looks right.\\nVERDICT: APPROVE');
   else { fs.writeFileSync('codex-step.txt', 'x\\n'); fs.writeFileSync(out, 'done'); }
 `;
 
-async function setup() {
-  const server = http.createServer((req, res) => { req.resume(); req.on('end', () => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"choices":[]}'); }); });
+async function setup({ local = { up: true }, wake = null, routing = null } = {}) {
+  const server = http.createServer((req, res) => { req.resume(); req.on('end', () => {
+    if (local.up || (local.flag && existsSync(local.flag))) { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"choices":[]}'); }
+    else { res.writeHead(500, { 'content-type': 'application/json' }); res.end('{"error":{"message":"no healthy nodes available"}}'); }
+  }); });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const bins = tmp();
   const claude = writeStubCli(bins, 'claude', CLAUDE);
@@ -47,13 +53,13 @@ async function setup() {
   writeFileSync(cfg, JSON.stringify({ participants: [
     { name: 'claude', adapter: 'claude-code', bin: claude, roles: ['author', 'reviewer'], capabilities: { is_agentic: true, can_edit_files: true } },
     { name: 'codex', adapter: 'codex', bin: codex, roles: ['author', 'reviewer'], capabilities: { is_agentic: true, can_edit_files: true } },
-    { name: 'local', adapter: 'local-agent', bin: codex, model: 'm', baseUrl: `http://127.0.0.1:${server.address().port}/v1`, roles: ['grunt'], capabilities: { is_agentic: true, can_edit_files: true } },
-  ] }));
+    { name: 'local', adapter: 'local-agent', bin: codex, model: 'm', baseUrl: `http://127.0.0.1:${server.address().port}/v1`, roles: ['grunt'], capabilities: { is_agentic: true, can_edit_files: true }, ...(wake ? { wake } : {}) },
+  ], ...(routing ? { routing } : {}) }));
   const repo = await makeRepo();
   const baseDir = tmp();
   const env = { ...process.env, CONDUCTOR_BASE_DIR: baseDir, XDG_CONFIG_HOME: tmp(), XDG_CACHE_HOME: tmp() };
   delete env.ANTHROPIC_API_KEY;
-  return { server, cfg, repo, baseDir, env, close: () => { server.closeAllConnections(); return new Promise((r) => server.close(r)); } };
+  return { local, server, cfg, repo, baseDir, env, close: () => { server.closeAllConnections(); return new Promise((r) => server.close(r)); } };
 }
 
 // Spawns the real bin (stdin is a pipe, so: no TTY). until(text) → send SIGINT once it appears.
@@ -186,4 +192,120 @@ test('local down without consent: the run stops before anything is spent', async
     assert.doesNotMatch(r.out, /Plan agreed/, 'no agent was called');
     assert.deepEqual(await refsOf(s.repo), before);
   } finally { await s.close(); }
+});
+
+// Answers each prompt in order once its text is on screen: [[promptSubstring, reply, before?], ...]
+function scripted(answers) {
+  const stdin = new PassThrough();
+  let text = '';
+  const queue = [...answers];
+  const stdout = new Writable({ write(c, e, cb) {
+    text += c;
+    const next = queue[0];
+    if (next && String(c).includes(next[0])) { queue.shift(); next[2]?.(); setImmediate(() => stdin.write(`${next[1]}\n`)); }
+    cb();
+  } });
+  return { stdin, stdout, text: () => text };
+}
+// The pre-run question; its [w] label depends on the wake method (Task 6), so match the [f] part.
+const CONSENT = '[f] go ahead without it';
+const GATE = '[a] approve → new branch';
+const inProcess = (s, argv, io, extra = {}) => main([...argv, '--config', s.cfg, '--no-bell'], { cwd: s.repo, env: s.env, stdin: io.stdin, stdout: io.stdout, isTTY: true, onSignal: () => {}, exit: () => {}, ...extra });
+
+test('local down, no terminal: told plainly, nothing started, nothing spent (run-2 smoke finding)', async () => {
+  const s = await setup({ local: { up: false }, wake: { hint: 'Turn on the desktop PC and start the LocalAI worker.' } });
+  try {
+    const before = await refsOf(s.repo);
+    const r = await spawnBin(['add multiply', '--config', s.cfg], { cwd: s.repo, env: s.env });
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /The local model "local" is not answering: its GPU worker is not connected\. Conductor has no way to wake it set up\. To fix it by hand: Turn on the desktop PC and start the LocalAI worker\./);
+    assert.ok(r.out.includes(NO_TTY_LOCAL));
+    assert.ok(r.out.includes(STOPPED_BEFORE_START));
+    assert.deepEqual(await refsOf(s.repo), before);
+    assert.deepEqual(readdirSync(s.baseDir).filter((n) => !n.startsWith('.')), [], 'no workspace: no agent was called');
+  } finally { await s.close(); }
+});
+
+test('doctor wakes a worker with its start command and says so', async () => {
+  const flag = path.join(tmp(), 'worker-up');
+  const starter = writeStubCli(tmp(), 'start-worker', `require('fs').writeFileSync(${JSON.stringify(flag)}, 'up');`);
+  const s = await setup({ local: { up: false, flag }, wake: { method: 'command', cmd: starter, waitMs: 10000, pollMs: 500 } });
+  try {
+    const d = await spawnBin(['doctor', '--config', s.cfg], { cwd: s.repo, env: s.env });
+    assert.equal(d.code, 0, d.out);
+    assert.match(d.out, /Waking local \(its start command\)…/);
+    assert.match(d.out, /local is awake \(after \d+ s\)\./);
+    assert.match(d.out, /✓ local \(local-agent\) — woke it with its start command/);
+    assert.doesNotMatch(d.out, /\[w\]/, 'doctor never asks');
+  } finally { await s.close(); }
+});
+
+test('local down, operator says go ahead: frontier does the step, the summary says so, memory records who served', async () => {
+  const s = await setup({ local: { up: false } });
+  try {
+    const io = scripted([[CONSENT, 'f'], [GATE, 'a']]);
+    const code = await inProcess(s, ['add multiply'], io);
+    assert.equal(code, 0, io.text());
+    assert.ok(io.text().includes(LOCAL_DOWN_WARNING));
+    assert.equal((await git(s.repo, ['show', '--name-only', '--format=', 'conductor/add-multiply'])).stdout.trim(), 'claude-step.txt');
+    const mem = JSON.parse(readFileSync(path.join(s.baseDir, '.workers.json'), 'utf8'));
+    assert.deepEqual(Object.keys(mem.workers).sort(), ['claude', 'codex']);
+  } finally { await s.close(); }
+});
+
+test('local down, operator wakes it again after starting it: the local model does the step', async () => {
+  const s = await setup({ local: { up: false } });
+  try {
+    const io = scripted([[CONSENT, 'w', () => { s.local.up = true; }], [GATE, 'a']]);
+    const code = await inProcess(s, ['add multiply'], io);
+    assert.equal(code, 0, io.text());
+    assert.doesNotMatch(io.text(), new RegExp(LOCAL_DOWN_WARNING.slice(0, 30)));
+    assert.equal((await git(s.repo, ['show', '--name-only', '--format=', 'conductor/add-multiply'])).stdout.trim(), 'multiply.txt');
+    const mem = JSON.parse(readFileSync(path.join(s.baseDir, '.workers.json'), 'utf8'));
+    assert.equal(mem.workers.local.runs, 1);
+  } finally { await s.close(); }
+});
+
+test('local dies mid-run, operator pauses, then resumes once it is back (Review Focus 5)', async () => {
+  // The local agent's stream fails (infrastructure); a 1 ms cooldown and no wait make the Seat give up at once.
+  const s = await setup({ routing: { cooldownMs: 1, maxWaitMs: 0 } });
+  process.env.STUB_LOCAL_FAIL = '1';
+  try {
+    const io = scripted([['[p] pause', 'p']]);
+    const code = await inProcess(s, ['add multiply'], io);
+    assert.equal(code, 3, io.text());
+    assert.match(io.text(), /The local model stopped answering during step 1 \(Add multiply\)/);
+    assert.match(io.text(), /Conductor paused: the local model stopped answering, and you chose not to use your subscription for its steps/);
+    delete process.env.STUB_LOCAL_FAIL;
+    const io2 = scripted([[GATE, 'a']]);
+    const code2 = await inProcess(s, ['resume'], io2);
+    assert.equal(code2, 0, io2.text());
+    assert.match(io2.text(), /Checking the local workers…/, 'resume checks the workers again');
+    assert.equal((await git(s.repo, ['show', '--name-only', '--format=', 'conductor/add-multiply'])).stdout.trim(), 'multiply.txt');
+  } finally { delete process.env.STUB_LOCAL_FAIL; await s.close(); }
+});
+
+test('local dies mid-run, operator says carry on: the frontier does the step and the summary says so', async () => {
+  const s = await setup({ routing: { cooldownMs: 1, maxWaitMs: 0 } });
+  process.env.STUB_LOCAL_FAIL = '1';
+  try {
+    const io = scripted([['[p] pause', 'f'], [GATE, 'a']]);
+    const code = await inProcess(s, ['add multiply'], io);
+    assert.equal(code, 0, io.text());
+    assert.match(io.text(), /The local model stopped answering during step 1 \(Add multiply\)/);
+    assert.ok(io.text().includes(LOCAL_DOWN_WARNING), 'the gate summary carries the warning');
+    assert.equal((await git(s.repo, ['show', '--name-only', '--format=', 'conductor/add-multiply'])).stdout.trim(), 'claude-step.txt');
+  } finally { delete process.env.STUB_LOCAL_FAIL; await s.close(); }
+});
+
+test('local dies mid-run with localDown "pause": paused without a question, and the reason says it was the setting', async () => {
+  const s = await setup({ routing: { cooldownMs: 1, maxWaitMs: 0, localDown: 'pause' } });
+  process.env.STUB_LOCAL_FAIL = '1';
+  try {
+    const io = scripted([]);
+    const code = await inProcess(s, ['add multiply'], io);
+    assert.equal(code, 3, io.text());
+    assert.doesNotMatch(io.text(), /\[p\] pause/);
+    assert.match(io.text(), /Conductor paused: the local model stopped answering, and your settings say to pause instead of using your subscription/);
+  } finally { delete process.env.STUB_LOCAL_FAIL; await s.close(); }
 });
