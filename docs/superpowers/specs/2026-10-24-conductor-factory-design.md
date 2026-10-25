@@ -1,7 +1,7 @@
 # Conductor Factory — Product Design
 
 - **Date:** 2026-10-24
-- **Status:** Draft for operator review
+- **Status:** Approved by operator 2026-10-25
 - **Builds on:** `2026-10-18-conductor-mvp-design.md` (Plans 1–3, merged to master 2026-10-24)
 - **Research input:** Babel doc "Research: LLM councils and specialist review agents for software (Oct 2026)" (project `code`)
 - **Author:** drafted with Claude Code (Opus 5.5), with Malcolm McLeod
