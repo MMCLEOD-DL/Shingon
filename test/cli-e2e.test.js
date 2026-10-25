@@ -351,3 +351,29 @@ test('Ctrl-C while waking: the wake command is stopped and Conductor exits 130 (
     assert.deepEqual(await refsOf(s.repo), before);
   } finally { await s.close(); }
 });
+
+function councilConfig(cfgPath, councilTools) {
+  const c = JSON.parse(readFileSync(cfgPath, 'utf8'));
+  c.options = { councilTools };
+  const out = path.join(tmp(), 'conductor.json');
+  writeFileSync(out, JSON.stringify(c));
+  return out;
+}
+
+test('doctor lists the council checks; --council runs them and the report reaches the gate', async () => {
+  const s = await setup();
+  try {
+    const gl = writeStubCli(tmp(), 'gitleaks', 'console.log("8.21.0")');
+    const cfg = councilConfig(s.cfg, { semgrep: false, gitleaks: gl, 'npm-audit': false, scancode: false });
+    const d = await spawnBin(['doctor', '--config', cfg], { cwd: s.repo, env: s.env });
+    assert.equal(d.code, 0, d.out);
+    assert.match(d.out, /Council checks \(used with --council\):\n {2}✗ Semgrep \(code scanner\): turned off in the config\n {2}✓ Gitleaks \(secret scanner\)\n/);
+
+    const off = councilConfig(s.cfg, { semgrep: false, gitleaks: false, 'npm-audit': false, scancode: false });
+    const r = await spawnBin(['add multiply', '--config', off, '--council'], { cwd: s.repo, env: s.env });
+    assert.equal(r.code, 1, r.out); // no TTY at the gate → rejected
+    assert.match(r.out, /✓ Council \(round 1\) +approved/);
+    assert.match(r.out, /Council report: approved, nothing to fix/);
+    assert.match(r.out, /Semgrep \(code scanner\) is turned off in the config\./);
+  } finally { await s.close(); }
+});

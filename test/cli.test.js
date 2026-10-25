@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { parseCli } from '../src/cli/args.js';
+import { parseCli, USAGE } from '../src/cli/args.js';
 import { findConfig } from '../src/cli/config.js';
 import { listRuns } from '../src/cli/runs.js';
 
@@ -18,9 +18,9 @@ test('parseCli: a request, subcommands and flags', () => {
   assert.equal(parseCli(['doctor']).command, 'doctor');
   assert.equal(parseCli([]).command, 'help');
   assert.equal(parseCli(['--version']).command, 'version');
-  const f = parseCli(['fix it', '--config', 'c.json', '--test', 'npm test', '--approve-plan', '--approve-each-chunk', '--watch-diffs', '--keep-workspace', '--no-bell']).flags;
-  assert.deepEqual(f, { config: 'c.json', testCommand: 'npm test', approvePlan: true, approveEachChunk: true, watchDiffs: true, keepWorkspace: true, bell: false });
-  assert.deepEqual(parseCli(['x']).flags, { config: null, testCommand: null, approvePlan: false, approveEachChunk: false, watchDiffs: false, keepWorkspace: false, bell: true });
+  const f = parseCli(['fix it', '--config', 'c.json', '--test', 'npm test', '--approve-plan', '--approve-each-chunk', '--watch-diffs', '--keep-workspace', '--no-bell', '--council']).flags;
+  assert.deepEqual(f, { config: 'c.json', testCommand: 'npm test', approvePlan: true, approveEachChunk: true, watchDiffs: true, keepWorkspace: true, bell: false, council: true });
+  assert.deepEqual(parseCli(['x']).flags, { config: null, testCommand: null, approvePlan: false, approveEachChunk: false, watchDiffs: false, keepWorkspace: false, bell: true, council: false });
 });
 
 test('parseCli: bad usage is an error, never a run', () => {
@@ -73,4 +73,8 @@ test('listRuns: unfinished runs of this repo only, newest first', () => {
   assert.equal(runs[0].workspaceDir, path.join(baseDir, 'ws-new'));
   assert.equal(listRuns({ baseDir, repoDir: null }).length, 3);
   assert.deepEqual(listRuns({ baseDir: path.join(baseDir, 'nope') }), []);
+});
+
+test('the usage text explains --council in plain words', () => {
+  assert.match(USAGE, /--council +have specialist reviewers check security, licences and correctness before you approve/);
 });

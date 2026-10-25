@@ -10,6 +10,8 @@ import { buildTeam, LOCAL_DOWN_WARNING } from '../team.js';
 import { LOCAL_PAUSE_SETTING_REASON } from '../chunkPhase.js';
 import { memoryFileFor, readWorkerMemory, recallWorkers, rememberWorkers, createUsageTracker } from '../workerMemory.js';
 import { workersToCheck, ensureWorkers, cachedHealth, progressText, downMessage, workerLine } from '../readiness.js';
+import { councilToolStatus } from '../council/index.js';
+import { DEFAULT_OPTIONS } from '../options.js';
 import { runTask, resume } from '../conductor.js';
 import { createTerminal } from '../ui/terminal.js';
 import { RunLog } from '../runlog.js';
@@ -165,6 +167,9 @@ export async function main(argv, {
     term.say(`Author: ${built.team.author.name} · Reviewer: ${built.team.reviewer.name} · Local: ${built.team.local.name}`);
     for (const w of built.warnings) term.say(`Note: ${w}`);
     downNotes();
+    term.say(['Council checks (used with --council):',
+      ...councilToolStatus({ options: { ...DEFAULT_OPTIONS, ...config.options }, env })
+        .map((t) => `  ${t.ok ? '✓' : '✗'} ${t.label}${t.ok ? '' : `: ${t.why}`}`)].join('\n'));
     term.close();
     return 0;
   }
@@ -231,6 +236,7 @@ export async function main(argv, {
     ...(f.approveEachChunk ? { approveEachChunk: true } : {}),
     ...(f.watchDiffs ? { watchDiffs: true } : {}),
     ...(f.keepWorkspace ? { keepWorkspace: true } : {}),
+    ...(f.council ? { council: true } : {}),
     allowSameVendor: built.allowSameVendor,
     // Task 7: ask mid-run, unless covering is the operator's standing choice or he already agreed for this run.
     confirmLocalFallback: localDownSetting !== 'frontier' && !approvedFallback,

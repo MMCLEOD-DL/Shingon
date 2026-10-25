@@ -12,6 +12,7 @@ Options:
   --approve-plan         show you the plan and ask before any step runs
   --approve-each-chunk   ask you before moving on after each step
   --watch-diffs          print each step's changes as it finishes
+  --council              have specialist reviewers check security, licences and correctness before you approve
   --keep-workspace       keep Conductor's working copy after the run
   --no-bell              do not ring the terminal bell when Conductor needs you
   -h, --help             show this help
@@ -23,6 +24,7 @@ const OPTIONS = {
   'approve-plan': { type: 'boolean' },
   'approve-each-chunk': { type: 'boolean' },
   'watch-diffs': { type: 'boolean' },
+  council: { type: 'boolean' },
   'keep-workspace': { type: 'boolean' },
   'no-bell': { type: 'boolean' },
   help: { type: 'boolean', short: 'h' },
@@ -46,6 +48,7 @@ export function parseCli(argv) {
     watchDiffs: v['watch-diffs'] === true,
     keepWorkspace: v['keep-workspace'] === true,
     bell: v['no-bell'] !== true,
+    council: v.council === true,
   };
   if (v.help) return { command: 'help', flags };
   if (v.version) return { command: 'version', flags };
