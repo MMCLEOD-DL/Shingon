@@ -3,6 +3,7 @@
 // come from roles.js; these are the task bodies.
 import { clip } from './text.js';
 import { redact } from './secrets.js';
+import { TOOL_LABEL } from './council/tools.js';
 
 // Redact before clipping: a key split by the clip point would otherwise survive as a fragment.
 const show = (text, max) => clip(redact(typeof text === 'string' ? text : ''), max);
@@ -109,4 +110,40 @@ export function finalReview({ request, plan, diff, tests, base }) {
     'Review the whole branch: does it meet the request, do the chunks fit together, is anything missing, broken or unsafe?',
     BLOCK_RULES,
   ].join('\n\n');
+}
+
+const FOCUS = {
+  security: 'Check the security findings below. Set aside false alarms (for example test fixtures, example keys, code that never sees outside input), explain the real problems and propose fixes.',
+  legal: 'Check the licence findings below against this rule: apps handed to clients may only use permissively licensed code and dependencies (MIT, Apache-2.0, BSD, ISC); copyleft (GPL, AGPL, LGPL, MPL and similar) and unknown or missing licences are blocking. Explain each risk in plain English. Only the operator can accept a licence.',
+  correctness: 'Check that the change fully does what the request asks, and look for untested paths, especially around money, totals and permissions.',
+};
+
+const councilItem = ({ id, finding: f }) => {
+  const head = `${id} [${f.grade}] ${TOOL_LABEL[f.tool] ?? f.tool ?? 'reviewer'}${f.file ? ` ${f.file}${f.line ? `:${f.line}` : ''}` : ''}: ${f.title}${f.preExisting ? ' (already there before this change)' : ''}${f.locked ? ' (a fact: you cannot set it aside or lower it)' : ''}`;
+  return f.detail ? `${head}\n    ${show(f.detail, 600)}` : head;
+};
+
+export function councilMember({ member, label, request, plan, diff, base, tests, items, notes }) {
+  return [
+    `You are the ${label} member of a review council. You review independently: you do not see the other members' views. ${FOCUS[member]}`,
+    `Overall request:\n${show(request, TEXT_MAX)}` + (plan ? `\n\n${planBlock(plan)}` : ''),
+    diffBlock('The change under review:', diff, 30000, base),
+    member === 'correctness' ? formatTests(tests) : '',
+    'What the checking tools found:\n' + (items.length ? items.map(councilItem).join('\n') : '(the tools found nothing)'),
+    notes?.length ? 'Checks that did not run:\n' + notes.map((n) => `- ${n}`).join('\n') : '',
+    [
+      'Rules:',
+      '- Work only from the evidence above and the files in your current directory. Do not edit anything.',
+      '- For each finding decide "keep" or "dismiss". Dismiss only a false alarm, and always say why.',
+      '- You may change a finding\'s grade: "blocking" (must be fixed before this ships), "warning" (the operator should know), "note" (for the record).',
+      '- A finding marked as a fact cannot be dismissed or lowered: explain it and say how to fix it.',
+      '- You may add problems the tools missed under "extra". Without tool evidence they can only be warnings or notes.',
+      '- Write "why" and "fix" in plain English for a business owner who does not read code: what is wrong, why it matters, what to change.',
+    ].join('\n'),
+    [
+      'End your reply with one ```json block of exactly this shape, then the VERDICT line:',
+      '{"findings": [{"id": "S1", "decision": "keep", "grade": "blocking", "why": "...", "fix": "..."}], "extra": [{"title": "...", "why": "...", "grade": "warning", "file": "..."}]}',
+      'Use VERDICT: BLOCK if any finding you keep is blocking, otherwise VERDICT: APPROVE.',
+    ].join('\n'),
+  ].filter(Boolean).join('\n\n');
 }

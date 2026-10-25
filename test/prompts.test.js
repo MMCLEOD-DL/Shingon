@@ -72,3 +72,26 @@ test('a shortened diff tells the reviewer where the full change is and to BLOCK 
   assert.match(big, /The diff above was shortened[\s\S]*git diff abc123[\s\S]*BLOCK and say so/);
   assert.match(P.finalReview({ request: 'r', plan, diff: 'x'.repeat(50000), tests: { ran: false }, base: 'def456' }), /git diff def456/);
 });
+
+import { makeFinding as mkF } from '../src/council/findings.js';
+
+test('councilMember: one member, its own evidence, the rules and the JSON shape', () => {
+  const items = [
+    { id: 'C1', finding: mkF({ member: 'correctness', tool: 'tests', grade: 'blocking', locked: true, title: 'The tests fail (exit code 1)', detail: 'not ok 3' }) },
+    { id: 'C2', finding: mkF({ member: 'correctness', tool: 'test-files', grade: 'warning', title: 'The change adds or edits no tests', preExisting: true }) },
+  ];
+  const p = P.councilMember({ member: 'correctness', label: 'Correctness', request: 'Add VAT totals', plan: { summary: 'S', chunks: [{ title: 'One' }] },
+    diff: '+x', base: 'abc', tests: { ran: true, passed: false, code: 1, output: 'not ok 3' }, items, notes: ['Semgrep (code scanner) is not installed, so this check did not run.'] });
+  assert.match(p, /You are the Correctness member of a review council/);
+  assert.match(p, /Add VAT totals/);
+  assert.match(p, /C1 \[blocking\] the test command: The tests fail \(exit code 1\) \(a fact: you cannot set it aside or lower it\)/);
+  assert.match(p, /C2 \[warning\] test coverage check: The change adds or edits no tests \(already there before this change\)/);
+  assert.match(p, /Checks that did not run:\n- Semgrep/);
+  assert.match(p, /"findings": \[\{"id": "S1", "decision": "keep"/);
+  assert.match(p, /Without tool evidence they can only be warnings or notes/);
+  assert.match(p, /Tests: FAILED/);
+  assert.doesNotMatch(p, /Security member|Legal member/);
+  const none = P.councilMember({ member: 'security', label: 'Security', request: 'r', plan: null, diff: '', base: 'abc', tests: null, items: [], notes: [] });
+  assert.match(none, /\(the tools found nothing\)/);
+  assert.doesNotMatch(none, /Tests:/, 'only Correctness is shown the test result');
+});
