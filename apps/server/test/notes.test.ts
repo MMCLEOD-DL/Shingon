@@ -1,7 +1,7 @@
 import { test, expect, beforeAll, afterAll } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { createTestApp, call as rawCall, signInAs } from './helpers/testApp.js';
 import { makeTeam, makeUser } from './helpers/factories.js';
 import { createNote, updateNote } from '../src/notes/repo.js';
@@ -97,6 +97,11 @@ test('the list is scoped, newest first, and pages', async () => {
   const carolList = await call(t, await as(carol), 'GET', '/api/notes');
   expect(carolList.json.notes).toEqual([]);
   expect((await call(t, a, 'GET', '/api/notes?cursor=not-a-cursor')).status).toBe(400);
+  const id0 = p1.json.notes[0]?.id ?? '';
+  for (const ts of ['2026-99-99T99:99:99.000000Z', '2026-02-30T00:00:00.000000Z', '0000-01-01T00:00:00.000000Z']) {
+    const bad = Buffer.from(`${ts}|${id0}`).toString('base64url');
+    expect((await call(t, a, 'GET', `/api/notes?cursor=${bad}`)).status).toBe(400);
+  }
   expect((await call(t, a, 'GET', '/api/notes?limit=0')).status).toBe(400);
   expect((await call(t, a, 'GET', '/api/notes?limit=101')).status).toBe(400);
 });
@@ -188,8 +193,44 @@ test('the clock handed to the repo stamps new and changed notes', async () => {
   const fixed = new Date('2031-05-06T07:08:09.000Z');
   const later = new Date('2031-05-07T07:08:09.000Z');
   const actor = { id: alice.id, email: alice.email, name: 'Alice', role: 'member' as const, teamId: N.id };
-  const note = await createNote(t.db, actor, { title: 'clocked', body: '', attachmentId: null }, undefined, fixed);
+  const note = await createNote(t.db, actor, { title: 'clocked', body: '', attachmentId: null }, { now: fixed });
   expect(note.createdAt).toBe(fixed.toISOString());
-  const upd = await updateNote(t.db, new LocalDiskStorage(t.config.uploadDir), actor, note.id, { title: 'clocked 2' }, undefined, later);
+  const upd = await updateNote(t.db, actor, note.id, { title: 'clocked 2' }, { now: later, storage: new LocalDiskStorage(t.config.uploadDir) });
   expect(upd).toMatchObject({ createdAt: fixed.toISOString(), updatedAt: later.toISOString() });
+});
+
+test('a change that changes nothing is not audited and does not bump updated_at', async () => {
+  const a = await as(alice);
+  const f = await upload(alice);
+  const made = (await call(t, a, 'POST', '/api/notes', { title: 'same', body: 'text', attachmentId: f })).json.note;
+  const plain = (await call(t, a, 'POST', '/api/notes', { title: 'plain' })).json.note;
+  const n = (await t.db.select().from(auditLog)).length;
+  for (const [id, patch] of [[made.id, { attachmentId: f }], [made.id, { title: 'same', body: 'text' }], [plain.id, { attachmentId: null }], [plain.id, {}]] as const) {
+    const r = await call(t, a, 'PATCH', `/api/notes/${id}`, patch);
+    expect(r.status).toBe(200);
+    expect(r.json.note.updatedAt).toBe(id === made.id ? made.updatedAt : plain.updatedAt);
+  }
+  expect((await t.db.select().from(auditLog)).length).toBe(n);
+  expect((await fileRow(f))?.attachedId).toBe(made.id);
+});
+
+test('if the update fails after the photo is swapped, the note keeps its original photo and the object stays', async () => {
+  const a = await as(alice);
+  const f1 = await upload(alice);
+  const f2 = await upload(alice);
+  const id = (await call(t, a, 'POST', '/api/notes', { title: 'safe', attachmentId: f1 })).json.note.id;
+  const key1 = (await fileRow(f1))!.storageKey;
+  await t.db.execute(sql`create function hf_fail_note_audit() returns trigger language plpgsql as $$ begin if new.action in ('note.updated','note.deleted') then raise exception 'forced failure'; end if; return new; end $$`);
+  await t.db.execute(sql`create trigger hf_fail_note_audit before insert on audit_log for each row execute function hf_fail_note_audit()`);
+  try {
+    expect((await call(t, a, 'PATCH', `/api/notes/${id}`, { attachmentId: f2 })).status).toBe(500);
+    expect((await call(t, a, 'DELETE', `/api/notes/${id}`)).status).toBe(500);
+  } finally {
+    await t.db.execute(sql`drop trigger hf_fail_note_audit on audit_log`);
+    await t.db.execute(sql`drop function hf_fail_note_audit()`);
+  }
+  expect((await call(t, a, 'GET', `/api/notes/${id}`)).json.note.attachment?.id).toBe(f1);
+  expect(await fileRow(f1)).toMatchObject({ attachedType: 'note', attachedId: id });
+  expect(objectExists(key1)).toBe(true);
+  expect((await fileRow(f2))?.attachedType).toBeNull();
 });

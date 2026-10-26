@@ -30,7 +30,7 @@ export async function seedNotes(t: TestApp, ids: typeof IDS): Promise<WorldResou
       const id = `e1000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
       const teamId = o.team === null ? null : ids.teams[o.team];
       const withFile = round === 1 && o.key === 'northAlice';
-      const fileId = withFile ? (await t.db.select({ id: files.id }).from(files).where(eq(files.ownerId, ids.users.northAlice)))[0]?.id ?? null : null;
+      const fileId = withFile ? (await t.db.select({ id: files.id }).from(files).where(eq(files.ownerId, ids.users.northAlice)).orderBy(files.id))[0]?.id ?? null : null;
       await t.db.insert(notes).values({
         id, ownerId: ids.users[o.key], teamId, title: canary, body: `${canary} body text`, attachmentFileId: fileId,
         createdAt: new Date(BASE + n * 60_000), updatedAt: new Date(BASE + n * 60_000),

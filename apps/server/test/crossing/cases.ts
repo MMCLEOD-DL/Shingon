@@ -57,12 +57,13 @@ export interface ItemCase { kind: 'item'; route: Route; resource: string; visibl
 /** `paginate`: the first page's query, and how to get the next page's query from a reply (null at the end). Every page is checked. */
 export interface ListCase { kind: 'list'; route: Route; resource: string; visible?: (a: WorldActor, r: WorldResource) => boolean; query?: string; paginate?: { query: string; next: (json: any) => string | null } }
 /** `multipart`: send one file as multipart/form-data instead of JSON; `body` keys (and forbiddenFields) go in as extra text fields. */
-export interface ActionCase { kind: 'action'; route: Route; multipart?: { field: string; filename: string; bytes: Buffer }; body?: (w: World) => unknown; okStatus?: number; mutates?: boolean; why?: string; forbiddenFields?: Record<string, unknown>[] }
+export interface ActionCase { kind: 'action'; route: Route; multipart?: { field: string; filename: string; bytes: Buffer }; body?: (w: World) => unknown; okStatus?: number | ((r: WorldResource | undefined, a: WorldActor) => number); mutates?: boolean; why?: string; forbiddenFields?: Record<string, unknown>[] }
 export type CrossingCase = ItemCase | ListCase | ActionCase;
 
 const TINY_PNG = readFileSync(new URL('../fixtures/files/tiny.png', import.meta.url));
 const own = (a: WorldActor, r: WorldResource) => a.id === r.id;
 const LONG_AGO = '2020-01-01T00:00:00.000Z';
+const DAVE_FILE = 'f1000000-0000-4000-8000-000000000007';   // the seeded file of disabledDave (resources/files.ts)
 const SOME_ID = '0a000000-0000-4000-8000-0000000000ff';
 // A well-formed link token that was never issued.
 const NEVER_ISSUED = 'A'.repeat(43);
@@ -109,6 +110,12 @@ export const CASES: CrossingCase[] = [
     allowed: (a, r) => a.role === 'admin' || a.id === r.ownerId },
   { kind: 'action', route: 'POST /api/notes', body: () => ({ title: 'New' }), okStatus: 201, mutates: true,
     forbiddenFields: [{ ownerId: IDS.users.southCarol }, { teamId: IDS.teams.south }, { id: SOME_ID }, { createdAt: LONG_AGO }, { updatedAt: LONG_AGO }, { ownerName: 'x' }, { canEdit: true }, { attachmentFileId: SOME_ID }] },
+  // Attaching somebody else's file is refused (404) and changes nothing. daveFile belongs to a user nobody in the harness signs in as,
+  // so only an admin (who may attach any file) is let through.
+  { kind: 'item', route: 'PATCH /api/notes/:id', resource: 'note', body: () => ({ attachmentId: DAVE_FILE }), mutates: true,
+    allowed: (a, r) => a.role === 'admin' || a.id === r.ownerId, okStatus: (_r, a) => (a.role === 'admin' ? 200 : 404) },
+  { kind: 'action', route: 'POST /api/notes', body: () => ({ title: 'With photo', attachmentId: DAVE_FILE }), mutates: true,
+    okStatus: (_r, a) => (a.role === 'admin' ? 201 : 404) },
 
   // Public routes: every actor, signed in or not, gets the same answer, nothing leaks and a refusal changes nothing.
   { kind: 'action', route: 'POST /api/auth/sign-in', body: () => ({ email: 'canary-user-northalice@hf.test', password: 'not the right password' }), okStatus: 401, mutates: true },

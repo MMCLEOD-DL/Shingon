@@ -21,6 +21,8 @@ export async function getVisibleFile(db: Db | Tx, actor: Actor, id: string): Pro
 
 /**
  * Links an uploaded file to the record it belongs to. Only the owner (or an admin) may; anything else is a 404.
+ * A file the actor can see but does not own (a manager looking at a team member's file) is a 404 too, deliberately:
+ * attaching changes the file, so only an owner or admin may, and the answer must not hint that the file exists. Client features copy this.
  * A file already attached to a different record is a 409: it is never moved from one parent to another.
  */
 export async function attachFile(tx: Tx, actor: Actor, fileId: string, parent: { type: string; id: string }): Promise<void> {
