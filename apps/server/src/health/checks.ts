@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import type { Storage } from '../files/storage.js';
+import { ROLLBACK_FAILED_MARK } from '../db/schema/opsRuns.js';
 
 export interface Check { name: string; ok: boolean; detail: string }
 export type Readiness = 'ok' | 'degraded' | 'down';
@@ -26,7 +27,11 @@ const NO_ANSWER: Record<string, string> = {
   email: 'The email queue could not be checked in time.',
   backups: 'The backup record could not be checked in time.',
   'restore-test': 'The restore-test record could not be checked in time.',
+  update: 'The update record could not be checked in time.',
 };
+
+/** Shown while an update's automatic undo has failed (Task 20), until a later update succeeds or the operator marks it recovered. */
+export const UPDATE_UNDO_FAILED = 'An update failed and its automatic undo failed too, so this box may not be on the right version or data. See the runbook, section "Recovering from a failed update". When it is sorted out, run: docker compose run --rm updater update --mark-recovered';
 
 const pass = (name: string): Check => ({ name, ok: true, detail: '' });
 const fail = (name: string, detail: string): Check => ({ name, ok: false, detail });
@@ -128,6 +133,15 @@ async function restoreTest(db: Db, now: Date): Promise<Check> {
   return pass('restore-test');
 }
 
+async function update(db: Db): Promise<Check> {
+  // Lock refusals (busy) are not outcomes; cancelled and rolled-back updates left the box as it was and alerted at the time.
+  const r = await db.execute<{ n: number }>(sql`
+    select count(*)::int as n from ops_runs
+    where kind = 'update' and not ok and not busy and position(${ROLLBACK_FAILED_MARK} in detail) > 0
+      and at > coalesce((select max(at) from ops_runs where kind = 'update' and ok), '-infinity'::timestamptz)`);
+  return (r.rows[0]?.n ?? 0) > 0 ? fail('update', UPDATE_UNDO_FAILED) : pass('update');
+}
+
 /** Resolves with the check, or with its "no answer" failure if it throws or runs past `ms`. Never rejects. */
 function bounded(name: string, ms: number, run: () => Promise<Check>): Promise<Check> {
   const noAnswer = fail(name, NO_ANSWER[name] ?? 'This check did not finish in time.');
@@ -153,6 +167,7 @@ export async function runReadinessChecks(deps: ReadinessDeps): Promise<Check[]> 
     bounded('email', READINESS_TIMEOUT_MS, () => email(deps.db, now)),
     bounded('backups', READINESS_TIMEOUT_MS, () => backups(deps.db, now)),
     bounded('restore-test', READINESS_TIMEOUT_MS, () => restoreTest(deps.db, now)),
+    bounded('update', READINESS_TIMEOUT_MS, () => update(deps.db)),
   ]);
 }
 

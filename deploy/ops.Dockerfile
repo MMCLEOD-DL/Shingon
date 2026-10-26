@@ -57,6 +57,8 @@ COPY --from=build /app/apps/server/dist apps/server/dist
 COPY --from=build /app/ops/package.json ops/package.json
 COPY --from=build /app/ops/dist ops/dist
 # Same owner as in the app image (uid/gid 1000 is `node` there), because either container may be the first to mount the uploads volume.
-# /state holds the backup work folder (with a full database dump while a backup runs) and the restic cache: root only.
-RUN mkdir -p /data/uploads && chown 1000:1000 /data/uploads && install -d -m 0700 /state
-ENTRYPOINT ["node", "ops/dist/cli.js"]
+# /state holds the backup work folder (with a full database dump while a backup runs) and the restic cache: readable only by
+# uid 1000, the user the ops daemon runs as (compose.yaml). A fresh state volume takes this owner and mode.
+RUN mkdir -p /data/uploads && chown 1000:1000 /data/uploads && install -d -m 0700 -o 1000 -g 1000 /state
+# An absolute path: the updater runs with its working directory set to the bundle folder (compose.yaml).
+ENTRYPOINT ["node", "/app/ops/dist/cli.js"]

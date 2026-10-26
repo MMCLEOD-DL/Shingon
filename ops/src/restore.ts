@@ -367,7 +367,6 @@ export async function restoreLive(deps: OpsDeps, which: string, opts: RestoreLiv
 
 /** The whole restore, safety backup included, under one hold of the ops lock. */
 async function restoreLiveLocked(deps: OpsDeps, which: string): Promise<{ snapshotId: string }> {
-  const { cfg } = deps;
   let snap: { id: string; short: string; time?: Date };
   try {
     // Chosen before the safety backup, or "latest" would mean the safety backup itself.
@@ -397,23 +396,8 @@ async function restoreLiveLocked(deps: OpsDeps, which: string): Promise<{ snapsh
   // After a failed restore, "latest" would be this safety backup, so its id is always spelled out.
   deps.log(`Safety backup ${safety} holds the data as it was before this restore.`);
 
-  const staging = path.join(cfg.workDir, `restore-uploads-${stamp(deps.now())}`);
   try {
-    deps.log(`Fetching backup ${snap.short} from ${describeRepo(cfg.backup.repository)}.`);
-    const r = await deps.run.run('restic', ['restore', snap.id, '--target', staging, '--include', cfg.uploadsDir], { env: resticEnv(cfg), timeoutMs: TIMEOUTS.resticRestore });
-    if (r.code !== 0) throw new RestoreError(resticProblem(deps, r, TIMEOUTS.resticRestore, `Backup ${snap.short} could not be fetched`));
-    const stagedUploads = path.join(staging, cfg.uploadsDir);
-    if (!(await exists(stagedUploads))) throw new RestoreError(`Backup ${snap.short} does not contain the uploads folder, so nothing has been changed.`);
-
-    deps.log('Putting the database back.');
-    await restoreDatabase(deps, snap.id, pgEnv(cfg.databaseUrl).PGDATABASE);
-
-    if (!(await confirmOpsLock())) throw new RestoreError('The database was put back, but ops lost its lock before the uploaded files, so they have not been touched. Run the restore again.');
-    deps.log('Putting the uploaded files back.');
-    for (const entry of await readdir(cfg.uploadsDir)) await rm(path.join(cfg.uploadsDir, entry), { recursive: true, force: true });
-    await cp(stagedUploads, cfg.uploadsDir, { recursive: true, preserveTimestamps: true });
-    const own = await deps.run.run('chown', ['-R', APP_UID_GID, cfg.uploadsDir], { timeoutMs: TIMEOUTS.chown });
-    if (own.code !== 0) throw new RestoreError('The uploaded files were put back, but the app may not be able to save new ones: their owner could not be set.');
+    await restoreDataFrom(deps, snap);
 
     const when = snap.time !== undefined ? ` from ${ukDate(snap.time)}` : '';
     await recordRun(deps, 'restore', true, `Backup ${snap.short}${when} was put back: the database and the uploaded files. Safety backup ${safety} holds the data from before.`, snap.id);
@@ -423,7 +407,42 @@ async function restoreLiveLocked(deps: OpsDeps, which: string): Promise<{ snapsh
     const msg = `${why} The data as it was before this restore is in safety backup ${safety}: restore that id (not latest) to go back.`;
     await recordRun(deps, 'restore', false, msg, snap.id);
     throw new RestoreError(msg, true);
-  } finally {
-    await rm(staging, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+/**
+ * Puts the database and the uploaded files from one backup back: used by `ops restore` (after its safety backup) and by an
+ * update's automatic rollback (Task 20), always with the app stopped. The uploads are fetched first, so a backup that cannot
+ * be read changes nothing; then the database is swapped in (restoreDatabase); then the uploads folder is replaced and given
+ * back to the app's user. Runs under the ops lock (re-entrant: the caller normally holds it already). Throws RestoreError.
+ */
+export async function restoreDataFrom(deps: OpsDeps, snap: { id: string; short: string }, opts: { lockWaitMs?: number } = {}): Promise<void> {
+  const { cfg } = deps;
+  try {
+    await withOpsLock(deps, { waitMs: opts.lockWaitMs ?? LOCK_WAIT.restore, busyMessage: `Another backup or restore is running, so nothing has been changed. ${STOP_BOTH}` }, async () => {
+      const staging = path.join(cfg.workDir, `restore-uploads-${stamp(deps.now())}`);
+      try {
+        deps.log(`Fetching backup ${snap.short} from ${describeRepo(cfg.backup.repository)}.`);
+        const r = await deps.run.run('restic', ['restore', snap.id, '--target', staging, '--include', cfg.uploadsDir], { env: resticEnv(cfg), timeoutMs: TIMEOUTS.resticRestore });
+        if (r.code !== 0) throw new RestoreError(resticProblem(deps, r, TIMEOUTS.resticRestore, `Backup ${snap.short} could not be fetched`));
+        const stagedUploads = path.join(staging, cfg.uploadsDir);
+        if (!(await exists(stagedUploads))) throw new RestoreError(`Backup ${snap.short} does not contain the uploads folder, so nothing has been changed.`);
+
+        deps.log('Putting the database back.');
+        await restoreDatabase(deps, snap.id, pgEnv(cfg.databaseUrl).PGDATABASE);
+
+        if (!(await confirmOpsLock())) throw new RestoreError('The database was put back, but ops lost its lock before the uploaded files, so they have not been touched. Run the restore again.');
+        deps.log('Putting the uploaded files back.');
+        for (const entry of await readdir(cfg.uploadsDir)) await rm(path.join(cfg.uploadsDir, entry), { recursive: true, force: true });
+        await cp(stagedUploads, cfg.uploadsDir, { recursive: true, preserveTimestamps: true });
+        const own = await deps.run.run('chown', ['-R', APP_UID_GID, cfg.uploadsDir], { timeoutMs: TIMEOUTS.chown });
+        if (own.code !== 0) throw new RestoreError('The uploaded files were put back, but the app may not be able to save new ones: their owner could not be set.');
+      } finally {
+        await rm(staging, { recursive: true, force: true }).catch(() => undefined);
+      }
+    });
+  } catch (e) {
+    if (e instanceof OpsBusyError) throw new RestoreError(e.message);
+    throw e;
   }
 }

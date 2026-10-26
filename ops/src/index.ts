@@ -11,3 +11,7 @@ export { createOpsDeps, runDaemon, restoreTestJob } from './daemon.js';
 export { matrixChannel, webhookChannel, allChannels, logChannel, channelFromConfig, type AlertChannel } from './alerts.js';
 export { Monitor, type Check } from './monitor.js';
 export { monitorChecks } from './checks.js';
+export { dockerCompose, loadImageFile, readEnvValue, type Compose } from './compose.js';
+export { fileLock } from './lock.js';
+export { runUpdate, httpWaitReady, frontDoorCheck, type UpdateDeps, type UpdateOutcome } from './update.js';
+export { restoreDataFrom } from './restore.js';

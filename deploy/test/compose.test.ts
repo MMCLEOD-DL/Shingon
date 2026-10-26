@@ -138,17 +138,28 @@ test('the image files bake in no secrets and create the uploads folder owned by 
   expect(app).toContain('foundation.json');
 });
 
-test('the long-running ops daemon is locked down too: read-only, no extra powers beyond the file ones it needs, no socket', () => {
+test('the long-running ops daemon is locked down too: read-only, the app\'s own user, no extra powers, no socket', () => {
   const ops = S.ops;
   expect(ops.command).toEqual(['daemon']);
   expect(ops.read_only).toBe(true);
   expect(ops.tmpfs).toContain('/tmp');
   expect(ops.cap_drop).toEqual(['ALL']);
-  // Read the app's private uploads, put them back and give them back to uid 1000. Nothing else.
-  expect([...(ops.cap_add ?? [])].sort()).toEqual(['CHOWN', 'DAC_OVERRIDE', 'FOWNER']);
+  // Task 20: as uid 1000 (the uploads' owner) it needs no CHOWN/DAC_OVERRIDE/FOWNER; the updater hands /state back to 1000.
+  expect(ops.user).toBe('1000:1000');
+  expect(ops.cap_add).toBeUndefined();
   expect(ops.security_opt).toContain('no-new-privileges:true');
   expect((ops.volumes ?? []).some((v: string) => v.includes('docker.sock'))).toBe(false);
   expect(ops.ports).toBeUndefined();
+});
+
+test('the ops image gives a fresh state volume to uid 1000, and the updater (root, with the socket) hands it back after an update', () => {
+  const dockerfile = readFileSync(new URL('../ops.Dockerfile', import.meta.url), 'utf8');
+  expect(dockerfile).toContain('install -d -m 0700 -o 1000 -g 1000 /state');
+  // The updater's working_dir is the bundle folder, so a relative entrypoint would not be found (seen live in Task 20).
+  expect(S.updater.working_dir).toBe('${HF_BUNDLE_DIR:?}');
+  expect(dockerfile).toMatch(/^ENTRYPOINT \["node", "\/app\/ops\/dist\/cli\.js"\]$/m);
+  expect(S.updater.user).toBeUndefined();
+  expect(S.updater.volumes).toContain('state:/state');
 });
 
 test('a mismatched tunnel address and edge network keeps only the front door down, checked by a locked-down one-shot service', () => {

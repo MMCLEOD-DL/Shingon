@@ -1,7 +1,7 @@
 import { test, expect, beforeAll, afterAll } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { createTestApp } from './helpers/testApp.js';
-import { runReadinessChecks, readinessStatus, readinessCache, type Check } from '../src/health/checks.js';
+import { runReadinessChecks, readinessStatus, readinessCache, UPDATE_UNDO_FAILED, type Check } from '../src/health/checks.js';
 import type { Db } from '../src/db/client.js';
 import type { Storage } from '../src/files/storage.js';
 
@@ -24,7 +24,7 @@ test('with the token, each check explains itself', async () => {
   await t.db.execute(sql`insert into email_outbox (to_address, template, data, created_at, next_attempt_at) values ('a@hf.test', 'password-changed', '{}', now() - interval '22 minutes', now())`);
   const r = await t.app.inject({ method: 'GET', url: '/readyz', headers: { 'x-health-token': TOKEN } });
   const byName = checksOf(r);
-  expect(Object.keys(byName)).toEqual(['database', 'storage', 'migrations', 'email', 'backups', 'restore-test']);
+  expect(Object.keys(byName)).toEqual(['database', 'storage', 'migrations', 'email', 'backups', 'restore-test', 'update']);
   expect(byName.database!.ok).toBe(true);
   expect(byName.migrations!.ok).toBe(true);
   expect(byName.email).toMatchObject({ ok: false, detail: '1 email is waiting to be sent (the oldest for 22 minutes).' });
@@ -56,6 +56,28 @@ test('a real backup or restore-test failure after the last success is a problem,
   const b2 = checksOf(r2);
   expect(b2.backups).toMatchObject({ ok: false, detail: 'The last successful backup was 27 hours ago.' });
   expect(b2['restore-test']).toMatchObject({ ok: false, detail: 'No restore test has passed in the last 8 days.' });
+  await t.db.execute(sql`delete from ops_runs`);
+});
+
+test('a failed update undo (Task 20) stays a problem until a later update succeeds or it is marked recovered; other outcomes do not', async () => {
+  const at = (m: number) => sql`now() - make_interval(mins => ${m})`;
+  const updateCheck = async (): Promise<Check> => checksOf(await t.app.inject({ method: 'GET', url: '/readyz', headers: { 'x-health-token': TOKEN } })).update!;
+  await t.db.execute(sql`delete from ops_runs`);
+  expect(await updateCheck()).toMatchObject({ ok: true });
+  await t.db.execute(sql`insert into ops_runs (kind, ok, detail, busy, at) values
+    ('update', true, '[Acme] Updated from 0.1.0 to 0.1.1. A backup (abcd1234) was taken first.', false, ${at(60)}),
+    ('update', false, '[Acme] Update to 0.1.2 failed (the database update failed), so it was undone automatically.', false, ${at(50)}),
+    ('update', false, '[Acme] Update to 0.1.2 cancelled: the new version is not on this box yet. Nothing was changed.', false, ${at(40)}),
+    ('update', false, 'Another update is already running.', true, ${at(30)})`);
+  expect(await updateCheck()).toMatchObject({ ok: true });
+  await t.db.execute(sql`insert into ops_runs (kind, ok, detail, at) values ('update', false, '[Acme] URGENT: update to 0.1.2 failed (x) and the automatic undo also failed (y). The app may be down.', ${at(20)})`);
+  expect(await updateCheck()).toEqual({ name: 'update', ok: false, detail: UPDATE_UNDO_FAILED });
+  // A later cancelled update or a busy refusal does not clear it.
+  await t.db.execute(sql`insert into ops_runs (kind, ok, detail, at) values ('update', false, '[Acme] Update to 0.1.3 cancelled: the new version is not on this box yet. Nothing was changed.', ${at(10)})`);
+  expect((await updateCheck()).ok).toBe(false);
+  // A later successful update (or update --mark-recovered, which records ok) does.
+  await t.db.execute(sql`insert into ops_runs (kind, ok, detail) values ('update', true, 'The operator marked the failed update as recovered.')`);
+  expect(await updateCheck()).toMatchObject({ ok: true });
   await t.db.execute(sql`delete from ops_runs`);
 });
 
@@ -112,7 +134,7 @@ test('a database that hangs is reported within the time limits, not waited on fo
   const started = Date.now();
   const checks = await runReadinessChecks({ db: hung, storage: { check: () => Promise.resolve() }, now: () => new Date() });
   expect(Date.now() - started).toBeLessThan(3500);
-  expect(checks.map((c) => c.name)).toEqual(['database', 'storage', 'migrations', 'email', 'backups', 'restore-test']);
+  expect(checks.map((c) => c.name)).toEqual(['database', 'storage', 'migrations', 'email', 'backups', 'restore-test', 'update']);
   expect(checks[0]).toEqual({ name: 'database', ok: false, detail: 'The database is not answering.' });
   expect(checks[1]!.ok).toBe(true);
 });

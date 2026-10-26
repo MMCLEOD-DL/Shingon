@@ -4,6 +4,12 @@ import { sql } from 'drizzle-orm';
 export const OPS_RUN_KINDS = ['backup', 'restore-test', 'restore', 'update', 'audit-purge'] as const;
 export type OpsRunKind = (typeof OPS_RUN_KINDS)[number];
 
+/**
+ * Every 'update' record whose automatic undo failed carries this text (Task 20's URGENT alert). The app's readiness check
+ * reports it until a later update succeeds or the operator marks the box as recovered, so the monitor keeps alerting.
+ */
+export const ROLLBACK_FAILED_MARK = 'URGENT: update to';
+
 // What the ops service did and whether it worked: backups, restore tests, restores, updates and audit-log purges.
 // The monitor (Task 19) reads it to alert on a failed or missing backup or restore test. `detail` is plain English
 // shown to the operator; it never holds a password or a file name.

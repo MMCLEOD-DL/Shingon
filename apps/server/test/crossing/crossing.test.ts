@@ -65,6 +65,6 @@ test('/readyz never shows its checks unless the health token is sent', async () 
     }
   }
   const full = await t.app.inject({ method: 'GET', url: '/readyz', headers: { 'x-health-token': HEALTH_TOKEN } });
-  expect(full.json<{ checks: unknown[] }>().checks).toHaveLength(6);
+  expect(full.json<{ checks: unknown[] }>().checks).toHaveLength(7);
   expect(full.body).not.toContain(HEALTH_TOKEN);
 });
