@@ -46,6 +46,7 @@ export const EXPECTED_PUBLIC: readonly Route[] = [
   'POST /api/auth/accept-invite',
   'POST /api/auth/forgot-password',
   'POST /api/auth/reset-password',
+  'GET /api/version',
 ];
 
 /**
@@ -124,4 +125,6 @@ export const CASES: CrossingCase[] = [
   { kind: 'action', route: 'POST /api/auth/forgot-password', body: () => ({ email: `nobody-${String(++forgotCounter)}@hf.test` }), okStatus: 202 },
   { kind: 'action', route: 'POST /api/auth/accept-invite', body: () => ({ token: NEVER_ISSUED, password: 'a perfectly long password' }), okStatus: 400, mutates: true },
   { kind: 'action', route: 'POST /api/auth/reset-password', body: () => ({ token: NEVER_ISSUED, password: 'a perfectly long password' }), okStatus: 400, mutates: true },
+  // Version check: nobody here sends the health token, so everyone gets the same short answer (the fuller one is tested in version.test.ts).
+  { kind: 'action', route: 'GET /api/version', okStatus: 200 },
 ];
