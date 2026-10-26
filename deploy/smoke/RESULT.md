@@ -1,6 +1,17 @@
 # Foundation smoke — result
 
-**Status:** PASSED on the throwaway build machine (CT 111), run by the implementer on 26 October 2026, twice (the second run is with the committed script, 80ecaeb, after a cosmetic output tidy). Still to do by the operator: the look-and-feel check below, and the follow-ups that live outside the code. Anyone can repeat it with `! bash deploy/smoke/run-smoke.sh` on a throwaway VM with Docker (never a client box, never CT 110).
+**Status:** PASSED on the throwaway build machine (CT 111), run by the implementer on 26 October 2026, three times. The latest run used the script as committed in eef90b6, the review round 1 fix with the new guards. The step lines below are from the second run (80ecaeb). The third run gave the same results in 10 min 17 s, with backups 2e323fcb, e4b9d001 (safety), a265677b (pre-update) and 36d002da.
+
+Still to do by the operator:
+- the look-and-feel check below;
+- the follow-ups that live outside the code.
+
+Anyone can repeat it with `! bash deploy/smoke/run-smoke.sh` on a throwaway VM with Docker. Never run it on a client box or on CT 110. It refuses to start if the machine:
+- has an edge-check container or a Compose project called `highland`;
+- has any `highland/app` or `highland/ops` image;
+- still has a smoke run left behind.
+
+At the end it removes only the images it built.
 
 ## Run
 - **Date / machine:** 26 October 2026, 22:55–23:03 UTC. CT 111 `hf-build` (Debian 12, Docker Engine with Compose v2, Node 22.23). No Matrix, SMTP, Cloudflare or other outside service was contacted: alerts went to the local catcher, mail to a local Mailpit, backups to a local restic REST server (`restic/rest-server:0.14.0`) on Docker's bridge address. The front door was published on 127.0.0.1 only (`HF_SMOKE_BIND`, default 127.0.0.1).
@@ -19,6 +30,13 @@
   - Secrets: pass. `DB_PASSWORD`, `HEALTH_TOKEN` and `BACKUP_PASSWORD` appear neither in the alerts nor in any container log.
   10. Tear down: pass. Containers, volumes, network and the highland images removed. "SMOKE PASSED in 7 min 49 s".
 - **Elapsed:** 7 min 49 s (first run 9 min 51 s, including image pulls).
+
+The guards were proven on the build machine with eef90b6. Each case exited 2 with a plain refusal and left everything untouched:
+- a local `highland/app:9.9.9` image;
+- a `registry.example.com/highland/ops:9.9.9` image;
+- an `edge-check`-labelled container in a project named `acme`.
+
+`ops help` in the built ops image prints the command list (exit 0).
 
 Also checked on the build machine the same evening (outside the script): the full Playwright suite with all three projects including mobile-webkit, 49 passed and 1 skipped, 39 screenshots; and the runbook's recipes (`tls internal` with `skip_install_trust` on the read-only front door, copying Caddy's root certificate out and verifying HTTPS with it, the `restic snapshots` / `key add` / `key list` commands through the ops image, `chown` through the updater, `COMPOSE_PROFILES=tunnel`, and that `ops init` run without `-u` leaves a root-owned mode-600 `.env`).
 
