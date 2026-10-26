@@ -1,6 +1,19 @@
+{
+	servers {
+		# Only the tunnel container (a fixed address on the edge network) may tell Caddy who the visitor is
+		# (Cf-Connecting-IP). Everyone else's forged Cf-Connecting-IP or X-Forwarded-For is ignored.
+		# Do not widen this to the whole network: Docker's gateway address, where host-side traffic arrives, is on it.
+		trusted_proxies static {$TUNNEL_IP}
+		client_ip_headers Cf-Connecting-IP
+		# HTTP/3 needs 443/udp, which is not published.
+		protocols h1 h2
+	}
+}
+
 {$SITE_ADDRESS} {
 	encode zstd gzip
-	# reverse_proxy replaces any X-Forwarded-For a client sends with the address it really saw.
-	# Do not add trusted_proxies or header_up here: the app counts exactly one proxy hop.
-	reverse_proxy app:3000
+	reverse_proxy app:3000 {
+		# The app counts exactly one proxy hop, so it always gets exactly one Caddy-set value: the real visitor.
+		header_up X-Forwarded-For {client_ip}
+	}
 }

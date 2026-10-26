@@ -3,9 +3,9 @@ import { readFileSync } from 'node:fs';
 import { parse } from 'yaml';
 
 const raw = readFileSync(new URL('../compose.yaml', import.meta.url), 'utf8');
-interface Service { image: string; ports?: string[]; expose?: string[]; volumes?: string[]; profiles?: string[]; environment: Record<string, string>; [k: string]: any }
-const c = parse(raw, { merge: true }) as { services: Record<string, Service> };   // merge: true resolves `<<: *opsenv` as Compose does
-const S = c.services as Record<string, Service> & { app: Service; ops: Service; updater: Service; tunnel: Service };
+interface Service { image: string; ports?: string[]; expose?: string[]; volumes?: string[]; profiles?: string[]; environment: Record<string, string>; networks?: any; [k: string]: any }
+const c = parse(raw, { merge: true }) as { services: Record<string, Service>; networks: Record<string, any> };   // merge: true resolves `<<: *opsenv` as Compose does
+const S = c.services as Record<string, Service> & { app: Service; proxy: Service; ops: Service; updater: Service; tunnel: Service };
 // Comments may explain what is forbidden, so only the directives themselves are checked.
 const caddyfile = readFileSync(new URL('../Caddyfile', import.meta.url), 'utf8').split('\n').filter((l) => !l.trim().startsWith('#')).join('\n');
 
@@ -22,10 +22,30 @@ test('the app has no ports: it is reachable only from Caddy, so nobody can send 
   expect(String(S.app.environment.TRUST_PROXY_HOPS)).toBe('1');
 });
 
-test('Caddy overwrites the client address and is never told to trust client-supplied forwarding headers', () => {
-  expect(caddyfile).not.toMatch(/trusted_proxies/);
-  expect(caddyfile).not.toMatch(/header_up/);
+test('Caddy trusts a client-address header only from the tunnel network, and always hands the app exactly one value', () => {
+  const trusted = caddyfile.match(/^\s*trusted_proxies\b.*$/gm) ?? [];
+  expect(trusted.map((l) => l.trim())).toEqual(['trusted_proxies static {$TUNNEL_IP}']);
+  expect((caddyfile.match(/^\s*client_ip_headers\b.*$/gm) ?? []).map((l) => l.trim())).toEqual(['client_ip_headers Cf-Connecting-IP']);
+  const headerUp = (caddyfile.match(/^\s*header_up\b.*$/gm) ?? []).map((l) => l.trim());
+  expect(headerUp).toEqual(['header_up X-Forwarded-For {client_ip}']);
   expect(caddyfile).toMatch(/reverse_proxy app:3000/);
+  expect(caddyfile).toMatch(/protocols h1 h2/);   // HTTP/3 needs 443/udp, which is not published
+  expect(S.proxy.environment.TUNNEL_IP).toBe('${TUNNEL_IP:-172.30.250.10}');
+  // The tunnel's address is fixed, and is the very address the Caddyfile trusts (a single host, never a subnet).
+  expect(S.tunnel.networks.edge.ipv4_address).toBe('${TUNNEL_IP:-172.30.250.10}');
+});
+
+test('networks: the tunnel shares a network with the front door only; the database is on the backend alone', () => {
+  const nets = (n: string): string[] => { const x = S[n]!.networks as string[] | Record<string, unknown> | undefined; return Array.isArray(x) ? x : Object.keys(x ?? {}); };
+  expect(nets('tunnel')).toEqual(['edge']);
+  expect(nets('proxy').sort()).toEqual(['edge', 'frontend']);
+  expect(nets('app').sort()).toEqual(['backend', 'frontend']);
+  for (const n of ['db', 'migrate', 'ops', 'updater']) expect(nets(n), n).toEqual(['backend']);
+  expect(Object.keys(c.networks).sort()).toEqual(['backend', 'edge', 'frontend']);
+  expect(c.networks.edge.ipam.config[0].subnet).toBe('${EDGE_SUBNET:-172.30.250.0/28}');
+  // Nothing may share a network with the tunnel except the proxy.
+  const withTunnelNet = Object.keys(S).filter((n) => nets(n).includes('edge')).sort();
+  expect(withTunnelNet).toEqual(['proxy', 'tunnel']);
 });
 
 test('the tunnel is outbound-only, optional and pinned', () => {

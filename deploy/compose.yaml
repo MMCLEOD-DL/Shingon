@@ -38,6 +38,7 @@ services:
     read_only: true
     tmpfs: [/tmp, /var/run/postgresql]
     security_opt: ["no-new-privileges:true"]
+    networks: [backend]
     healthcheck: { test: ["CMD", "pg_isready", "-U", "app", "-d", "app"], interval: 5s, retries: 20 }
   migrate:
     image: ${APP_IMAGE:-highland/app}:${APP_TAG:?}
@@ -45,6 +46,7 @@ services:
     environment: { DATABASE_URL: *dburl }
     depends_on: { db: { condition: service_healthy } }
     restart: "no"
+    networks: [backend]
     read_only: true
     tmpfs: [/tmp]
     cap_drop: [ALL]
@@ -69,6 +71,7 @@ services:
       TRUST_PROXY_HOPS: "1"   # exactly one proxy (Caddy) in front of the app
     volumes: [uploads:/data/uploads]
     depends_on: { migrate: { condition: service_completed_successfully } }
+    networks: [backend, frontend]
     read_only: true
     tmpfs: [/tmp]
     cap_drop: [ALL]
@@ -80,14 +83,18 @@ services:
     environment: *opsenv
     volumes: [uploads:/data/uploads, state:/state]
     depends_on: { db: { condition: service_healthy } }
+    networks: [backend]
     security_opt: ["no-new-privileges:true"]
   proxy:
     image: caddy:2.11.7-alpine
     restart: unless-stopped
     ports: ["${HTTP_PORT:-80}:80", "${HTTPS_PORT:-443}:443"]
-    environment: { SITE_ADDRESS: "${SITE_ADDRESS:-:80}" }
+    # Caddy trusts a client-address header only from the tunnel container's fixed address (TUNNEL_IP), see the Caddyfile.
+    # Not the whole network: Docker's gateway address (where traffic from the host side arrives) is on it too.
+    environment: { SITE_ADDRESS: "${SITE_ADDRESS:-:80}", TUNNEL_IP: "${TUNNEL_IP:-172.30.250.10}" }
     volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro", "caddy_data:/data"]
     depends_on: { app: { condition: service_healthy } }
+    networks: [frontend, edge]
     # Caddy needs to open ports 80 and 443 and keep its certificates in /data; nothing else.
     read_only: true
     tmpfs: [/config]
@@ -102,6 +109,7 @@ services:
       <<: *opsenv
       HF_BUNDLE_DIR: ${HF_BUNDLE_DIR}
     volumes: ["/var/run/docker.sock:/var/run/docker.sock", "${HF_BUNDLE_DIR}:${HF_BUNDLE_DIR}", "uploads:/data/uploads", "state:/state"]
+    networks: [backend]
   tunnel:
     profiles: [tunnel]
     image: cloudflare/cloudflared:2026.10.4
@@ -109,7 +117,19 @@ services:
     command: ["tunnel", "--no-autoupdate", "--metrics", "0.0.0.0:2000", "run"]
     environment: { TUNNEL_TOKEN: "${TUNNEL_TOKEN:-}" }   # empty → cloudflared exits; the monitor reports it (Task 19)
     extra_hosts: ["host.docker.internal:host-gateway"]
+    # The tunnel shares a network with the front door only: it cannot reach the app or the database directly.
+    networks:
+      edge:
+        ipv4_address: ${TUNNEL_IP:-172.30.250.10}
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+# backend: database, migrations, app, ops. frontend: front door and app. edge: front door and tunnel only.
+networks:
+  backend: {}
+  frontend: {}
+  edge:
+    ipam:
+      config:
+        - subnet: ${EDGE_SUBNET:-172.30.250.0/28}
 volumes: { pgdata: {}, uploads: {}, state: {}, caddy_data: {} }

@@ -6,6 +6,8 @@ export interface InitOptions {
   siteAddress: string;
   bundleDir: string;
   mode: 'demo' | 'production';
+  /** The box is reached through the outbound tunnel: the front door must answer plain HTTP on :80 and the monitor watches the tunnel. */
+  tunnel?: boolean;
   random?: (bytes: number) => string;
 }
 
@@ -24,6 +26,17 @@ function dotenvValue(key: string, v: string): string {
 
 export function generateEnv(opts: InitOptions): { env: string; checklist: string } {
   const random = opts.random ?? defaultRandom;
+  const client = opts.client.trim();
+  if (client === '') throw new Error('--client needs the client\'s name, such as "Acme Ltd".');
+  let origin: string;
+  try {
+    const u = new URL(opts.origin);
+    if ((u.protocol !== 'http:' && u.protocol !== 'https:') || u.username !== '' || u.password !== '' || u.pathname !== '/' || u.search !== '' || u.hash !== '') throw new Error('bad');
+    origin = u.origin;
+  } catch {
+    throw new Error('--origin must be just the web address, such as https://app.client.co.uk (or http://... on a LAN), with no path, login or extra parts.');
+  }
+  const siteAddress = opts.tunnel === true ? ':80' : opts.siteAddress;
   const secret = (): string => random(32);
   const sections: { heading: string; entries: Entry[] }[] = [
     {
@@ -34,13 +47,15 @@ export function generateEnv(opts: InitOptions): { env: string; checklist: string
         { key: 'OPS_IMAGE', comment: 'The ops image.', example: 'highland/ops' },
         { key: 'APP_TAG', comment: 'The release to run, such as 0.1.0. Write it here before the first start.', example: '' },
         { key: 'UPDATER_TAG', comment: 'The release the updater runs (defaults to APP_TAG).', example: '' },
-        { key: 'APP_NAME', comment: 'The name shown to staff in the app and in emails.', value: opts.client },
-        { key: 'APP_ORIGIN', comment: 'The web address staff use.', value: opts.origin },
+        { key: 'APP_NAME', comment: 'The name shown to staff in the app and in emails.', value: client },
+        { key: 'APP_ORIGIN', comment: 'The web address staff use.', value: origin },
         { key: 'INSTANCE_MODE', comment: 'production for a live box. demo is for made-up data only.', value: opts.mode },
-        { key: 'CLIENT_LABEL', comment: "The client's name, used in alerts so you can tell the boxes apart.", value: opts.client },
+        { key: 'CLIENT_LABEL', comment: "The client's name, used in alerts so you can tell the boxes apart.", value: client },
         { key: 'DB_PASSWORD', comment: 'Database password (random).', value: secret() },
         { key: 'HEALTH_TOKEN', comment: 'Lets monitoring read the detailed health and version (random).', value: secret() },
-        { key: 'SITE_ADDRESS', comment: 'What the front door answers to: :80 for plain HTTP, or a public name for automatic HTTPS.', value: opts.siteAddress },
+        { key: 'SITE_ADDRESS', comment: 'What the front door answers to: :80 for plain HTTP, or a public name for automatic HTTPS. With the tunnel it must be :80.', value: siteAddress },
+        { key: 'EDGE_SUBNET', comment: 'The private network between the front door and the tunnel. Change it only if it clashes with a network you use.', example: '172.30.250.0/28' },
+        { key: 'TUNNEL_IP', comment: "The tunnel's fixed address on that network (inside EDGE_SUBNET). Only this address is believed about a visitor's real address.", example: '172.30.250.10' },
         { key: 'HTTP_PORT', comment: 'Ports the front door listens on, if 80 and 443 are in use.', example: '80' },
         { key: 'HTTPS_PORT', comment: 'The HTTPS port.', example: '443' },
         { key: 'HF_BUNDLE_DIR', comment: 'The full path of the folder holding this file on the machine. The updater needs it.', value: opts.bundleDir },
@@ -85,13 +100,13 @@ export function generateEnv(opts: InitOptions): { env: string; checklist: string
       heading: 'Remote access (outbound tunnel)',
       entries: [
         { key: 'TUNNEL_TOKEN', comment: "Token from the tunnel provider's dashboard. Start with `--profile tunnel`. Nothing is opened inbound.", example: '' },
-        { key: 'TUNNEL_ENABLED', comment: 'Set to true when the tunnel is in use, so the monitor watches it.', example: 'false' },
+        { key: 'TUNNEL_ENABLED', comment: 'Set to true when the tunnel is in use, so the monitor watches it.', ...(opts.tunnel === true ? { value: 'true' } : { example: 'false' }) },
       ],
     },
   ];
 
   const lines: string[] = [
-    `# Highland deployment settings for ${opts.client.replace(/[\r\n]+/g, ' ')}.`,
+    `# Highland deployment settings for ${client.replace(/[\r\n]+/g, ' ')}.`,
     '# Made by `ops init`. It holds secrets: keep it out of git and off shared drives.',
   ];
   for (const s of sections) {
@@ -103,13 +118,15 @@ export function generateEnv(opts: InitOptions): { env: string; checklist: string
   }
 
   const checklist = [
-    `Setting up ${opts.client.replace(/[\r\n]+/g, ' ')}. Do these before you start the box:`,
+    `Setting up ${client.replace(/[\r\n]+/g, ' ')}. Do these before you start the box:`,
     '',
     '1. Save BACKUP_PASSWORD in your password manager now. Without it the backups cannot be read, and it must not live only on this box.',
     '2. Fill in SMTP_URL and EMAIL_FROM in .env, so invitations and password resets can be emailed.',
     "3. Set BACKUP_REPOSITORY to the destination in the client's data policy (never only a folder on this machine).",
     '4. Set the Matrix alert details (MATRIX_HOMESERVER, MATRIX_ACCESS_TOKEN and MATRIX_ROOM_ID) so a failed backup or a stopped app reaches you.',
-    '5. Optional: for remote access without opening the client network, put the tunnel token in TUNNEL_TOKEN, set TUNNEL_ENABLED=true, and add --profile tunnel when starting.',
+    opts.tunnel === true
+      ? '5. Put the tunnel token in TUNNEL_TOKEN and add --profile tunnel when starting. SITE_ADDRESS has been set to :80 for the tunnel; leave APP_ORIGIN as the https:// address.'
+      : '5. Optional: for remote access without opening the client network, put the tunnel token in TUNNEL_TOKEN, set TUNNEL_ENABLED=true, and add --profile tunnel when starting. With the tunnel, SITE_ADDRESS must be :80 (keep APP_ORIGIN as https://), or visitors loop forever; `ops init --tunnel` does this for you.',
     '',
     'Also write the release you are installing into .env as APP_TAG (for example APP_TAG=0.1.0).',
     '',

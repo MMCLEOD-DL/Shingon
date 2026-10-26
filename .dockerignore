@@ -6,5 +6,8 @@ test-results
 .git
 .env
 **/.env
+**/.env.*
+**/*.env
+!**/.env.example
 apps/web/e2e/.auth
 **/*.tsbuildinfo

@@ -21,7 +21,7 @@
     "verify:full": "npm run verify && npm run test:e2e",
     "verify": "npm run lint && npm run typecheck && npm run licences && npm test",
     "bundle": "tsx scripts/bundle.ts",
-    "images": "docker build -f deploy/Dockerfile -t highland/app:$npm_package_version --build-arg APP_VERSION=$npm_package_version --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) . && docker build -f deploy/ops.Dockerfile -t highland/ops:$npm_package_version ."
+    "images": "docker build -f deploy/Dockerfile -t highland/app:$npm_package_version --build-arg APP_VERSION=$npm_package_version --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) . && docker build -f deploy/ops.Dockerfile -t highland/ops:$npm_package_version --build-arg APP_VERSION=$npm_package_version --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) ."
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",

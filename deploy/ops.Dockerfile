@@ -17,6 +17,8 @@ FROM node:22-bookworm-slim
 ARG APP_VERSION=0.0.0-dev
 ARG GIT_COMMIT=unknown
 ARG RESTIC_VERSION=0.18.1
+ARG DOCKER_KEY_FPR=9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+ARG PGDG_KEY_FPR=B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8
 ARG RESTIC_SHA256=680838f19d67151adba227e1570cdd8af12c19cf1735783ed1ba928bc41f363d
 ENV NODE_ENV=production
 LABEL org.opencontainers.image.title="highland-ops" \
@@ -26,8 +28,13 @@ LABEL org.opencontainers.image.title="highland-ops" \
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl gnupg bzip2 \
  && install -d -m 0755 /etc/apt/keyrings \
- && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /etc/apt/keyrings/pgdg.gpg \
- && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+ && curl -fsSL -o /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+ && curl -fsSL -o /tmp/docker.asc https://download.docker.com/linux/debian/gpg \
+ && gpg --show-keys --with-colons /tmp/pgdg.asc | awk -F: '/^fpr:/{print $10}' | grep -qx "${PGDG_KEY_FPR}" \
+ && gpg --show-keys --with-colons /tmp/docker.asc | awk -F: '/^fpr:/{print $10}' | grep -qx "${DOCKER_KEY_FPR}" \
+ && gpg --dearmor -o /etc/apt/keyrings/pgdg.gpg /tmp/pgdg.asc \
+ && gpg --dearmor -o /etc/apt/keyrings/docker.gpg /tmp/docker.asc \
+ && rm /tmp/pgdg.asc /tmp/docker.asc \
  && echo "deb [signed-by=/etc/apt/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
  && echo "deb [signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list \
  && apt-get update \
