@@ -61,12 +61,12 @@ export function startOutboxWorker(
   db: Db,
   transport: EmailTransport,
   site: Site & { from?: string },
-  opts: { intervalMs?: number; log?: WorkerLog } = {},
+  opts: { intervalMs?: number; log?: WorkerLog; /** Replaces the real processor; for tests that must not depend on database timing. */ process?: () => Promise<unknown> } = {},
 ): () => Promise<void> {
   let running: Promise<unknown> | null = null;
   const timer = setInterval(() => {
     if (running) return;
-    running = processOutbox(db, transport, site)
+    running = (opts.process ? opts.process() : processOutbox(db, transport, site))
       .catch((e: unknown) => {
         // Only the error name: messages can carry addresses or connection details.
         opts.log?.error({ errName: e instanceof Error ? e.name : 'Error' }, 'Email outbox run failed');

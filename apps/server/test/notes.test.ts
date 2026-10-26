@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { eq, sql } from 'drizzle-orm';
 import { createTestApp, call as rawCall, signInAs } from './helpers/testApp.js';
 import { makeTeam, makeUser } from './helpers/factories.js';
-import { createNote, updateNote } from '../src/notes/repo.js';
+import { createNote, updateNote, removeDiscarded } from '../src/notes/repo.js';
 import { LocalDiskStorage } from '../src/files/storage.js';
 import { auditLog, files, notes } from '../src/db/schema/index.js';
 
@@ -171,6 +171,21 @@ test('detaching or replacing a photo removes the old file and its object; deleti
   expect((await call(t, a, 'DELETE', `/api/notes/${id2}`)).status).toBe(204);
   expect(await fileRow(f3)).toBeUndefined();
   expect(objectExists(key3)).toBe(false);
+});
+
+test('a discarded photo that was re-attached before removal keeps its row and its object', async () => {
+  const a = await as(alice);
+  const f = await upload(alice);
+  const row = (await fileRow(f))!;
+  // After the commit that discarded it the file is unattached; the owner now attaches it to another note, then removal runs.
+  const id = (await call(t, a, 'POST', '/api/notes', { title: 'rescued', attachmentId: f })).json.note.id;
+  await removeDiscarded(t.db, { storage: new LocalDiskStorage(t.config.uploadDir) }, [{ id: f, storageKey: row.storageKey }]);
+  expect(await fileRow(f)).toBeDefined();
+  expect(objectExists(row.storageKey)).toBe(true);
+  const served = await t.app.inject({ method: 'GET', url: `/api/files/${f}/content`, headers: { cookie: a.cookie } });
+  expect(served.statusCode).toBe(200);
+  expect(served.rawPayload.length).toBe(png.length);
+  expect((await call(t, a, 'GET', '/api/notes')).json.notes.find((n) => n.id === id)?.attachment?.id).toBe(f);
 });
 
 test('writes are audited in the same transaction, with field names only', async () => {

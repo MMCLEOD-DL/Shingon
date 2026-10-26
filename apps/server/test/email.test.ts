@@ -5,9 +5,10 @@ import { renderTemplate, memoryTransport, queueEmail, processOutbox, RETRY_DELAY
 
 const site = { appName: 'Acme Expenses', appOrigin: 'https://acme.example' };
 let t: Awaited<ReturnType<typeof createTestDb>>;
-beforeAll(async () => { t = await createTestDb(); });
-afterAll(async () => { await t.close(); });
-beforeEach(async () => { await t.db.execute(sql`delete from email_outbox`); });
+const HOOK_MS = 30_000;
+beforeAll(async () => { t = await createTestDb(); }, HOOK_MS);
+afterAll(async () => { await t.close(); }, HOOK_MS);
+beforeEach(async () => { await t.db.execute(sql`delete from email_outbox`); }, HOOK_MS);
 
 test('templates are plain English, branded, and escape what they are given', () => {
   const m = renderTemplate('invite', { name: '<b>Al</b>', inviterName: 'Ada', link: 'https://acme.example/invite/abc' }, site);
@@ -90,34 +91,39 @@ test('one bad mail does not stop or repeat the others', async () => {
 test('the worker ticks without overlapping, survives a transport error, and stops', async () => {
   vi.useFakeTimers();
   try {
+    // The processor is a stub, so no real I/O has to finish inside a fake-timer tick.
     let active = 0;
     let maxActive = 0;
     let calls = 0;
     const gate = { release: (): void => undefined };
-    const transport = {
-      send: async () => {
-        calls++;
-        active++;
-        maxActive = Math.max(maxActive, active);
-        await new Promise<void>((r) => { gate.release = () => { r(); }; });
-        active--;
-        throw new Error('nope');
-      },
-    };
-    await queueEmail(t.db, { to: 'worker@hf.test', template: 'password-changed', data: { name: 'W' } });
     const errors: object[] = [];
-    const stop = startOutboxWorker(t.db, transport, site, { intervalMs: 50, log: { error: (o) => { errors.push(o); } } });
+    const process = async (): Promise<void> => {
+      calls++;
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await new Promise<void>((r) => { gate.release = () => { r(); }; });
+      active--;
+      throw Object.assign(new Error('connect ECONNREFUSED secret-host'), { name: 'TransportError' });
+    };
+    const stop = startOutboxWorker(t.db, memoryTransport(), site, { intervalMs: 50, log: { error: (o) => { errors.push(o); } }, process });
     await vi.advanceTimersByTimeAsync(500);
     expect(calls).toBe(1);
     expect(maxActive).toBe(1);
     gate.release();
+    await vi.advanceTimersByTimeAsync(0);
+    // The failed run was swallowed and logged by name only; the next tick starts a fresh run.
+    expect(errors).toEqual([{ errName: 'TransportError' }]);
+    expect(JSON.stringify(errors)).not.toContain('secret-host');
+    await vi.advanceTimersByTimeAsync(50);
+    expect(calls).toBe(2);
+    gate.release();
     const stopped = stop();
-    await vi.advanceTimersByTimeAsync(10);
+    await vi.advanceTimersByTimeAsync(0);
     await expect(stopped).resolves.toBeUndefined();
-    expect(errors).toEqual([]);
     const before = calls;
     await vi.advanceTimersByTimeAsync(500);
     expect(calls).toBe(before);
+    expect(maxActive).toBe(1);
   } finally {
     vi.useRealTimers();
   }

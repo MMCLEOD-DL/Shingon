@@ -13,6 +13,8 @@ const PARENT_TYPE = 'note';
 
 /** Everything a write needs besides the actor: the client address for the audit row, the app's clock, the object store and a logger. */
 export interface NoteDeps { ip?: string; now?: Date; storage?: Storage; log?: { error(obj: object, msg: string): void } }
+/** Updates and deletes may discard a photo, so they must be given the object store: no caller can delete a row without its object. */
+export type NoteWriteDeps = NoteDeps & { storage: Storage };
 
 /** Microsecond-exact text of created_at, so the cursor round-trips without losing the precision the sort uses. */
 const createdText = sql<string>`to_char(${notes.createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
@@ -91,12 +93,16 @@ async function detachFile(tx: Tx, fileId: string): Promise<Discard | null> {
   return { id: row.id, storageKey: row.storageKey };
 }
 
-/** After the commit: best effort. A failure leaves an unattached row, which the orphan sweep collects. Nothing but the file id and error name is logged. */
-async function removeDiscarded(db: Db, deps: NoteDeps, discarded: Discard[]): Promise<void> {
+/**
+ * After the commit: best effort. The row goes first, and only if it is still unattached (the owner may have attached the file elsewhere
+ * since the commit); the object is deleted only when that row delete really happened. A failure leaves an unattached row or an orphan
+ * object, which the sweep collects. Nothing but the file id and error name is logged.
+ */
+export async function removeDiscarded(db: Db, deps: NoteWriteDeps, discarded: Discard[]): Promise<void> {
   for (const f of discarded) {
     try {
-      await deps.storage?.delete(f.storageKey);
-      await db.delete(files).where(and(eq(files.id, f.id), isNull(files.attachedType)));
+      const gone = await db.delete(files).where(and(eq(files.id, f.id), isNull(files.attachedType))).returning({ id: files.id });
+      if (gone.length > 0) await deps.storage.delete(f.storageKey);
     } catch (e) {
       deps.log?.error({ fileId: f.id, errName: (e as { name?: string }).name }, 'A discarded note photo could not be removed; the sweep will retry');
     }
@@ -121,7 +127,7 @@ export async function createNote(db: Db, actor: Actor, input: CreateNoteInput, d
   return view;
 }
 
-export async function updateNote(db: Db, actor: Actor, id: string, input: UpdateNoteInput, deps: NoteDeps = {}): Promise<NoteView> {
+export async function updateNote(db: Db, actor: Actor, id: string, input: UpdateNoteInput, deps: NoteWriteDeps): Promise<NoteView> {
   const discarded: Discard[] = [];
   await db.transaction(async (tx) => {
     const current = await lockEditable(tx, actor, id);
@@ -152,7 +158,7 @@ export async function updateNote(db: Db, actor: Actor, id: string, input: Update
   return view;
 }
 
-export async function deleteNote(db: Db, actor: Actor, id: string, deps: NoteDeps = {}): Promise<void> {
+export async function deleteNote(db: Db, actor: Actor, id: string, deps: NoteWriteDeps): Promise<void> {
   const discarded: Discard[] = [];
   await db.transaction(async (tx) => {
     const current = await lockEditable(tx, actor, id);

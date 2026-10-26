@@ -4,13 +4,13 @@ import { CreateNoteInput, NoteListQuery, UpdateNoteInput } from '@hf/shared';
 import { defineRoute } from '../http/route.js';
 import { notFound, unauthorized } from '../http/errors.js';
 import type { Storage } from '../files/storage.js';
-import { type NoteDeps, createNote, deleteNote, getNote, listNotes, updateNote } from './repo.js';
+import { type NoteWriteDeps, createNote, deleteNote, getNote, listNotes, updateNote } from './repo.js';
 
 const IdParams = z.strictObject({ id: z.uuid() });
 const NoQuery = z.strictObject({});
 
 export function registerNoteRoutes(app: FastifyInstance, storage: Storage, now?: () => Date): void {
-  const deps = (req: { ip: string; log: NoteDeps['log'] }): NoteDeps => ({ ip: req.ip, storage, ...(now ? { now: now() } : {}), ...(req.log ? { log: req.log } : {}) });
+  const deps = (req: { ip: string; log: NoteWriteDeps['log'] }): NoteWriteDeps => ({ ip: req.ip, storage, ...(now ? { now: now() } : {}), ...(req.log ? { log: req.log } : {}) });
   defineRoute(app, {
     method: 'GET',
     url: '/api/notes',
