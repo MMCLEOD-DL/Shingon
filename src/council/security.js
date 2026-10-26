@@ -2,6 +2,8 @@
 // Security member: Semgrep (SAST), Gitleaks (secrets), npm audit, and a scanner-settings check.
 // Parsers throw on empty/unparseable output when the tool signalled failure, so a crashed
 // scanner is reported as an error and never looks like a clean run.
+import { lstatSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import { makeFinding } from './findings.js';
 import { runTool, skipped, TOOL_LABEL } from './tools.js';
 import { lockPackages, readLock, lockDelta } from './lockfile.js';
@@ -133,6 +135,35 @@ export function settingsTouched(files) {
   }));
 }
 
+// A skip-this-line comment a step added can hide a problem instead of fixing it. Only lines this
+// change added count (a new file counts as all added); old suppressions on unchanged lines are ignored.
+const SUPPRESSION = /nosemgrep|gitleaks:allow|\bnosec\b/i;
+const MAX_SUPPRESSION_FILE = 2 * 1024 * 1024;
+export function suppressionsAdded({ dir, files, changed, added, wholeFiles }) {
+  const out = [];
+  for (const file of files) {
+    let text;
+    try {
+      const p = path.join(dir, file);
+      const st = lstatSync(p);
+      if (!st.isFile() || st.size > MAX_SUPPRESSION_FILE) continue;
+      text = readFileSync(p, 'utf8');
+    } catch { continue; }
+    if (text.includes('\0')) continue;
+    const lines = text.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const m = SUPPRESSION.exec(lines[i]);
+      if (!m || !isIntroduced({ changed, added, wholeFiles }, file, i + 1)) continue;
+      out.push(makeFinding({
+        member: 'security', tool: 'settings', grade: 'warning', locked: true, file, line: i + 1,
+        title: 'This change adds a comment that tells a scanner to skip a line',
+        detail: `The line carries "${m[0]}". Check that it does not hide a real problem.`,
+      }));
+    }
+  }
+  return out;
+}
+
 export const SECURITY = {
   member: 'security',
   label: 'Security',
@@ -140,7 +171,7 @@ export const SECURITY = {
   async collect(input) {
     const base = { member: 'security', cwd: input.dir, options: input.options, env: input.env };
     const semgrep = await runTool({ ...base, name: 'semgrep', label: TOOL_LABEL.semgrep, bin: 'semgrep',
-      args: ['scan', '--config', input.options.councilSemgrepConfig, '--json', '--quiet', '--metrics=off', '--disable-version-check', '.'],
+      args: ['scan', '--config', input.options.councilSemgrepConfig, '--json', '--quiet', '--metrics=off', '--disable-version-check', '--disable-nosem', '.'],
       install: 'Install: pipx install semgrep (free, runs on this machine).',
       parse: (t, r) => parseSemgrep(t, input, r) });
     const gitleaks = await runTool({ ...base, name: 'gitleaks', label: TOOL_LABEL.gitleaks, bin: 'gitleaks',
@@ -160,7 +191,7 @@ export const SECURITY = {
         install: 'Install Node.js with npm.',
         parse: (t) => parseNpmAudit(t, { introduced }) });
     }
-    const settings = { tool: 'settings', label: TOOL_LABEL.settings, status: 'ran', findings: settingsTouched(input.files), note: null };
+    const settings = { tool: 'settings', label: TOOL_LABEL.settings, status: 'ran', findings: [...settingsTouched(input.files), ...suppressionsAdded(input)], note: null };
     return [semgrep, gitleaks, audit, settings];
   },
 };

@@ -78,7 +78,7 @@ export function reportText(r) {
 }
 
 export function fixChunk(report, fixRound) {
-  let text = 'The review council found problems that must be fixed before this change can ship. Fix each one below with the smallest change that does it, and add or update tests where that makes sense. Do not change anything else.\n';
+  let text = 'The review council found problems that must be fixed before this change can ship. Fix each one below with the smallest change that does it, and add or update tests where that makes sense. Do not change anything else. Fix the problem itself. Do not silence a scanner: no nosemgrep, nosec or gitleaks:allow comments, and no edits to scanner settings or ignore files.\n';
   const all = report.blocking;
   for (let i = 0; i < all.length; i++) {
     const f = all[i];

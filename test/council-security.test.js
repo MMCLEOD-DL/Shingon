@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { lockPackages, hasLicenceData, readLock, lockDelta } from '../src/council/lockfile.js';
-import { parseSemgrep, parseGitleaks, parseNpmAudit, settingsTouched, unquoteGitPath, addedLines, isIntroduced, SECURITY } from '../src/council/security.js';
+import { parseSemgrep, parseGitleaks, parseNpmAudit, settingsTouched, suppressionsAdded, unquoteGitPath, addedLines, isIntroduced, SECURITY } from '../src/council/security.js';
 import { DEFAULT_OPTIONS } from '../src/options.js';
 import { git } from '../src/workspace.js';
 import { makeRepo } from './helpers/gitRepo.js';
@@ -157,6 +157,31 @@ test('settingsTouched: a changed scanner-settings file is a locked warning', () 
   assert.deepEqual(settingsTouched(['src/a.js', '.npmrc.bak']), []);
 });
 
+test('suppressionsAdded: a skip-this-line comment on an added line is a locked warning; an old one is ignored', () => {
+  const dir = tmp();
+  writeFileSync(path.join(dir, 'a.js'), 'eval(x) // nosemgrep\nconst k = 1; // gitleaks:allow\nrun(); // nosemgrep\n');
+  writeFileSync(path.join(dir, 'b.py'), 'x = 1  # nosec\n');
+  writeFileSync(path.join(dir, 'c.js'), 'ok();\n// nosecurity is not a marker\n');
+  // a.js: only line 2 was added (lines 1 and 3 carry old suppressions); b.py is a new file (all added).
+  const added = new Map([['a.js', new Set([2])], ['b.py', new Set()], ['c.js', new Set([1, 2])]]);
+  const f = suppressionsAdded({ dir, files: ['a.js', 'b.py', 'c.js', 'gone.js'], changed: new Set(['a.js', 'b.py', 'c.js', 'gone.js']), added, wholeFiles: new Set(['b.py']) });
+  assert.deepEqual(f.map((x) => [x.file, x.line, x.grade, x.locked, x.tool, x.member]), [
+    ['a.js', 2, 'warning', true, 'settings', 'security'],
+    ['b.py', 1, 'warning', true, 'settings', 'security'],
+  ]);
+  assert.equal(f[0].title, 'This change adds a comment that tells a scanner to skip a line');
+  assert.match(f[0].detail, /gitleaks:allow/);
+  assert.deepEqual(suppressionsAdded({ dir, files: ['a.js'], changed: new Set(['a.js']), added: new Map([['a.js', new Set()]]) }), []);
+});
+
+test('SECURITY.collect: an added suppression comment shows in the settings check', async () => {
+  const repo = await makeRepo({ 'old.js': 'eval(x) // nosemgrep\n' });
+  writeFileSync(path.join(repo, 'new.js'), 'eval(y) // nosemgrep\n');
+  const runs = await SECURITY.collect({ ...(await input(repo, { files: ['new.js'], options: { councilTools: councilStubs(tmp(), {}) } })), added: new Map([['new.js', new Set([1])]]) });
+  const settings = runs.find((r) => r.tool === 'settings');
+  assert.deepEqual(settings.findings.map((x) => [x.file, x.line, x.grade, x.locked]), [['new.js', 1, 'warning', true]]);
+});
+
 async function input(repo, over = {}) {
   const baseSha = (await git(repo, ['rev-parse', 'HEAD'])).stdout.trim();
   const files = over.files ?? [];
@@ -181,7 +206,7 @@ test('SECURITY.collect: four checks in order, with exact tool arguments', async 
   assert.ok(runs[2].findings.some((f) => f.title.startsWith('lodash') && f.preExisting));
 
   const args = await SECURITY.collect(await input(repo, { options: { councilTools: councilStubs(tmp(), { semgrep: echoArgs }) } }));
-  assert.equal(args[0].findings[0].title, 'scan --config p/default --json --quiet --metrics=off --disable-version-check .');
+  assert.equal(args[0].findings[0].title, 'scan --config p/default --json --quiet --metrics=off --disable-version-check --disable-nosem .');
 });
 
 test('SECURITY.collect: no lockfile → the dependency check is skipped with a reason', async () => {

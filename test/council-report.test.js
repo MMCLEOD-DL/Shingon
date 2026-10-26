@@ -63,6 +63,11 @@ test('a problem that blocked earlier and still blocks is not "fixed"', () => {
   assert.deepEqual(r.resolved, []);
 });
 
+test('fixChunk tells the fixer to fix the problem itself, never silence a scanner', () => {
+  const c = fixChunk({ blocking: [] }, 1);
+  assert.match(c.instructions, /Fix the problem itself\. Do not silence a scanner: no nosemgrep, nosec or gitleaks:allow comments, and no edits to scanner settings or ignore files\./);
+});
+
 test('fixChunk carries every blocking finding with its evidence, and nothing else', () => {
   const r = buildReport({ round: 1, findings: [evalF, testsF, oldF], toolRuns: [], by: 'codex' });
   const c = fixChunk(r, 1);
