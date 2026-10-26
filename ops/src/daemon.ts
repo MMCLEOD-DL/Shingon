@@ -16,7 +16,7 @@ import { startScheduler, type Job } from './scheduler.js';
 import { alertSecrets, channelFromConfig, logChannel, redactAlert, redactingChannel, type AlertChannel } from './alerts.js';
 import { Monitor } from './monitor.js';
 import { monitorChecks } from './checks.js';
-import { isLeftover, readRecord, UPDATE_RECORD } from './journal.js';
+import { readRecord, recordIsLeftover, UPDATE_RECORD } from './journal.js';
 
 export const AUDIT_PURGE_SCHEDULE = '15 3 * * *';
 export const SCHEDULED_BACKUP_LOCK_WAIT = 60 * 60e3;
@@ -52,12 +52,15 @@ const pauseText = (snapshot?: string): string =>
  * pre-update backup the alert names must not be pruned or pushed out (Task 20 review).
  */
 export async function backupPause(deps: OpsDeps): Promise<string | null> {
-  const rec = await readRecord(path.join(path.dirname(deps.cfg.workDir), UPDATE_RECORD)).catch(() => null);
-  if (rec !== null) {
-    // A running update holds the ops lock: then the backup simply waits for it. An error asking counts as "not running".
-    const alive = await opsLockHeld(deps).catch(() => false);
-    if (isLeftover(rec, deps.now(), alive)) return pauseText(rec.snapshot);
-  }
+  const stateDir = path.dirname(deps.cfg.workDir);
+  const rec = await readRecord(path.join(stateDir, UPDATE_RECORD)).catch(() => null);
+  // A running update (its lock's holder is alive) is not a leftover: then the backup simply waits for the ops lock.
+  if (rec !== null && (await recordIsLeftover(rec, stateDir, deps.now(), () => opsLockHeld(deps)))) return pauseText(rec.snapshot);
+  return urgentPause(deps);
+}
+
+/** The ops-log half of the pause: a recorded failed undo not yet marked recovered. Fails closed. */
+async function urgentPause(deps: OpsDeps): Promise<string | null> {
   let urgent: Awaited<ReturnType<typeof outstandingUpdate>>;
   try {
     urgent = await outstandingUpdate(deps.db);
@@ -66,6 +69,17 @@ export async function backupPause(deps: OpsDeps): Promise<string | null> {
     return 'Backups are paused for now because the ops log in the database could not be read to check for an update that could not be undone (is the database running?). Nothing is backed up or tidied away until it can be read.';
   }
   return urgent !== null ? pauseText(urgent.snapshotId) : null;
+}
+
+/**
+ * Asked by a scheduled backup right before its prune, while it holds the ops lock. An updater writes its record only while
+ * holding that lock, so no update can be running now: any record present is left behind, whatever its step or age, and the
+ * snapshot it names must not be pruned (Task 20 review round 3).
+ */
+export async function prunePause(deps: OpsDeps): Promise<string | null> {
+  const rec = await readRecord(path.join(path.dirname(deps.cfg.workDir), UPDATE_RECORD)).catch(() => null);
+  if (rec !== null) return pauseText(rec.snapshot);
+  return urgentPause(deps);
 }
 
 /**
@@ -90,7 +104,7 @@ export function scheduledBackupJob(deps: OpsDeps, channel: AlertChannel): () => 
       await channel.send(`[${deps.cfg.client}] ${paused}`).catch((e: unknown) => { deps.log(`The alert about the paused backups could not be sent: ${e instanceof Error ? e.message : 'unknown problem'}`); });
       return;
     }
-    await runBackup(deps, 'scheduled', { lockWaitMs: SCHEDULED_BACKUP_LOCK_WAIT, prunePause: () => backupPause(deps) });
+    await runBackup(deps, 'scheduled', { lockWaitMs: SCHEDULED_BACKUP_LOCK_WAIT, prunePause: () => prunePause(deps) });
   };
 }
 
@@ -251,7 +265,7 @@ export async function runDaemon(deps: OpsDeps, close: () => Promise<void>): Prom
   if (cfg.backup.allowLocal) deps.log(`BACKUP_ALLOW_LOCAL is true. ${LOCAL_WARNING}`);
   for (const w of cfg.warnings) deps.log(`Warning: ${w}`);
   const left = await readRecord(path.join(path.dirname(cfg.workDir), UPDATE_RECORD)).catch(() => null);
-  if (left !== null && isLeftover(left, deps.now(), await opsLockHeld(deps).catch(() => false))) {
+  if (left !== null && (await recordIsLeftover(left, path.dirname(cfg.workDir), deps.now(), () => opsLockHeld(deps)))) {
     deps.log(`Warning: an update from ${left.from} to ${left.to} stopped part-way (step: ${left.step}). Backups are paused and the health check raises a critical alert until it is sorted out.`);
   }
   const { channel, monitor } = buildMonitor(deps);

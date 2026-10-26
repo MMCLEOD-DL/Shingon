@@ -1,9 +1,14 @@
-import { open, readFile, rm, stat } from 'node:fs/promises';
+import { open, readFile, rm, stat, utimes } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { plainFsError } from './durable.js';
 
 /** A lock file whose holder cannot be read is replaced after this. Generous: an update with a large backup takes hours. */
 export const STALE_LOCK_MS = 4 * 3600e3;
+
+/** While an update runs, its lock file's time is refreshed this often, so others without the Docker socket can see it is alive. */
+export const HEARTBEAT_MS = 20_000;
+/** A lock refreshed within this is held by a running update. */
+export const ALIVE_WITHIN_MS = 90_000;
 
 /** Who holds a lock, as written into the lock file. */
 export interface LockHolder { pid: number; host: string; at: string }
@@ -16,9 +21,10 @@ export interface LockHolder { pid: number; host: string; at: string }
 export function fileLock(
   path: string,
   now: () => Date = () => new Date(),
-  opts: { isAlive?: (h: LockHolder) => Promise<boolean>; maxAgeMs?: number } = {},
+  opts: { isAlive?: (h: LockHolder) => Promise<boolean>; maxAgeMs?: number; heartbeatMs?: number } = {},
 ): { acquire(): Promise<boolean>; release(): Promise<void> } {
   let held = false;
+  let beat: NodeJS.Timeout | undefined;
   const maxAge = opts.maxAgeMs ?? STALE_LOCK_MS;
   const stale = async (): Promise<boolean> => {
     const st = await stat(path).catch(() => null);
@@ -38,7 +44,8 @@ export function fileLock(
     async acquire() {
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          const fh = await open(path, 'wx', 0o600);
+          // Readable by the ops daemon (uid 1000): it holds only a process id, a container id and a time.
+          const fh = await open(path, 'wx', 0o644);
           try {
             const me: LockHolder = { pid: process.pid, host: hostname(), at: now().toISOString() };
             await fh.writeFile(JSON.stringify(me) + '\n');
@@ -46,6 +53,9 @@ export function fileLock(
             await fh.close();
           }
           held = true;
+          // The heartbeat: the monitor and the backup pause read "refreshed lately" as "the update is still running".
+          beat = setInterval(() => { const t = now(); void utimes(path, t, t).catch(() => undefined); }, opts.heartbeatMs ?? HEARTBEAT_MS);
+          beat.unref();
           return true;
         } catch (e) {
           if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw new Error(`The update lock (${path}) could not be taken: ${plainFsError(e)}.`);
@@ -58,6 +68,7 @@ export function fileLock(
     async release() {
       if (!held) return;
       held = false;
+      clearInterval(beat);
       await rm(path, { force: true });
     },
   };
@@ -81,4 +92,22 @@ export function holderFromInspect(r: { code: number; stdout: string; stderr: str
   if (r.timedOut === true) return true;
   if (r.code === 0) return r.stdout.trim() !== 'false';
   return !/no such (object|container)/i.test(r.stderr);
+}
+
+/**
+ * Whether an update is running, as seen from a container without the Docker socket (the ops daemon): the update lock exists,
+ * names its holder, and was refreshed within ALIVE_WITHIN_MS (the holder's heartbeat). false when there is no lock or it has
+ * gone quiet (a crashed updater stops refreshing it); undefined when the lock is there but cannot be read.
+ */
+export async function updateLockAlive(path: string, now: Date): Promise<boolean | undefined> {
+  const st = await stat(path).catch((e: unknown) => ((e as NodeJS.ErrnoException).code === 'ENOENT' ? null : undefined));
+  if (st === null) return false;
+  if (st === undefined) return undefined;
+  try {
+    const h = JSON.parse(await readFile(path, 'utf8')) as Partial<LockHolder>;
+    if (typeof h.pid !== 'number' || typeof h.host !== 'string') return undefined;
+  } catch {
+    return undefined;
+  }
+  return now.getTime() - st.mtime.getTime() <= ALIVE_WITHIN_MS;
 }

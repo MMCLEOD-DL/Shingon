@@ -1,7 +1,9 @@
 import { readFile, rm } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { ROLLBACK_FAILED_MARK } from '@hf/server/db/schema';
+import path from 'node:path';
 import { durableWrite, plainFsError, realFs, type DurableFs } from './durable.js';
+import { updateLockAlive } from './lock.js';
 
 /** Where an update had got to. Written before each step, so a crash leaves the step it was in. */
 export type UpdateStep = 'stopping' | 'backing-up' | 'switching' | 'migrating' | 'starting' | 'undoing' | 'undo-failed' | 'finishing' | 'uncertain';
@@ -72,11 +74,24 @@ export const FINISHING_GRACE_MS = 10 * 60e3;
  * (`holderAlive`: the updater holds the ops lock for the whole update, and a crashed one loses it with its database session),
  * nor within the grace at the start or end of an update. A failed undo is always left behind.
  */
-export function isLeftover(r: UpdateRecord, now: Date, holderAlive = false): boolean {
+export function isLeftover(r: UpdateRecord, now: Date, holderAlive = false, grace = true): boolean {
   if (r.step === 'undo-failed') return true;
   if (holderAlive) return false;
+  if (!grace) return true;
   const fresh = now.getTime() - new Date(r.updatedAt).getTime() <= FINISHING_GRACE_MS;
   return !((r.step === 'finishing' || r.step === 'stopping') && fresh);
+}
+
+/**
+ * Whether a record in `stateDir` is left behind, for the monitor and the start of a scheduled or manual backup: not while
+ * its update is running. "Running" means the update lock's holder is alive (its heartbeat, see updateLockAlive). Only when
+ * the lock cannot be read does it fall back to "someone holds the ops lock" plus the grace windows.
+ */
+export async function recordIsLeftover(r: UpdateRecord, stateDir: string, now: Date, opsLockHeld?: () => Promise<boolean>): Promise<boolean> {
+  const alive = await updateLockAlive(path.join(stateDir, 'update.lock'), now).catch(() => undefined);
+  if (alive !== undefined) return isLeftover(r, now, alive, false);
+  const held = await (opsLockHeld?.() ?? Promise.resolve(false)).catch(() => false);
+  return isLeftover(r, now, held, true);
 }
 
 /** Parses a record file; anything unreadable counts as a record of an unknown update, never as "no record". */

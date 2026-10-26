@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, stat, utimes, writeFile } from '
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { dockerCompose, imageFileInBundle, isDockerHub, isQualified, loadImageFile, readEnvValue } from '../src/compose.js';
-import { fileLock, holderFromInspect, type LockHolder } from '../src/lock.js';
+import { ALIVE_WITHIN_MS, fileLock, holderFromInspect, updateLockAlive, type LockHolder } from '../src/lock.js';
 import { durableWrite, plainFsError, type DurableFs } from '../src/durable.js';
 import { fakeRunner } from './helpers.js';
 
@@ -311,4 +311,40 @@ test('N3: docker inspect: only "no such container/object" (or a stopped containe
   expect(holderFromInspect({ code: 1, stdout: '', stderr: 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock' })).toBe(true);
   expect(holderFromInspect({ code: 127, stdout: '', stderr: 'docker could not be started.' })).toBe(true);
   expect(holderFromInspect({ code: 143, stdout: '', stderr: '', timedOut: true })).toBe(true);
+});
+
+test('round 3: the update lock is readable by the daemon and its heartbeat refreshes it while held', async () => {
+  const dir = await tmp();
+  try {
+    const p = path.join(dir, 'update.lock');
+    const l = fileLock(p, undefined, { heartbeatMs: 20 });
+    expect(await l.acquire()).toBe(true);
+    expect((await stat(p)).mode & 0o777).toBe(0o644);
+    const old = new Date(Date.now() - 3600e3);
+    await utimes(p, old, old);
+    await new Promise((r) => setTimeout(r, 80));
+    expect(Date.now() - (await stat(p)).mtime.getTime()).toBeLessThan(5000);   // refreshed
+    expect(await updateLockAlive(p, new Date())).toBe(true);
+    await l.release();
+    await new Promise((r) => setTimeout(r, 60));
+    expect(await readdir(dir)).toEqual([]);   // the heartbeat stopped with the release and did not recreate anything
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('round 3: updateLockAlive — no lock: false; fresh: true; quiet past the window: false; unreadable: unknown', async () => {
+  const dir = await tmp();
+  try {
+    const p = path.join(dir, 'update.lock');
+    const now = new Date();
+    expect(await updateLockAlive(p, now)).toBe(false);
+    await writeFile(p, JSON.stringify({ pid: 1, host: 'u', at: 'x' }));
+    expect(await updateLockAlive(p, now)).toBe(true);
+    expect(await updateLockAlive(p, new Date(now.getTime() + ALIVE_WITHIN_MS + 5000))).toBe(false);
+    await writeFile(p, 'not json');
+    expect(await updateLockAlive(p, now)).toBeUndefined();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

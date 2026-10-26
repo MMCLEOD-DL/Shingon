@@ -2,7 +2,7 @@ import { statfs as fsStatfs } from 'node:fs/promises';
 import path from 'node:path';
 import type { OpsConfig } from './config.js';
 import type { Check } from './monitor.js';
-import { isLeftover, leftoverDetail, readRecord, UPDATE_RECORD } from './journal.js';
+import { leftoverDetail, readRecord, recordIsLeftover, UPDATE_RECORD } from './journal.js';
 
 export type { Check } from './monitor.js';
 
@@ -15,7 +15,7 @@ export interface MonitorCheckDeps {
   /** How long a disk may take to report its free space (default 5 s); a hung mount is reported, not waited on. */
   diskTimeoutMs?: number;
   now?: () => Date;
-  /** Whether a running update (or another ops run) holds the ops lock; an error counts as "no", so a leftover is reported. */
+  /** Fallback only, when the update lock cannot be read: whether some run holds the ops lock (an error counts as "no"). */
   opsLockHeld?: () => Promise<boolean>;
 }
 
@@ -25,8 +25,8 @@ const ukTime = (d: Date): string => new Intl.DateTimeFormat('en-GB', { dateStyle
 async function updateRecordCheck(deps: MonitorCheckDeps): Promise<Check> {
   const r = await readRecord(path.join(path.dirname(deps.cfg.workDir), UPDATE_RECORD)).catch(() => null);
   if (r === null) return { name: 'update-record', ok: true, detail: '' };
-  const alive = await (deps.opsLockHeld?.() ?? Promise.resolve(false)).catch(() => false);
-  if (!isLeftover(r, (deps.now ?? (() => new Date()))(), alive)) return { name: 'update-record', ok: true, detail: '' };
+  const stateDir = path.dirname(deps.cfg.workDir);
+  if (!(await recordIsLeftover(r, stateDir, (deps.now ?? (() => new Date()))(), deps.opsLockHeld))) return { name: 'update-record', ok: true, detail: '' };
   return { name: 'update-record', ok: false, critical: true, detail: leftoverDetail(r, ukTime) };
 }
 

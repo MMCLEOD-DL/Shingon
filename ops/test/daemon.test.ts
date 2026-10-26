@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { daemonJobs, onJobFailure, MONITOR_SCHEDULE, backupPause, scheduledBackupJob, manualBackup, sweepLeftovers } from '../src/daemon.js';
+import { daemonJobs, onJobFailure, MONITOR_SCHEDULE, backupPause, prunePause, scheduledBackupJob, manualBackup, sweepLeftovers } from '../src/daemon.js';
 import { Monitor } from '../src/monitor.js';
 import { withOpsLock } from '../src/opsLock.js';
 import { lastRun, type OpsDeps } from '../src/runs.js';
@@ -121,27 +121,62 @@ test('an update record left in /state pauses scheduled backups too', async () =>
     const file = path.join(path.dirname(deps.cfg.workDir), 'update-in-progress.json');
     await writeFile(file, JSON.stringify({ from: '0.1.5', to: '0.1.6', startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), step: 'backing-up', pid: 1, host: 'x' }));
     expect(await backupPause(deps)).toMatch(/^Backups are paused because an update could not be undone\. Nothing is backed up/);
-    // A finishing update a moment ago is not a leftover: the ops lock already keeps the backup waiting for it.
+    // A finishing update that is still running (its lock's heartbeat is fresh) is not a leftover: the backup waits for it.
     await writeFile(file, JSON.stringify({ from: '0.1.5', to: '0.1.6', startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), step: 'finishing', snapshot: 'abcdef12aaaa', pid: 1, host: 'x' }));
+    await writeFile(path.join(path.dirname(deps.cfg.workDir), 'update.lock'), JSON.stringify({ pid: 1, host: 'updater1', at: new Date().toISOString() }));
     expect(await backupPause(deps)).toBeNull();
   });
 });
 
-test('N1: a record of an update that still holds the ops lock does not pause backups (the backup waits for the lock instead)', async () => {
-  const { mkdir, writeFile } = await import('node:fs/promises');
+test('round 3: "running" means the update lock\'s holder is alive (fresh heartbeat), not merely that someone holds the ops lock', async () => {
+  const { mkdir, writeFile, utimes } = await import('node:fs/promises');
   const path = await import('node:path');
   await withDeps({}, async (deps) => {
-    await mkdir(path.dirname(deps.cfg.workDir), { recursive: true });
-    await writeFile(path.join(path.dirname(deps.cfg.workDir), 'update-in-progress.json'), JSON.stringify({ from: '0.1.5', to: '0.1.6', startedAt: new Date().toISOString(), updatedAt: new Date(Date.now() - 3600e3).toISOString(), step: 'migrating', pid: 1, host: 'x' }));
-    expect(await backupPause(deps)).not.toBeNull();
+    const state = path.dirname(deps.cfg.workDir);
+    await mkdir(state, { recursive: true });
+    await writeFile(path.join(state, 'update-in-progress.json'), JSON.stringify({ from: '0.1.5', to: '0.1.6', startedAt: new Date().toISOString(), updatedAt: new Date(Date.now() - 3600e3).toISOString(), step: 'migrating', pid: 1, host: 'x' }));
+    // Another run (say, a long restore test) holding the ops lock does not hide a leftover.
     const held = await holdLock(deps);
     try {
-      expect(await backupPause(deps)).toBeNull();
+      expect(await backupPause(deps)).not.toBeNull();
     } finally {
       held.release();
       await held.done;
     }
+    // A routine update in progress: its lock names it and its heartbeat is fresh. No pause.
+    const lock = path.join(state, 'update.lock');
+    await writeFile(lock, JSON.stringify({ pid: 1, host: 'updater1', at: new Date().toISOString() }));
+    expect(await backupPause(deps)).toBeNull();
+    // Its heartbeat stopped (a crashed updater): left behind.
+    const old = new Date(Date.now() - 5 * 60e3);
+    await utimes(lock, old, old);
     expect(await backupPause(deps)).not.toBeNull();
+    // A lock that cannot be read falls back to the ops lock plus the grace windows.
+    await writeFile(lock, 'not json');
+    const held2 = await holdLock(deps);
+    try {
+      expect(await backupPause(deps)).toBeNull();
+    } finally {
+      held2.release();
+      await held2.done;
+    }
+  });
+});
+
+test('round 3: a backup that holds the ops lock never prunes while any update record is present, whatever its step or age', async () => {
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  const path = await import('node:path');
+  await withDeps({}, async (deps, rec) => {
+    rec.respond(okBackup);
+    const state = path.dirname(deps.cfg.workDir);
+    await mkdir(state, { recursive: true });
+    // Fresh "finishing" with a fresh lock: the start-of-job check would let it through, but under the ops lock no update can be running.
+    await writeFile(path.join(state, 'update-in-progress.json'), JSON.stringify({ from: '0.1.5', to: '0.1.6', startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), step: 'finishing', snapshot: 'c323c601aaaabbbb', pid: 1, host: 'x' }));
+    await writeFile(path.join(state, 'update.lock'), JSON.stringify({ pid: 1, host: 'updater1', at: new Date().toISOString() }));
+    expect(await prunePause(deps)).toMatch(/^Backups are paused because an update could not be undone: backup c323c601/);
+    await runBackup(deps, 'scheduled', { prunePause: () => prunePause(deps) });
+    expect(rec.calls.some((c) => c.args[0] === 'backup')).toBe(true);
+    expect(rec.calls.some((c) => c.args[0] === 'forget')).toBe(false);
   });
 });
 

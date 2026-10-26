@@ -89,7 +89,7 @@ test('a disk that does not answer is reported within the time limit, not waited 
   expect(cs['disk:/data/uploads']).toEqual({ name: 'disk:/data/uploads', ok: false, detail: 'The free disk space on /data/uploads could not be checked: the disk did not answer in time.' });
 });
 
-test('an update record left in /state is a critical problem with plain recovery guidance; a fresh "finishing" one is not', async () => {
+test('an update record left in /state is a critical problem with plain recovery guidance; one whose update is still running is not', async () => {
   const { mkdtemp, mkdir, writeFile, rm } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
   const path = await import('node:path');
@@ -102,15 +102,36 @@ test('an update record left in /state is a critical problem with plain recovery 
     const now = new Date('2026-10-26T21:00:00Z');
     const rec = { from: '0.1.5', to: '0.1.6', startedAt: '2026-10-26T20:00:00.000Z', updatedAt: '2026-10-26T20:58:00.000Z', step: 'finishing', snapshot: 'c323c601aaaa', pid: 1, host: 'x' };
     await writeFile(path.join(dir, 'state', 'update-in-progress.json'), JSON.stringify(rec));
-    expect(byName(await monitorChecks({ cfg, statfs: roomy, now: () => now }))['update-record']).toMatchObject({ ok: true });   // finishing, 2 minutes old
+    // A finishing update that is still running (its lock refreshed 10 s ago) is not a problem…
+    const { utimes: ut } = await import('node:fs/promises');
+    const runningLock = path.join(dir, 'state', 'update.lock');
+    await writeFile(runningLock, JSON.stringify({ pid: 1, host: 'updater1', at: now.toISOString() }));
+    await ut(runningLock, new Date(now.getTime() - 10e3), new Date(now.getTime() - 10e3));
+    expect(byName(await monitorChecks({ cfg, statfs: roomy, now: () => now }))['update-record']).toMatchObject({ ok: true });
+    // …but the same record with no update lock at all was left behind (the lock is released only after the record is cleared).
+    await rm(runningLock);
+    expect(byName(await monitorChecks({ cfg, statfs: roomy, now: () => now }))['update-record']).toMatchObject({ ok: false });
     await writeFile(path.join(dir, 'state', 'update-in-progress.json'), JSON.stringify({ ...rec, step: 'migrating' }));
     const c = byName(await monitorChecks({ cfg, statfs: roomy, now: () => now }))['update-record'] as { ok: boolean; critical?: boolean; detail: string };
     expect(c.ok).toBe(false);
     expect(c.critical).toBe(true);
     expect(c.detail).toBe('The update to 0.1.6 (from 0.1.5, started 26 October 2026 at 20:00) stopped part-way while updating the database for 0.1.6 (the database may be partly updated, and .env names 0.1.6), and was never finished or undone. Backup c323c601 holds the data from before the update. No further update will run until this is sorted out. See the runbook, section "Recovering from a failed update"; when it is sorted out, run: docker compose run --rm updater update --mark-recovered');
-    // N1: while a running update holds the ops lock, the same record is not a problem; if the lock cannot be asked, it is.
+    // Round 3: another run (a restore test) holding the ops lock does not hide a leftover from the monitor.
+    expect(byName(await monitorChecks({ cfg, statfs: roomy, now: () => now, opsLockHeld: async () => true }))['update-record']!.ok).toBe(false);
+    // A routine update in progress: its lock names it and was refreshed lately (the heartbeat). Not a problem.
+    const lock = path.join(dir, 'state', 'update.lock');
+    await writeFile(lock, JSON.stringify({ pid: 1, host: 'updater1', at: now.toISOString() }));
+    const { utimes } = await import('node:fs/promises');
+    await utimes(lock, new Date(now.getTime() - 30e3), new Date(now.getTime() - 30e3));
+    expect(byName(await monitorChecks({ cfg, statfs: roomy, now: () => now }))['update-record']!.ok).toBe(true);
+    // Its heartbeat stopped two minutes ago (a crashed updater): a problem again.
+    await utimes(lock, new Date(now.getTime() - 120e3), new Date(now.getTime() - 120e3));
+    expect(byName(await monitorChecks({ cfg, statfs: roomy, now: () => now }))['update-record']!.ok).toBe(false);
+    // An unreadable lock falls back to the ops lock probe (an error asking counts as "not held").
+    await writeFile(lock, 'garbage');
     expect(byName(await monitorChecks({ cfg, statfs: roomy, now: () => now, opsLockHeld: async () => true }))['update-record']!.ok).toBe(true);
     expect(byName(await monitorChecks({ cfg, statfs: roomy, now: () => now, opsLockHeld: async () => { throw new Error('down'); } }))['update-record']!.ok).toBe(false);
+    await rm(lock);
     await writeFile(path.join(dir, 'state', 'update-in-progress.json'), '{ broken');
     expect(byName(await monitorChecks({ cfg, statfs: roomy, now: () => now }))['update-record']!.ok).toBe(false);   // unreadable is never "no record"
   } finally {
