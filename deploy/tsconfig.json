@@ -1,1 +1,1 @@
-{ "extends": "../tsconfig.base.json", "compilerOptions": { "rootDir": ".", "noEmit": true, "types": ["node"] }, "include": ["test"] }
+{ "extends": "../tsconfig.base.json", "compilerOptions": { "rootDir": "..", "noEmit": true, "types": ["node"] }, "include": ["test", "../scripts/check-licences.ts"] }

@@ -16,10 +16,9 @@ for (const p of PAGES) {
       page.on('console', (m) => {
         if (m.type() !== 'error') return;
         // A signed-out visitor is asked "who are you?" first and the answer is 401. The browser logs that as an error; it is the app working.
-        // WebKit may report an empty location, so a "status of 401" message with no URL is accepted too (signed-out pages only).
-        // TODO(build machine): confirm this against the real WebKit run.
-        const where = m.location().url;
-        if (p.as === 'anon' && m.text().includes('status of 401') && (where === '' || where.endsWith('/api/me'))) return;
+        // Chromium and WebKit both report it as "… status of 401 …" at /api/me (checked on the build machine's WebKit run), so only
+        // that exact pair is let through, and only on signed-out pages.
+        if (p.as === 'anon' && m.text().includes('status of 401') && m.location().url.endsWith('/api/me')) return;
         errors.push(m.text());
       });
       await page.goto(resolvePath(p, fx));

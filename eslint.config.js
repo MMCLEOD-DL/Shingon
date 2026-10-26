@@ -4,7 +4,7 @@ const ROUTE_SELECTOR =
   'CallExpression[callee.object.name=/^(app|fastify|instance|server)$/][callee.property.name=/^(get|post|put|patch|delete|head|options|all|route)$/]';
 
 export default tseslint.config(
-  { ignores: ['**/dist/**', 'apps/web/e2e/**/*.png', '**/node_modules/**', '**/vitest.config.ts', 'vitest.config.ts', 'eslint.config.js', '**/*.cjs'] },
+  { ignores: ['**/dist/**', 'apps/web/e2e/**/*.png', '**/node_modules/**', '**/vitest.config.ts', 'vitest.config.ts', 'eslint.config.js', '**/*.cjs', 'deploy/smoke/*.mjs'] },
   ...tseslint.configs.strictTypeChecked,
   {
     languageOptions: {

@@ -2,7 +2,7 @@ import { test, expect } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { isAllowed, collectLicences, checkLicences } from './check-licences.js';
+import { isAllowed, collectLicences, checkLicences, renderMarkdown } from './check-licences.js';
 
 function fakeRepo(pkgs: Record<string, object>, workspaces: string[] = []) {
   const root = mkdtempSync(path.join(tmpdir(), 'lic-'));
@@ -92,4 +92,13 @@ test('an alias shows both names but exceptions use the folder name', async () =>
   const r = await checkLicences(root, {});
   expect(r.problems[0]).toContain('alias (real-name)@1.0.0');
   expect((await checkLicences(root, { 'alias@1.0.0': 'ok' })).ok).toBe(true);
+});
+
+test('the licence document lists packages and the fixed image section', async () => {
+  const root = fakeRepo({ b: { license: 'ISC' }, a: { license: 'MIT' } });
+  const md = renderMarkdown(await collectLicences(root));
+  expect(md).toContain('| Package | Version | Licence |');
+  expect(md.indexOf('| a | 1.0.0 | MIT |')).toBeLessThan(md.indexOf('| b | 1.0.0 | ISC |'));
+  expect(md).toContain('## Container images');
+  expect(md).toContain('| restic | BSD-2-Clause |');
 });

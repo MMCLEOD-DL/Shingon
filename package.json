@@ -16,6 +16,7 @@
     "lint": "eslint .",
     "typecheck": "tsc -b packages/shared apps/server ops scripts deploy && npm -w @hf/web run typecheck --if-present",
     "licences": "tsx scripts/check-licences.ts",
+    "licences:doc": "tsx scripts/check-licences.ts --markdown docs/LICENCES.md",
     "test": "vitest run",
     "test:e2e": "tsc -b packages/shared && npm -w @hf/web run build && playwright test -c apps/web/playwright.config.ts",
     "verify:full": "npm run verify && npm run test:e2e",
