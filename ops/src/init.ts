@@ -44,7 +44,8 @@ export function generateEnv(opts: InitOptions): { env: string; checklist: string
       entries: [
         { key: 'COMPOSE_PROJECT_NAME', comment: 'Name of this Compose project. Only change it if two deployments share one machine.', example: 'highland' },
         { key: 'APP_IMAGE', comment: 'Which app and ops images to run. Set by the release you installed; `ops update` changes APP_TAG.', example: 'highland/app' },
-        { key: 'OPS_IMAGE', comment: 'The ops image.', example: 'highland/ops' },
+        { key: 'OPS_IMAGE', comment: 'The ops image. The default names are local only (loaded with ops update --image-file) and never downloaded; a registry needs the full name, such as registry.example.com/highland/ops.', example: 'highland/ops' },
+        { key: 'IMAGE_PULL_POLICY', comment: 'never (default: local images only) or missing (download a registry image that is not here yet).', example: 'never' },
         { key: 'APP_TAG', comment: 'The release to run, such as 0.1.0. Write it here before the first start.', example: '' },
         { key: 'UPDATER_TAG', comment: 'The release the updater runs (defaults to APP_TAG).', example: '' },
         { key: 'APP_NAME', comment: 'The name shown to staff in the app and in emails.', value: client },

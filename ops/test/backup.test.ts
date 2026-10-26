@@ -18,7 +18,7 @@ test('first backup creates the repository; secrets go only in env', async () => 
     expect(r.snapshotId).toBe('abcdef1234567890');
     return rec.calls;
   });
-  expect(calls.map((c) => `${c.cmd} ${c.args[0] ?? ''}`)).toEqual(['restic cat', 'restic init', 'pg_dump --format=custom', 'restic backup', 'restic forget']);
+  expect(calls.map((c) => `${c.cmd} ${c.args[0] ?? ''}`)).toEqual(['restic cat', 'restic init', 'pg_dump --format=custom', 'restic backup', 'restic forget', 'restic forget']);
   for (const c of calls) {
     expect(c.args.join(' ')).not.toContain(TEST_BACKUP_PASSWORD);
     expect(c.args.join(' ')).not.toMatch(/postgres:\/\//);
@@ -41,12 +41,15 @@ test('the dump and the manifest come from one snapshot, from a fixed folder, and
   expect(dump.args).toContain(`--file=${deps0.cfg.workDir}/backup/db.dump`);
   const backup = calls.find((c) => c.args[0] === 'backup')!;
   expect(backup.args).toEqual(expect.arrayContaining([`${deps0.cfg.workDir}/backup/db.dump`, `${deps0.cfg.workDir}/backup/manifest.json`, deps0.cfg.uploadsDir]));
-  const forget = calls.find((c) => c.args[0] === 'forget')!;
-  // The same selection as "latest": this box's real backups only. Safety backups are outside the retention policy, so they
-  // can never take a daily/weekly/monthly slot from a real backup, and are never pruned (review round 2 ruling).
-  expect(forget.args.slice(0, 7)).toEqual(['forget', '--tag', 'hf,scheduled', '--tag', 'hf,manual', '--tag', 'hf,pre-update']);
-  expect(forget.args.slice(7, 12)).toEqual(['--group-by', 'host', '--host', 'acme-test-ltd', '--prune']);
-  expect(forget.args).not.toContain('safety');
+  const [pre, forget] = calls.filter((c) => c.args[0] === 'forget');
+  // Scheduled and manual backups only. Safety backups are outside every policy (never pruned); pre-update backups are
+  // outside the daily one too, because a failed update's alert names one (Task 20 review): they have their own rule,
+  // applied first and without pruning.
+  expect(pre!.args).toEqual(['forget', '--tag', 'hf,pre-update', '--group-by', 'host', '--host', 'acme-test-ltd', '--keep-last', '5', '--keep-within', '30d']);
+  expect(forget!.args.slice(0, 5)).toEqual(['forget', '--tag', 'hf,scheduled', '--tag', 'hf,manual']);
+  expect(forget!.args.slice(5, 10)).toEqual(['--group-by', 'host', '--host', 'acme-test-ltd', '--prune']);
+  expect(forget!.args).not.toContain('safety');
+  expect(forget!.args.join(' ')).not.toContain('pre-update');
 });
 
 test('a pre-update backup does not prune', async () => {
@@ -204,4 +207,15 @@ test('a failed audit-log tidy-up is recorded and logged once, and marked so the 
     expect(rec.logs).toEqual([line]);
     expect(await lastRun(deps.db, 'audit-purge', { okOnly: false })).toMatchObject({ ok: false, detail: line });
   });
+});
+
+test('a scheduled backup asked to pause pruning saves the backup but tidies nothing away', async () => {
+  const calls = await withDeps({}, async (deps, rec) => {
+    rec.respond(okBackup);
+    await runBackup(deps, 'scheduled', { prunePause: async () => 'Backups are paused because an update could not be undone.' });
+    expect(rec.logs).toContain('Old backups were not tidied away. Backups are paused because an update could not be undone.');
+    return rec.calls;
+  });
+  expect(calls.some((c) => c.args[0] === 'forget')).toBe(false);
+  expect(calls.some((c) => c.args[0] === 'backup')).toBe(true);
 });

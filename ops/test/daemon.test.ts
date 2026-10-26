@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { daemonJobs, onJobFailure, MONITOR_SCHEDULE } from '../src/daemon.js';
+import { daemonJobs, onJobFailure, MONITOR_SCHEDULE, backupPause, scheduledBackupJob } from '../src/daemon.js';
 import { Monitor } from '../src/monitor.js';
 import { withOpsLock } from '../src/opsLock.js';
 import { lastRun, type OpsDeps } from '../src/runs.js';
@@ -88,5 +88,41 @@ test('a backup refused because the lock was busy is recorded as busy; a real fai
     await expect(runBackup(deps, 'scheduled')).rejects.toThrow('The backup password does not match the backup destination.');
     const rows = await deps.db.select({ ok: opsRuns.ok, busy: opsRuns.busy }).from(opsRuns).orderBy(opsRuns.id);
     expect(rows).toEqual([{ ok: false, busy: true }, { ok: false, busy: false }]);
+  });
+});
+
+test('while a failed undo is outstanding, the scheduled backup (and every prune) is skipped, recorded as busy and alerted; mark-recovered lifts it', async () => {
+  await withDeps({}, async (deps, rec) => {
+    rec.respond(okBackup);
+    const sent: string[] = [];
+    const job = scheduledBackupJob(deps, { send: async (t) => { sent.push(t); } });
+    await deps.db.insert(opsRuns).values({ kind: 'update', ok: false, detail: '[Acme Test Ltd] URGENT: update to 0.1.6 failed (x) and the automatic undo also failed (y).', snapshotId: 'c323c601aaaabbbb' });
+    await job();
+    expect(rec.calls.filter((c) => c.cmd === 'restic' || c.cmd === 'pg_dump')).toEqual([]);   // no backup, no forget
+    const paused = 'Backups are paused because an update could not be undone: backup c323c601 holds the data from before it and must be kept as it is. Nothing is backed up or tidied away meanwhile. See the runbook, section "Recovering from a failed update"; when the box is recovered, run: docker compose run --rm updater update --mark-recovered';
+    expect(sent).toEqual([`[Acme Test Ltd] ${paused}`]);
+    const runs = await deps.db.select().from(opsRuns);
+    expect(runs.find((r) => r.kind === 'backup')).toMatchObject({ ok: false, busy: true, detail: paused });
+    // A cancelled update afterwards does not lift the pause; marking recovered does.
+    await deps.db.insert(opsRuns).values({ kind: 'update', ok: false, detail: '[Acme Test Ltd] Update to 0.1.7 cancelled: an earlier update could not be undone and has not been marked as recovered.' });
+    expect(await backupPause(deps)).toBe(paused);
+    await deps.db.insert(opsRuns).values({ kind: 'update', ok: true, detail: 'The operator marked the failed update as recovered: the app is healthy on 0.1.5.' });
+    expect(await backupPause(deps)).toBeNull();
+    await job();
+    expect(rec.calls.filter((c) => c.args[0] === 'forget')).toHaveLength(2);   // the pre-update rule and the daily rule
+  });
+});
+
+test('an update record left in /state pauses scheduled backups too', async () => {
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  const path = await import('node:path');
+  await withDeps({}, async (deps) => {
+    await mkdir(path.dirname(deps.cfg.workDir), { recursive: true });
+    const file = path.join(path.dirname(deps.cfg.workDir), 'update-in-progress.json');
+    await writeFile(file, JSON.stringify({ from: '0.1.5', to: '0.1.6', startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), step: 'backing-up', pid: 1, host: 'x' }));
+    expect(await backupPause(deps)).toMatch(/^Backups are paused because an update could not be undone\. Nothing is backed up/);
+    // A finishing update a moment ago is not a leftover: the ops lock already keeps the backup waiting for it.
+    await writeFile(file, JSON.stringify({ from: '0.1.5', to: '0.1.6', startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), step: 'finishing', snapshot: 'abcdef12aaaa', pid: 1, host: 'x' }));
+    expect(await backupPause(deps)).toBeNull();
   });
 });

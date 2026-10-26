@@ -88,3 +88,29 @@ test('a disk that does not answer is reported within the time limit, not waited 
   expect(Date.now() - started).toBeLessThan(2000);
   expect(cs['disk:/data/uploads']).toEqual({ name: 'disk:/data/uploads', ok: false, detail: 'The free disk space on /data/uploads could not be checked: the disk did not answer in time.' });
 });
+
+test('an update record left in /state is a critical problem with plain recovery guidance; a fresh "finishing" one is not', async () => {
+  const { mkdtemp, mkdir, writeFile, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const path = await import('node:path');
+  const dir = await mkdtemp(path.join(tmpdir(), 'hf-rec-'));
+  try {
+    const work = path.join(dir, 'state', 'work');
+    await mkdir(work, { recursive: true });
+    const cfg = loadOpsConfig({ ...env, OPS_WORK_DIR: work });
+    expect(byName(await monitorChecks({ cfg, statfs: roomy }))['update-record']).toMatchObject({ ok: true });
+    const now = new Date('2026-10-26T21:00:00Z');
+    const rec = { from: '0.1.5', to: '0.1.6', startedAt: '2026-10-26T20:00:00.000Z', updatedAt: '2026-10-26T20:58:00.000Z', step: 'finishing', snapshot: 'c323c601aaaa', pid: 1, host: 'x' };
+    await writeFile(path.join(dir, 'state', 'update-in-progress.json'), JSON.stringify(rec));
+    expect(byName(await monitorChecks({ cfg, statfs: roomy, now: () => now }))['update-record']).toMatchObject({ ok: true });   // finishing, 2 minutes old
+    await writeFile(path.join(dir, 'state', 'update-in-progress.json'), JSON.stringify({ ...rec, step: 'migrating' }));
+    const c = byName(await monitorChecks({ cfg, statfs: roomy, now: () => now }))['update-record'] as { ok: boolean; critical?: boolean; detail: string };
+    expect(c.ok).toBe(false);
+    expect(c.critical).toBe(true);
+    expect(c.detail).toBe('The update to 0.1.6 (from 0.1.5, started 26 October 2026 at 20:00) stopped part-way while updating the database for 0.1.6 (the database may be partly updated, and .env names 0.1.6), and was never finished or undone. Backup c323c601 holds the data from before the update. No further update will run until this is sorted out. See the runbook, section "Recovering from a failed update"; when it is sorted out, run: docker compose run --rm updater update --mark-recovered');
+    await writeFile(path.join(dir, 'state', 'update-in-progress.json'), '{ broken');
+    expect(byName(await monitorChecks({ cfg, statfs: roomy, now: () => now }))['update-record']!.ok).toBe(false);   // unreadable is never "no record"
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

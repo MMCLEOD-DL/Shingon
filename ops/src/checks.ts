@@ -2,6 +2,7 @@ import { statfs as fsStatfs } from 'node:fs/promises';
 import path from 'node:path';
 import type { OpsConfig } from './config.js';
 import type { Check } from './monitor.js';
+import { isLeftover, leftoverDetail, readRecord, UPDATE_RECORD } from './journal.js';
 
 export type { Check } from './monitor.js';
 
@@ -13,6 +14,16 @@ export interface MonitorCheckDeps {
   tunnelUrl?: string;
   /** How long a disk may take to report its free space (default 5 s); a hung mount is reported, not waited on. */
   diskTimeoutMs?: number;
+  now?: () => Date;
+}
+
+const ukTime = (d: Date): string => new Intl.DateTimeFormat('en-GB', { dateStyle: 'long', timeStyle: 'short', timeZone: 'Europe/London' }).format(d);
+
+/** An update that stopped part-way (its record is still in /state): critical, alerted on first sighting (Task 20). */
+async function updateRecordCheck(deps: MonitorCheckDeps): Promise<Check> {
+  const r = await readRecord(path.join(path.dirname(deps.cfg.workDir), UPDATE_RECORD)).catch(() => null);
+  if (r === null || !isLeftover(r, (deps.now ?? (() => new Date()))())) return { name: 'update-record', ok: true, detail: '' };
+  return { name: 'update-record', ok: false, critical: true, detail: leftoverDetail(r, ukTime) };
 }
 
 export const APP_TIMEOUT_MS = 5000;
@@ -92,13 +103,14 @@ async function tunnelCheck(deps: MonitorCheckDeps): Promise<Check> {
 export async function monitorChecks(deps: MonitorCheckDeps): Promise<Check[]> {
   const { cfg } = deps;
   const stateDir = path.dirname(cfg.workDir);
-  const [app, uploads, state, tunnel] = await Promise.all([
+  const [app, uploads, state, tunnel, record] = await Promise.all([
     appChecks(deps),
     diskCheck(deps, cfg.uploadsDir),
     diskCheck(deps, stateDir),
     cfg.tunnelEnabled ? tunnelCheck(deps) : Promise.resolve(undefined),
+    updateRecordCheck(deps),
   ]);
-  const out: Check[] = [...app, uploads, state];
+  const out: Check[] = [...app, uploads, state, record];
   if (tunnel !== undefined) out.push(tunnel);
   out.push(cfg.backup.allowLocal
     ? { name: 'backup-location', ok: false, detail: LOCAL_BACKUP_PROBLEM, critical: true }

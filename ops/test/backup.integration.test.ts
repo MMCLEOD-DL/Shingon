@@ -111,4 +111,32 @@ describe.runIf(has('restic', ['version']) && has('pg_dump') && has('pg_restore')
       expect(ids).not.toContain(n3);
     });
   }, 180_000);
+
+  test('pre-update backups are outside the daily policy: the last 5 and any within 30 days are kept, older ones go', async () => {
+    await withRealDeps(async (deps) => {
+      deps.cfg.backup.keep = ['--keep-daily', '1'];
+      await runBackup(deps, 'scheduled');
+      const env = resticEnv(deps.cfg);
+      const host = slug(deps.cfg.client);
+      const day = (back: number): string => {
+        const y = new Date(Date.now() - back * 86400e3);
+        return `${String(y.getFullYear())}-${String(y.getMonth() + 1).padStart(2, '0')}-${String(y.getDate()).padStart(2, '0')} 12:00:00`;
+      };
+      const make = async (tag: string, when: string): Promise<string> => {
+        const r = await execRunner.run('restic', ['backup', '--json', '--host', host, '--tag', 'hf', '--tag', tag, '--time', when, deps.cfg.uploadsDir], { env, timeoutMs: 60_000 });
+        expect(r.code, r.stderr).toBe(0);
+        return (JSON.parse(r.stdout.trim().split('\n').pop()!) as { snapshot_id: string }).snapshot_id;
+      };
+      // Eight old pre-update backups (40 to 47 days ago) and the one a failed update named yesterday.
+      const old: string[] = [];
+      for (let d = 47; d >= 40; d--) old.push(await make('pre-update', day(d)));
+      const named = await make('pre-update', day(1));
+      await runBackup(deps, 'scheduled');   // runs both forgets and the prune
+      const after = await execRunner.run('restic', ['snapshots', '--json', '--host', host], { env, timeoutMs: 60_000 });
+      const ids = (JSON.parse(after.stdout) as { id: string }[]).map((x) => x.id);
+      expect(ids).toContain(named);                                   // the daily policy (keep-daily 1) never touches it
+      for (const id of old.slice(-4)) expect(ids).toContain(id);      // with it, the last 5 pre-update backups are kept
+      for (const id of old.slice(0, 4)) expect(ids).not.toContain(id); // older than 30 days and beyond the last 5: pruned
+    });
+  }, 180_000);
 });

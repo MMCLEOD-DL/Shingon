@@ -1,11 +1,13 @@
-import { randomBytes } from 'node:crypto';
-import { chmod, chown, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { durableWrite, plainFsError, realFs, type DurableFs } from './durable.js';
 import type { Runner } from './runner.js';
 
 /** What the updater asks of Docker Compose. Only the on-demand updater, which alone has the Docker socket, uses it (Ruling 7). */
 export interface Compose {
-  imageAvailable(image: string): Promise<boolean>;   // `docker image inspect`, else `docker pull` (true if either succeeds)
+  imageAvailable(image: string): Promise<boolean>;   // `docker image inspect`, else `docker pull` for a registry-qualified name only
+  /** Only `docker image inspect`: is it on this box now (never pulls). Used to make sure a rollback would be possible. */
+  hasLocalImage?(image: string): Promise<boolean>;
   stop(service: string): Promise<void>;              // docker compose stop <service>
   up(service: string): Promise<void>;                // docker compose up -d --no-deps <service>
   runOnce(service: string): Promise<{ ok: boolean; output: string }>;   // docker compose run --rm --no-deps <service>
@@ -21,6 +23,36 @@ export const notATag = (tag: string): string =>
 
 const NO_TAG_LINE = 'The deployment settings (.env) have no APP_TAG line.';
 const APP_TAG_LINE = /^APP_TAG=.*$/m;
+
+/**
+ * True when an image name says which registry it lives on: its first path segment contains a "." or ":" or is
+ * "localhost" (registry.example.com/highland/app, localhost:5000/highland/app). Anything else, such as the default
+ * highland/app, would be looked up on Docker Hub, where that name belongs to someone else: such images are local only and
+ * are never pulled. They arrive with `update --image-file`.
+ */
+export function isQualified(image: string): boolean {
+  const slash = image.indexOf('/');
+  if (slash < 0) return false;
+  const first = image.slice(0, slash);
+  return first.includes('.') || first.includes(':') || first === 'localhost';
+}
+
+/**
+ * The real path of an image file, which must be inside the bundle folder (the only host folder the updater sees at the
+ * same path). Throws a plain Error otherwise.
+ */
+export async function imageFileInBundle(bundleDir: string, file: string): Promise<string> {
+  let real: string;
+  let root: string;
+  try {
+    root = await realpath(bundleDir);
+    real = await realpath(path.resolve(bundleDir, file));
+  } catch (e) {
+    throw new Error(`The image file ${path.basename(file)} could not be found in the bundle folder (${plainFsError(e)}).`);
+  }
+  if (real !== root && !real.startsWith(root + path.sep)) throw new Error(`The image file must be inside the bundle folder (${bundleDir}).`);
+  return real;
+}
 
 /** How the services are named in messages. */
 const LABEL: Record<string, string> = { app: 'the app', ops: 'the monitor (ops)', proxy: 'the front door', migrate: 'the database update', 'edge-check': 'the tunnel settings check' };
@@ -54,19 +86,22 @@ export async function loadImageFile(run: Runner, file: string, env: Record<strin
  * the registry sign-in folder), never the ops secrets, and nothing secret goes on a command line. Docker's own output is
  * never put in a message.
  */
-export function dockerCompose(o: { run: Runner; bundleDir: string; project: string; env?: Record<string, string> }): Compose {
+export function dockerCompose(o: { run: Runner; bundleDir: string; project: string; env?: Record<string, string>; fs?: DurableFs }): Compose {
   const env = o.env ?? {};
   const envFile = path.join(o.bundleDir, '.env');
   const compose = (args: string[], timeoutMs: number) =>
     o.run.run('docker', ['compose', '--project-directory', o.bundleDir, '-p', o.project, ...args], { env, timeoutMs });
   const code = (n: number): string => `(docker compose stopped with code ${String(n)})`;
+  const hasLocalImage = async (image: string): Promise<boolean> =>
+    (await o.run.run('docker', ['image', 'inspect', '--format', '{{.Id}}', image], { env, timeoutMs: COMPOSE_TIMEOUTS.inspect })).code === 0;
   return {
     async imageAvailable(image) {
-      const inspect = await o.run.run('docker', ['image', 'inspect', '--format', '{{.Id}}', image], { env, timeoutMs: COMPOSE_TIMEOUTS.inspect });
-      if (inspect.code === 0) return true;
+      if (await hasLocalImage(image)) return true;
+      if (!isQualified(image)) return false;   // never asks Docker Hub for a name that is not ours
       const pull = await o.run.run('docker', ['pull', image], { env, timeoutMs: COMPOSE_TIMEOUTS.pull });
       return pull.code === 0;
     },
+    hasLocalImage,
     async stop(service) {
       const r = await compose(['stop', service], COMPOSE_TIMEOUTS.stop);
       if (r.code !== 0) throw new Error(`Docker could not stop ${label(service)} ${code(r.code)}.`);
@@ -89,17 +124,11 @@ export function dockerCompose(o: { run: Runner; bundleDir: string; project: stri
       if (!TAG.test(tag)) throw new Error(notATag(tag));
       const text = await readFile(envFile, 'utf8');
       if (!APP_TAG_LINE.test(text)) throw new Error(NO_TAG_LINE);
-      const st = await stat(envFile);
-      const tmp = path.join(o.bundleDir, `.env.update-${randomBytes(4).toString('hex')}`);
       try {
-        await writeFile(tmp, text.replace(APP_TAG_LINE, `APP_TAG=${tag}`), { mode: st.mode & 0o777, flag: 'wx' });
-        await chmod(tmp, st.mode & 0o777);
-        // Keep the owner the operator gave .env (the updater runs as root); a non-root caller simply keeps its own.
-        await chown(tmp, st.uid, st.gid).catch(() => undefined);
-        await rename(tmp, envFile);
+        const st = await stat(envFile);
+        await durableWrite(envFile, text.replace(APP_TAG_LINE, `APP_TAG=${tag}`), { mode: st.mode & 0o777, owner: { uid: st.uid, gid: st.gid } }, o.fs ?? realFs);
       } catch (e) {
-        await rm(tmp, { force: true }).catch(() => undefined);
-        throw new Error(`The new version could not be written into the deployment settings (.env): ${(e as NodeJS.ErrnoException).code ?? 'unknown problem'}.`);
+        throw new Error(`The new version could not be written into the deployment settings (.env): ${plainFsError(e)}.`);
       }
     },
   };

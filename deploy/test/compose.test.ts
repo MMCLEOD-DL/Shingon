@@ -162,6 +162,13 @@ test('the ops image gives a fresh state volume to uid 1000, and the updater (roo
   expect(S.updater.volumes).toContain('state:/state');
 });
 
+test('our images are never pulled by default: highland/app and highland/ops on Docker Hub belong to someone else', () => {
+  for (const n of ['migrate', 'app', 'ops', 'edge-check', 'updater']) {
+    expect(S[n]!.pull_policy, n).toBe('${IMAGE_PULL_POLICY:-never}');
+  }
+  expect(S.proxy.pull_policy).toBeUndefined();   // third-party images keep the normal policy
+});
+
 test('a mismatched tunnel address and edge network keeps only the front door down, checked by a locked-down one-shot service', () => {
   const e = S['edge-check']!;
   expect(e.image).toBe('${OPS_IMAGE:-highland/ops}:${APP_TAG}');

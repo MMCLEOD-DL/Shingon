@@ -10,12 +10,13 @@ import { runBackup, LOCAL_WARNING, BackupError, firstLine } from './backup.js';
 import { verifyLatestRestore } from './restore.js';
 import { withOpsLock, OpsBusyError } from './opsLock.js';
 import { connect, pgEnv } from './pg.js';
-import { recordRun, scrub, type OpsDeps } from './runs.js';
+import { outstandingUpdate, recordRun, scrub, type OpsDeps } from './runs.js';
 import { execRunner } from './runner.js';
 import { startScheduler, type Job } from './scheduler.js';
 import { alertSecrets, channelFromConfig, logChannel, redactAlert, redactingChannel, type AlertChannel } from './alerts.js';
 import { Monitor } from './monitor.js';
 import { monitorChecks } from './checks.js';
+import { isLeftover, readRecord, UPDATE_RECORD } from './journal.js';
 
 export const AUDIT_PURGE_SCHEDULE = '15 3 * * *';
 export const SCHEDULED_BACKUP_LOCK_WAIT = 60 * 60e3;
@@ -38,6 +39,40 @@ export function restoreTestJob(deps: OpsDeps & { verify?: (d: OpsDeps) => Promis
     } catch (e) {
       deps.log(`The alert about the failed restore test could not be sent: ${e instanceof Error ? e.message : 'unknown problem'}`);
     }
+  };
+}
+
+const pauseText = (snapshot?: string): string =>
+  `Backups are paused because an update could not be undone${snapshot !== undefined ? `: backup ${snapshot.slice(0, 8)} holds the data from before it and must be kept as it is` : ''}. `
+  + 'Nothing is backed up or tidied away meanwhile. See the runbook, section "Recovering from a failed update"; when the box is recovered, run: docker compose run --rm updater update --mark-recovered';
+
+/**
+ * Why scheduled backups (and with them every prune) must not run now, or null: an update record left in /state by an update
+ * that stopped part-way, or a recorded update whose undo failed and that has not been marked as recovered. Either way the
+ * pre-update backup the alert names must not be pruned or pushed out (Task 20 review).
+ */
+export async function backupPause(deps: OpsDeps): Promise<string | null> {
+  const rec = await readRecord(path.join(path.dirname(deps.cfg.workDir), UPDATE_RECORD)).catch(() => null);
+  if (rec !== null && isLeftover(rec, deps.now())) return pauseText(rec.snapshot);
+  let urgent: Awaited<ReturnType<typeof outstandingUpdate>>;
+  try {
+    urgent = await outstandingUpdate(deps.db);
+  } catch {
+    return null;   // the database is not answering: the backup itself will fail and say so, before any prune
+  }
+  return urgent !== null ? pauseText(urgent.snapshotId) : null;
+}
+
+/** The scheduled backup: skipped (recorded as busy, alerted) while backups are paused; otherwise the usual backup and prune. */
+export function scheduledBackupJob(deps: OpsDeps, channel: AlertChannel): () => Promise<void> {
+  return async () => {
+    const paused = await backupPause(deps);
+    if (paused !== null) {
+      await recordRun(deps, 'backup', false, paused, undefined, { busy: true });
+      await channel.send(`[${deps.cfg.client}] ${paused}`).catch((e: unknown) => { deps.log(`The alert about the paused backups could not be sent: ${e instanceof Error ? e.message : 'unknown problem'}`); });
+      return;
+    }
+    await runBackup(deps, 'scheduled', { lockWaitMs: SCHEDULED_BACKUP_LOCK_WAIT, prunePause: () => backupPause(deps) });
   };
 }
 
@@ -74,7 +109,7 @@ export async function purgeAuditLog(deps: OpsDeps): Promise<number> {
 export function daemonJobs(deps: OpsDeps, channel: AlertChannel = logChannel(deps.log), monitor?: Monitor): Job[] {
   const jobs: Job[] = [
     // Waits up to an hour for a restore test or restore to finish rather than skipping the night's backup.
-    { name: 'backup', cron: deps.cfg.backup.schedule, run: async () => { await runBackup(deps, 'scheduled', { lockWaitMs: SCHEDULED_BACKUP_LOCK_WAIT }); } },
+    { name: 'backup', cron: deps.cfg.backup.schedule, run: scheduledBackupJob(deps, channel) },
     { name: 'restore-test', cron: deps.cfg.backup.restoreTestSchedule, run: restoreTestJob(deps, channel, deps.cfg.client) },
     { name: 'audit-purge', cron: AUDIT_PURGE_SCHEDULE, run: async () => { await purgeAuditLog(deps); } },
   ];
@@ -184,6 +219,10 @@ export async function runDaemon(deps: OpsDeps, close: () => Promise<void>): Prom
   deps.log(`Ops is running for ${cfg.client}. Backups: "${cfg.backup.schedule}"; restore tests: "${cfg.backup.restoreTestSchedule}"; audit-log tidy-up: "${AUDIT_PURGE_SCHEDULE}" (UK time).`);
   if (cfg.backup.allowLocal) deps.log(`BACKUP_ALLOW_LOCAL is true. ${LOCAL_WARNING}`);
   for (const w of cfg.warnings) deps.log(`Warning: ${w}`);
+  const left = await readRecord(path.join(path.dirname(cfg.workDir), UPDATE_RECORD)).catch(() => null);
+  if (left !== null && isLeftover(left, deps.now())) {
+    deps.log(`Warning: an update from ${left.from} to ${left.to} stopped part-way (step: ${left.step}). Backups are paused and the health check raises a critical alert until it is sorted out.`);
+  }
   const { channel, monitor } = buildMonitor(deps);
   const where = [cfg.alerts.matrix ? 'Matrix' : '', cfg.alerts.webhookUrl !== undefined ? 'the alert webhook' : ''].filter(Boolean).join(' and ') || 'the ops log only';
   deps.log(`Health checks run every minute; alerts go to ${where}${cfg.heartbeatUrl !== undefined ? ', with a heartbeat to the outside watcher' : ''}.`);

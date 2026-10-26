@@ -2,8 +2,9 @@ import { test, expect } from 'vitest';
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { dockerCompose, loadImageFile, readEnvValue } from '../src/compose.js';
-import { fileLock } from '../src/lock.js';
+import { dockerCompose, imageFileInBundle, isQualified, loadImageFile, readEnvValue } from '../src/compose.js';
+import { fileLock, type LockHolder } from '../src/lock.js';
+import { durableWrite, plainFsError, type DurableFs } from '../src/durable.js';
 import { fakeRunner } from './helpers.js';
 
 const line = (c: { cmd: string; args: string[] }): string => [c.cmd, ...c.args].join(' ');
@@ -128,7 +129,7 @@ test('loadImageFile runs docker load -i <file> and reports failure in plain Engl
   expect(await loadImageFile(rec, '/opt/hf/missing.tar')).toEqual({ ok: false, message: 'The image file missing.tar could not be loaded (docker load stopped with code 1). Check the file is in the bundle folder and complete.' });
 });
 
-test('fileLock: first acquire true, second false; after release true again; a lock older than an hour is replaced', async () => {
+test('fileLock: first acquire true, second false; after release true again; a lock older than 4 hours is replaced', async () => {
   const dir = await tmp();
   try {
     const p = path.join(dir, 'state', 'update.lock');
@@ -146,6 +147,9 @@ test('fileLock: first acquire true, second false; after release true again; a lo
     await writeFile(p, 'left by a crashed update');
     const twoHoursAgo = new Date(Date.now() - 2 * 3600e3);
     await utimes(p, twoHoursAgo, twoHoursAgo);
+    expect(await a.acquire()).toBe(false);   // 2 hours: a long backup may still be running
+    const fiveHoursAgo = new Date(Date.now() - 5 * 3600e3);
+    await utimes(p, fiveHoursAgo, fiveHoursAgo);
     expect(await a.acquire()).toBe(true);
     expect(await b.acquire()).toBe(false);
     await a.release();
@@ -160,9 +164,120 @@ test('fileLock uses the injected clock for staleness', async () => {
   try {
     const p = path.join(dir, 'update.lock');
     await writeFile(p, 'x');
-    expect(await fileLock(p, () => new Date(Date.now() + 30 * 60e3)).acquire()).toBe(false);
-    expect(await fileLock(p, () => new Date(Date.now() + 61 * 60e3)).acquire()).toBe(true);
+    expect(await fileLock(p, () => new Date(Date.now() + 3 * 3600e3)).acquire()).toBe(false);
+    expect(await fileLock(p, () => new Date(Date.now() + 4.1 * 3600e3)).acquire()).toBe(true);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('fileLock takes over a fresh lock only when its holder is shown to be gone', async () => {
+  const dir = await tmp();
+  try {
+    const p = path.join(dir, 'update.lock');
+    await writeFile(p, JSON.stringify({ pid: 4242, host: 'deadbeef1234', at: new Date().toISOString() }));
+    const asked: LockHolder[] = [];
+    expect(await fileLock(p, undefined, { isAlive: async (h) => { asked.push(h); return true; } }).acquire()).toBe(false);
+    expect(asked).toEqual([{ pid: 4242, host: 'deadbeef1234', at: expect.any(String) as string }]);
+    expect(await fileLock(p, undefined, { isAlive: async () => { throw new Error('docker unreachable'); } }).acquire()).toBe(false);   // unsure: keep it
+    const l = fileLock(p, undefined, { isAlive: async () => false });
+    expect(await l.acquire()).toBe(true);
+    expect(JSON.parse(await readFile(p, 'utf8'))).toMatchObject({ pid: process.pid });
+    await l.release();
+    await writeFile(p, 'not json');   // a holder that cannot be read is never assumed gone (until 4 hours)
+    expect(await fileLock(p, undefined, { isAlive: async () => false }).acquire()).toBe(false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('isQualified: only names that say which registry they live on', () => {
+  for (const q of ['registry.example.com/highland/app', 'localhost:5000/highland/app', '127.0.0.1:5000/highland/ops', 'localhost/highland/app', 'ghcr.io/acme/app']) expect(isQualified(q), q).toBe(true);
+  for (const u of ['highland/app', 'highland/ops', 'app', 'acme/highland/app']) expect(isQualified(u), u).toBe(false);
+});
+
+test('unqualified images are never pulled (Docker Hub\'s "highland" belongs to someone else); qualified ones are', async () => {
+  const rec = fakeRunner(() => ({ code: 1, stdout: '', stderr: '' }));
+  const c = dockerCompose({ run: rec, bundleDir: '/opt/hf', project: 'acme' });
+  expect(await c.imageAvailable('highland/app:1.1.0')).toBe(false);
+  expect(rec.calls.map(line)).toEqual(['docker image inspect --format {{.Id}} highland/app:1.1.0']);
+  rec.calls.length = 0;
+  await c.imageAvailable('localhost:5000/highland/app:1.1.0');
+  expect(rec.calls.map(line)).toEqual(['docker image inspect --format {{.Id}} localhost:5000/highland/app:1.1.0', 'docker pull localhost:5000/highland/app:1.1.0']);
+  rec.calls.length = 0;
+  expect(await c.hasLocalImage!('registry.example.com/highland/app:1.0.0')).toBe(false);
+  expect(rec.calls.map(line)).toEqual(['docker image inspect --format {{.Id}} registry.example.com/highland/app:1.0.0']);   // never pulls
+});
+
+test('imageFileInBundle: the file must really be inside the bundle folder', async () => {
+  const dir = await tmp();
+  const outside = await tmp();
+  try {
+    await writeFile(path.join(dir, 'images-1.1.0.tar'), 'x');
+    await writeFile(path.join(outside, 'evil.tar'), 'x');
+    expect(await imageFileInBundle(dir, 'images-1.1.0.tar')).toBe(path.join(await realpathOf(dir), 'images-1.1.0.tar'));
+    await expect(imageFileInBundle(dir, path.join(outside, 'evil.tar'))).rejects.toThrow(`The image file must be inside the bundle folder (${dir}).`);
+    await expect(imageFileInBundle(dir, '../' + path.basename(outside) + '/evil.tar')).rejects.toThrow('must be inside the bundle folder');
+    await expect(imageFileInBundle(dir, 'missing.tar')).rejects.toThrow('The image file missing.tar could not be found in the bundle folder (the file or folder does not exist).');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+async function realpathOf(p: string): Promise<string> {
+  const { realpath } = await import('node:fs/promises');
+  return realpath(p);
+}
+
+function recordingFs(fail?: { op: string; code: string }): DurableFs & { ops: string[] } {
+  const ops: string[] = [];
+  const maybe = (op: string): void => { if (fail?.op === op) throw Object.assign(new Error(op), { code: fail.code }); };
+  return {
+    ops,
+    open: async (p, flags) => {
+      ops.push(`open ${path.basename(p)} ${flags}`);
+      return {
+        writeFile: async () => { ops.push('write'); maybe('write'); },
+        sync: async () => { ops.push(`sync ${path.basename(p)}`); },
+        close: async () => { ops.push(`close ${path.basename(p)}`); },
+      };
+    },
+    chmod: async () => { ops.push('chmod'); },
+    chown: async () => { ops.push('chown'); },
+    rename: async (_a, b) => { ops.push(`rename -> ${path.basename(b)}`); maybe('rename'); },
+    rm: async (p) => { ops.push(`rm ${path.basename(p).startsWith('.env.tmp') ? 'tmp' : p}`); },
+  };
+}
+
+test('durableWrite: write, flush the file, rename, then flush the folder', async () => {
+  const fs = recordingFs();
+  await durableWrite('/opt/hf/.env', 'APP_TAG=1.1.0\n', { mode: 0o600, owner: { uid: 0, gid: 0 } }, fs);
+  expect(fs.ops.map((o) => o.replace(/\.env\.tmp-[0-9a-f]+/, '.env.tmp'))).toEqual([
+    'open .env.tmp wx', 'write', 'sync .env.tmp', 'close .env.tmp', 'chmod', 'chown', 'rename -> .env', 'open hf r', 'sync hf', 'close hf',
+  ]);
+});
+
+test('writeTag goes through durableWrite, and a disk problem is said in plain English (no bare error code)', async () => {
+  const dir = await tmp();
+  try {
+    await writeFile(path.join(dir, '.env'), 'APP_TAG=1.0.0\n', { mode: 0o600 });
+    const fs = recordingFs({ op: 'write', code: 'ENOSPC' });
+    const c = dockerCompose({ run: fakeRunner(), bundleDir: dir, project: 'acme', fs });
+    await expect(c.writeTag('1.1.0')).rejects.toThrow('The new version could not be written into the deployment settings (.env): the disk is full.');
+    expect(fs.ops).toContain('rm tmp');
+    expect(fs.ops.some((o) => o.startsWith('rename'))).toBe(false);
+    const ok = recordingFs();
+    await dockerCompose({ run: fakeRunner(), bundleDir: dir, project: 'acme', fs: ok }).writeTag('1.1.0');
+    expect(ok.ops.filter((o) => o.startsWith('sync'))).toHaveLength(2);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('plainFsError maps codes to words', () => {
+  expect(plainFsError(Object.assign(new Error('x'), { code: 'EACCES' }))).toBe('permission was refused');
+  expect(plainFsError(Object.assign(new Error('x'), { code: 'EROFS' }))).toBe('the disk is read-only');
+  expect(plainFsError(Object.assign(new Error('x'), { code: 'EWHATEVER' }))).toBe('an unexpected file-system problem');
+  expect(plainFsError(new Error('x'))).toBe('an unexpected file-system problem');
 });

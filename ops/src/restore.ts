@@ -416,7 +416,7 @@ async function restoreLiveLocked(deps: OpsDeps, which: string): Promise<{ snapsh
  * be read changes nothing; then the database is swapped in (restoreDatabase); then the uploads folder is replaced and given
  * back to the app's user. Runs under the ops lock (re-entrant: the caller normally holds it already). Throws RestoreError.
  */
-export async function restoreDataFrom(deps: OpsDeps, snap: { id: string; short: string }, opts: { lockWaitMs?: number } = {}): Promise<void> {
+export async function restoreDataFrom(deps: OpsDeps, snap: { id: string; short: string }, opts: { lockWaitMs?: number; onStep?: (done: 'database' | 'uploads') => void } = {}): Promise<void> {
   const { cfg } = deps;
   try {
     await withOpsLock(deps, { waitMs: opts.lockWaitMs ?? LOCK_WAIT.restore, busyMessage: `Another backup or restore is running, so nothing has been changed. ${STOP_BOTH}` }, async () => {
@@ -430,12 +430,14 @@ export async function restoreDataFrom(deps: OpsDeps, snap: { id: string; short: 
 
         deps.log('Putting the database back.');
         await restoreDatabase(deps, snap.id, pgEnv(cfg.databaseUrl).PGDATABASE);
+        opts.onStep?.('database');
 
         if (!(await confirmOpsLock())) throw new RestoreError('The database was put back, but ops lost its lock before the uploaded files, so they have not been touched. Run the restore again.');
         deps.log('Putting the uploaded files back.');
         for (const entry of await readdir(cfg.uploadsDir)) await rm(path.join(cfg.uploadsDir, entry), { recursive: true, force: true });
         await cp(stagedUploads, cfg.uploadsDir, { recursive: true, preserveTimestamps: true });
         const own = await deps.run.run('chown', ['-R', APP_UID_GID, cfg.uploadsDir], { timeoutMs: TIMEOUTS.chown });
+        opts.onStep?.('uploads');
         if (own.code !== 0) throw new RestoreError('The uploaded files were put back, but the app may not be able to save new ones: their owner could not be set.');
       } finally {
         await rm(staging, { recursive: true, force: true }).catch(() => undefined);
