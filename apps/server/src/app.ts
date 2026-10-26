@@ -30,6 +30,8 @@ export interface AppDeps {
   emailTransport?: EmailTransport;
   storage?: Storage;
   now?: () => Date;
+  /** How long /readyz reuses its checks (default 5 s). Tests that change data between calls set 0. */
+  readinessCacheMs?: number;
 }
 
 export interface HfState {
@@ -177,17 +179,17 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     app.addHook('onClose', () => { clearInterval(sweep); clearTimeout(first); });
   }
 
-  registerRoutes(app, config, storage, deps.now);
+  registerRoutes(app, config, storage, deps.now, deps.readinessCacheMs);
   return app;
 }
 
 /** Later tasks append their route modules here. */
-function registerRoutes(app: FastifyInstance, config: Config, storage: Storage, now?: () => Date): void {
+function registerRoutes(app: FastifyInstance, config: Config, storage: Storage, now?: () => Date, readinessCacheMs?: number): void {
   registerAuthRoutes(app, config, now);
   registerUserRoutes(app, config, now);
   registerAuditRoutes(app);
   registerFileRoutes(app, config, storage);
   registerNoteRoutes(app, storage, now);
   registerVersionRoute(app, config);
-  registerHealthRoutes(app, config, storage, now);
+  registerHealthRoutes(app, config, storage, now, readinessCacheMs);
 }

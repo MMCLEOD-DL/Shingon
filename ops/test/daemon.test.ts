@@ -1,10 +1,11 @@
 import { test, expect } from 'vitest';
-import { daemonJobs, onJobFailure } from '../src/daemon.js';
+import { daemonJobs, onJobFailure, MONITOR_SCHEDULE } from '../src/daemon.js';
 import { Monitor } from '../src/monitor.js';
 import { withOpsLock } from '../src/opsLock.js';
 import { lastRun, type OpsDeps } from '../src/runs.js';
 import { startScheduler } from '../src/scheduler.js';
-import { BackupError } from '../src/backup.js';
+import { BackupError, runBackup } from '../src/backup.js';
+import { opsRuns } from '@hf/server/db/schema';
 import { okBackup, withDeps } from './helpers.js';
 
 async function holdLock(deps: OpsDeps): Promise<{ release: () => void; done: Promise<void> }> {
@@ -16,38 +17,41 @@ async function holdLock(deps: OpsDeps): Promise<{ release: () => void; done: Pro
   return { release, done };
 }
 
-test('the monitor keeps ticking every time while a scheduled backup waits for the ops lock, and the backup never piles up', async () => {
+test('the monitor keeps ticking while a scheduled backup waits for the ops lock, and the backup never piles up', async () => {
   await withDeps({}, async (deps, rec) => {
     rec.respond(okBackup);
     const sent: string[] = [];
     let ticks = 0;
     const monitor = new Monitor({ checks: async () => { ticks++; return []; }, channel: { send: async (t) => { sent.push(t); } }, client: 'Acme' });
     let backupStarts = 0;
-    // Every second instead of nightly / every minute, so the test is quick.
     const jobs = daemonJobs(deps, { send: async (t) => { sent.push(t); } }, monitor)
-      .filter((j) => j.name === 'backup' || j.name === 'monitor')
-      .map((j) => ({ ...j, cron: '* * * * * *', run: j.name === 'backup' ? async () => { backupStarts++; await j.run(); } : j.run }));
-    expect(jobs.map((j) => j.name).sort()).toEqual(['backup', 'monitor']);
+      .map((j) => (j.name === 'backup' ? { ...j, run: async () => { backupStarts++; await j.run(); } } : j));
+    expect(jobs.find((j) => j.name === 'monitor')?.cron).toBe(MONITOR_SCHEDULE);
+    // A manual clock: the test fires each job's timer itself, so nothing depends on real time passing.
+    const fire: Record<string, () => Promise<unknown>> = {};
+    const s = startScheduler(jobs, onJobFailure(deps, monitor), (_cron, name, f) => { fire[name] = f; return { stop: () => undefined }; });
     const held = await holdLock(deps);
-    const s = startScheduler(jobs, onJobFailure(deps, monitor));
     try {
-      await new Promise((r) => setTimeout(r, 4200));
-      expect(backupStarts).toBe(1);      // still waiting for the lock: later runs were skipped, not stacked up
+      const firstBackup = fire['backup']!();          // waits for the lock (up to an hour)
+      for (let i = 0; i < 5; i++) {
+        expect(await fire['monitor']!()).toBe('ran');  // every monitor tick runs to the end meanwhile
+        expect(await fire['backup']!()).toBe('skipped'); // and the next backups due are skipped, not stacked up
+      }
+      expect(ticks).toBe(5);
+      expect(backupStarts).toBe(1);
       expect(rec.calls).toEqual([]);
-      expect(ticks).toBeGreaterThanOrEqual(3);
-      const before = ticks;
-      await new Promise((r) => setTimeout(r, 1100));
-      expect(ticks).toBeGreaterThan(before);
+      held.release();
+      await held.done;
+      expect(await firstBackup).toBe('ran');
     } finally {
       s.stop();
       held.release();
-      await held.done;
     }
-    for (let i = 0; i < 100 && (await lastRun(deps.db, 'backup', { okOnly: true })) === null; i++) await new Promise((r) => setTimeout(r, 100));
     expect((await lastRun(deps.db, 'backup', { okOnly: true }))!.detail).toMatch(/^Backup 01234567 saved/);
+    expect(await fire['backup']!()).toBe('ran');   // free again once the first finished
     expect(sent).toEqual([]);
   });
-}, 20_000);
+});
 
 test('a failed scheduled job reaches the alert channel at once, named in plain English and with secrets hidden', async () => {
   await withDeps({}, async (deps, rec) => {
@@ -70,6 +74,19 @@ test('if the alert channel is down, the failure is still logged and nothing thro
   await withDeps({}, async (deps, rec) => {
     const monitor = new Monitor({ checks: async () => [], channel: { send: () => Promise.reject(new Error('Matrix refused the alert (HTTP 502).')) }, client: 'Acme', log: deps.log });
     await onJobFailure(deps, monitor)('backup', new BackupError('The backup destination could not be reached (sftp:backup@nas.test.lan:/srv/restic).', true));
-    expect(rec.logs).toEqual(['The alert about the failed scheduled backup could not be sent: Matrix refused the alert (HTTP 502).']);
+    expect(rec.logs).toEqual(['The alert about the failed scheduled backup could not be sent (it will be tried again at the next check): Matrix refused the alert (HTTP 502).']);
+  });
+});
+
+test('a backup refused because the lock was busy is recorded as busy; a real failure is not', async () => {
+  await withDeps({}, async (deps, rec) => {
+    const held = await holdLock(deps);
+    await expect(runBackup(deps, 'manual')).rejects.toThrow(/^Another backup or restore is running right now/);
+    held.release();
+    await held.done;
+    rec.respond((c) => (c.cmd === 'restic' ? { code: 1, stdout: '', stderr: 'Fatal: wrong password or no key found' } : { code: 0, stdout: '', stderr: '' }));
+    await expect(runBackup(deps, 'scheduled')).rejects.toThrow('The backup password does not match the backup destination.');
+    const rows = await deps.db.select({ ok: opsRuns.ok, busy: opsRuns.busy }).from(opsRuns).orderBy(opsRuns.id);
+    expect(rows).toEqual([{ ok: false, busy: true }, { ok: false, busy: false }]);
   });
 });

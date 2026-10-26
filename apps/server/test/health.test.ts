@@ -1,14 +1,15 @@
 import { test, expect, beforeAll, afterAll } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { createTestApp } from './helpers/testApp.js';
-import { runReadinessChecks, readinessStatus, type Check } from '../src/health/checks.js';
+import { runReadinessChecks, readinessStatus, readinessCache, type Check } from '../src/health/checks.js';
 import type { Db } from '../src/db/client.js';
 import type { Storage } from '../src/files/storage.js';
 
 const TOKEN = 'h'.repeat(32);
 let t: Awaited<ReturnType<typeof createTestApp>>;
 const checksOf = (r: { json: () => unknown }): Record<string, Check> => Object.fromEntries((r.json() as { checks: Check[] }).checks.map((c) => [c.name, c]));
-beforeAll(async () => { t = await createTestApp({ healthToken: TOKEN }); });
+// No caching here: these tests change the data between calls. Caching has its own tests below.
+beforeAll(async () => { t = await createTestApp({ healthToken: TOKEN, readinessCacheMs: 0 }); });
 afterAll(async () => { await t.close(); });
 
 test('without the token only the status is shown', async () => {
@@ -39,14 +40,14 @@ test('fresh backup and passing restore test turn those checks green', async () =
 
 // ── Beyond the brief's three: failed runs, stale runs, failed mail, the database down, and no rate limit.
 
-test('a failed backup or restore test after the last success is a problem, and so is a stale one', async () => {
+test('a real backup or restore-test failure after the last success is a problem, and so is a stale one', async () => {
   const at = (h: number) => sql`now() - make_interval(hours => ${h})`;
   await t.db.execute(sql`delete from ops_runs`);
-  await t.db.execute(sql`insert into ops_runs (kind, ok, detail, at) values ('backup', true, 'old', ${at(31)}), ('backup', false, 'Another backup or restore is running right now, so this backup did not start. Try again when it has finished.', ${at(1)})`);
+  await t.db.execute(sql`insert into ops_runs (kind, ok, detail, at) values ('backup', true, 'old', ${at(31)}), ('backup', false, 'The backup destination could not be reached (sftp:backup@nas:/srv).', ${at(1)})`);
   await t.db.execute(sql`insert into ops_runs (kind, ok, detail, at) values ('restore-test', true, 'fine', ${at(48)}), ('restore-test', false, 'Table notes has 32 rows in the backup record but 0 after restoring.', ${at(2)})`);
   const r = await t.app.inject({ method: 'GET', url: '/readyz', headers: { 'x-health-token': TOKEN } });
   const byName = checksOf(r);
-  expect(byName.backups).toMatchObject({ ok: false, detail: 'The last backup failed: Another backup or restore is running right now, so this backup did not start. Try again when it has finished. The last successful backup was 31 hours ago.' });
+  expect(byName.backups).toMatchObject({ ok: false, detail: 'The last backup failed: The backup destination could not be reached (sftp:backup@nas:/srv). The last successful backup was 31 hours ago.' });
   expect(byName['restore-test']).toMatchObject({ ok: false, detail: 'The last restore test failed: Table notes has 32 rows in the backup record but 0 after restoring.' });
 
   await t.db.execute(sql`delete from ops_runs`);
@@ -55,6 +56,28 @@ test('a failed backup or restore test after the last success is a problem, and s
   const b2 = checksOf(r2);
   expect(b2.backups).toMatchObject({ ok: false, detail: 'The last successful backup was 27 hours ago.' });
   expect(b2['restore-test']).toMatchObject({ ok: false, detail: 'No restore test has passed in the last 8 days.' });
+  await t.db.execute(sql`delete from ops_runs`);
+});
+
+test('a backup refused only because another run held the lock is not a failure; a real one is, until a later success', async () => {
+  const at = (h: number) => sql`now() - make_interval(hours => ${h})`;
+  const backups = async () => checksOf(await t.app.inject({ method: 'GET', url: '/readyz', headers: { 'x-health-token': TOKEN } })).backups;
+  await t.db.execute(sql`delete from ops_runs`);
+  // A manual backup refused as busy, after a fresh success: fine.
+  await t.db.execute(sql`insert into ops_runs (kind, ok, detail, busy, at) values ('backup', true, 'Backup 1 saved', false, ${at(3)}),
+    ('backup', false, 'Another backup or restore is running right now, so this backup did not start. Try again when it has finished.', true, ${at(1)})`);
+  expect(await backups()).toMatchObject({ ok: true });
+  // A scheduled backup that really failed: a problem.
+  await t.db.execute(sql`insert into ops_runs (kind, ok, detail, at) values ('backup', false, 'The backup password does not match the backup destination.', now() - interval '10 minutes')`);
+  expect(await backups()).toMatchObject({ ok: false, detail: 'The last backup failed: The backup password does not match the backup destination.' });
+  // A later success clears it.
+  await t.db.execute(sql`insert into ops_runs (kind, ok, detail) values ('backup', true, 'Backup 2 saved')`);
+  expect(await backups()).toMatchObject({ ok: true });
+  // The same for a restore test refused as busy.
+  await t.db.execute(sql`insert into ops_runs (kind, ok, detail, at) values ('restore-test', true, 'passed', ${at(24)})`);
+  await t.db.execute(sql`insert into ops_runs (kind, ok, detail, busy) values ('restore-test', false, 'Another backup or restore was still running after 10 minutes, so the restore test could not start.', true)`);
+  const r = checksOf(await t.app.inject({ method: 'GET', url: '/readyz', headers: { 'x-health-token': TOKEN } }));
+  expect(r['restore-test']).toMatchObject({ ok: true });
   await t.db.execute(sql`delete from ops_runs`);
 });
 
@@ -110,4 +133,42 @@ test('/healthz is bare liveness and /readyz is declared public with its reason',
   expect(r.json()).toEqual({ status: 'ok' });
   expect(t.app.hf.routes.find((x) => x.url === '/healthz')?.access).toEqual({ public: 'liveness for Docker and the monitor' });
   expect(t.app.hf.routes.find((x) => x.url === '/readyz')?.access).toEqual({ public: 'readiness; details only with the health token' });
+});
+
+test('readiness is computed once for a burst of callers, then reused for 5 seconds, token or not', async () => {
+  let computed = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  let ms = 0;
+  const get = readinessCache(async () => { computed++; await gate; return [{ name: 'database', ok: true, detail: '' }]; }, 5000, () => ms);
+  const burst = Array.from({ length: 50 }, () => get());
+  release();
+  const results = await Promise.all(burst);
+  expect(computed).toBe(1);
+  expect(new Set(results).size).toBe(1);
+  ms = 4999; await get(); expect(computed).toBe(1);
+  ms = 5000; await get(); expect(computed).toBe(2);
+});
+
+test('/readyz through the app: 40 concurrent callers, with and without the token, share one round of checks', async () => {
+  const c = await createTestApp({ healthToken: TOKEN });   // the default 5 s cache
+  try {
+    let queries = 0;
+    const execute = c.db.execute.bind(c.db);
+    (c.db as { execute: typeof execute }).execute = ((q: Parameters<typeof execute>[0]) => { queries++; return execute(q); });
+    const replies = await Promise.all(Array.from({ length: 40 }, (_, i) =>
+      c.app.inject({ method: 'GET', url: '/readyz', headers: i % 2 === 0 ? { 'x-health-token': TOKEN } : {} })));
+    expect(new Set(replies.map((r) => r.statusCode))).toEqual(new Set([200]));
+    const oneRound = queries;
+    expect(oneRound).toBeGreaterThan(0);
+    expect(oneRound).toBeLessThanOrEqual(10);   // one round is 8 queries; 40 uncached rounds would be 320
+    // Data written now is not seen until the cache runs out, and asking again costs nothing.
+    await c.db.execute(sql`insert into ops_runs (kind, ok, detail) values ('backup', true, 'x'), ('restore-test', true, 'y')`);
+    queries = 0;
+    expect(checksOf(await c.app.inject({ method: 'GET', url: '/readyz', headers: { 'x-health-token': TOKEN } })).backups!.ok).toBe(false);
+    expect(queries).toBe(0);
+    for (const r of replies.filter((_, i) => i % 2 === 1)) expect(r.json()).toEqual({ status: 'degraded' });
+  } finally {
+    await c.close();
+  }
 });

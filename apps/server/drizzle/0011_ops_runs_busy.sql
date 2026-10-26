@@ -1,0 +1,1 @@
+ALTER TABLE "ops_runs" ADD COLUMN "busy" boolean DEFAULT false NOT NULL;

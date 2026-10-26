@@ -26,11 +26,11 @@ export function scrub(deps: Pick<OpsDeps, 'cfg'>, text: string): string {
  * Writes down what ops did, for the operator and for the monitor. If the database cannot take the record (for example
  * because the database itself is what failed), the result is still logged and the caller carries on.
  */
-export async function recordRun(deps: OpsDeps, kind: OpsRunKind, ok: boolean, detail: string, snapshotId?: string): Promise<void> {
+export async function recordRun(deps: OpsDeps, kind: OpsRunKind, ok: boolean, detail: string, snapshotId?: string, opts: { busy?: boolean } = {}): Promise<void> {
   const clean = scrub(deps, detail);
   deps.log(clean);
   try {
-    await deps.db.insert(opsRuns).values({ kind, ok, detail: clean, snapshotId: snapshotId ?? null, at: deps.now() });
+    await deps.db.insert(opsRuns).values({ kind, ok, detail: clean, snapshotId: snapshotId ?? null, busy: opts.busy === true, at: deps.now() });
   } catch {
     deps.log(`That result could not be written to the ops log in the database (is the database running?).`);
   }

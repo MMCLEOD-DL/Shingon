@@ -21,9 +21,9 @@ export interface TestApp {
 }
 
 export async function createTestApp(
-  overrides: Partial<Config> & { beforeReady?: (app: FastifyInstance) => void | Promise<void> } = {},
+  overrides: Partial<Config> & { beforeReady?: (app: FastifyInstance) => void | Promise<void>; readinessCacheMs?: number } = {},
 ): Promise<TestApp> {
-  const { beforeReady, ...configOverrides } = overrides;
+  const { beforeReady, readinessCacheMs, ...configOverrides } = overrides;
   const testDb = await createTestDb();
   let storageDir: string | undefined;
   let app: FastifyInstance | undefined;
@@ -45,7 +45,7 @@ export async function createTestApp(
       ...configOverrides,
     };
     const mail = memoryTransport();
-    app = await buildApp({ config, db: testDb.db, emailTransport: mail });
+    app = await buildApp({ config, db: testDb.db, emailTransport: mail, ...(readinessCacheMs !== undefined ? { readinessCacheMs } : {}) });
     await beforeReady?.(app);
     await app.ready();
     const dir = storageDir;

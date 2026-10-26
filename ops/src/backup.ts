@@ -143,7 +143,8 @@ export async function runBackup(deps: OpsDeps, kind: BackupKind, opts: BackupOpt
     const message = e instanceof BackupError || e instanceof OpsBusyError
       ? scrub(deps, e.message)
       : `The backup failed: ${firstLine(scrub(deps, e instanceof Error ? e.message : String(e)))}.`;
-    await recordRun(deps, 'backup', false, message);
+    // A refusal because another run held the lock is marked, so the monitor does not report it as a failed backup.
+    await recordRun(deps, 'backup', false, message, undefined, { busy: e instanceof OpsBusyError && !e.unreachable });
     throw new BackupError(message, true);
   }
 }

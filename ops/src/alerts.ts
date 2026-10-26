@@ -2,7 +2,11 @@ import { randomBytes } from 'node:crypto';
 import { repoPassword, type OpsConfig } from './config.js';
 
 /** Somewhere an alert can be sent. Rejects with a plain-English Error, never one that repeats an address or token. */
-export interface AlertChannel { send(text: string): Promise<void> }
+export interface AlertChannel {
+  send(text: string): Promise<void>;
+  /** How the channel is named in the ops log, such as "Matrix". Never an address or token. */
+  name?: string;
+}
 
 /** An alert that gets no answer within this is counted as not sent, so a hung channel never stalls the monitor. */
 export const SEND_TIMEOUT_MS = 10_000;
@@ -15,6 +19,7 @@ export function matrixChannel(cfg: { homeserver: string; accessToken: string; ro
   const doFetch = cfg.fetchImpl ?? fetch;
   const base = cfg.homeserver.replace(/\/+$/, '');
   return {
+    name: 'Matrix',
     async send(text) {
       const txn = `hf-${String(Date.now())}-${randomBytes(6).toString('hex')}`;
       const url = `${base}/_matrix/client/v3/rooms/${encodeURIComponent(cfg.roomId)}/send/m.room.message/${txn}`;
@@ -39,6 +44,7 @@ export function matrixChannel(cfg: { homeserver: string; accessToken: string; ro
 export function webhookChannel(url: string, fetchImpl?: typeof fetch): AlertChannel {
   const doFetch = fetchImpl ?? fetch;
   return {
+    name: 'the alert webhook',
     async send(text) {
       let res: Response;
       try {
@@ -57,15 +63,22 @@ export function webhookChannel(url: string, fetchImpl?: typeof fetch): AlertChan
   };
 }
 
-/** Sends to every channel at once. Rejects only if all of them fail, naming each failure. */
-export function allChannels(channels: AlertChannel[]): AlertChannel {
+/**
+ * Sends to every channel at once. Rejects only if all of them fail, naming each failure. A channel that fails while another
+ * succeeds is still logged (its name and plain error, never an address or token), so a broken route does not go unnoticed.
+ */
+export function allChannels(channels: AlertChannel[], log?: (line: string) => void): AlertChannel {
   return {
+    name: 'every alert channel',
     async send(text) {
       const results = await Promise.allSettled(channels.map((c) => c.send(text)));
-      if (results.length > 0 && results.every((r) => r.status === 'rejected')) {
-        const reasons = results.map((r) => ((r).reason instanceof Error ? ((r).reason).message : 'unknown problem'));
+      const reasons = results.map((r) => (r.status === 'rejected' ? (r.reason instanceof Error ? r.reason.message : 'unknown problem') : null));
+      if (results.length > 0 && reasons.every((r) => r !== null)) {
         throw new Error(`No alert could be sent: ${[...new Set(reasons)].join(' ')}`);
       }
+      reasons.forEach((r, i) => {
+        if (r !== null) log?.(`An alert went out, but not to ${channels[i]?.name ?? 'one of the alert channels'}: ${r}`);
+      });
     },
   };
 }
@@ -84,10 +97,19 @@ export function channelFromConfig(cfg: Pick<OpsConfig, 'instanceMode' | 'alerts'
   if (cfg.alerts.matrix) channels.push(matrixChannel(cfg.alerts.matrix));
   if (cfg.alerts.webhookUrl !== undefined) channels.push(webhookChannel(cfg.alerts.webhookUrl));
   const [only, ...more] = channels;
-  if (only !== undefined) return more.length === 0 ? only : allChannels(channels);
+  if (only !== undefined) return more.length === 0 ? only : allChannels(channels, log);
   if (cfg.instanceMode === 'demo' || cfg.instanceMode === 'test') return logChannel(log);
   // Defence in depth: loadOpsConfig already refuses this.
   return { send: () => Promise.reject(new Error('No alert channel is set. Set MATRIX_HOMESERVER, MATRIX_ACCESS_TOKEN and MATRIX_ROOM_ID, or ALERT_WEBHOOK_URL.')) };
+}
+
+/**
+ * A path segment that may be a secret: 16 characters or more, or 8 or more mixing letters and digits (most push tokens and
+ * hex or base64 ids). A plain word such as "database" or "notify" is not.
+ */
+export function looksLikeToken(seg: string): boolean {
+  if (seg.length >= 16) return true;
+  return seg.length >= 8 && /[0-9]/.test(seg) && /[A-Za-z]/.test(seg);
 }
 
 /** Every value from the settings that must never appear in an alert, longest first so a secret inside another is hidden whole. */
@@ -105,7 +127,8 @@ export function alertSecrets(cfg: Pick<OpsConfig, 'alerts' | 'heartbeatUrl' | 'h
       if (u.password !== '') out.push(u.password, decodeURIComponent(u.password));
       for (const v of u.searchParams.values()) out.push(v);
       // Push and webhook addresses often carry their secret in the path (…/api/push/<token>, …/hooks/<id>/<token>).
-      if (url !== cfg.databaseUrl) for (const seg of u.pathname.split('/')) if (seg.length >= 8) out.push(seg);
+      // Only segments that look like a token are hidden, so ordinary words such as /webhook/database stay readable.
+      if (url !== cfg.databaseUrl) for (const seg of u.pathname.split('/')) if (looksLikeToken(seg)) out.push(seg);
     } catch { /* not a URL: the whole value is already listed */ }
   }
   return [...new Set(out.filter((s) => s.length >= 4))].sort((a, b) => b.length - a.length);
@@ -122,5 +145,5 @@ export function redactAlert(text: string, secrets: readonly string[]): string {
 
 /** Wraps a channel so nothing it sends can carry a secret from the settings. */
 export function redactingChannel(channel: AlertChannel, secrets: readonly string[]): AlertChannel {
-  return { send: (text) => channel.send(redactAlert(text, secrets)) };
+  return { ...(channel.name !== undefined ? { name: channel.name } : {}), send: (text) => channel.send(redactAlert(text, secrets)) };
 }

@@ -15,6 +15,9 @@ export const opsRuns = pgTable(
     ok: boolean('ok').notNull(),
     detail: text('detail').notNull(),
     snapshotId: text('snapshot_id'),
+    // True when the run did not start because another backup or restore held the ops lock. The monitor does not count
+    // such a refusal as "the last backup failed" (the staleness check still catches a backup that never ran), Task 19.
+    busy: boolean('busy').notNull().default(false),
     at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

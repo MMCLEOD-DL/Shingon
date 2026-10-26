@@ -94,6 +94,7 @@ async function withMaintenance<T>(deps: OpsDeps, fn: (c: pg.Client) => Promise<T
 export async function verifyLatestRestore(deps: OpsDeps): Promise<{ ok: boolean; problems: string[] }> {
   const problems: string[] = [];
   let snap: SnapshotInfo | null = null;
+  let busy = false;
   try {
     snap = await withOpsLock(
       deps,
@@ -101,12 +102,13 @@ export async function verifyLatestRestore(deps: OpsDeps): Promise<{ ok: boolean;
       () => verifyLocked(deps, problems),
     );
   } catch (e) {
+    busy = e instanceof OpsBusyError && !e.unreachable;
     problems.push(e instanceof RestoreError || e instanceof OpsBusyError ? e.message : `The restore test could not finish: ${firstLine(scrub(deps, e instanceof Error ? e.message : String(e)))}.`);
   }
   const ok = problems.length === 0;
   await recordRun(deps, 'restore-test', ok,
     ok && snap !== null ? `Restore test passed: backup ${snap.short} from ${ukDate(snap.time)} restored completely.` : problems.join(' '),
-    snap?.id);
+    snap?.id, { busy });
   return { ok, problems };
 }
 

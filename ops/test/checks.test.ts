@@ -81,3 +81,10 @@ test('ops check prints one line per check and fails if any check fails', async (
     .toEqual({ lines: ['✓ app', '✗ disk:/state: Disk space is low on /state: 0.2 GB free (5%).'], ok: false });
   expect(formatChecks([{ name: 'app', ok: true, detail: '' }]).ok).toBe(true);
 });
+
+test('a disk that does not answer is reported within the time limit, not waited on', async () => {
+  const started = Date.now();
+  const cs = byName(await monitorChecks({ cfg: loadOpsConfig(env), statfs: () => new Promise(() => undefined), diskTimeoutMs: 100 }));
+  expect(Date.now() - started).toBeLessThan(2000);
+  expect(cs['disk:/data/uploads']).toEqual({ name: 'disk:/data/uploads', ok: false, detail: 'The free disk space on /data/uploads could not be checked: the disk did not answer in time.' });
+});

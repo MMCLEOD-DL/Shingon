@@ -98,7 +98,9 @@ async function runs(db: Db, kind: 'backup' | 'restore-test'): Promise<{ latest: 
   const pick = async (okOnly: boolean): Promise<Run | null> => {
     const r = await db.execute<{ at: Date | string; ok: boolean; detail: string }>(okOnly
       ? sql`select at, ok, detail from ops_runs where kind = ${kind} and ok order by at desc, id desc limit 1`
-      : sql`select at, ok, detail from ops_runs where kind = ${kind} order by at desc, id desc limit 1`);
+      // A run that did not start because another held the ops lock is not a failure of its own: the staleness check
+      // catches a backup or restore test that never ran.
+      : sql`select at, ok, detail from ops_runs where kind = ${kind} and not busy order by at desc, id desc limit 1`);
     const row = r.rows[0];
     return row ? { at: new Date(row.at), ok: row.ok, detail: row.detail } : null;
   };
@@ -109,7 +111,8 @@ async function runs(db: Db, kind: 'backup' | 'restore-test'): Promise<{ latest: 
 async function backups(db: Db, now: Date): Promise<Check> {
   const { latest, lastOk } = await runs(db, 'backup');
   const problems: string[] = [];
-  // A failure after the last success (a lock wait that gave up counts) is a problem even while the last success is fresh.
+  // A real failure after the last success is a problem even while the last success is fresh. Lock-busy refusals are skipped
+  // (see runs), and a failure followed by a success no longer counts, because the latest run is then the success.
   if (latest !== null && !latest.ok) problems.push(`The last backup failed: ${latest.detail}`);
   if (lastOk === null) problems.push('No backup has succeeded yet.');
   else if (now.getTime() - lastOk.at.getTime() >= BACKUP_MAX_AGE_MS) {
@@ -157,4 +160,24 @@ export async function runReadinessChecks(deps: ReadinessDeps): Promise<Check[]> 
 export function readinessStatus(checks: Check[]): Readiness {
   if (checks.some((c) => c.name === 'database' && !c.ok)) return 'down';
   return checks.every((c) => c.ok) ? 'ok' : 'degraded';
+}
+
+/**
+ * Computes readiness at most once every `ttlMs`, and shares one computation among callers that arrive while it runs, so a
+ * flood of anonymous /readyz requests costs the database one round of checks per `ttlMs` at most. With `ttlMs` 0 only the
+ * in-flight computation is shared. `clock` is a millisecond counter (default: performance.now, which never jumps).
+ */
+export function readinessCache(compute: () => Promise<Check[]>, ttlMs: number, clock: () => number = () => performance.now()): () => Promise<Check[]> {
+  let cached: { at: number; checks: Check[] } | null = null;
+  let inflight: Promise<Check[]> | null = null;
+  return () => {
+    if (cached !== null && clock() - cached.at < ttlMs) return Promise.resolve(cached.checks);
+    if (inflight !== null) return inflight;
+    const run = compute().then((checks) => {
+      cached = { at: clock(), checks };
+      return checks;
+    }).finally(() => { inflight = null; });
+    inflight = run;
+    return run;
+  };
 }

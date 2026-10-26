@@ -11,12 +11,15 @@ export interface MonitorCheckDeps {
   statfs?: (p: string) => Promise<{ bsize: number; blocks: number; bavail: number }>;
   /** cloudflared's readiness address. Ops reaches the tunnel over the small internal `tunnelmon` network (compose.yaml). */
   tunnelUrl?: string;
+  /** How long a disk may take to report its free space (default 5 s); a hung mount is reported, not waited on. */
+  diskTimeoutMs?: number;
 }
 
 export const APP_TIMEOUT_MS = 5000;
 const TUNNEL_TIMEOUT_MS = 5000;
 const MIN_FREE_BYTES = 2 * 1024 ** 3;
 const MIN_FREE_FRACTION = 0.1;
+export const DISK_TIMEOUT_MS = 5000;
 
 export const LOCAL_BACKUP_PROBLEM = 'Backups are being kept on this box only. This is a development setting and must be changed before real use.';
 const APP_DOWN = 'The app is not answering.';
@@ -51,15 +54,22 @@ async function appChecks(deps: MonitorCheckDeps): Promise<Check[]> {
 async function diskCheck(deps: MonitorCheckDeps, folder: string): Promise<Check> {
   const name = `disk:${folder}`;
   try {
-    const s = await (deps.statfs ?? fsStatfs)(folder);
+    const timeoutMs = deps.diskTimeoutMs ?? DISK_TIMEOUT_MS;
+    let timer: NodeJS.Timeout | undefined;
+    const s = await Promise.race([
+      (deps.statfs ?? fsStatfs)(folder),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => { reject(new Error('timeout')); }, timeoutMs); }),
+    ]).finally(() => { clearTimeout(timer); });
     const free = s.bavail * s.bsize;
     const fraction = s.blocks > 0 ? s.bavail / s.blocks : 0;
     if (free >= MIN_FREE_BYTES && fraction >= MIN_FREE_FRACTION) return { name, ok: true, detail: '' };
     const gb = free / 1e9;
     const shown = gb >= 10 ? String(Math.round(gb)) : (Math.round(gb * 10) / 10).toFixed(1);
     return { name, ok: false, detail: `Disk space is low on ${folder}: ${shown} GB free (${String(Math.round(fraction * 100))}%).` };
-  } catch {
-    return { name, ok: false, detail: `The free disk space on ${folder} could not be checked.` };
+  } catch (e) {
+    return { name, ok: false, detail: (e as Error).message === 'timeout'
+      ? `The free disk space on ${folder} could not be checked: the disk did not answer in time.`
+      : `The free disk space on ${folder} could not be checked.` };
   }
 }
 

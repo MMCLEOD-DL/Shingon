@@ -73,12 +73,13 @@ test('with Matrix and a webhook both set, both get every alert, in production to
   });
 });
 
-test('allChannels fails only when every channel fails', async () => {
-  const sent: string[] = [];
-  const ok = { send: async (t: string) => { sent.push(t); } };
-  const bad = { send: () => Promise.reject(new Error('Matrix refused the alert (HTTP 500).')) };
-  await allChannels([bad, ok]).send('one');
+test('allChannels fails only when every channel fails, and logs a channel that failed while another worked', async () => {
+  const sent: string[] = [], logged: string[] = [];
+  const ok = { name: 'the alert webhook', send: async (t: string) => { sent.push(t); } };
+  const bad = { name: 'Matrix', send: () => Promise.reject(new Error('Matrix refused the alert (HTTP 500).')) };
+  await allChannels([bad, ok], (l) => logged.push(l)).send('one');
   expect(sent).toEqual(['one']);
+  expect(logged).toEqual(['An alert went out, but not to Matrix: Matrix refused the alert (HTTP 500).']);
   await expect(allChannels([bad, bad]).send('two')).rejects.toThrow('No alert could be sent: Matrix refused the alert (HTTP 500).');
 });
 
@@ -110,4 +111,15 @@ test('alert text never carries a secret: tokens, passwords, webhook query secret
   const got: string[] = [];
   await redactingChannel({ send: async (t) => { got.push(t); } }, secrets).send('[Acme] Problem: the scheduled backup failed. syt_matrix_secret_55');
   expect(got).toEqual(['[Acme] Problem: the scheduled backup failed. [hidden]']);
+});
+
+test('only path segments that look like tokens are hidden, so ordinary words stay readable', async () => {
+  const { looksLikeToken } = await import('../src/alerts.js');
+  const base = { INSTANCE_MODE: 'demo', DATABASE_URL: 'postgres://app:db-pass-4242@db:5432/app', APP_INTERNAL_URL: 'http://app:3000', CLIENT_LABEL: 'Acme',
+    BACKUP_REPOSITORY: 'sftp:backup@nas:/srv', BACKUP_PASSWORD: 'backup-password-0123456789' };
+  const secrets = alertSecrets(loadOpsConfig({ ...base, ALERT_WEBHOOK_URL: 'https://n8n.example/webhook/database?token=tok-secret-77', HEARTBEAT_URL: 'https://kuma.example/api/push/Ab3dE6gH9j' }));
+  const out = redactAlert('The webhook/database flow, the api/push route and the notify step. tok-secret-77 Ab3dE6gH9j', secrets);
+  expect(out).toBe('The webhook/database flow, the api/push route and the notify step. [hidden] [hidden]');
+  for (const w of ['webhook', 'database', 'notify', 'api', 'push']) expect(looksLikeToken(w), w).toBe(false);
+  for (const w of ['Ab3dE6gH9j', '0123abcd', 'aVeryLongPlainWordX']) expect(looksLikeToken(w), w).toBe(true);
 });
