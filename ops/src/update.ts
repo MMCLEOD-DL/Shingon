@@ -1,6 +1,6 @@
 import { ROLLBACK_FAILED_MARK } from '@hf/server/db/schema';
 import type { AlertChannel } from './alerts.js';
-import { isQualified, notATag, TAG, type Compose } from './compose.js';
+import { isDockerHub, isQualified, notATag, TAG, type Compose } from './compose.js';
 import { leftoverMessage, type UpdateJournal, type UpdateRecord, type UpdateStep } from './journal.js';
 import { OpsBusyError } from './opsLock.js';
 
@@ -46,9 +46,11 @@ export interface UpdateDeps {
   log?: (line: string) => void;
 }
 
-export type UpdateOutcome = { outcome: 'updated' | 'cancelled' | 'rolled-back' | 'rollback-failed'; message: string };
+/** `urgent`: refused because an earlier update stopped part-way (the CLI exits 3, as for rollback-failed). */
+export type UpdateOutcome = { outcome: 'updated' | 'cancelled' | 'rolled-back' | 'rollback-failed'; message: string; urgent?: true };
 
 interface Result extends UpdateOutcome { alert: boolean; busy?: boolean; snapshotId?: string }
+
 
 export const DEFAULT_UPDATE_TIMEOUT_MS = 180_000;
 export const ANOTHER_UPDATE = 'Another update is already running.';
@@ -89,7 +91,7 @@ export async function runUpdate(deps: UpdateDeps, opts: { to: string }): Promise
     if (result.alert) {
       await deps.alert.send(result.message).catch((e: unknown) => { deps.log?.(`The alert could not be sent: ${sentence(e)}`); });
     }
-    return { outcome: result.outcome, message: result.message };
+    return { outcome: result.outcome, message: result.message, ...(result.urgent === true ? { urgent: true as const } : {}) };
   } finally {
     await deps.lock.release();
   }
@@ -105,10 +107,16 @@ async function decide(deps: UpdateDeps, to: string): Promise<Result & { clearJou
     left = (await deps.journal?.read()) ?? null;
   } catch { /* unreadable is handled by read() itself */ }
   if (left !== null) {
-    return { outcome: 'cancelled', message: leftoverMessage(client, left, deps.when ?? defaultWhen), alert: true, ...(left.snapshot !== undefined ? { snapshotId: left.snapshot } : {}), clearJournal: false };
+    return { outcome: 'cancelled', message: leftoverMessage(client, left, deps.when ?? defaultWhen), alert: true, urgent: true, ...(left.snapshot !== undefined ? { snapshotId: left.snapshot } : {}), clearJournal: false };
   }
-  const urgent = await deps.outstanding?.().catch(() => null);
-  if (urgent !== undefined && urgent !== null) {
+  let urgent: { snapshotId?: string } | null = null;
+  try {
+    urgent = (await deps.outstanding?.()) ?? null;
+  } catch {
+    // Fail closed: an earlier failed update cannot be ruled out.
+    return { outcome: 'cancelled', message: `[${client}] Update to ${to} cancelled: the ops log in the database could not be read to check for an earlier update that could not be undone, so nothing was changed. Check that the database is running, then try again.`, alert: true, clearJournal: false };
+  }
+  if (urgent !== null) {
     const id = urgent.snapshotId !== undefined ? ` (backup ${urgent.snapshotId.slice(0, 8)} holds the data from before it)` : '';
     return {
       outcome: 'cancelled',
@@ -150,6 +158,10 @@ async function updateLocked(deps: UpdateDeps, to: string): Promise<Result> {
   log(`Updating ${client} from ${from} to ${to}.`);
   const cancel = (why: string): Result => ({ outcome: 'cancelled', message: `[${client}] Update to ${to} cancelled: ${why} Nothing was changed.`, alert: true });
 
+  // Highland images never come from Docker Hub, whatever the name says.
+  if (isDockerHub(deps.images.app) || isDockerHub(deps.images.ops)) {
+    return cancel('APP_IMAGE or OPS_IMAGE in .env points at Docker Hub (docker.io), which Highland images never come from. Use your own registry (such as registry.example.com/highland/app) or load the images from a file with --image-file.');
+  }
   // 2. The new images: loaded from a file if one was given, then present (or pulled from a named registry).
   if (deps.loadImages !== undefined) {
     const loaded = await deps.loadImages().catch((e: unknown) => ({ ok: false, message: sentence(e) }));
@@ -176,12 +188,24 @@ async function updateLocked(deps: UpdateDeps, to: string): Promise<Result> {
   // The durable record, before anything changes. If it cannot be written, nothing is touched.
   const startedAt = new Date().toISOString();
   let snapshotId: string | undefined;
-  const mark = async (step: UpdateStep): Promise<void> => {
+  let markProblem: string | undefined;
+  /** Writes the step; false (with the reason in markProblem) when the record could not be written. */
+  const mark = async (step: UpdateStep): Promise<boolean> => {
     try {
       await deps.journal?.write({ from, to, startedAt, step, ...(snapshotId !== undefined ? { snapshot: snapshotId } : {}) });
+      return true;
     } catch (e) {
-      log(`Warning: the update record could not be written (${clause(e)}).`);
+      markProblem = clause(e);
+      log(`Warning: the update record could not be written (${markProblem}).`);
+      return false;
     }
+  };
+  /**
+   * After the first change (.env switched), a step that could not be written leaves an out-of-date record: it is marked
+   * 'uncertain' if at all possible, so a later reader never trusts a step that is no longer true.
+   */
+  const markAfterChange = async (step: UpdateStep): Promise<void> => {
+    if (!(await mark(step))) await mark('uncertain');
   };
   if (deps.journal !== undefined) {
     try {
@@ -215,8 +239,9 @@ async function updateLocked(deps: UpdateDeps, to: string): Promise<Result> {
     return cancelAndRestart(sentence(e));
   }
 
-  // 4. The pre-update backup. If it fails, nothing has changed.
-  await mark('backing-up');
+  // 4. The pre-update backup. If it fails, nothing has changed. Before any change, a record that cannot be kept up to date
+  //    stops the update (the old version is started again).
+  if (!(await mark('backing-up'))) return cancelAndRestart(`the update record could not be kept up to date (${markProblem ?? 'unknown problem'}).`);
   log('Taking a backup first.');
   try {
     snapshotId = (await deps.backup('pre-update')).snapshotId;
@@ -229,7 +254,7 @@ async function updateLocked(deps: UpdateDeps, to: string): Promise<Result> {
 
   /** After the backup: put the backup and the previous version back. */
   const rollback = async (reason: string): Promise<Result> => {
-    await mark('undoing');
+    await markAfterChange('undoing');
     log(`The update did not work (${reason}). Undoing it: putting back backup ${id} and version ${from}.`);
     const done = { database: false, uploads: false, tag: false };
     try {
@@ -243,8 +268,9 @@ async function updateLocked(deps: UpdateDeps, to: string): Promise<Result> {
       const r = await deps.waitReady(from, timeoutMs);
       if (!r.ok) throw new Error(`${from} did not become healthy again: ${r.detail}`);
     } catch (e) {
-      // Best effort, so the monitor watches the box while the operator responds.
-      await mark('finishing');
+      // The record keeps saying the undo failed (no grace), in case the URGENT row cannot be stored. Then, best effort,
+      // the monitor, so it watches the box while the operator responds.
+      await markAfterChange('undo-failed');
       try { await startOps(); } catch { /* ignored */ }
       const restored = done.database && done.uploads ? 'The database and the uploaded files were put back from it'
         : done.database ? 'The database was put back from it, but the uploaded files were not'
@@ -259,14 +285,14 @@ async function updateLocked(deps: UpdateDeps, to: string): Promise<Result> {
         snapshotId: snap,
       };
     }
-    await mark('finishing');
+    await markAfterChange('finishing');
     let message = `[${client}] Update to ${to} failed (${reason}), so it was undone automatically. The app is back on ${from} with its data exactly as it was before the update.`;
     try { await startOps(); } catch { message += MONITOR_NOTE; }
     return { outcome: 'rolled-back', message, alert: true, snapshotId: snap };
   };
 
   // 5. Switch the tag and migrate.
-  await mark('switching');
+  if (!(await mark('switching'))) return cancelAndRestart(`the update record could not be kept up to date (${markProblem ?? 'unknown problem'}). Backup ${id} was taken.`);
   log(`Switching to ${to} and updating the database.`);
   try {
     await compose.writeTag(to);
@@ -274,13 +300,13 @@ async function updateLocked(deps: UpdateDeps, to: string): Promise<Result> {
     // The rename is atomic: the settings still name the old version and the database is untouched.
     return cancelAndRestart(sentence(e));
   }
-  await mark('migrating');
+  await markAfterChange('migrating');
   let migrated = false;
   try { migrated = (await compose.runOnce('migrate')).ok; } catch { /* counted as failed */ }
   if (!migrated) return rollback('the database update failed');
 
   // 6. Start and wait for health: judged by the app's own version and readiness, never by the front door.
-  await mark('starting');
+  await markAfterChange('starting');
   log(`Starting ${to}.`);
   try {
     await compose.up('app');
@@ -297,7 +323,7 @@ async function updateLocked(deps: UpdateDeps, to: string): Promise<Result> {
   if (!ready.ok) return rollback(ready.detail);
 
   // 7. The monitor back, then the front door (a settings mismatch there is a warning, not a failed update).
-  await mark('finishing');
+  await markAfterChange('finishing');
   let message = `[${client}] Updated from ${from} to ${to}. A backup (${id}) was taken first.`;
   try { await startOps(); } catch { message += MONITOR_NOTE; }
   if (deps.frontDoor !== undefined) {

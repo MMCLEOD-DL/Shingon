@@ -479,3 +479,74 @@ test('mark-recovered: when healthy, records an ok update (which clears the alert
   expect((await markRecovered(s.deps)).ok).toBe(false);
   expect(s.j.current()).toEqual(leftRec);   // nothing cleared when the ok record could not be stored
 });
+
+// ── Fix round 2 ───────────────────────────────────────────────────────────────────────────────────────────────────
+
+test('N2: a failed undo leaves the record at "undo-failed" (not "finishing") before the monitor starts', async () => {
+  const f = fakes({ migrate: false, restoreThrows: true });
+  const j = memJournal();
+  f.deps.journal = j;
+  let stepWhenOpsStarted = '';
+  const up = f.deps.compose.up.bind(f.deps.compose);
+  f.deps.compose = { ...f.deps.compose, up: async (s) => { if (s === 'ops') stepWhenOpsStarted = j.current()?.step ?? 'none'; await up(s); } };
+  f.deps.record = async () => false;   // the URGENT row cannot be stored
+  expect((await runUpdate(f.deps, { to: '1.1.0' })).outcome).toBe('rollback-failed');
+  expect(stepWhenOpsStarted).toBe('undo-failed');
+  expect(j.current()?.step).toBe('undo-failed');   // kept, and always treated as left behind
+});
+
+function flakyJournal(failSteps: string[]) {
+  const j = memJournal();
+  const write = j.write.bind(j);
+  j.write = async (r) => { if (failSteps.includes(r.step)) throw new Error('the disk is full'); await write(r); };
+  return j;
+}
+
+test('N5: the record cannot be updated before any change: the update stops and the old version is started again', async () => {
+  const f = fakes();
+  f.deps.journal = flakyJournal(['backing-up']);
+  const r = await runUpdate(f.deps, { to: '1.1.0' });
+  expect(r.message).toBe('[Acme] Update to 1.1.0 cancelled: the update record could not be kept up to date (the disk is full). Nothing was changed; the app is running 1.0.0 again.');
+  expect(f.log).not.toContain('backup');
+  const g = fakes();
+  g.deps.journal = flakyJournal(['switching']);
+  const r2 = await runUpdate(g.deps, { to: '1.1.0' });
+  expect(r2.message).toBe('[Acme] Update to 1.1.0 cancelled: the update record could not be kept up to date (the disk is full). Backup abcdef12 was taken. Nothing was changed; the app is running 1.0.0 again.');
+  expect(g.log).not.toContain('tag 1.1.0');
+  expect(g.tag()).toBe('1.0.0');
+});
+
+test('N5: after the first change, a step that cannot be written is replaced by "uncertain"', async () => {
+  const f = fakes({ readyNew: false, restoreThrows: true });
+  const j = flakyJournal(['starting']);
+  f.deps.journal = j;
+  f.deps.record = async () => false;
+  await runUpdate(f.deps, { to: '1.1.0' });
+  expect(j.steps).toEqual(['stopping', 'backing-up', 'switching@abcdef12', 'migrating@abcdef12', 'uncertain@abcdef12', 'undoing@abcdef12', 'undo-failed@abcdef12']);
+});
+
+test('N4: image names that point at Docker Hub are refused plainly before anything happens', async () => {
+  for (const app of ['docker.io/highland/app', 'Index.Docker.IO/highland/app', 'registry-1.docker.io/highland/app']) {
+    const f = fakes();
+    f.deps.images = { app, ops: 'registry.example.com/highland/ops' };
+    const r = await runUpdate(f.deps, { to: '1.1.0' });
+    expect(r.message).toBe('[Acme] Update to 1.1.0 cancelled: APP_IMAGE or OPS_IMAGE in .env points at Docker Hub (docker.io), which Highland images never come from. Use your own registry (such as registry.example.com/highland/app) or load the images from a file with --image-file. Nothing was changed.');
+    expect(f.log).toEqual(['unlock']);
+  }
+});
+
+test('N6: if the ops log cannot be read to check for an earlier failed update, the update is refused (fail closed)', async () => {
+  const f = fakes();
+  f.deps.outstanding = async () => { throw new Error('connection refused'); };
+  const r = await runUpdate(f.deps, { to: '1.1.0' });
+  expect(r).toEqual({ outcome: 'cancelled', message: '[Acme] Update to 1.1.0 cancelled: the ops log in the database could not be read to check for an earlier update that could not be undone, so nothing was changed. Check that the database is running, then try again.' });
+  expect(f.log).toEqual(['unlock']);
+});
+
+test('item 8: a leftover-record refusal is flagged urgent (the CLI exits 3); other refusals are not', async () => {
+  const f = fakes();
+  f.deps.journal = memJournal({ from: '1.0.0', to: '1.1.0', startedAt: '2026-10-26T20:00:00Z', updatedAt: '2026-10-26T20:00:00Z', step: 'migrating', pid: 1, host: 'x' });
+  expect((await runUpdate(f.deps, { to: '1.1.0' })).urgent).toBe(true);
+  const g = fakes({ images: false });
+  expect((await runUpdate(g.deps, { to: '1.1.0' })).urgent).toBeUndefined();
+});

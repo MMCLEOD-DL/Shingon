@@ -8,14 +8,14 @@ import { realIo, runInit, USAGE } from './init-cli.js';
 import { checkEdgePair, loadOpsConfig, OpsConfigError, type OpsConfig } from './config.js';
 import { BackupError, runBackup, firstLine } from './backup.js';
 import { RestoreError, restoreDataFrom, restoreLive, ukDate, verifyLatestRestore } from './restore.js';
-import { createOpsDeps, runDaemon } from './daemon.js';
+import { createOpsDeps, manualBackup, runDaemon } from './daemon.js';
 import { execRunner, redact } from './runner.js';
 import { formatChecks, monitorChecks } from './checks.js';
 import { alertSecrets, channelFromConfig, redactAlert, redactingChannel } from './alerts.js';
 import { dockerCompose, imageFileInBundle, loadImageFile, readEnvValue } from './compose.js';
 import { fileJournal, UPDATE_RECORD } from './journal.js';
-import { fileLock, pidAlive, type LockHolder } from './lock.js';
-import { withOpsLock } from './opsLock.js';
+import { fileLock, holderFromInspect, pidAlive, type LockHolder } from './lock.js';
+import { opsLockHeld, withOpsLock } from './opsLock.js';
 import { outstandingUpdate, recordRun } from './runs.js';
 import { frontDoorCheck, httpWaitReady, markRecovered, runUpdate } from './update.js';
 
@@ -119,8 +119,7 @@ async function updateCli(rest: string[]): Promise<number> {
     // The lock names its holder (this container); it is taken over only when that container is no longer running.
     const isAlive = async (h: LockHolder): Promise<boolean> => {
       if (h.host === hostname()) return pidAlive(h.pid);
-      const r = await execRunner.run('docker', ['inspect', '--format', '{{.State.Running}}', h.host], { env: dockerEnv, timeoutMs: 60e3 });
-      return r.code === 0 && r.stdout.trim() === 'true';
+      return holderFromInspect(await execRunner.run('docker', ['inspect', '--format', '{{.State.Running}}', h.host], { env: dockerEnv, timeoutMs: 60e3 }));
     };
     const lock = fileLock(path.join(stateDir, 'update.lock'), () => new Date(), { isAlive });
     const journal = fileJournal(path.join(stateDir, UPDATE_RECORD), isRoot ? { owner: { uid: 1000, gid: 1000 } } : {});
@@ -158,7 +157,7 @@ async function updateCli(rest: string[]): Promise<number> {
         when: ukDate,
         log: say,
       }, { to });
-      return EXIT[outcome.outcome];
+      return outcome.urgent === true ? 3 : EXIT[outcome.outcome];
     } finally {
       await handOver();
     }
@@ -170,11 +169,18 @@ async function main(argv: string[]): Promise<number> {
   switch (command) {
     case 'init':
       return runInit(rest, realIo);
-    case 'backup':
-      if (rest.length > 0) { complain(`backup takes no options.\n\n${USAGE}`); return 2; }
+    case 'backup': {
+      const force = rest.length === 1 && rest[0] === '--force';
+      if (rest.length > 0 && !force) { complain(`backup takes only --force.\n\n${USAGE}`); return 2; }
       // runBackup logs and records its own outcome; only the exit code is added here.
       // Waits up to 2 minutes for a running backup, restore test or restore, then refuses in plain English.
-      return withDeps(async (deps) => { await runBackup(deps, 'manual', { lockWaitMs: MANUAL_BACKUP_LOCK_WAIT }); return 0; });
+      // While backups are paused (a failed update's backup must stay "latest"), it refuses unless --force.
+      return withDeps(async (deps) => {
+        const r = await manualBackup(deps, { force, lockWaitMs: MANUAL_BACKUP_LOCK_WAIT });
+        if (!r.ok && r.message !== undefined) complain(r.message);
+        return r.ok ? 0 : 1;
+      });
+    }
     case 'restore-test':
       if (rest.length > 0) { complain(`restore-test takes no options.\n\n${USAGE}`); return 2; }
       return withDeps(async (deps) => ((await verifyLatestRestore(deps)).ok ? 0 : 1));
@@ -203,7 +209,7 @@ async function main(argv: string[]): Promise<number> {
       const cfg = config();
       if (cfg === undefined) return 2;
       const secrets = alertSecrets(cfg);
-      const { lines, ok } = formatChecks(await monitorChecks({ cfg }));
+      const { lines, ok } = formatChecks(await monitorChecks({ cfg, opsLockHeld: () => opsLockHeld({ cfg }) }));
       for (const l of lines) say(redactAlert(l, secrets));
       return ok ? 0 : 1;
     }

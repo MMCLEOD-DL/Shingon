@@ -40,3 +40,28 @@ test('a record that cannot be written gives a plain reason, never a code or a pa
   const j = fileJournal('/nonexistent-folder-hf/update-in-progress.json');
   await expect(j.write({ from: 'a', to: 'b', startedAt: '2026-10-26T20:00:00Z', step: 'stopping' })).rejects.toThrow(/^the file or folder does not exist$/);
 });
+
+test('N1: a record is not left behind while its update still holds the ops lock, nor fresh at the start or end; a failed undo always is', () => {
+  const base: UpdateRecord = { from: 'a', to: 'b', startedAt: '2026-10-26T20:00:00Z', updatedAt: '2026-10-26T20:00:00Z', step: 'migrating', pid: 1, host: 'h' };
+  const soon = new Date('2026-10-26T20:01:00Z');
+  const late = new Date('2026-10-26T20:30:00Z');
+  expect(isLeftover(base, soon, true)).toBe(false);                       // a running update, any step
+  expect(isLeftover(base, late, true)).toBe(false);
+  expect(isLeftover(base, soon, false)).toBe(true);                       // nobody holds the lock: left behind
+  expect(isLeftover({ ...base, step: 'stopping' }, soon)).toBe(false);    // the seconds before the monitor is stopped
+  expect(isLeftover({ ...base, step: 'stopping' }, late)).toBe(true);
+  expect(isLeftover({ ...base, step: 'undo-failed' }, soon, true)).toBe(true);   // no grace, holder or not
+});
+
+test('N5: the leftover text never claims "no backup" once the backup step had started; uncertain steps say so', async () => {
+  const { leftoverMessage } = await import('../src/journal.js');
+  const r: UpdateRecord = { from: '0.1.0', to: '0.1.1', startedAt: '2026-10-26T20:00:00Z', updatedAt: '2026-10-26T20:00:00Z', step: 'backing-up', pid: 1, host: 'h' };
+  const m = leftoverMessage('Acme', r, () => 'then');
+  expect(m).not.toContain('No backup had been taken yet');
+  expect(m).toContain('A backup may or may not have been taken');
+  expect(leftoverMessage('Acme', { ...r, step: 'stopping' }, () => 'then')).toContain('No backup had been taken yet.');
+  const u = leftoverMessage('Acme', { ...r, step: 'uncertain', snapshot: 'abcdef1234' }, () => 'then');
+  expect(u).toContain('a step after the backup that is not known exactly');
+  expect(u).toContain('Backup abcdef12 holds the data from before the update.');
+  expect(leftoverMessage('Acme', { ...r, step: 'undo-failed', snapshot: 'abcdef1234' }, () => 'then')).toContain('the automatic undo failed');
+});

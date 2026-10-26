@@ -34,7 +34,16 @@ export function isQualified(image: string): boolean {
   const slash = image.indexOf('/');
   if (slash < 0) return false;
   const first = image.slice(0, slash);
+  if (isDockerHub(image)) return false;   // a Docker Hub host spelt out is still Docker Hub
   return first.includes('.') || first.includes(':') || first === 'localhost';
+}
+
+const DOCKER_HUB = new Set(['docker.io', 'index.docker.io', 'registry-1.docker.io']);
+/** True when an image name spells out a Docker Hub host (any case, with or without a port). Highland images never come from there. */
+export function isDockerHub(image: string): boolean {
+  const slash = image.indexOf('/');
+  if (slash < 0) return false;
+  return DOCKER_HUB.has(image.slice(0, slash).toLowerCase().replace(/:\d+$/, ''));
 }
 
 /**

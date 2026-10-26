@@ -2,7 +2,7 @@ import { open, readFile, rm, stat } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { plainFsError } from './durable.js';
 
-/** A lock file older than this is replaced even if its holder cannot be checked. Generous: an update with a large backup takes hours. */
+/** A lock file whose holder cannot be read is replaced after this. Generous: an update with a large backup takes hours. */
 export const STALE_LOCK_MS = 4 * 3600e3;
 
 /** Who holds a lock, as written into the lock file. */
@@ -23,14 +23,16 @@ export function fileLock(
   const stale = async (): Promise<boolean> => {
     const st = await stat(path).catch(() => null);
     if (st === null) return true;   // gone meanwhile
-    if (now().getTime() - st.mtime.getTime() > maxAge) return true;
-    if (opts.isAlive === undefined) return false;
+    const old = now().getTime() - st.mtime.getTime() > maxAge;
     let holder: LockHolder | undefined;
     try {
       const h = JSON.parse(await readFile(path, 'utf8')) as Partial<LockHolder>;
       if (typeof h.pid === 'number' && typeof h.host === 'string') holder = { pid: h.pid, host: h.host, at: h.at ?? '' };
-    } catch { /* unreadable: cannot prove the holder is gone */ }
-    return holder !== undefined && !(await opts.isAlive(holder).catch(() => true));
+    } catch { /* unreadable */ }
+    // The age limit applies only when the holder cannot be read (or cannot be checked at all): a readable holder that is
+    // still running keeps its lock however long its update takes. Any doubt about the holder keeps the lock.
+    if (holder === undefined || opts.isAlive === undefined) return old;
+    return !(await opts.isAlive(holder).catch(() => true));
   };
   return {
     async acquire() {
@@ -69,4 +71,14 @@ export function pidAlive(pid: number): boolean {
   } catch (e) {
     return (e as NodeJS.ErrnoException).code === 'EPERM';
   }
+}
+
+/**
+ * Reads `docker inspect` of a lock holder's container: gone only when Docker says there is no such container (or it exists
+ * but has stopped). Any other error or a time-out counts as alive, so the lock is kept.
+ */
+export function holderFromInspect(r: { code: number; stdout: string; stderr: string; timedOut?: boolean }): boolean {
+  if (r.timedOut === true) return true;
+  if (r.code === 0) return r.stdout.trim() !== 'false';
+  return !/no such (object|container)/i.test(r.stderr);
 }

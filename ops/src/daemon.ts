@@ -8,7 +8,7 @@ import type { Db } from '@hf/server/db';
 import { type OpsConfig } from './config.js';
 import { runBackup, LOCAL_WARNING, BackupError, firstLine } from './backup.js';
 import { verifyLatestRestore } from './restore.js';
-import { withOpsLock, OpsBusyError } from './opsLock.js';
+import { withOpsLock, OpsBusyError, opsLockHeld } from './opsLock.js';
 import { connect, pgEnv } from './pg.js';
 import { outstandingUpdate, recordRun, scrub, type OpsDeps } from './runs.js';
 import { execRunner } from './runner.js';
@@ -53,14 +53,32 @@ const pauseText = (snapshot?: string): string =>
  */
 export async function backupPause(deps: OpsDeps): Promise<string | null> {
   const rec = await readRecord(path.join(path.dirname(deps.cfg.workDir), UPDATE_RECORD)).catch(() => null);
-  if (rec !== null && isLeftover(rec, deps.now())) return pauseText(rec.snapshot);
+  if (rec !== null) {
+    // A running update holds the ops lock: then the backup simply waits for it. An error asking counts as "not running".
+    const alive = await opsLockHeld(deps).catch(() => false);
+    if (isLeftover(rec, deps.now(), alive)) return pauseText(rec.snapshot);
+  }
   let urgent: Awaited<ReturnType<typeof outstandingUpdate>>;
   try {
     urgent = await outstandingUpdate(deps.db);
   } catch {
-    return null;   // the database is not answering: the backup itself will fail and say so, before any prune
+    // Fail closed: without the ops log there is no knowing whether a failed update's backup must be kept.
+    return 'Backups are paused for now because the ops log in the database could not be read to check for an update that could not be undone (is the database running?). Nothing is backed up or tidied away until it can be read.';
   }
   return urgent !== null ? pauseText(urgent.snapshotId) : null;
+}
+
+/**
+ * `ops backup`: refused while backups are paused, unless forced, because its snapshot would become "latest" in place of
+ * the backup a failed update's alert names (which stays safe either way: manual backups never prune).
+ */
+export async function manualBackup(deps: OpsDeps, opts: { force: boolean; lockWaitMs: number }): Promise<{ ok: boolean; message?: string }> {
+  const paused = await backupPause(deps);
+  if (paused !== null && !opts.force) {
+    return { ok: false, message: `${paused} A manual backup now would become "latest" in place of the backup the alert names, so it was not taken. To take one anyway, run: docker compose run --rm ops backup --force` };
+  }
+  await runBackup(deps, 'manual', { lockWaitMs: opts.lockWaitMs });
+  return { ok: true };
 }
 
 /** The scheduled backup: skipped (recorded as busy, alerted) while backups are paused; otherwise the usual backup and prune. */
@@ -139,7 +157,7 @@ export function buildMonitor(deps: OpsDeps): { channel: AlertChannel; monitor: M
   const secrets = alertSecrets(cfg);
   const channel = redactingChannel(channelFromConfig(cfg, deps.log), secrets);
   const monitor = new Monitor({
-    checks: async () => (await monitorChecks(deps)).map((c) => ({ ...c, detail: redactAlert(c.detail, secrets) })),
+    checks: async () => (await monitorChecks({ ...deps, opsLockHeld: () => opsLockHeld(deps) })).map((c) => ({ ...c, detail: redactAlert(c.detail, secrets) })),
     channel,
     client: cfg.client,
     ...(cfg.heartbeatUrl !== undefined ? { heartbeatUrl: cfg.heartbeatUrl } : {}),
@@ -165,6 +183,19 @@ export async function sweepLeftovers(deps: OpsDeps, maxAgeMs = 3600e3): Promise<
   const cutoff = deps.now().getTime() - maxAgeMs;
   try {
     await withOpsLock(deps, { waitMs: 0, busyMessage: 'busy' }, async () => {
+      // A temp file of an update record whose write was cut short (Task 20).
+      const stateDir = path.dirname(deps.cfg.workDir);
+      let stateEntries: string[] = [];
+      try { stateEntries = await readdir(stateDir); } catch { /* no state folder yet */ }
+      for (const name of stateEntries) {
+        if (!/^\.update-in-progress\.json\.tmp-/.test(name)) continue;
+        const full = path.join(stateDir, name);
+        const age = (await stat(full).catch(() => null))?.mtime.getTime() ?? Infinity;
+        if (age < cutoff) {
+          await rm(full, { force: true });
+          removed.push(`file ${name}`);
+        }
+      }
       let entries: string[] = [];
       try { entries = await readdir(deps.cfg.workDir); } catch { /* no work folder yet */ }
       for (const name of entries) {
@@ -220,7 +251,7 @@ export async function runDaemon(deps: OpsDeps, close: () => Promise<void>): Prom
   if (cfg.backup.allowLocal) deps.log(`BACKUP_ALLOW_LOCAL is true. ${LOCAL_WARNING}`);
   for (const w of cfg.warnings) deps.log(`Warning: ${w}`);
   const left = await readRecord(path.join(path.dirname(cfg.workDir), UPDATE_RECORD)).catch(() => null);
-  if (left !== null && isLeftover(left, deps.now())) {
+  if (left !== null && isLeftover(left, deps.now(), await opsLockHeld(deps).catch(() => false))) {
     deps.log(`Warning: an update from ${left.from} to ${left.to} stopped part-way (step: ${left.step}). Backups are paused and the health check raises a critical alert until it is sorted out.`);
   }
   const { channel, monitor } = buildMonitor(deps);

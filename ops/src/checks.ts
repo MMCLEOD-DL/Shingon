@@ -15,6 +15,8 @@ export interface MonitorCheckDeps {
   /** How long a disk may take to report its free space (default 5 s); a hung mount is reported, not waited on. */
   diskTimeoutMs?: number;
   now?: () => Date;
+  /** Whether a running update (or another ops run) holds the ops lock; an error counts as "no", so a leftover is reported. */
+  opsLockHeld?: () => Promise<boolean>;
 }
 
 const ukTime = (d: Date): string => new Intl.DateTimeFormat('en-GB', { dateStyle: 'long', timeStyle: 'short', timeZone: 'Europe/London' }).format(d);
@@ -22,7 +24,9 @@ const ukTime = (d: Date): string => new Intl.DateTimeFormat('en-GB', { dateStyle
 /** An update that stopped part-way (its record is still in /state): critical, alerted on first sighting (Task 20). */
 async function updateRecordCheck(deps: MonitorCheckDeps): Promise<Check> {
   const r = await readRecord(path.join(path.dirname(deps.cfg.workDir), UPDATE_RECORD)).catch(() => null);
-  if (r === null || !isLeftover(r, (deps.now ?? (() => new Date()))())) return { name: 'update-record', ok: true, detail: '' };
+  if (r === null) return { name: 'update-record', ok: true, detail: '' };
+  const alive = await (deps.opsLockHeld?.() ?? Promise.resolve(false)).catch(() => false);
+  if (!isLeftover(r, (deps.now ?? (() => new Date()))(), alive)) return { name: 'update-record', ok: true, detail: '' };
   return { name: 'update-record', ok: false, critical: true, detail: leftoverDetail(r, ukTime) };
 }
 

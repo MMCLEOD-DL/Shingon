@@ -108,6 +108,9 @@ test('an update record left in /state is a critical problem with plain recovery 
     expect(c.ok).toBe(false);
     expect(c.critical).toBe(true);
     expect(c.detail).toBe('The update to 0.1.6 (from 0.1.5, started 26 October 2026 at 20:00) stopped part-way while updating the database for 0.1.6 (the database may be partly updated, and .env names 0.1.6), and was never finished or undone. Backup c323c601 holds the data from before the update. No further update will run until this is sorted out. See the runbook, section "Recovering from a failed update"; when it is sorted out, run: docker compose run --rm updater update --mark-recovered');
+    // N1: while a running update holds the ops lock, the same record is not a problem; if the lock cannot be asked, it is.
+    expect(byName(await monitorChecks({ cfg, statfs: roomy, now: () => now, opsLockHeld: async () => true }))['update-record']!.ok).toBe(true);
+    expect(byName(await monitorChecks({ cfg, statfs: roomy, now: () => now, opsLockHeld: async () => { throw new Error('down'); } }))['update-record']!.ok).toBe(false);
     await writeFile(path.join(dir, 'state', 'update-in-progress.json'), '{ broken');
     expect(byName(await monitorChecks({ cfg, statfs: roomy, now: () => now }))['update-record']!.ok).toBe(false);   // unreadable is never "no record"
   } finally {

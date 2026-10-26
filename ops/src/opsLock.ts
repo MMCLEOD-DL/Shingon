@@ -86,3 +86,22 @@ export async function withOpsLock<T>(deps: Pick<OpsDeps, 'cfg'>, opts: { waitMs:
     await c.end().catch(() => undefined);
   }
 }
+
+/**
+ * Whether some session holds this deployment's ops lock right now (from pg_locks, without taking it). An update holds it
+ * from its first change to its outcome, and a crashed updater's session (and so its lock) ends with it: this is how the
+ * monitor and the backup pause tell a running update from one left behind. Throws when the database cannot be asked.
+ */
+export async function opsLockHeld(deps: Pick<OpsDeps, 'cfg'>): Promise<boolean> {
+  const key = lockKey(pgEnv(deps.cfg.databaseUrl).PGDATABASE);
+  const c = await connect(deps.cfg.databaseUrl, 'postgres', 'hf-ops-lock-check');
+  try {
+    const r = await c.query<{ n: number }>(
+      "select count(*)::int as n from pg_locks where locktype = 'advisory' and granted and classid = $1::oid and objid = $2::oid and objsubid = 2",
+      [CLASS_ID, key >>> 0],
+    );
+    return (r.rows[0]?.n ?? 0) > 0;
+  } finally {
+    await c.end().catch(() => undefined);
+  }
+}

@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { daemonJobs, onJobFailure, MONITOR_SCHEDULE, backupPause, scheduledBackupJob } from '../src/daemon.js';
+import { daemonJobs, onJobFailure, MONITOR_SCHEDULE, backupPause, scheduledBackupJob, manualBackup, sweepLeftovers } from '../src/daemon.js';
 import { Monitor } from '../src/monitor.js';
 import { withOpsLock } from '../src/opsLock.js';
 import { lastRun, type OpsDeps } from '../src/runs.js';
@@ -124,5 +124,65 @@ test('an update record left in /state pauses scheduled backups too', async () =>
     // A finishing update a moment ago is not a leftover: the ops lock already keeps the backup waiting for it.
     await writeFile(file, JSON.stringify({ from: '0.1.5', to: '0.1.6', startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), step: 'finishing', snapshot: 'abcdef12aaaa', pid: 1, host: 'x' }));
     expect(await backupPause(deps)).toBeNull();
+  });
+});
+
+test('N1: a record of an update that still holds the ops lock does not pause backups (the backup waits for the lock instead)', async () => {
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  const path = await import('node:path');
+  await withDeps({}, async (deps) => {
+    await mkdir(path.dirname(deps.cfg.workDir), { recursive: true });
+    await writeFile(path.join(path.dirname(deps.cfg.workDir), 'update-in-progress.json'), JSON.stringify({ from: '0.1.5', to: '0.1.6', startedAt: new Date().toISOString(), updatedAt: new Date(Date.now() - 3600e3).toISOString(), step: 'migrating', pid: 1, host: 'x' }));
+    expect(await backupPause(deps)).not.toBeNull();
+    const held = await holdLock(deps);
+    try {
+      expect(await backupPause(deps)).toBeNull();
+    } finally {
+      held.release();
+      await held.done;
+    }
+    expect(await backupPause(deps)).not.toBeNull();
+  });
+});
+
+test('N6: if the ops log cannot be read, scheduled backups pause (fail closed)', async () => {
+  await withDeps({}, async (deps) => {
+    const broken = { ...deps, db: { execute: () => Promise.reject(new Error('connection refused')) } as unknown as OpsDeps['db'] };
+    expect(await backupPause(broken)).toBe('Backups are paused for now because the ops log in the database could not be read to check for an update that could not be undone (is the database running?). Nothing is backed up or tidied away until it can be read.');
+  });
+});
+
+test('item 7: a manual backup while paused is refused unless forced', async () => {
+  await withDeps({}, async (deps, rec) => {
+    rec.respond(okBackup);
+    await deps.db.insert(opsRuns).values({ kind: 'update', ok: false, detail: '[Acme Test Ltd] URGENT: update to 0.1.6 failed (x) and the automatic undo also failed (y).', snapshotId: 'c323c601aaaabbbb' });
+    const r = await manualBackup(deps, { force: false, lockWaitMs: 0 });
+    expect(r.ok).toBe(false);
+    expect(r.message).toMatch(/^Backups are paused because an update could not be undone: backup c323c601 .* A manual backup now would become "latest" in place of the backup the alert names, so it was not taken\. To take one anyway, run: docker compose run --rm ops backup --force$/);
+    expect(rec.calls).toEqual([]);
+    expect(await manualBackup(deps, { force: true, lockWaitMs: 0 })).toEqual({ ok: true });
+    expect(rec.calls.some((c) => c.args[0] === 'backup')).toBe(true);
+    expect(rec.calls.some((c) => c.args[0] === 'forget')).toBe(false);   // a manual backup never prunes
+  });
+});
+
+test('item 9: the sweep removes update-record temp files older than an hour from /state, and keeps fresh ones and the record', async () => {
+  const { mkdir, writeFile, utimes, readdir } = await import('node:fs/promises');
+  const path = await import('node:path');
+  await withDeps({}, async (deps) => {
+    const state = path.dirname(deps.cfg.workDir);
+    await mkdir(deps.cfg.workDir, { recursive: true });
+    const old = path.join(state, '.update-in-progress.json.tmp-aaaa1111');
+    await writeFile(old, '{');
+    const twoHoursAgo = new Date(Date.now() - 2 * 3600e3);
+    await utimes(old, twoHoursAgo, twoHoursAgo);
+    await writeFile(path.join(state, '.update-in-progress.json.tmp-bbbb2222'), '{');
+    await writeFile(path.join(state, 'update-in-progress.json'), '{}');
+    const removed = await sweepLeftovers(deps);
+    expect(removed).toContain('file .update-in-progress.json.tmp-aaaa1111');
+    const left = await readdir(state);
+    expect(left).toContain('.update-in-progress.json.tmp-bbbb2222');
+    expect(left).toContain('update-in-progress.json');
+    expect(left).not.toContain('.update-in-progress.json.tmp-aaaa1111');
   });
 });

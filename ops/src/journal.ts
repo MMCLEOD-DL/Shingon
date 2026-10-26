@@ -4,7 +4,7 @@ import { ROLLBACK_FAILED_MARK } from '@hf/server/db/schema';
 import { durableWrite, plainFsError, realFs, type DurableFs } from './durable.js';
 
 /** Where an update had got to. Written before each step, so a crash leaves the step it was in. */
-export type UpdateStep = 'stopping' | 'backing-up' | 'switching' | 'migrating' | 'starting' | 'undoing' | 'finishing';
+export type UpdateStep = 'stopping' | 'backing-up' | 'switching' | 'migrating' | 'starting' | 'undoing' | 'undo-failed' | 'finishing' | 'uncertain';
 
 export interface UpdateRecord {
   from: string;
@@ -35,13 +35,18 @@ export function stepText(r: Pick<UpdateRecord, 'step' | 'from' | 'to'>): string 
     case 'migrating': return `updating the database for ${r.to} (the database may be partly updated, and .env names ${r.to})`;
     case 'starting': return `starting ${r.to} and checking its health (the database was updated, and .env names ${r.to})`;
     case 'undoing': return `undoing the update (putting the backup and ${r.from} back), so the database, the uploads and .env may each be either version`;
+    case 'undo-failed': return `undoing a failed update: the automatic undo failed, so the database, the uploads and .env may each be either ${r.from} or ${r.to}`;
     case 'finishing': return 'finishing (starting the monitor and recording the outcome)';
+    case 'uncertain': return `a step after the backup that is not known exactly, because the update record could not be kept up to date (the database, the uploads and .env may each be either ${r.from} or ${r.to})`;
   }
 }
 
 /** The body shared by the URGENT alert and the monitor's check: "<to> (from <from>, started …) stopped part-way while …". */
 function leftoverBody(r: UpdateRecord, when: (d: Date) => string): string {
-  const backup = r.snapshot !== undefined ? ` Backup ${r.snapshot.slice(0, 8)} holds the data from before the update.` : ' No backup had been taken yet.';
+  const backup = r.snapshot !== undefined ? ` Backup ${r.snapshot.slice(0, 8)} holds the data from before the update.`
+    : r.step === 'stopping' ? ' No backup had been taken yet.'
+      // The backup may have finished just before the stop: never claim there is none.
+      : ' A backup may or may not have been taken: the newest pre-update backup (restic snapshots --tag pre-update) holds the data from before the update if it was.';
   return `${r.to} (from ${r.from}, started ${when(new Date(r.startedAt))}) stopped part-way while ${stepText(r)}, and was never finished or undone.${backup} `
     + 'No further update will run until this is sorted out. See the runbook, section "Recovering from a failed update"; when it is sorted out, run: docker compose run --rm updater update --mark-recovered';
 }
@@ -56,10 +61,22 @@ export function leftoverDetail(r: UpdateRecord, when: (d: Date) => string): stri
   return `The update to ${leftoverBody(r, when)}`;
 }
 
-/** A record the monitor and the backup pause should treat as left behind: anything but the last few minutes of a finishing update. */
+/**
+ * How long a record at the very start ('stopping', before the monitor is stopped) or the very end ('finishing', after it is
+ * started again) of a routine update is not treated as left behind, even when the holder's liveness cannot be seen.
+ */
 export const FINISHING_GRACE_MS = 10 * 60e3;
-export function isLeftover(r: UpdateRecord, now: Date): boolean {
-  return r.step !== 'finishing' || now.getTime() - new Date(r.updatedAt).getTime() > FINISHING_GRACE_MS;
+
+/**
+ * Whether the monitor and the backup pause should treat a record as left behind. Not while its update is still running
+ * (`holderAlive`: the updater holds the ops lock for the whole update, and a crashed one loses it with its database session),
+ * nor within the grace at the start or end of an update. A failed undo is always left behind.
+ */
+export function isLeftover(r: UpdateRecord, now: Date, holderAlive = false): boolean {
+  if (r.step === 'undo-failed') return true;
+  if (holderAlive) return false;
+  const fresh = now.getTime() - new Date(r.updatedAt).getTime() <= FINISHING_GRACE_MS;
+  return !((r.step === 'finishing' || r.step === 'stopping') && fresh);
 }
 
 /** Parses a record file; anything unreadable counts as a record of an unknown update, never as "no record". */

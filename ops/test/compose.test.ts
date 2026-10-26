@@ -2,8 +2,8 @@ import { test, expect } from 'vitest';
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { dockerCompose, imageFileInBundle, isQualified, loadImageFile, readEnvValue } from '../src/compose.js';
-import { fileLock, type LockHolder } from '../src/lock.js';
+import { dockerCompose, imageFileInBundle, isDockerHub, isQualified, loadImageFile, readEnvValue } from '../src/compose.js';
+import { fileLock, holderFromInspect, type LockHolder } from '../src/lock.js';
 import { durableWrite, plainFsError, type DurableFs } from '../src/durable.js';
 import { fakeRunner } from './helpers.js';
 
@@ -194,6 +194,13 @@ test('fileLock takes over a fresh lock only when its holder is shown to be gone'
 test('isQualified: only names that say which registry they live on', () => {
   for (const q of ['registry.example.com/highland/app', 'localhost:5000/highland/app', '127.0.0.1:5000/highland/ops', 'localhost/highland/app', 'ghcr.io/acme/app']) expect(isQualified(q), q).toBe(true);
   for (const u of ['highland/app', 'highland/ops', 'app', 'acme/highland/app']) expect(isQualified(u), u).toBe(false);
+  // N4: Docker Hub spelt out is still Docker Hub.
+  for (const h of ['docker.io/highland/app', 'DOCKER.IO/highland/app', 'index.docker.io/highland/app', 'Registry-1.Docker.io/highland/app', 'docker.io:443/highland/app']) {
+    expect(isQualified(h), h).toBe(false);
+    expect(isDockerHub(h), h).toBe(true);
+  }
+  expect(isDockerHub('registry.example.com/highland/app')).toBe(false);
+  expect(isDockerHub('highland/app')).toBe(false);
 });
 
 test('unqualified images are never pulled (Docker Hub\'s "highland" belongs to someone else); qualified ones are', async () => {
@@ -280,4 +287,28 @@ test('plainFsError maps codes to words', () => {
   expect(plainFsError(Object.assign(new Error('x'), { code: 'EROFS' }))).toBe('the disk is read-only');
   expect(plainFsError(Object.assign(new Error('x'), { code: 'EWHATEVER' }))).toBe('an unexpected file-system problem');
   expect(plainFsError(new Error('x'))).toBe('an unexpected file-system problem');
+});
+
+test('N3: a readable holder that is alive keeps its lock however old; the age limit is only for an unreadable holder', async () => {
+  const dir = await tmp();
+  try {
+    const p = path.join(dir, 'update.lock');
+    await writeFile(p, JSON.stringify({ pid: 1, host: 'abc123', at: '2026-10-26T00:00:00Z' }));
+    const tenHoursAgo = new Date(Date.now() - 10 * 3600e3);
+    await utimes(p, tenHoursAgo, tenHoursAgo);
+    expect(await fileLock(p, undefined, { isAlive: async () => true }).acquire()).toBe(false);   // a long update still running
+    expect(await fileLock(p, undefined, { isAlive: async () => false }).acquire()).toBe(true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('N3: docker inspect: only "no such container/object" (or a stopped container) means gone; any other error or a time-out means alive', () => {
+  expect(holderFromInspect({ code: 1, stdout: '', stderr: 'Error: No such object: abc123' })).toBe(false);
+  expect(holderFromInspect({ code: 1, stdout: '', stderr: 'Error response from daemon: No such container: abc123' })).toBe(false);
+  expect(holderFromInspect({ code: 0, stdout: 'false\n', stderr: '' })).toBe(false);
+  expect(holderFromInspect({ code: 0, stdout: 'true\n', stderr: '' })).toBe(true);
+  expect(holderFromInspect({ code: 1, stdout: '', stderr: 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock' })).toBe(true);
+  expect(holderFromInspect({ code: 127, stdout: '', stderr: 'docker could not be started.' })).toBe(true);
+  expect(holderFromInspect({ code: 143, stdout: '', stderr: '', timedOut: true })).toBe(true);
 });
