@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { classifyLicence, licenceFindings, splitAccept, parseScancode, LEGAL } from '../src/council/licences.js';
@@ -98,6 +98,25 @@ test('LEGAL.collect: lockfile delta plus ScanCode on changed files only (never l
   ]);
   const accepted = await LEGAL.collect(await legalInput(repo, files, { councilTools: tools, councilAcceptLicences: ['GPL-3.0-only'] }));
   assert.equal(accepted[0].findings.length, 0);
+});
+
+test('LEGAL.collect: a committed symlink to a file outside the repo is never copied for ScanCode', async () => {
+  const outside = mkdtempSync(path.join(tmpdir(), 'cleg-out-'));
+  writeFileSync(path.join(outside, 'secret.txt'), 'GNU General Public License, outside the workspace\n');
+  const repo = await makeRepo();
+  symlinkSync(path.join(outside, 'secret.txt'), path.join(repo, 'link.js'));
+  await git(repo, ['add', '-A']);
+  await git(repo, ['commit', '-q', '-m', 'add a symlink']);
+  // The stub lists every file it was given: the symlink must not be among them.
+  const listAll = `const fs = require('fs'), path = require('path'); const root = args[args.length - 1];
+    const out = []; const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else out.push(path.relative(root, p)); } };
+    walk(root); fs.writeFileSync(args[args.indexOf('--json-pp') + 1], JSON.stringify({ files: out.map((p) => ({ path: p, type: 'file', detected_license_expression_spdx: 'GPL-3.0-only' })) }));`;
+  writeFileSync(path.join(repo, 'real.js'), 'ok\n');
+  const tools = councilStubs(mkdtempSync(path.join(tmpdir(), 'cleg-')), { scancode: listAll });
+  const runs = await LEGAL.collect(await legalInput(repo, ['link.js', 'real.js'], { councilTools: tools }));
+  assert.deepEqual(runs[1].findings.map((f) => f.file), ['real.js']);
+  const onlyLink = await LEGAL.collect(await legalInput(repo, ['link.js'], { councilTools: tools }));
+  assert.equal(onlyLink[1].status, 'skipped');
 });
 
 test('LEGAL.collect: a v1 lockfile has no licence data, so the licence check is skipped, not failed', async () => {

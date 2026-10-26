@@ -42,6 +42,12 @@ export function validateCouncilOptions(o) {
   if (!Array.isArray(o.councilAcceptLicences) || o.councilAcceptLicences.some((x) => typeof x !== 'string')) {
     throw new Error(`councilAcceptLicences must be a list of licence names (got ${shown(o.councilAcceptLicences)})`);
   }
+  if (!Number.isInteger(o.councilToolTimeoutMs) || o.councilToolTimeoutMs <= 0) {
+    throw new Error(`councilToolTimeoutMs must be a whole number of milliseconds above 0 (got ${shown(o.councilToolTimeoutMs)})`);
+  }
+  if (typeof o.councilSemgrepConfig !== 'string' || !o.councilSemgrepConfig.trim()) {
+    throw new Error(`councilSemgrepConfig must be a Semgrep rules pack name or a rules file path (got ${shown(o.councilSemgrepConfig)})`);
+  }
   const tools = o.councilTools;
   if (tools === null || typeof tools !== 'object' || Array.isArray(tools)
     || Object.values(tools).some((v) => v !== false && typeof v !== 'string')) {

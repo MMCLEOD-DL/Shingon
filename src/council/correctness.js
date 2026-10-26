@@ -7,6 +7,8 @@ import { TOOL_LABEL } from './tools.js';
 export const TEST_FILE = /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[cm]?[jt]sx?$|_test\.(go|py)$|(^|\/)test_[^/]*\.py$/;
 const DOC_FILE = /\.(md|txt|rst|adoc)$|(^|\/)docs?\//i;
 
+const howFailed = (tests) => (tests.code === -1 || tests.code === null || tests.code === undefined ? 'the test command timed out' : `exit code ${tests.code}`);
+
 export function testFindings(tests, baseTests = null) {
   if (!tests?.ran) {
     return [makeFinding({
@@ -19,14 +21,14 @@ export function testFindings(tests, baseTests = null) {
   if (baseTests?.ran && baseTests.passed === false) {
     return [makeFinding({
       member: 'correctness', tool: 'tests', grade: 'warning', locked: true, preExisting: true,
-      title: `The tests fail (exit code ${tests.code}), but they already failed before this change`,
-      detail: `They also failed on the starting commit, so Conductor cannot tell whether this change broke anything more. Read the output:\n${tests.output}`,
+      title: 'The tests fail, but they already failed before this change', // the exit code is in the detail
+      detail: `${howFailed(tests)}\nThey also failed on the starting commit, so Conductor cannot tell whether this change broke anything more. Read the output:\n${tests.output}`,
     })];
   }
   return [makeFinding({
     member: 'correctness', tool: 'tests', grade: 'blocking', locked: true,
     title: 'The tests fail', // stable key across rounds; the exit code is in the detail
-    detail: `${tests.code === -1 || tests.code === null || tests.code === undefined ? 'the test command timed out' : `exit code ${tests.code}`}\n${tests.output}`,
+    detail: `${howFailed(tests)}\n${tests.output}`,
   })];
 }
 

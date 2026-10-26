@@ -146,6 +146,11 @@ test('validateCouncilOptions explains bad settings in plain words; off means unc
   assert.throws(v({ councilAcceptLicences: 'GPL' }), /councilAcceptLicences must be a list of licence names/);
   assert.throws(v({ councilTools: { semgrep: 1 } }), /councilTools must map a tool name to a path or false/);
   assert.throws(v({ councilTools: { trivy: false } }), /councilTools: unknown tool "trivy" \(known: semgrep, gitleaks, npm-audit, scancode\)/);
+  assert.throws(v({ councilToolTimeoutMs: 0 }), /councilToolTimeoutMs must be a whole number of milliseconds above 0 \(got 0\)/);
+  assert.throws(v({ councilToolTimeoutMs: 1.5 }), /councilToolTimeoutMs must be a whole number/);
+  assert.throws(v({ councilToolTimeoutMs: '600000' }), /councilToolTimeoutMs must be a whole number/);
+  assert.throws(v({ councilSemgrepConfig: '' }), /councilSemgrepConfig must be a Semgrep rules pack name or a rules file path \(got ""\)/);
+  assert.throws(v({ councilSemgrepConfig: 5 }), /councilSemgrepConfig must be/);
   assert.doesNotThrow(() => validateCouncilOptions({ ...DEFAULT_OPTIONS, councilFixRounds: 99 }));
 });
 

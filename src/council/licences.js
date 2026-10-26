@@ -1,7 +1,7 @@
 // src/council/licences.js
 // Legal member: dependency licences from the npm lockfile (permissive-only rule, spec §5a) and
 // an optional ScanCode pass over the files this run changed (copied copyleft code).
-import { mkdtempSync, mkdirSync, copyFileSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, copyFileSync, rmSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { makeFinding } from './findings.js';
@@ -142,7 +142,8 @@ async function collectScancode(input) {
   for (const f of input.files ?? []) {
     if (SCAN_EXCLUDE.test(f)) continue;
     try {
-      const st = statSync(path.join(input.dir, f));
+      // lstat: a symlink (even to a file) is skipped, so nothing outside the workspace is copied.
+      const st = lstatSync(path.join(input.dir, f));
       if (st.isFile() && st.size <= MAX_SCAN_BYTES) candidates.push(f);
     } catch { /* deleted or unreadable */ }
     if (candidates.length >= MAX_SCAN_FILES) break;

@@ -26,8 +26,12 @@ test('tests that already failed at the starting commit: a locked warning, not a 
   const failing = { ran: true, passed: false, code: 1, output: 'not ok 1' };
   const [f] = testFindings(failing, { ran: true, passed: false, code: 1 });
   assert.deepEqual([f.grade, f.maxGrade, f.locked, f.preExisting], ['warning', 'warning', true, true]);
-  assert.equal(f.title, 'The tests fail (exit code 1), but they already failed before this change');
+  assert.equal(f.title, 'The tests fail, but they already failed before this change');
+  assert.match(f.detail, /^exit code 1\n/);
   assert.match(f.detail, /cannot tell whether this change broke anything more/);
+  const [timedOut] = testFindings({ ran: true, passed: false, code: -1, output: '' }, { ran: true, passed: false, code: 1 });
+  assert.equal(timedOut.title, 'The tests fail, but they already failed before this change');
+  assert.match(timedOut.detail, /^the test command timed out\n/);
   assert.equal(testFindings(failing, { ran: true, passed: true, code: 0 })[0].grade, 'blocking', 'green before, red now: blocks');
   assert.equal(testFindings(failing, null)[0].grade, 'blocking');
 });
