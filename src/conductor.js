@@ -348,10 +348,11 @@ async function drive(ctx) {
         }
         // Ruling 10: a possible secret was seen in a step's commit. Land one commit with exactly the approved
         // files, so a secret a fix step removed is not in the history land() fetches into the real repository.
-        if (state.council.secretSeen && state.council.squashedAt !== approvedSha && state.chunkShas.length > 1 && files.length) {
+        const commitsSince = async () => Number((await git(ws.dir, ['rev-list', '--count', `${ws.baseSha}..${approvedSha}`])).stdout.trim()) || 0;
+        if (state.council.secretSeen && state.council.squashedAt !== approvedSha && files.length && (await commitsSince()) > 1) {
           await holdAt(ws, log, approvedSha, 'council-squash-reset');   // drop anything the tests or tools left behind
           const treeOf = async (sha) => (await git(ws.dir, ['rev-parse', `${sha}^{tree}`])).stdout.trim();
-          const squashed = await ws.squashSince(ws.baseSha, `conductor: ${clip(state.request.split('\n')[0], 72)} (steps combined)`);
+          const squashed = await ws.squashSince(ws.baseSha, `conductor: ${clip(redact(state.request.split('\n')[0]), 72)} (steps combined)`);
           if (!squashed || (await treeOf(squashed)) !== (await treeOf(approvedSha))) {
             throw new Error('combining the steps into one commit did not keep the files the same');
           }

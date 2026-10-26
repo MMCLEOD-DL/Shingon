@@ -75,8 +75,10 @@ test('still blocking after the cap: the operator is asked in plain words; reject
   const repo = await makeRepo();
   const before = await refsOf(repo);
   const h = hooks();
-  const out = await runTask({ repoDir: repo, request: 'x', team: team({ local: writeApp(true) }), hooks: h, baseDir: base(), options: opts({ councilFixRounds: 1 }) });
+  const events = [];
+  const out = await runTask({ repoDir: repo, request: 'x', team: team({ local: writeApp(true) }), hooks: { ...h, onEvent: (e) => events.push(e) }, baseDir: base(), options: opts({ councilFixRounds: 1 }) });
   assert.equal(out.status, 'stopped');
+  assert.equal(types(events, 'council-fix').length, 1, 'exactly one fix round at cap 1');
   assert.equal(out.reason, 'You stopped the run because the council still found problems that must be fixed. Your repository is unchanged.');
   assert.equal(await refsOf(repo), before);
   const esc = h.calls.find((c) => c.name === 'escalate').arg;
@@ -85,8 +87,10 @@ test('still blocking after the cap: the operator is asked in plain words; reject
   assert.match(esc.message, /The concern: Security: Untrusted input reaches eval\(\)/);
 
   const ok = hooks({ escalate: async () => 'approve' });
-  const landed = await runTask({ repoDir: repo, request: 'y', team: team({ local: writeApp(true) }), hooks: ok, baseDir: base(), options: opts({ councilFixRounds: 0 }) });
+  const events0 = [];
+  const landed = await runTask({ repoDir: repo, request: 'y', team: team({ local: writeApp(true) }), hooks: { ...ok, onEvent: (e) => events0.push(e) }, baseDir: base(), options: opts({ councilFixRounds: 0 }) });
   assert.equal(landed.status, 'landed');
+  assert.equal(types(events0, 'council-fix').length, 0, 'no fix round at cap 0');
   const gate = ok.calls.find((c) => c.name === 'approveResult').arg;
   assert.equal(gate.council.overridden, true);
   assert.match(gate.summary, /Council report: NOT approved: 1 blocking problem remains, and you chose to continue/);
@@ -142,6 +146,53 @@ test('paused in the middle of round 2: resume finishes the round without redoing
   assert.match(h.calls.find((c) => c.name === 'approveResult').arg.summary, /Round 2 · checked by codex\nFixed during the review \(1\)/);
 });
 
+test('a fixer that never fixes, paused in round 2 at cap 1: resume goes to the council escalation, never a second fix (Review Focus 4)', async () => {
+  let councilCalls = 0;
+  const flaky = () => (++councilCalls === 3 ? { ok: false, failure: 'no-participant', error: 'no AI model is available for codex (codex: rate-limited)' } : keepAll());
+  const repo = await makeRepo();
+  const before = await refsOf(repo);
+  const events = [];
+  const onEvent = (e) => events.push(e);
+  const paused = await runTask({ repoDir: repo, request: 'x', team: team({ local: writeApp(true), council: flaky }), hooks: { ...hooks(), onEvent }, baseDir: base(), options: opts({ councilFixRounds: 1 }) });
+  assert.equal(paused.status, 'paused');
+  assert.equal(types(events, 'council-fix').length, 1);
+
+  const t = team({ local: writeApp(true) });
+  const h = hooks();   // escalate answers 'reject'
+  const out = await resume({ workspaceDir: paused.workspaceDir, repoDir: repo, team: t, hooks: { ...h, onEvent } });
+  assert.equal(out.status, 'stopped');
+  assert.equal(out.reason, 'You stopped the run because the council still found problems that must be fixed. Your repository is unchanged.');
+  assert.equal(h.calls.filter((c) => c.name === 'escalate').map((c) => c.arg.kind).join(), 'council');
+  assert.equal(t.local.calls.length, 0, 'no second fix step');
+  assert.equal(types(events, 'council-fix').length, 1, 'no second council-fix event');
+  assert.equal(await refsOf(repo), before);
+});
+
+test('a fixer that never fixes, paused during the queued fix step at cap 1: resume finishes it, then escalates (Review Focus 4)', async () => {
+  // The step reviewer has no model when the fix step is reviewed: the run pauses with the fix step queued.
+  let pausedOnce = false;
+  const reviewer = (task) => {
+    if (!pausedOnce && /Council fixes, round 1/.test(task) && !isCouncil(task)) { pausedOnce = true; return { ok: false, failure: 'no-participant', error: 'no AI model is available for codex (codex: rate-limited)' }; }
+    return isCouncil(task) ? keepAll() : approve();
+  };
+  const t1 = team({ local: writeApp(true) });
+  t1.reviewer = fakeParticipant({ name: 'codex', kind: 'codex', script: (role, task) => reviewer(task) });
+  const repo = await makeRepo();
+  const events = [];
+  const onEvent = (e) => events.push(e);
+  const paused = await runTask({ repoDir: repo, request: 'x', team: t1, hooks: { ...hooks(), onEvent }, baseDir: base(), options: opts({ councilFixRounds: 1 }) });
+  assert.equal(paused.status, 'paused', paused.reason);
+  assert.equal(types(events, 'council-fix').length, 1);
+
+  const t = team({ local: writeApp(true) });
+  const h = hooks();
+  const out = await resume({ workspaceDir: paused.workspaceDir, repoDir: repo, team: t, hooks: { ...h, onEvent } });
+  assert.equal(out.status, 'stopped');
+  assert.equal(h.calls.filter((c) => c.name === 'escalate').map((c) => c.arg.kind).join(), 'council');
+  assert.equal(t.local.calls.filter((c) => /Council fixes, round 2/.test(c.task)).length, 0, 'no second fix step');
+  assert.equal(types(events, 'council-fix').length, 1, 'no second council-fix event');
+});
+
 test('a secret removed by a fix step never reaches your repository\'s history (Review Focus 5, Ruling 10)', async () => {
   const KEY = 'AKIAZXCVBNMASDFGHJKL';
   const local = (r, task, c, o) => {
@@ -152,8 +203,21 @@ test('a secret removed by a fix step never reaches your repository\'s history (R
   const repo = await makeRepo();
   const h = hooks();
   const events = [];
-  const out = await runTask({ repoDir: repo, request: 'Add config', team: team({ local }), hooks: { ...h, onEvent: (e) => events.push(e) }, baseDir: base(), options: opts({}, { gitleaks: GITLEAKS_AKIA }) });
+  // A secret-looking env value placed in the request must never reach the landed commit message.
+  // (Mixed case, so the lower-cased branch slug never equals it and out.branch stays usable.)
+  const TOKEN = 'TokRequest9F8E7D6C5B4A';
+  const prev = process.env.CONDUCTOR_DRIVE_TEST_TOKEN;
+  process.env.CONDUCTOR_DRIVE_TEST_TOKEN = TOKEN;
+  let out;
+  try {
+    out = await runTask({ repoDir: repo, request: `Add config ${TOKEN}`, team: team({ local }), hooks: { ...h, onEvent: (e) => events.push(e) }, baseDir: base(), options: opts({}, { gitleaks: GITLEAKS_AKIA }) });
+  } finally {
+    if (prev === undefined) delete process.env.CONDUCTOR_DRIVE_TEST_TOKEN; else process.env.CONDUCTOR_DRIVE_TEST_TOKEN = prev;
+  }
   assert.equal(out.status, 'landed');
+  const message = (await git(repo, ['log', '--format=%B', `main..${out.branch}`])).stdout;
+  assert.match(message, /conductor: Add config \[redacted\] \(steps combined\)/);
+  assert.doesNotMatch(message, new RegExp(TOKEN));
   assert.equal(types(events, 'council-fix').length, 1);
   assert.equal(types(events, 'council-squash').length, 1);
   assert.equal((await git(repo, ['rev-list', '--count', `main..${out.branch}`])).stdout.trim(), '1', 'the two step commits were combined');
