@@ -18,7 +18,7 @@ export interface Config {
 
 export class ConfigError extends Error {
   constructor(public readonly problems: string[]) {
-    super(`The app cannot start because of ${String(problems.length)} settings problems:\n- ${problems.join('\n- ')}`);
+    super(`The app cannot start because of ${String(problems.length)} settings ${problems.length === 1 ? 'problem' : 'problems'}:\n- ${problems.join('\n- ')}`);
     this.name = 'ConfigError';
   }
 }
@@ -69,15 +69,23 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (rawOrigin === undefined) problems.push('APP_ORIGIN is missing.');
   else {
     let ok = false;
+    let hasUserinfo = false;
     try {
       const u = new URL(rawOrigin);
-      ok = (u.protocol === 'http:' || u.protocol === 'https:') && u.pathname === '/' && !u.search && !u.hash && !u.username
+      hasUserinfo = u.username !== '' || u.password !== '';
+      ok = (u.protocol === 'http:' || u.protocol === 'https:') && u.pathname === '/' && !u.search && !u.hash && !hasUserinfo
         && /^https?:\/\/[^/]+\/?$/.test(rawOrigin);
       if (ok) appOrigin = u.origin;
     } catch {
       ok = false;
     }
-    if (!ok) problems.push(`APP_ORIGIN must be a web address like https://app.example.co.uk (got "${rawOrigin}").`);
+    if (hasUserinfo) problems.push('APP_ORIGIN must not contain a username or password.');
+    else if (!ok) {
+      // A value containing "@" may hold a secret, so it is never repeated back.
+      problems.push(rawOrigin.includes('@')
+        ? 'APP_ORIGIN must be a web address like https://app.example.co.uk (the value is hidden here for safety).'
+        : `APP_ORIGIN must be a web address like https://app.example.co.uk (got "${rawOrigin}").`);
+    }
   }
 
   const port = int('PORT', 1, 65535, 3000, 'between 1 and 65535');

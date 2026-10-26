@@ -39,3 +39,21 @@ test('production refuses test-only mail transports and short health tokens', () 
     .toThrow(/EMAIL_TRANSPORT file is only for testing/);
   expect(() => loadConfig({ ...base, HEALTH_TOKEN: 'short' })).toThrow(/HEALTH_TOKEN must be at least 24 characters/);
 });
+
+test('a single problem is worded in the singular', () => {
+  expect(() => loadConfig({ ...base, PORT: '0' })).toThrow(/^The app cannot start because of 1 settings problem:/);
+});
+
+test('APP_ORIGIN with a username or password is refused and never echoed', () => {
+  for (const origin of ['https://admin:s3cret@app.example.co.uk', 'https://s3cret@app.example.co.uk', 'https//s3cret@x']) {
+    try {
+      loadConfig({ ...base, APP_ORIGIN: origin });
+      expect.unreachable();
+    } catch (e) {
+      expect(e).toBeInstanceOf(ConfigError);
+      expect((e as Error).message).not.toContain('s3cret');
+    }
+  }
+  expect(() => loadConfig({ ...base, APP_ORIGIN: 'https://u:p@app.example.co.uk' }))
+    .toThrow('APP_ORIGIN must not contain a username or password');
+});
