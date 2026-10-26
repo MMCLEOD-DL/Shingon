@@ -7,6 +7,7 @@ import type { Config } from './config.js';
 import type { Db } from './db/client.js';
 import { SESSION_COOKIE, loadSession, type Actor } from './auth/sessions.js';
 import { registerAuthRoutes } from './auth/routes.js';
+import { registerUserRoutes } from './users/routes.js';
 import { registerCsrf } from './http/csrf.js';
 import { HttpError } from './http/errors.js';
 import type { RouteAccess } from './http/route.js';
@@ -123,4 +124,5 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 /** Later tasks append their route modules here. */
 function registerRoutes(app: FastifyInstance, config: Config, now?: () => Date): void {
   registerAuthRoutes(app, config, now);
+  registerUserRoutes(app);
 }

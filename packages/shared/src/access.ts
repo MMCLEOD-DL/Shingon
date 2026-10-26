@@ -1,9 +1,20 @@
 export const ROLES = ['admin', 'manager', 'member'] as const;
 export type Role = (typeof ROLES)[number];
 
-// Who may do what. Task 4 adds the rest of the table; client apps extend it, they do not rewrite the model.
+// Who may do what. Client apps extend it, they do not rewrite the model.
 export const PERMISSIONS = {
   'self:manage': ['admin', 'manager', 'member'],
+  'users:list': ['admin', 'manager'],
+  'users:manage': ['admin'],
+  'teams:list': ['admin', 'manager'],
+  'teams:manage': ['admin'],
+  'audit:read': ['admin'],
+  'files:upload': ['admin', 'manager', 'member'],
+  'files:read': ['admin', 'manager', 'member'],
+  'notes:create': ['admin', 'manager', 'member'],
+  'notes:read': ['admin', 'manager', 'member'],
+  'notes:update': ['admin', 'manager', 'member'],
+  'notes:delete': ['admin', 'manager', 'member'],
 } as const satisfies Record<string, readonly Role[]>;
 
 export type Permission = keyof typeof PERMISSIONS;
