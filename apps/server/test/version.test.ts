@@ -1,6 +1,9 @@
 import { test, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createTestApp } from './helpers/testApp.js';
+import { getVersionInfo } from '../src/version.js';
 import { hasHealthToken } from '../src/http/healthToken.js';
 
 const TOKEN = 'v'.repeat(32);
@@ -41,4 +44,18 @@ test('hasHealthToken: exact match only; unset, empty, missing, repeated and diff
   expect(hasHealthToken(req(''), {})).toBe(false);
   expect(hasHealthToken(req(undefined), {})).toBe(false);
   expect(hasHealthToken(req('x'), { healthToken: undefined })).toBe(false);
+});
+
+test('a missing foundation.json gives "unknown" and one plain warning, never a 500, and a restored file is picked up', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'hf-nofound-'));
+  const warnings: string[] = [];
+  const log = { warn: (m: string) => { warnings.push(m); } };
+  expect(getVersionInfo({ appVersion: '1.0.0', commit: 'c1' }, { log, startDir: dir })).toEqual({ app: '1.0.0', foundation: 'unknown', commit: 'c1' });
+  expect(warnings).toHaveLength(1);
+  expect(warnings[0]).toMatch(/^foundation\.json is missing or unreadable/);
+  writeFileSync(join(dir, 'foundation.json'), '{oops');
+  expect(getVersionInfo({ appVersion: '1.0.0', commit: 'c1' }, { log, startDir: dir }).foundation).toBe('unknown');
+  writeFileSync(join(dir, 'foundation.json'), '{"name":"highland-foundation","version":"4.5.6","commit":"v4.5.6"}');
+  expect(getVersionInfo({ appVersion: '1.0.0', commit: 'c1' }, { log, startDir: dir }).foundation).toBe('4.5.6');
+  expect(warnings).toHaveLength(2);
 });

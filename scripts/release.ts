@@ -1,6 +1,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { parseChangelog } from './changelog.js';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import semver from 'semver';
 
@@ -57,6 +58,9 @@ export interface ReleaseDeps {
   today: string;
   isClean(): boolean;
   audit(): AuditResult;
+  /** True when git knows who is committing (user.name and user.email). */
+  hasGitIdentity(): boolean;
+  tagExists(tag: string): boolean;
   commitAndTag(version: string): void;
 }
 
@@ -67,7 +71,17 @@ export function runRelease(bump: Bump, deps: ReleaseDeps): string {
   if (!verdict.ok) throw new Error(verdict.message);
   const file = (f: string): string => path.join(deps.root, f);
   const pkg = JSON.parse(readFileSync(file('package.json'), 'utf8')) as { version: string };
-  const plan = planRelease(readFileSync(file('CHANGELOG.md'), 'utf8'), pkg.version, bump, deps.today);
+  const found = JSON.parse(readFileSync(file('foundation.json'), 'utf8')) as JsonFile;
+  if (found.version !== pkg.version) {
+    throw new Error(`foundation.json says ${String(found.version)} but package.json says ${pkg.version}. They must match before a release; fix whichever is wrong.`);
+  }
+  const changelog = readFileSync(file('CHANGELOG.md'), 'utf8');
+  const plan = planRelease(changelog, pkg.version, bump, deps.today);
+  if (parseChangelog(changelog).some((s) => s.version === plan.version)) {
+    throw new Error(`CHANGELOG.md already has a section for ${plan.version}. Fix the changelog or the version before releasing.`);
+  }
+  if (deps.tagExists(`v${plan.version}`)) throw new Error(`The tag v${plan.version} already exists, so this release would overwrite it. Remove the tag if it is a mistake, or choose a different kind of release.`);
+  if (!deps.hasGitIdentity()) throw new Error('Git does not know who you are. Set it with git config user.name and git config user.email, then try again.');
   const setVersion = (f: string, edit: (j: JsonFile) => void): void => {
     const j = JSON.parse(readFileSync(file(f), 'utf8')) as JsonFile;
     edit(j);
@@ -81,7 +95,10 @@ export function runRelease(bump: Bump, deps: ReleaseDeps): string {
       const top = j.packages?.[''];
       if (top) top.version = plan.version;
     });
-  } catch { /* no lock file: nothing to keep in step */ }
+  } catch (err) {
+    // No lock file means nothing to keep in step; any other problem must not be hidden.
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
   // The release commit's own sha cannot be known before the commit exists, so the stamp records the tag name.
   setVersion('foundation.json', (j) => { j.version = plan.version; j.commit = `v${plan.version}`; });
   deps.commitAndTag(plan.version);
@@ -98,10 +115,21 @@ function realDeps(root: string): ReleaseDeps {
       const r = spawnSync('npm', ['audit', '--omit=dev', '--audit-level=high', '--json'], { cwd: root, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
       return { code: r.status, stdout: r.stdout };
     },
+    hasGitIdentity() {
+      try { return git('config', 'user.name').trim() !== '' && git('config', 'user.email').trim() !== ''; } catch { return false; }
+    },
+    tagExists(tag) {
+      try { return git('tag', '--list', tag).trim() !== ''; } catch { return false; }
+    },
     commitAndTag(version) {
-      git('add', 'CHANGELOG.md', 'package.json', 'package-lock.json', 'foundation.json');
-      git('commit', '-m', `release: v${version}`);
-      git('tag', '-a', `v${version}`, '-m', `v${version}`);
+      const step = (what: string, ...args: string[]): void => {
+        try { git(...args); } catch {
+          throw new Error(`Git could not ${what}. The release files have been changed but not finished: check "git status", then undo them with "git checkout ." or finish by hand.`);
+        }
+      };
+      step('add the release files', 'add', '-A', 'CHANGELOG.md', 'package.json', 'foundation.json', ...(existsSync(path.join(root, 'package-lock.json')) ? ['package-lock.json'] : []));
+      step('make the release commit', 'commit', '-m', `release: v${version}`);
+      step('create the release tag', 'tag', '-a', `v${version}`, '-m', `v${version}`);
     },
   };
 }

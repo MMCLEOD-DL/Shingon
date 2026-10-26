@@ -3,7 +3,7 @@ import semver from 'semver';
 export interface ChangelogSection { version: string; date: string | null; lines: string[] }
 
 const HEADING = /^## \[([^\]]+)\](?:\s*-\s*(\d{4}-\d{2}-\d{2}))?\s*$/;
-const SECURITY = /^- \*\*\[security\]\*\*\s*/;
+const SECURITY = /^\s*[-*+]\s*\*\*\[\s*security\s*\]\*\*\s*/i;
 
 /** Splits a Keep a Changelog file on its `## [` headings. `Unreleased` comes back as version 'Unreleased'. */
 export function parseChangelog(text: string): ChangelogSection[] {
@@ -11,8 +11,12 @@ export function parseChangelog(text: string): ChangelogSection[] {
   for (const chunk of text.split(/^(?=## \[)/m)) {
     const [first = '', ...rest] = chunk.split('\n');
     const m = HEADING.exec(first.trimEnd());
-    if (!m) continue; // the title before the first heading
-    sections.push({ version: m[1] ?? '', date: m[2] ?? null, lines: rest.map((l) => l.trimEnd()).filter((l) => l !== '') });
+    if (!first.startsWith('## [')) continue; // the title before the first heading
+    // Fails closed: a heading that is not understood could hide a security fix, so it stops the check.
+    if (!m) throw new Error(`CHANGELOG.md has a heading that is not in the expected form: "${first.trimEnd()}". Use "## [1.2.3] - 2026-01-31" (a two-digit month and day) or "## [Unreleased]".`);
+    const version = m[1] ?? '';
+    if (version !== 'Unreleased' && semver.valid(version) === null) throw new Error(`CHANGELOG.md has a heading with a version that is not a version number: "${first.trimEnd()}".`);
+    sections.push({ version, date: m[2] ?? null, lines: rest.map((l) => l.trimEnd()).filter((l) => l !== '') });
   }
   return sections;
 }
