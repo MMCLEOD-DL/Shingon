@@ -18,3 +18,9 @@ test('204 resolves to undefined and JSON bodies are sent as JSON', async () => {
   expect(await api('POST', '/api/auth/sign-out', { a: 1 })).toBeUndefined();
   expect(f.mock.calls[0]![1]).toMatchObject({ method: 'POST', credentials: 'same-origin', body: '{"a":1}' });
 });
+test('a 200 that is not JSON becomes the plain message, not a SyntaxError', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('<html>Bad gateway page</html>', { status: 200, headers: { 'content-type': 'text/html' } })));
+  const e = await api('GET', '/api/me').catch((x: unknown) => x);
+  expect(e).toBeInstanceOf(ApiError);
+  expect((e as ApiError).message).toBe('Something went wrong. Please try again.');
+});

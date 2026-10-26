@@ -115,12 +115,14 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   } else {
     // The built web app. Files under /assets/ have hashed names, so they can be kept for a year; the page itself is always rechecked.
     staticLoading = true;
+    const webRoot = path.resolve(config.webDistDir);
     await app.register(fastifyStatic, {
-      root: path.resolve(config.webDistDir),
+      root: webRoot,
       wildcard: false,
       index: false,
       setHeaders(reply, filePath) {
-        const cacheable = filePath.split(path.sep).includes('assets');
+        // Decided from the path inside the built app, so a folder called "assets" further up the disk changes nothing.
+        const cacheable = path.relative(webRoot, filePath).split(path.sep)[0] === 'assets';
         reply.header('cache-control', cacheable ? 'public, max-age=31536000, immutable' : 'no-cache');
       },
     });
@@ -128,7 +130,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     app.setNotFoundHandler(async (req, reply) => {
       const url = req.url.split('?')[0] ?? '/';
       // Unknown API paths, missing files and other methods get the plain 404; only page paths get the app.
-      if (req.method !== 'GET' || url === '/api' || url.startsWith('/api/') || url.startsWith('/assets/')) return reply.code(404).send(notFound);
+      if ((req.method !== 'GET' && req.method !== 'HEAD') || url === '/api' || url.startsWith('/api/') || url.startsWith('/assets/')) return reply.code(404).send(notFound);
       return reply.header('cache-control', 'no-cache').sendFile('index.html');
     });
   }

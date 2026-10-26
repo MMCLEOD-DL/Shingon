@@ -5,11 +5,14 @@ import { can, type Permission, type Role } from '@hf/shared';
 import { api, onUnauthorized } from './api.js';
 import { EmptyState } from './ui/EmptyState.js';
 
-export interface Actor { id: string; email: string; name: string; role: Role; teamId: string | null }
+/** teamName arrives with /api/me; the sign-in and invite replies do not carry it, so it can be absent until the next refresh. */
+export interface Actor { id: string; email: string; name: string; role: Role; teamId: string | null; teamName?: string | null }
 
 interface AuthState {
   user: Actor | null;
   loading: boolean;
+  /** True after the person chose to sign out, so the next sign-in page does not send them back to where they were. */
+  signedOutByChoice: boolean;
   refresh: () => Promise<void>;
   signOut: () => Promise<void>;
   /** For the sign-in and accept-invite pages, which already have the user from the server's reply. */
@@ -21,11 +24,13 @@ const AuthContext = createContext<AuthState | null>(null);
 export function AuthProvider({ children, onSignedOut }: { children: ReactNode; onSignedOut?: () => void }) {
   const [user, setUserState] = useState<Actor | null>(null);
   const [loading, setLoading] = useState(true);
+  const [signedOutByChoice, setSignedOutByChoice] = useState(false);
 
   const signedOut = useRef(onSignedOut);
   signedOut.current = onSignedOut;
   const setUser = useCallback((u: Actor | null) => {
     setUserState(u);
+    if (u !== null) setSignedOutByChoice(false);
     if (u === null) signedOut.current?.();
   }, []);
 
@@ -48,6 +53,7 @@ export function AuthProvider({ children, onSignedOut }: { children: ReactNode; o
   }, [refresh, setUser]);
 
   const signOut = useCallback(async () => {
+    setSignedOutByChoice(true);
     try {
       await api('POST', '/api/auth/sign-out');
     } finally {
@@ -56,7 +62,7 @@ export function AuthProvider({ children, onSignedOut }: { children: ReactNode; o
     }
   }, [setUser]);
 
-  const value = useMemo<AuthState>(() => ({ user, loading, refresh, signOut, setUser }), [user, loading, refresh, signOut, setUser]);
+  const value = useMemo<AuthState>(() => ({ user, loading, signedOutByChoice, refresh, signOut, setUser }), [user, loading, signedOutByChoice, refresh, signOut, setUser]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
@@ -67,10 +73,13 @@ export function useAuth(): AuthState {
 }
 
 export function RequireAuth({ children }: { children: ReactNode }) {
-  const { user, loading } = useAuth();
+  const { user, loading, signedOutByChoice } = useAuth();
   const loc = useLocation();
   if (loading) return <Center mih="60vh"><Loader aria-label="Loading" /></Center>;
-  if (!user) return <Navigate to={`/sign-in?next=${encodeURIComponent(loc.pathname + loc.search)}`} replace />;
+  if (!user) {
+    // After an explicit sign-out the next person at this screen should not land on the last person's page.
+    return <Navigate to={signedOutByChoice ? '/sign-in' : `/sign-in?next=${encodeURIComponent(loc.pathname + loc.search)}`} replace />;
+  }
   return <>{children}</>;
 }
 

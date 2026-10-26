@@ -25,6 +25,29 @@ export type UpdateUserInput = z.infer<typeof UpdateUserInput>;
 export const UpdateMeInput = z.strictObject({ name: z.string().trim().min(1).max(100) });
 export type UpdateMeInput = z.infer<typeof UpdateMeInput>;
 
+// Account forms: the browser checks these before sending, and the server checks the same schemas again.
+export const SignInInput = z.strictObject({
+  email: z.string().trim().toLowerCase().min(1, 'Enter your email address.').max(320),
+  password: z.string().min(1, 'Enter your password.').max(200),
+});
+export type SignInInput = z.infer<typeof SignInInput>;
+
+export const ForgotInput = z.strictObject({
+  email: z.string().trim().toLowerCase().min(1, 'Enter your email address.').max(320),
+});
+export type ForgotInput = z.infer<typeof ForgotInput>;
+
+export const SetPasswordInput = z.strictObject({
+  password: z.string().min(10, 'Use at least 10 characters.').max(200, 'Use at most 200 characters.'),
+});
+export type SetPasswordInput = z.infer<typeof SetPasswordInput>;
+
+export const ChangePasswordInput = z.strictObject({
+  currentPassword: z.string().min(1, 'Enter your current password.').max(200),
+  newPassword: SetPasswordInput.shape.password,
+});
+export type ChangePasswordInput = z.infer<typeof ChangePasswordInput>;
+
 export const CreateTeamInput = z.strictObject({ name: z.string().trim().min(1).max(80) });
 export type CreateTeamInput = z.infer<typeof CreateTeamInput>;
 

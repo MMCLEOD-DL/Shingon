@@ -18,6 +18,7 @@ test('sign in sets a hardened cookie and /api/me answers', async () => {
   expect(cookie).toMatch(/SameSite=Lax/);
   const me = await call(t, { cookie: cookie.split(';')[0]! }, 'GET', '/api/me');
   expect(me.json.user).toMatchObject({ id: u.id, email: 'alice@hf.test', role: 'member' });
+  expect(me.json.user).toHaveProperty('teamName', null);
   expect(JSON.stringify(me.json)).not.toMatch(/password|hash/i);
 });
 

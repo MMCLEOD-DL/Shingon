@@ -32,7 +32,7 @@ export function Shell() {
       <AppShell.Header>
         <Group h="100%" px="md" justify="space-between" wrap="nowrap">
           <Group wrap="nowrap" gap="sm">
-            <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" aria-label="Open the menu" />
+            <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" aria-label={opened ? 'Close the menu' : 'Open the menu'} />
             <Text fw={650} size="lg" truncate>{BRAND.appName}</Text>
           </Group>
           <Menu position="bottom-end" width={220}>

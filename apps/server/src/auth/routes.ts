@@ -1,15 +1,19 @@
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
+import { ForgotInput, SignInInput } from '@hf/shared';
 import { defineRoute } from '../http/route.js';
 import { HttpError, unauthorized } from '../http/errors.js';
-import { users, sessions } from '../db/schema/index.js';
+import { users, sessions, teams } from '../db/schema/index.js';
 import { hashPassword, verifyPassword } from './password.js';
-import { SESSION_ABSOLUTE_MS, SESSION_COOKIE, createSession } from './sessions.js';
+import { SESSION_ABSOLUTE_MS, SESSION_COOKIE, createSession, type Actor } from './sessions.js';
 import { acceptInvite } from './invites.js';
 import { changePassword, requestPasswordReset, resetPassword } from './reset.js';
 import type { Config } from '../config.js';
 import { audit, auditableEmail } from '../audit/audit.js';
+
+/** What /api/me says about the signed-in person: the actor plus the name of their team, for the profile page. */
+type MeView = Actor & { teamName: string | null };
 
 const tooMany = (wait: string): string => `Too many attempts. Please wait ${wait} and try again.`;
 const SIGN_IN_WINDOW = '15 minutes';
@@ -17,16 +21,12 @@ const FORGOT_WINDOW = '1 hour';
 const BAD_SIGN_IN = "That email and password don't match an account.";
 
 
-const signInBody = z.strictObject({
-  email: z.string().trim().toLowerCase().max(320),
-  password: z.string().max(200),
-});
-
 const tokenBody = z.string().max(200);
-const acceptInviteBody = z.strictObject({ token: tokenBody, password: z.string().max(200) });
-const forgotBody = z.strictObject({ email: z.string().trim().toLowerCase().max(320) });
-const resetBody = z.strictObject({ token: tokenBody, password: z.string().max(200) });
-const changePasswordBody = z.strictObject({ currentPassword: z.string().max(200), newPassword: z.string().max(200) });
+// The length rule is checked by the password rules (plain-English reply, and a weak password does not burn the link), so only a ceiling here.
+const passwordBody = z.string().max(200);
+const acceptInviteBody = z.strictObject({ token: tokenBody, password: passwordBody });
+const resetBody = z.strictObject({ token: tokenBody, password: passwordBody });
+const changePasswordBody = z.strictObject({ currentPassword: passwordBody, newPassword: passwordBody });
 const FORGOT_REPLY = { message: "If that email has an account, we've sent a link to reset the password." };
 
 export function registerAuthRoutes(app: FastifyInstance, config: Pick<Config, 'cookieSecure' | 'appOrigin'>, now?: () => Date): void {
@@ -47,7 +47,7 @@ export function registerAuthRoutes(app: FastifyInstance, config: Pick<Config, 'c
     method: 'POST',
     url: '/api/auth/sign-in',
     access: { public: 'signing in' },
-    schema: { body: signInBody },
+    schema: { body: SignInInput },
     config: {
       rateLimit: {
         max: 10,
@@ -105,8 +105,15 @@ export function registerAuthRoutes(app: FastifyInstance, config: Pick<Config, 'c
     method: 'GET',
     url: '/api/me',
     access: { permission: 'self:manage' },
-    handler(_req, _reply, { actor }) {
-      return Promise.resolve({ user: actor });
+    async handler(_req, _reply, { actor, db }) {
+      if (!actor) throw unauthorized();
+      let teamName: string | null = null;
+      if (actor.teamId) {
+        const [team] = await db.select({ name: teams.name }).from(teams).where(eq(teams.id, actor.teamId)).limit(1);
+        teamName = team?.name ?? null;
+      }
+      const user: MeView = { ...actor, teamName };
+      return { user };
     },
   });
 
@@ -134,7 +141,7 @@ export function registerAuthRoutes(app: FastifyInstance, config: Pick<Config, 'c
     method: 'POST',
     url: '/api/auth/forgot-password',
     access: { public: 'asking for a reset link' },
-    schema: { body: forgotBody },
+    schema: { body: ForgotInput },
     config: {
       rateLimit: {
         max: 5,

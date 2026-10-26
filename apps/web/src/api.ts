@@ -45,6 +45,16 @@ async function send(url: string, init: RequestInit): Promise<Response> {
   throw new ApiError(res.status, message, issues);
 }
 
+/** A success reply that is not JSON (a proxy's page, a cut-off body) is a failure with the plain message, never a SyntaxError. */
+async function readJson(res: Response): Promise<unknown> {
+  try {
+    const text = await res.text();
+    return text === '' ? undefined : JSON.parse(text);
+  } catch {
+    throw new ApiError(res.status, GENERIC);
+  }
+}
+
 export async function api<T>(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, body?: unknown): Promise<T> {
   const init: RequestInit = { method, headers: { accept: 'application/json' } };
   if (body !== undefined) {
@@ -53,13 +63,12 @@ export async function api<T>(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: s
   }
   const res = await send(url, init);
   if (res.status === 204) return undefined as T;
-  const text = await res.text();
-  return (text === '' ? undefined : JSON.parse(text)) as T;
+  return (await readJson(res)) as T;
 }
 
 export async function uploadFile(file: File): Promise<FileView> {
   const form = new FormData();
   form.append('file', file);
   const res = await send('/api/files', { method: 'POST', body: form, headers: { accept: 'application/json' } });
-  return ((await res.json()) as { file: FileView }).file;
+  return ((await readJson(res)) as { file: FileView }).file;
 }

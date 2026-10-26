@@ -14,6 +14,12 @@ test('the server serves the app for page paths and JSON 404 for unknown API path
   expect(page.statusCode).toBe(200);
   expect(page.body).toContain('<title>HF</title>');
   expect(page.headers['cache-control']).toBe('no-cache');
+  expect(String(page.headers['content-security-policy'])).toContain("default-src 'self'");
+  // HEAD on a page path is answered like GET, without a body
+  const head = await t.app.inject({ method: 'HEAD', url: '/notes/123' });
+  expect(head.statusCode).toBe(200);
+  expect(head.body).toBe('');
+  expect(String(head.headers['content-type'])).toContain('text/html');
   const api = await t.app.inject({ method: 'GET', url: '/api/nope' });
   expect(api.statusCode).toBe(404);
   expect(api.json()).toEqual({ error: "We couldn't find that." });
@@ -34,5 +40,19 @@ test('without a built app the server answers page paths with the plain 404', asy
   const page = await t.app.inject({ method: 'GET', url: '/notes' });
   expect(page.statusCode).toBe(404);
   expect(t.app.hf.staticRoutes).toEqual([]);
+  await t.close();
+});
+
+test('caching follows the path inside the built app, not the folder it sits in', async () => {
+  // The whole app lives under a folder called "assets"; only its own assets/ folder may be cached for a year.
+  const dist = path.join(mkdtempSync(path.join(tmpdir(), 'site-')), 'assets', 'dist');
+  mkdirSync(path.join(dist, 'assets'), { recursive: true });
+  writeFileSync(path.join(dist, 'index.html'), '<!doctype html><title>HF</title>');
+  writeFileSync(path.join(dist, 'favicon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+  writeFileSync(path.join(dist, 'assets', 'app-abc123.js'), 'console.log(1)');
+  const t = await createTestApp({ webDistDir: dist });
+  expect((await t.app.inject({ method: 'GET', url: '/index.html' })).headers['cache-control']).toBe('no-cache');
+  expect((await t.app.inject({ method: 'GET', url: '/favicon.svg' })).headers['cache-control']).toBe('no-cache');
+  expect((await t.app.inject({ method: 'GET', url: '/assets/app-abc123.js' })).headers['cache-control']).toBe('public, max-age=31536000, immutable');
   await t.close();
 });

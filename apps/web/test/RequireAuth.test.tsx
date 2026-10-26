@@ -3,7 +3,8 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { MantineProvider } from '@mantine/core';
 import { createMemoryRouter, useLocation } from 'react-router';
 import { RouterProvider } from 'react-router/dom';
-import { AuthProvider, RequireAuth, RequirePermission } from '../src/auth.js';
+import userEvent from '@testing-library/user-event';
+import { AuthProvider, RequireAuth, RequirePermission, useAuth } from '../src/auth.js';
 import { theme } from '../src/theme.js';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -41,4 +42,18 @@ test('a signed-in member without the permission sees a plain message, not the pa
   renderAt('/admin/users');
   expect(await screen.findByText("You don't have access to this page")).toBeInTheDocument();
   expect(screen.queryByText('Admin area')).toBeNull();
+});
+
+test('after choosing to sign out, the sign-in page is not told where the person was', async () => {
+  const me = { id: 'u1', email: 'a@x.test', name: 'Alice', role: 'member', teamId: null };
+  vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => (init?.method === 'POST' ? new Response(null, { status: 204 }) : json(200, { user: me }))));
+  function Out() { const { signOut } = useAuth(); return <button onClick={() => { void signOut(); }}>Out</button>; }
+  const router = createMemoryRouter(
+    [{ path: '/notes', element: <RequireAuth><Out /></RequireAuth> }, { path: '/sign-in', element: <Where /> }],
+    { initialEntries: ['/notes'] },
+  );
+  render(<MantineProvider theme={theme}><AuthProvider><RouterProvider router={router} /></AuthProvider></MantineProvider>);
+  await userEvent.click(await screen.findByText('Out'));
+  await waitFor(() => { expect(router.state.location.pathname).toBe('/sign-in'); });
+  expect(router.state.location.search).toBe('');
 });
