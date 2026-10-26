@@ -12,6 +12,14 @@ export const USAGE = [
   '      Without --out the settings go to standard output, which must be redirected to a file, then protected:',
   '        ops init ... > .env && chmod 600 .env',
   '      --tunnel       the box is reached through the outbound tunnel (sets SITE_ADDRESS to :80).',
+  '  backup',
+  '      Takes an encrypted backup now (database, uploads and a record of what they hold).',
+  '  restore-test',
+  '      Restores the newest backup into a scratch database and checks that everything came back.',
+  '  restore <backup id | latest> --yes-replace-live-data',
+  '      Puts a backup back over the live data, after taking a safety backup. Stop the app first.',
+  '  daemon',
+  '      Runs the scheduled backups, restore tests and audit-log tidy-up (the ops service does this).',
 ].join('\n');
 
 export interface InitIo {

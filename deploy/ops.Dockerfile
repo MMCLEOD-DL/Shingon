@@ -9,6 +9,8 @@ COPY ops/package.json ops/
 RUN npm ci --ignore-scripts
 COPY tsconfig.base.json foundation.json ./
 COPY packages packages
+# Ops records its runs in the app's database through the server's schema (apps/server/src/db), so it builds that too.
+COPY apps/server apps/server
 COPY ops ops
 RUN npm run build --if-present -w @hf/ops \
  && npm prune --omit=dev --ignore-scripts
@@ -25,16 +27,17 @@ LABEL org.opencontainers.image.title="highland-ops" \
       org.opencontainers.image.version="${APP_VERSION}" \
       org.opencontainers.image.revision="${GIT_COMMIT}"
 # postgresql-client-17 (to match the 17 server) and the Docker CLI with the Compose plugin (used only by the updater, which alone gets the socket).
+# Each downloaded key file goes into a throwaway keyring and only the pinned fingerprint is exported to apt's keyring,
+# so an extra key added to the download is never trusted (deploy/pin-apt-key.sh, tested in deploy/test/pin-apt-key.test.ts).
+COPY deploy/pin-apt-key.sh /usr/local/sbin/pin-apt-key
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl gnupg bzip2 \
  && install -d -m 0755 /etc/apt/keyrings \
  && curl -fsSL -o /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc \
  && curl -fsSL -o /tmp/docker.asc https://download.docker.com/linux/debian/gpg \
- && gpg --show-keys --with-colons /tmp/pgdg.asc | awk -F: '/^fpr:/{print $10}' | grep -qx "${PGDG_KEY_FPR}" \
- && gpg --show-keys --with-colons /tmp/docker.asc | awk -F: '/^fpr:/{print $10}' | grep -qx "${DOCKER_KEY_FPR}" \
- && gpg --dearmor -o /etc/apt/keyrings/pgdg.gpg /tmp/pgdg.asc \
- && gpg --dearmor -o /etc/apt/keyrings/docker.gpg /tmp/docker.asc \
- && rm /tmp/pgdg.asc /tmp/docker.asc \
+ && pin-apt-key /tmp/pgdg.asc "${PGDG_KEY_FPR}" /etc/apt/keyrings/pgdg.gpg \
+ && pin-apt-key /tmp/docker.asc "${DOCKER_KEY_FPR}" /etc/apt/keyrings/docker.gpg \
+ && rm /tmp/pgdg.asc /tmp/docker.asc /usr/local/sbin/pin-apt-key \
  && echo "deb [signed-by=/etc/apt/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
  && echo "deb [signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list \
  && apt-get update \
@@ -49,8 +52,11 @@ COPY --from=build /app/node_modules node_modules
 COPY --from=build /app/package.json /app/foundation.json ./
 COPY --from=build /app/packages/shared/package.json packages/shared/package.json
 COPY --from=build /app/packages/shared/dist packages/shared/dist
+COPY --from=build /app/apps/server/package.json apps/server/package.json
+COPY --from=build /app/apps/server/dist apps/server/dist
 COPY --from=build /app/ops/package.json ops/package.json
 COPY --from=build /app/ops/dist ops/dist
 # Same owner as in the app image (uid/gid 1000 is `node` there), because either container may be the first to mount the uploads volume.
-RUN mkdir -p /data/uploads && chown 1000:1000 /data/uploads
+# /state holds the backup work folder (with a full database dump while a backup runs) and the restic cache: root only.
+RUN mkdir -p /data/uploads && chown 1000:1000 /data/uploads && install -d -m 0700 /state
 ENTRYPOINT ["node", "ops/dist/cli.js"]

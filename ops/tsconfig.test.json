@@ -1,1 +1,1 @@
-{ "extends": "../tsconfig.base.json", "compilerOptions": { "rootDir": ".", "noEmit": true, "types": ["node"] }, "include": ["test"], "references": [{ "path": "./tsconfig.build.json" }] }
+{ "extends": "../tsconfig.base.json", "compilerOptions": { "rootDir": "..", "noEmit": true, "types": ["node"] }, "include": ["test", "../apps/server/test/helpers/testDb.ts"], "references": [{ "path": "./tsconfig.build.json" }, { "path": "../apps/server/tsconfig.build.json" }] }

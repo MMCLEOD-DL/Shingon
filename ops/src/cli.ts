@@ -1,8 +1,90 @@
+import { parseArgs } from 'node:util';
 import { realIo, runInit, USAGE } from './init-cli.js';
+import { loadOpsConfig, OpsConfigError, type OpsConfig } from './config.js';
+import { BackupError, runBackup, firstLine } from './backup.js';
+import { RestoreError, restoreLive, verifyLatestRestore } from './restore.js';
+import { createOpsDeps, runDaemon } from './daemon.js';
+import { redact } from './runner.js';
 
-const [command, ...rest] = process.argv.slice(2);
-if (command === 'init') process.exitCode = runInit(rest, realIo);
-else {
-  console.error(command === undefined ? USAGE : `"${command}" is not an ops command yet.\n\n${USAGE}`);
-  process.exitCode = 2;
+const say = (line: string): void => { console.log(line); };
+const complain = (line: string): void => { console.error(line); };
+
+/** The last line of defence: a plain sentence, never a stack trace, and never a secret from the environment. */
+function plain(e: unknown): string {
+  if (e instanceof BackupError || e instanceof RestoreError) return e.message;
+  const text = e instanceof Error ? e.message : String(e);
+  return `Ops stopped because of an unexpected problem: ${firstLine(redact(text, process.env as Record<string, string>))}.`;
 }
+process.on('uncaughtException', (e) => { complain(plain(e)); process.exit(1); });
+process.on('unhandledRejection', (e) => { complain(plain(e)); process.exit(1); });
+
+function config(): OpsConfig | undefined {
+  try {
+    return loadOpsConfig();
+  } catch (e) {
+    complain(e instanceof OpsConfigError ? e.message : 'The ops settings could not be read.');
+    return undefined;
+  }
+}
+
+async function withDeps(fn: (deps: ReturnType<typeof createOpsDeps>['deps']) => Promise<number>): Promise<number> {
+  const cfg = config();
+  if (cfg === undefined) return 2;
+  const { deps, close } = createOpsDeps(cfg, say);
+  try {
+    return await fn(deps);
+  } catch (e) {
+    // A backup or restore failure has already been logged and recorded in plain English; anything else is said here.
+    if (!((e instanceof BackupError || e instanceof RestoreError) && e.reported)) complain(plain(e));
+    return 1;
+  } finally {
+    await close().catch(() => undefined);
+  }
+}
+
+async function main(argv: string[]): Promise<number> {
+  const [command, ...rest] = argv;
+  switch (command) {
+    case 'init':
+      return runInit(rest, realIo);
+    case 'backup':
+      if (rest.length > 0) { complain(`backup takes no options.\n\n${USAGE}`); return 2; }
+      // runBackup logs and records its own outcome; only the exit code is added here.
+      return withDeps(async (deps) => { await runBackup(deps, 'manual'); return 0; });
+    case 'restore-test':
+      if (rest.length > 0) { complain(`restore-test takes no options.\n\n${USAGE}`); return 2; }
+      return withDeps(async (deps) => ((await verifyLatestRestore(deps)).ok ? 0 : 1));
+    case 'restore': {
+      let parsed;
+      try {
+        parsed = parseArgs({ args: rest, allowPositionals: true, strict: true, options: { 'yes-replace-live-data': { type: 'boolean' } } });
+      } catch {
+        complain(USAGE);
+        return 2;
+      }
+      const which = parsed.positionals[0];
+      if (which === undefined || parsed.positionals.length > 1) { complain('restore needs one backup id, or latest.\n\n' + USAGE); return 2; }
+      if (parsed.values['yes-replace-live-data'] !== true) {
+        complain('This replaces the live database and uploaded files with the backup. Nothing has been changed. To go ahead, stop the app (docker compose stop app) and add --yes-replace-live-data.');
+        return 2;
+      }
+      return withDeps(async (deps) => {
+        await restoreLive(deps, which);
+        say('Done. Start the app again: docker compose start app');
+        return 0;
+      });
+    }
+    case 'daemon': {
+      const cfg = config();
+      if (cfg === undefined) return 2;
+      const { deps, close } = createOpsDeps(cfg, say);
+      await runDaemon(deps, close);
+      return 0;
+    }
+    default:
+      complain(command === undefined ? USAGE : `"${command}" is not an ops command.\n\n${USAGE}`);
+      return 2;
+  }
+}
+
+process.exitCode = await main(process.argv.slice(2));

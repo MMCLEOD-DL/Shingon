@@ -4,6 +4,16 @@
   "private": true,
   "type": "module",
   "license": "UNLICENSED",
+  "exports": {
+    "./db": {
+      "types": "./dist/db/client.d.ts",
+      "default": "./dist/db/client.js"
+    },
+    "./db/schema": {
+      "types": "./dist/db/schema/index.d.ts",
+      "default": "./dist/db/schema/index.js"
+    }
+  },
   "dependencies": {
     "@faker-js/faker": "10.6.0",
     "@fastify/cookie": "11.1.3",

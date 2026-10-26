@@ -1,0 +1,182 @@
+import { test, expect } from 'vitest';
+import { existsSync } from 'node:fs';
+import { sql } from 'drizzle-orm';
+import { runBackup, BackupError } from '../src/backup.js';
+import { verifyLatestRestore, restoreDatabase, restoreLive } from '../src/restore.js';
+import { lastRun } from '../src/runs.js';
+import { purgeAuditLog } from '../src/daemon.js';
+import { withDeps, okBackup, deps0, TEST_BACKUP_PASSWORD } from './helpers.js';
+
+const ok = { code: 0, stdout: '', stderr: '' };
+
+test('first backup creates the repository; secrets go only in env', async () => {
+  const calls = await withDeps({ BACKUP_REPOSITORY: 'sftp:b@nas:/r' }, async (deps, rec) => {
+    rec.respond((c) => c.cmd === 'restic' && c.args[0] === 'cat' ? { code: 1, stdout: '', stderr: 'Fatal: unable to open config file: stat: no such file' }
+      : c.cmd === 'restic' && c.args[0] === 'backup' ? { code: 0, stdout: '{"message_type":"summary","snapshot_id":"abcdef1234567890","total_bytes_processed":5242880}\n', stderr: '' }
+      : { code: 0, stdout: '', stderr: '' });
+    const r = await runBackup(deps, 'scheduled');
+    expect(r.snapshotId).toBe('abcdef1234567890');
+    return rec.calls;
+  });
+  expect(calls.map((c) => `${c.cmd} ${c.args[0] ?? ''}`)).toEqual(['restic cat', 'restic init', 'pg_dump --format=custom', 'restic backup', 'restic forget']);
+  for (const c of calls) {
+    expect(c.args.join(' ')).not.toContain(TEST_BACKUP_PASSWORD);
+    expect(c.args.join(' ')).not.toMatch(/postgres:\/\//);
+  }
+  expect(calls.find((c) => c.args[0] === 'backup')!.env.RESTIC_PASSWORD).toBe(TEST_BACKUP_PASSWORD);
+});
+
+test('an unreachable destination fails loudly, in plain English, and is recorded', async () => {
+  await withDeps({ BACKUP_REPOSITORY: 'rest:https://u:pw@nas:8000/acme' }, async (deps, rec) => {
+    rec.respond((c) => c.cmd === 'restic' ? { code: 1, stdout: '', stderr: 'Fatal: unable to open repository at rest:https://u:***@nas:8000/acme: dial tcp: connection refused' } : { code: 0, stdout: '', stderr: '' });
+    await expect(runBackup(deps, 'pre-update')).rejects.toThrow('The backup destination could not be reached (rest:https://nas:8000/acme).');
+    expect(await lastRun(deps.db, 'backup', { okOnly: false })).toMatchObject({ ok: false, detail: 'The backup destination could not be reached (rest:https://nas:8000/acme).' });
+  });
+});
+
+test('the dump and the manifest come from one snapshot, from a fixed folder, and snapshots are grouped by host', async () => {
+  const calls = await withDeps({}, async (deps, rec) => { rec.respond(okBackup); await runBackup(deps, 'scheduled'); return rec.calls; });
+  const dump = calls.find((c) => c.cmd === 'pg_dump')!;
+  expect(dump.args.some((a) => /^--snapshot=[0-9A-F]+-[0-9A-F]+-\d+$/.test(a))).toBe(true);
+  expect(dump.args).toContain(`--file=${deps0.cfg.workDir}/backup/db.dump`);
+  const backup = calls.find((c) => c.args[0] === 'backup')!;
+  expect(backup.args).toEqual(expect.arrayContaining([`${deps0.cfg.workDir}/backup/db.dump`, `${deps0.cfg.workDir}/backup/manifest.json`, deps0.cfg.uploadsDir]));
+  const forget = calls.find((c) => c.args[0] === 'forget')!;
+  expect(forget.args.slice(0, 5)).toEqual(['forget', '--tag', 'hf', '--group-by', 'host']);
+});
+
+test('a pre-update backup does not prune', async () => {
+  const calls = await withDeps({}, async (deps, rec) => { rec.respond(okBackup); await runBackup(deps, 'pre-update'); return rec.calls; });
+  expect(calls.some((c) => c.args[0] === 'forget')).toBe(false);
+});
+
+test('a successful backup is recorded, tidies its work files and names the host and kind', async () => {
+  await withDeps({}, async (deps, rec) => {
+    rec.respond(okBackup);
+    await runBackup(deps, 'manual');
+    const backup = rec.calls.find((c) => c.args[0] === 'backup')!;
+    expect(backup.args.slice(0, 8)).toEqual(['backup', '--json', '--host', 'acme-test-ltd', '--tag', 'hf', '--tag', 'manual']);
+    expect(await lastRun(deps.db, 'backup', { okOnly: true })).toMatchObject({ ok: true, detail: 'Backup 01234567 saved to sftp:backup@nas.test.lan:/srv/restic: 3 MB.' });
+    expect(existsSync(`${deps.cfg.workDir}/backup/db.dump`)).toBe(false);
+    expect(existsSync(`${deps.cfg.workDir}/backup/manifest.json`)).toBe(false);
+    const runs = await deps.db.execute<{ snapshot_id: string }>(sql`select snapshot_id from ops_runs where kind = 'backup'`);
+    expect(runs.rows).toEqual([{ snapshot_id: '0123456789abcdef0123456789abcdef' }]);
+  });
+});
+
+test('restic is always given a time limit, and a destination that never answers gives a plain, recorded failure', async () => {
+  await withDeps({}, async (deps, rec) => {
+    rec.respond((c) => c.cmd === 'restic' ? { code: -1, stdout: '', stderr: '', timedOut: true } : ok);
+    await expect(runBackup(deps, 'scheduled')).rejects.toThrow(/^The backup destination did not answer within 2 minutes \(sftp:backup@nas\.test\.lan:\/srv\/restic\)\./);
+    for (const c of rec.calls) expect(c.timeoutMs, `${c.cmd} ${c.args[0]!}`).toBeGreaterThan(0);
+    expect((await lastRun(deps.db, 'backup', { okOnly: false }))!.ok).toBe(false);
+  });
+});
+
+test('busy, wrong-password, unreadable-database and unknown failures each have their own plain message, with no secret', async () => {
+  const cases: [Parameters<typeof withDeps>[0], (c: { cmd: string; args: string[] }) => { code: number; stdout: string; stderr: string }, string][] = [
+    [{}, (c) => c.cmd === 'restic' ? { code: 1, stdout: '', stderr: 'Fatal: unable to create lock in backend: repository is already locked by PID 7' } : ok,
+      'The backup destination is busy with another backup or check (sftp:backup@nas.test.lan:/srv/restic). Try again in a few minutes.'],
+    [{}, (c) => c.cmd === 'restic' ? { code: 1, stdout: '', stderr: 'Fatal: wrong password or no key found' } : ok, 'The backup password does not match the backup destination.'],
+    [{}, (c) => c.cmd === 'pg_dump' ? { code: 1, stdout: '', stderr: 'pg_dump: error: connection failed' } : ok, 'The database could not be read for the backup.'],
+    [{}, (c) => c.cmd === 'restic' && c.args[0] === 'backup' ? { code: 1, stdout: '', stderr: `\nFatal: something odd happened ${TEST_BACKUP_PASSWORD}\nmore` } : ok,
+      'The backup failed: Fatal: something odd happened [hidden].'],
+  ];
+  for (const [env, respond, message] of cases) {
+    await withDeps(env, async (deps, rec) => {
+      rec.respond(respond);
+      const err = await runBackup(deps, 'scheduled').then(() => null, (e: unknown) => e);
+      expect(err).toBeInstanceOf(BackupError);
+      expect((err as Error).message).toBe(message);
+      expect((await lastRun(deps.db, 'backup', { okOnly: false }))!.detail).toBe(message);
+      expect(rec.logs.join('\n')).not.toContain(TEST_BACKUP_PASSWORD);
+    });
+  }
+});
+
+test('a local repository is refused before anything runs unless BACKUP_ALLOW_LOCAL is true', async () => {
+  await withDeps({ BACKUP_ALLOW_LOCAL: 'true', BACKUP_REPOSITORY: '/srv/restic' }, async (deps, rec) => {
+    rec.respond(okBackup);
+    deps.cfg.backup.allowLocal = false;   // as if the flag were switched off after start-up
+    await expect(runBackup(deps, 'manual')).rejects.toThrow(/points at this box/);
+    expect(rec.calls).toEqual([]);
+    expect((await lastRun(deps.db, 'backup', { okOnly: false }))!.detail).toMatch(/points at this box/);
+  });
+  await withDeps({ BACKUP_ALLOW_LOCAL: 'true', BACKUP_REPOSITORY: '/srv/restic' }, async (deps, rec) => {
+    rec.respond(okBackup);
+    await runBackup(deps, 'manual');
+    // The standing warning is written down with every backup, and logged.
+    expect((await lastRun(deps.db, 'backup', { okOnly: true }))!.detail).toMatch(/Warning: this backup is kept on this same machine \(BACKUP_ALLOW_LOCAL=true\)/);
+    expect(rec.logs.join('\n')).toMatch(/BACKUP_ALLOW_LOCAL/);
+  });
+});
+
+test('restore test: no backups yet, and a destination it cannot read, are both recorded as failures', async () => {
+  await withDeps({}, async (deps, rec) => {
+    rec.respond((c) => c.args[0] === 'snapshots' ? { code: 0, stdout: '[]', stderr: '' } : ok);
+    expect(await verifyLatestRestore(deps)).toEqual({ ok: false, problems: ['There are no backups yet.'] });
+    expect(await lastRun(deps.db, 'restore-test', { okOnly: false })).toMatchObject({ ok: false, detail: 'There are no backups yet.' });
+    expect(rec.calls.find((c) => c.args[0] === 'snapshots')!.args).toEqual(['snapshots', '--json', '--tag', 'hf', '--group-by', 'host', '--latest', '1']);
+  });
+  await withDeps({}, async (deps, rec) => {
+    const at = new Date(Date.now() - 30 * 3600e3).toISOString();
+    rec.respond((c) => c.args[0] === 'snapshots'
+      ? { code: 0, stdout: JSON.stringify([{ group_key: { hostname: 'acme' }, snapshots: [{ id: 'f'.repeat(64), short_id: 'ffffffff', time: at }] }]), stderr: '' }
+      : c.args[0] === 'restore' ? { code: 1, stdout: '', stderr: 'Fatal: load index: ciphertext verification failed' } : ok);
+    const r = await verifyLatestRestore(deps);
+    expect(r.ok).toBe(false);
+    expect(r.problems).toEqual([
+      'The newest backup is 30 hours old (expected one every day).',
+      'Backup ffffffff could not be restored: Fatal: load index: ciphertext verification failed.',
+    ]);
+    expect((await lastRun(deps.db, 'restore-test', { okOnly: false }))!.detail).toBe(r.problems.join(' '));
+    const leftover = await deps.db.execute(sql`select datname from pg_database where datname like 'hf_restore_test_%'`);
+    expect(leftover.rows).toEqual([]);
+  });
+});
+
+test('a rollback restore refuses a database name that is not a plain identifier, before touching anything', async () => {
+  await withDeps({}, async (deps, rec) => {
+    await expect(restoreDatabase(deps, 'abc', 'app"; drop database x; --')).rejects.toThrow(/not a database name ops can restore into/);
+    expect(rec.calls).toEqual([]);
+  });
+});
+
+test('ops restore refuses while the app answers, before touching anything', async () => {
+  const { createServer } = await import('node:http');
+  const server = createServer((_req, res) => { res.end('{"status":"ok"}'); });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const port = (server.address() as { port: number }).port;
+  try {
+    await withDeps({ APP_INTERNAL_URL: `http://127.0.0.1:${String(port)}` }, async (deps, rec) => {
+      await expect(restoreLive(deps, 'latest')).rejects.toThrow('Stop the app first: docker compose stop app');
+      expect(rec.calls).toEqual([]);
+    });
+  } finally {
+    server.close();
+  }
+});
+
+test('ops restore chooses "latest" before its safety backup, and a failure names the safety backup to go back to', async () => {
+  await withDeps({}, async (deps, rec) => {
+    const at = new Date().toISOString();
+    rec.respond((c) => c.args[0] === 'snapshots'
+      ? { code: 0, stdout: JSON.stringify([{ group_key: {}, snapshots: [{ id: 'a'.repeat(64), short_id: 'aaaaaaaa', time: at }] }]), stderr: '' }
+      : okBackup(c));
+    // The fake restic restores nothing, so the uploads folder is missing from the "restored" copy.
+    const err = await restoreLive(deps, 'latest').then(() => null, (e: unknown) => e as Error);
+    expect(err?.message).toBe('Backup aaaaaaaa does not contain the uploads folder, so nothing has been changed. The data as it was before this restore is in safety backup 01234567: restore that id (not latest) to go back.');
+    const order = rec.calls.map((c) => `${c.cmd} ${c.args[0] ?? ''}`);
+    expect(order.indexOf('restic snapshots')).toBeLessThan(order.indexOf('restic backup'));
+    expect(rec.calls.find((c) => c.args[0] === 'restore')!.args.slice(0, 2)).toEqual(['restore', 'a'.repeat(64)]);
+    expect(await lastRun(deps.db, 'restore', { okOnly: false })).toMatchObject({ ok: false, detail: err!.message });
+  });
+});
+
+test('the daily audit-log tidy-up uses the retention setting and is recorded', async () => {
+  await withDeps({ AUDIT_RETENTION_DAYS: '30' }, async (deps) => {
+    await deps.db.execute(sql`insert into audit_log (actor_label, action, at) values ('system', 'seed.demo', now() - interval '40 days'), ('system', 'seed.demo', now() - interval '10 days')`);
+    expect(await purgeAuditLog(deps)).toBe(1);
+    expect(await lastRun(deps.db, 'audit-purge', { okOnly: true })).toMatchObject({ detail: 'Audit log tidied: 1 entry older than 30 days removed.' });
+  });
+});

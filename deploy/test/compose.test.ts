@@ -131,3 +131,31 @@ test('the image files bake in no secrets and create the uploads folder owned by 
   expect(app.indexOf('chown node:node /data/uploads')).toBeLessThan(app.indexOf('USER node'));
   expect(app).toContain('foundation.json');
 });
+
+test('the long-running ops daemon is locked down too: read-only, no extra powers beyond the file ones it needs, no socket', () => {
+  const ops = S.ops;
+  expect(ops.command).toEqual(['daemon']);
+  expect(ops.read_only).toBe(true);
+  expect(ops.tmpfs).toContain('/tmp');
+  expect(ops.cap_drop).toEqual(['ALL']);
+  // Read the app's private uploads, put them back and give them back to uid 1000. Nothing else.
+  expect([...(ops.cap_add ?? [])].sort()).toEqual(['CHOWN', 'DAC_OVERRIDE', 'FOWNER']);
+  expect(ops.security_opt).toContain('no-new-privileges:true');
+  expect((ops.volumes ?? []).some((v: string) => v.includes('docker.sock'))).toBe(false);
+  expect(ops.ports).toBeUndefined();
+});
+
+test('ops sees the same tunnel address and edge network as the front door, so it can refuse a mismatched pair', () => {
+  expect(S.ops.environment.TUNNEL_IP).toBe(S.proxy.environment.TUNNEL_IP);
+  expect(S.ops.environment.TUNNEL_IP).toBe(S.tunnel.networks.edge.ipv4_address);
+  expect(S.ops.environment.EDGE_SUBNET).toBe(c.networks.edge.ipam.config[0].subnet);
+  const env = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
+  expect(env).toMatch(/change both together/i);
+});
+
+test('the ops image trusts only the pinned apt keys, never a whole downloaded key file', () => {
+  const d = readFileSync(new URL('../ops.Dockerfile', import.meta.url), 'utf8');
+  expect(d).not.toMatch(/gpg --dearmor/);
+  expect(d).toMatch(/pin-apt-key \/tmp\/pgdg\.asc "\$\{PGDG_KEY_FPR\}" \/etc\/apt\/keyrings\/pgdg\.gpg/);
+  expect(d).toMatch(/pin-apt-key \/tmp\/docker\.asc "\$\{DOCKER_KEY_FPR\}" \/etc\/apt\/keyrings\/docker\.gpg/);
+});

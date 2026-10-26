@@ -28,6 +28,10 @@ x-ops-env: &opsenv
   ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
   HEARTBEAT_URL: ${HEARTBEAT_URL:-}
   TUNNEL_ENABLED: ${TUNNEL_ENABLED:-false}
+  # Ops refuses to start when these two do not match (TUNNEL_IP must be a usable address inside EDGE_SUBNET),
+  # because the front door would then trust the wrong address. Same defaults as the proxy and tunnel below.
+  TUNNEL_IP: ${TUNNEL_IP:-172.30.250.10}
+  EDGE_SUBNET: ${EDGE_SUBNET:-172.30.250.0/28}
 services:
   db:
     image: postgres:17.11-bookworm
@@ -84,6 +88,13 @@ services:
     volumes: [uploads:/data/uploads, state:/state]
     depends_on: { db: { condition: service_healthy } }
     networks: [backend]
+    # Locked down like the app. Ops runs as root only so that it can read the app's private uploads for a backup and put
+    # them back with the app's owner (uid 1000) after a restore: those three file powers and nothing else. It never has the
+    # Docker socket. All it writes is the state volume (work folder, restic cache), the uploads volume and /tmp.
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
     security_opt: ["no-new-privileges:true"]
   proxy:
     image: caddy:2.11.7-alpine
