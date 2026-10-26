@@ -120,6 +120,14 @@ If the secret scanner finds a password or key that the change added, it blocks. 
 removes it, Conductor combines the run's steps into one commit before you approve, so the key
 is not left in your repository's history either. (Gitleaks checks the finished files, so a key
 added and removed between two steps before the council runs is not caught.)
+Treat any key the council found as exposed and replace it, even after the fix removed it:
+the reviewing AIs and the run log may already have seen it. The limits, plainly: Gitleaks only
+knows common key formats, so it can miss one, and the combined commit cleans only this run's
+history, not anything a person, an AI or a log has already seen.
+
+Editing a scanner's settings or ignore files, or adding a comment that tells a scanner to skip
+a line (`nosemgrep`, `nosec`, `gitleaks:allow`), shows as a Security warning the AI cannot set
+aside.
 
 **Tools it uses (all free, all optional; run `conductor doctor` to see which you have, even
 when it cannot reach your models):**
