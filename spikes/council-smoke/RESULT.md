@@ -33,3 +33,15 @@
 - Cost: each council round adds one reviewer call for Correctness, plus one each for Security
   and Legal when their tools found something. That is at most 4 rounds.
 - Packaging for others is still out of scope: **notify the operator before going live as a product**.
+
+## Code follow-ups (from the Plan 5 final review, deferred)
+- **Unredacted names.** The run's branch name, task id, log file name and step commit messages are made from the request text without redaction. This predates Plan 5. Redact before slugging, all in one place.
+- **`gitleaks:allow` hides a key.** An added `gitleaks:allow` comment hides a key from Gitleaks; only a locked "skip-this-line comment" warning remains, and the commits are not combined. Consider treating that comment on an added line as a possible secret (set `secretSeen` and block).
+- **npm 6 audit output.** It is treated as clean. Throw when there is neither `vulnerabilities` nor `advisories`.
+- **Semgrep's short `nosem` form.** It raises no warning (`--disable-nosem` still neutralises it). Docs lines that mention the markers raise a harmless warning.
+- **Minor polish and test gaps:**
+  - an errored check is listed twice in the report;
+  - the council line doesn't use `council-fix`'s own `blocking` count;
+  - there is no `fixVendors` test;
+  - doctor's could-not-check path has no council section;
+  - README jargon.
