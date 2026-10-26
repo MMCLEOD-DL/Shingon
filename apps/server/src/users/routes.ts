@@ -15,7 +15,7 @@ const isUniqueViolation = (e: unknown): boolean => {
   return err?.code === '23505' || err?.cause?.code === '23505';
 };
 
-export function registerUserRoutes(app: FastifyInstance): void {
+export function registerUserRoutes(app: FastifyInstance, now: () => Date = () => new Date()): void {
   defineRoute(app, {
     method: 'GET',
     url: '/api/users',
@@ -55,7 +55,7 @@ export function registerUserRoutes(app: FastifyInstance): void {
       }
       const role = body.role ?? target.role;
       const teamId = body.teamId === undefined ? target.teamId : body.teamId;
-      if ((role === 'manager' || role === 'member') && teamId === null) {
+      if ((body.role !== undefined || body.teamId !== undefined) && (role === 'manager' || role === 'member') && teamId === null) {
         throw badRequest('Managers and members must belong to a team.');
       }
       if (body.teamId) {
@@ -68,10 +68,10 @@ export function registerUserRoutes(app: FastifyInstance): void {
         if (body.name !== undefined) set.name = body.name;
         if (body.role !== undefined) set.role = body.role;
         if (body.teamId !== undefined) set.teamId = body.teamId;
-        if (body.disabled === true && !target.disabled) set.disabledAt = new Date();
+        if (body.disabled === true && !target.disabled) set.disabledAt = now();
         if (body.disabled === false) set.disabledAt = null;
         if (Object.keys(set).length > 0) {
-          set.updatedAt = new Date();
+          set.updatedAt = now();
           await tx.update(users).set(set).where(eq(users.id, target.id));
         }
         if (body.disabled === true) await revokeSessions(tx, target.id);
@@ -115,7 +115,7 @@ export function registerUserRoutes(app: FastifyInstance): void {
     schema: { body: UpdateMeInput },
     async handler(req, _reply, { actor, db }) {
       if (!actor) throw unauthorized();
-      await db.update(users).set({ name: req.body.name, updatedAt: new Date() }).where(eq(users.id, actor.id));
+      await db.update(users).set({ name: req.body.name, updatedAt: now() }).where(eq(users.id, actor.id));
       const user = await getUser(db, actor, actor.id);
       if (!user) throw notFound();
       return { user };

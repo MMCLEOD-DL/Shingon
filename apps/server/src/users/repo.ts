@@ -42,7 +42,8 @@ export async function getUser(db: Db, actor: Actor, id: string): Promise<UserVie
 
 export async function listTeams(db: Db, actor: Actor): Promise<TeamView[]> {
   // Teams are not owned rows: an admin sees all, anyone else only their own team.
-  if (actor.role !== 'admin' && !actor.teamId) return [];
-  const where = actor.role === 'admin' || !actor.teamId ? undefined : eq(teams.id, actor.teamId);
-  return db.select({ id: teams.id, name: teams.name }).from(teams).where(where).orderBy(asc(teams.name));
+  const q = db.select({ id: teams.id, name: teams.name }).from(teams);
+  if (actor.role === 'admin') return q.orderBy(asc(teams.name));
+  if (!actor.teamId) return [];
+  return q.where(eq(teams.id, actor.teamId)).orderBy(asc(teams.name));
 }

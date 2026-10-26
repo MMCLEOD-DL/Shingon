@@ -95,3 +95,19 @@ test('/api/me renames the caller', async () => {
   const r = await call(t, await signInAs(t, u), 'PATCH', '/api/me', { name: '  New  ' });
   expect(r.json.user.name).toBe('New');
 });
+
+test('the self-rule also blocks an admin disabling themselves', async () => {
+  const r = await call(t, await signInAs(t, admin), 'PATCH', `/api/users/${admin.id}`, { disabled: true });
+  expect(r.status).toBe(409);
+});
+
+test('a teamless member can be disabled (emergency revoke); setting a member role with no team is refused', async () => {
+  const a = await signInAs(t, admin);
+  const u = await makeUser(t.db, { role: 'member', teamId: null });
+  const uAuth = await signInAs(t, u);
+  const off = await call(t, a, 'PATCH', `/api/users/${u.id}`, { disabled: true });
+  expect(off.status).toBe(200);
+  expect((await call(t, uAuth, 'GET', '/api/me')).status).toBe(401);
+  const bad = await call(t, a, 'PATCH', `/api/users/${u.id}`, { role: 'member', teamId: null });
+  expect(bad.status).toBe(400);
+});

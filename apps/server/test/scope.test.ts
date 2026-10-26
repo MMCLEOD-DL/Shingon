@@ -13,3 +13,8 @@ test('visibility: admin all, manager team, member own', () => {
 test('edit: owner or admin only; managers view but do not edit', () => {
   expect([admin, mN, alice, mS].map((a) => canEdit(a, aliceRow))).toEqual([true, false, true, false]);
 });
+test('a manager with no team does not see a teamless row owned by someone else', () => {
+  const lone = A('manager', 'u5', null);
+  expect(canSee(lone, { ownerId: 'u0', teamId: null })).toBe(false);
+  expect(canSee(lone, { ownerId: 'u5', teamId: null })).toBe(true);
+});
