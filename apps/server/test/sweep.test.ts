@@ -1,5 +1,6 @@
 import { test, expect } from 'vitest';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
@@ -60,4 +61,39 @@ test('a file the sweep cannot remove is logged by id and error code, and the res
   expect(JSON.stringify(logged)).not.toContain('secret');
   expect((await t.db.select({ id: files.id }).from(files)).map((r) => r.id)).toEqual([ids['dd0004']]);
   await t.close();
+});
+
+test('the disk sweep removes old objects with no row and old .tmp files, and keeps young ones and ones with a row', async () => {
+  const t = await createTestDb();
+  const dir = mkdtempSync(path.join(tmpdir(), 'sw-'));
+  const storage = new LocalDiskStorage(dir);
+  const N = await makeTeam(t.db, 'N');
+  const u = await makeUser(t.db, { role: 'member', teamId: N.id });
+  const now = new Date();
+  const age = async (rel: string, h: number) => { const d = new Date(now.getTime() - h * 3600e3); await utimes(path.join(dir, rel), d, d); };
+  for (const key of ['ab0001', 'ab0002', 'ab0003']) await storage.put(key, Readable.from(['x']));
+  await age('ab/ab0001', 48); await age('ab/ab0002', 1); await age('ab/ab0003', 48);
+  const { size, sha256 } = { size: 1, sha256: 'a'.repeat(64) };
+  await t.db.insert(files).values({ ownerId: u.id, teamId: N.id, storageKey: 'ab0003', originalName: 'a.png', contentType: 'image/png', size, sha256, attachedType: 'note', attachedId: '00000000-0000-4000-8000-000000000001' });
+  writeFileSync(path.join(dir, 'ab', 'ab0004.0123456789ab.tmp'), 'partial');
+  await age('ab/ab0004.0123456789ab.tmp', 48);
+  writeFileSync(path.join(dir, 'ab', 'ab0005.0123456789ab.tmp'), 'partial');
+
+  await sweepOrphans(t.db, storage, new Date(now.getTime() - 24 * 3600e3));
+  const left = readdirSync(path.join(dir, 'ab')).sort();
+  expect(left).toEqual(['ab0002', 'ab0003', 'ab0005.0123456789ab.tmp']);
+  await t.close();
+});
+
+test('the disk listing ignores symlinks and odd names', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'sw-'));
+  const outside = mkdtempSync(path.join(tmpdir(), 'out-'));
+  writeFileSync(path.join(outside, 'cd0001'), 'x');
+  mkdirSync(path.join(dir, 'cd'));
+  symlinkSync(path.join(outside, 'cd0001'), path.join(dir, 'cd', 'cd0001'));
+  symlinkSync(outside, path.join(dir, 'ef'));
+  writeFileSync(path.join(dir, 'cd', 'notes.txt'), 'x');
+  const seen: string[] = [];
+  for await (const o of new LocalDiskStorage(dir).list()) seen.push(o.key);
+  expect(seen).toEqual([]);
 });

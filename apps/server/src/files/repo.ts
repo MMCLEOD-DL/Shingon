@@ -35,7 +35,7 @@ export async function attachFile(tx: Tx, actor: Actor, fileId: string, parent: {
 }
 
 /**
- * Deletes unattached files older than `olderThan`. For each file the stored object goes first and the row second,
+ * Deletes unattached files older than `olderThan`, then reconciles the disk (`sweepStrayObjects`). For each file the stored object goes first and the row second,
  * so a crash leaves at worst a row whose object is gone (the next sweep removes it), never an object no row points to.
  * The row is locked and re-checked first, so a file attached a moment ago is not removed.
  */
@@ -59,5 +59,32 @@ export async function sweepOrphans(db: Db, storage: Storage, olderThan: Date, lo
       log?.error({ fileId: id, errName: err.name, errCode: err.code }, 'File sweep could not remove a file');
     }
   }
+  await sweepStrayObjects(db, storage, olderThan, log);
+  return removed;
+}
+
+/**
+ * Disk side of the sweep: removes stored objects that no files row points to (for example when a post-commit removal deleted the row
+ * but then failed to delete the object) and leftover partial uploads, when older than `olderThan`. Failures are logged by error name/code only.
+ */
+export async function sweepStrayObjects(db: Db, storage: Storage, olderThan: Date, log?: { error(obj: object, msg: string): void }): Promise<number> {
+  let removed = 0;
+  const fail = (e: unknown): void => {
+    const err = e as { name?: string; code?: string };
+    log?.error({ errName: err.name, errCode: err.code }, 'File sweep could not remove a stray stored object');
+  };
+  try {
+    for await (const o of storage.list()) {
+      if (o.mtime >= olderThan) continue;
+      try {
+        if (!o.tmp) {
+          const [row] = await db.select({ id: files.id }).from(files).where(eq(files.storageKey, o.key)).limit(1);
+          if (row) continue;
+        }
+        await storage.delete(o.key);
+        removed++;
+      } catch (e) { fail(e); }
+    }
+  } catch (e) { fail(e); }
   return removed;
 }

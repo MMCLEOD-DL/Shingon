@@ -61,7 +61,7 @@ export function startOutboxWorker(
   db: Db,
   transport: EmailTransport,
   site: Site & { from?: string },
-  opts: { intervalMs?: number; log?: WorkerLog; /** Replaces the real processor; for tests that must not depend on database timing. */ process?: () => Promise<unknown> } = {},
+  opts: { intervalMs?: number; log?: WorkerLog; /** @internal Tests only; production must not pass this. Replaces the real processor so a test need not wait on database timing. */ process?: () => Promise<unknown> } = {},
 ): () => Promise<void> {
   let running: Promise<unknown> | null = null;
   const timer = setInterval(() => {

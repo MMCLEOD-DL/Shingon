@@ -188,6 +188,25 @@ test('a discarded photo that was re-attached before removal keeps its row and it
   expect((await call(t, a, 'GET', '/api/notes')).json.notes.find((n) => n.id === id)?.attachment?.id).toBe(f);
 });
 
+test('a failing object delete after the commit is swallowed and logged by file id and error name only', async () => {
+  const a = await as(alice);
+  const f1 = await upload(alice);
+  const id = (await call(t, a, 'POST', '/api/notes', { title: 'stuck', attachmentId: f1 })).json.note.id;
+  const key = (await fileRow(f1))!.storageKey;
+  const logged: object[] = [];
+  const real = new LocalDiskStorage(t.config.uploadDir);
+  const broken = Object.assign(Object.create(real) as LocalDiskStorage, {
+    delete: () => Promise.reject(Object.assign(new Error(`/secret/${key} denied`), { name: 'EACCESError' })),
+  });
+  const actor = { id: alice.id, email: alice.email, name: 'Alice', role: 'member' as const, teamId: N.id };
+  const view = await updateNote(t.db, actor, id, { attachmentId: null }, { storage: broken, log: { error: (o) => { logged.push(o); } } });
+  expect(view.attachment).toBeNull();
+  expect(logged).toEqual([{ fileId: f1, errName: 'EACCESError' }]);
+  expect(JSON.stringify(logged)).not.toContain('secret');
+  expect(await fileRow(f1)).toBeUndefined();
+  expect(objectExists(key)).toBe(true); // orphan object: the disk-side sweep collects it
+});
+
 test('writes are audited in the same transaction, with field names only', async () => {
   const a = await as(alice);
   const id = (await call(t, a, 'POST', '/api/notes', { title: 'Private title', body: 'SECRET-BODY-TEXT' })).json.note.id;

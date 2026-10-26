@@ -96,7 +96,7 @@ async function detachFile(tx: Tx, fileId: string): Promise<Discard | null> {
 /**
  * After the commit: best effort. The row goes first, and only if it is still unattached (the owner may have attached the file elsewhere
  * since the commit); the object is deleted only when that row delete really happened. A failure leaves an unattached row or an orphan
- * object, which the sweep collects. Nothing but the file id and error name is logged.
+ * object, which the disk-side sweep (`sweepStrayObjects`) collects. Nothing but the file id and error name is logged.
  */
 export async function removeDiscarded(db: Db, deps: NoteWriteDeps, discarded: Discard[]): Promise<void> {
   for (const f of discarded) {
@@ -104,7 +104,7 @@ export async function removeDiscarded(db: Db, deps: NoteWriteDeps, discarded: Di
       const gone = await db.delete(files).where(and(eq(files.id, f.id), isNull(files.attachedType))).returning({ id: files.id });
       if (gone.length > 0) await deps.storage.delete(f.storageKey);
     } catch (e) {
-      deps.log?.error({ fileId: f.id, errName: (e as { name?: string }).name }, 'A discarded note photo could not be removed; the sweep will retry');
+      deps.log?.error({ fileId: f.id, errName: (e as { name?: string }).name }, 'A discarded note photo could not be removed; the sweep will collect it');
     }
   }
 }

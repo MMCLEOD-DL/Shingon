@@ -117,6 +117,8 @@ test('the worker ticks without overlapping, survives a transport error, and stop
     await vi.advanceTimersByTimeAsync(50);
     expect(calls).toBe(2);
     gate.release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(errors).toEqual([{ errName: 'TransportError' }, { errName: 'TransportError' }]);
     const stopped = stop();
     await vi.advanceTimersByTimeAsync(0);
     await expect(stopped).resolves.toBeUndefined();
@@ -141,6 +143,7 @@ test('the worker logs a failed run by error name only', async () => {
     vi.useRealTimers();
   }
   expect(errors.length).toBeGreaterThan(0);
+  expect(errors.every((e) => JSON.stringify(e) === '{"errName":"Error"}')).toBe(true);
   expect(JSON.stringify(errors)).not.toContain('hunter2');
 });
 
