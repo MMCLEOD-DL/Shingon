@@ -47,6 +47,7 @@ export const EXPECTED_PUBLIC: readonly Route[] = [
   'POST /api/auth/forgot-password',
   'POST /api/auth/reset-password',
   'GET /api/version',
+  'GET /healthz',
 ];
 
 /**
@@ -127,4 +128,6 @@ export const CASES: CrossingCase[] = [
   { kind: 'action', route: 'POST /api/auth/reset-password', body: () => ({ token: NEVER_ISSUED, password: 'a perfectly long password' }), okStatus: 400, mutates: true },
   // Version check: nobody here sends the health token, so everyone gets the same short answer (the fuller one is tested in version.test.ts).
   { kind: 'action', route: 'GET /api/version', okStatus: 200 },
+  // Liveness for Docker: nobody sends the health token, so everyone gets the same bare answer.
+  { kind: 'action', route: 'GET /healthz', okStatus: 200 },
 ];

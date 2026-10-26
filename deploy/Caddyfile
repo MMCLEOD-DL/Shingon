@@ -1,0 +1,6 @@
+{$SITE_ADDRESS} {
+	encode zstd gzip
+	# reverse_proxy replaces any X-Forwarded-For a client sends with the address it really saw.
+	# Do not add trusted_proxies or header_up here: the app counts exactly one proxy hop.
+	reverse_proxy app:3000
+}

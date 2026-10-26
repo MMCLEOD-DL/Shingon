@@ -1,0 +1,115 @@
+name: ${COMPOSE_PROJECT_NAME:-highland}
+x-db-url: &dburl postgres://app:${DB_PASSWORD:?run ops init}@db:5432/app
+# Everything ops needs. Shared by `ops` and `updater`, so an update can back up, alert and
+# address the right project with exactly the settings the daemon uses.
+x-ops-env: &opsenv
+  COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-highland}
+  INSTANCE_MODE: ${INSTANCE_MODE:-production}
+  DATABASE_URL: *dburl
+  APP_INTERNAL_URL: http://app:3000
+  CLIENT_LABEL: ${CLIENT_LABEL:?}
+  HEALTH_TOKEN: ${HEALTH_TOKEN}
+  BACKUP_REPOSITORY: ${BACKUP_REPOSITORY:?}
+  BACKUP_PASSWORD: ${BACKUP_PASSWORD:?}
+  BACKUP_ALLOW_LOCAL: ${BACKUP_ALLOW_LOCAL:-false}
+  BACKUP_SCHEDULE: ${BACKUP_SCHEDULE:-30 2 * * *}
+  RESTORE_TEST_SCHEDULE: ${RESTORE_TEST_SCHEDULE:-30 4 * * 0}
+  BACKUP_KEEP: ${BACKUP_KEEP:---keep-daily 7 --keep-weekly 5 --keep-monthly 12}
+  AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-730}
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+  B2_ACCOUNT_ID: ${B2_ACCOUNT_ID:-}
+  B2_ACCOUNT_KEY: ${B2_ACCOUNT_KEY:-}
+  RESTIC_REST_USERNAME: ${RESTIC_REST_USERNAME:-}
+  RESTIC_REST_PASSWORD: ${RESTIC_REST_PASSWORD:-}
+  MATRIX_HOMESERVER: ${MATRIX_HOMESERVER:-}
+  MATRIX_ACCESS_TOKEN: ${MATRIX_ACCESS_TOKEN:-}
+  MATRIX_ROOM_ID: ${MATRIX_ROOM_ID:-}
+  ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+  HEARTBEAT_URL: ${HEARTBEAT_URL:-}
+  TUNNEL_ENABLED: ${TUNNEL_ENABLED:-false}
+services:
+  db:
+    image: postgres:17.11-bookworm
+    restart: unless-stopped
+    environment: { POSTGRES_DB: app, POSTGRES_USER: app, POSTGRES_PASSWORD: "${DB_PASSWORD}" }
+    volumes: [pgdata:/var/lib/postgresql/data]
+    # Postgres needs a writable socket folder and /tmp; everything else in the image is read-only.
+    read_only: true
+    tmpfs: [/tmp, /var/run/postgresql]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck: { test: ["CMD", "pg_isready", "-U", "app", "-d", "app"], interval: 5s, retries: 20 }
+  migrate:
+    image: ${APP_IMAGE:-highland/app}:${APP_TAG:?}
+    command: ["node", "apps/server/dist/db/migrate-cli.js"]
+    environment: { DATABASE_URL: *dburl }
+    depends_on: { db: { condition: service_healthy } }
+    restart: "no"
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+  app:
+    image: ${APP_IMAGE:-highland/app}:${APP_TAG}
+    restart: unless-stopped
+    # No `ports:` here, on purpose. Only Caddy can reach the app, over the internal network, and Caddy overwrites
+    # X-Forwarded-For with the real client address. Publishing this port would let anyone send their own.
+    environment:
+      INSTANCE_MODE: ${INSTANCE_MODE:-production}
+      APP_NAME: ${APP_NAME:?}
+      APP_ORIGIN: ${APP_ORIGIN:?}
+      DATABASE_URL: *dburl
+      UPLOAD_DIR: /data/uploads
+      EMAIL_TRANSPORT: smtp
+      SMTP_URL: ${SMTP_URL:?}
+      EMAIL_FROM: ${EMAIL_FROM:?}
+      HEALTH_TOKEN: ${HEALTH_TOKEN:?}
+      APP_VERSION: ${APP_TAG}
+      WEB_DIST_DIR: /app/apps/web/dist
+      TRUST_PROXY_HOPS: "1"   # exactly one proxy (Caddy) in front of the app
+    volumes: [uploads:/data/uploads]
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+  ops:
+    image: ${OPS_IMAGE:-highland/ops}:${APP_TAG}
+    command: ["daemon"]
+    restart: unless-stopped
+    environment: *opsenv
+    volumes: [uploads:/data/uploads, state:/state]
+    depends_on: { db: { condition: service_healthy } }
+    security_opt: ["no-new-privileges:true"]
+  proxy:
+    image: caddy:2.11.7-alpine
+    restart: unless-stopped
+    ports: ["${HTTP_PORT:-80}:80", "${HTTPS_PORT:-443}:443"]
+    environment: { SITE_ADDRESS: "${SITE_ADDRESS:-:80}" }
+    volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro", "caddy_data:/data"]
+    depends_on: { app: { condition: service_healthy } }
+    # Caddy needs to open ports 80 and 443 and keep its certificates in /data; nothing else.
+    read_only: true
+    tmpfs: [/config]
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+  updater:
+    profiles: [tools]
+    image: ${OPS_IMAGE:-highland/ops}:${UPDATER_TAG:-${APP_TAG}}
+    working_dir: ${HF_BUNDLE_DIR:?}
+    environment:
+      <<: *opsenv
+      HF_BUNDLE_DIR: ${HF_BUNDLE_DIR}
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock", "${HF_BUNDLE_DIR}:${HF_BUNDLE_DIR}", "uploads:/data/uploads", "state:/state"]
+  tunnel:
+    profiles: [tunnel]
+    image: cloudflare/cloudflared:2026.10.4
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "--metrics", "0.0.0.0:2000", "run"]
+    environment: { TUNNEL_TOKEN: "${TUNNEL_TOKEN:-}" }   # empty → cloudflared exits; the monitor reports it (Task 19)
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+volumes: { pgdata: {}, uploads: {}, state: {}, caddy_data: {} }

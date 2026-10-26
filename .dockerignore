@@ -1,0 +1,10 @@
+node_modules
+**/node_modules
+**/dist
+reports
+test-results
+.git
+.env
+**/.env
+apps/web/e2e/.auth
+**/*.tsbuildinfo
