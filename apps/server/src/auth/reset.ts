@@ -94,7 +94,8 @@ export async function changePassword(
   await db.transaction(async (tx) => {
     await tx.update(users).set({ passwordHash, updatedAt: opts.now ?? new Date() }).where(eq(users.id, actor.id));
     await revokeSessions(tx, actor.id, sessionId === null ? {} : { exceptSessionId: sessionId });
-    await queueEmail(tx, { to: actor.email, template: 'password-changed', data: { name: actor.name } });
+    await tx.delete(userTokens).where(and(eq(userTokens.userId, actor.id), eq(userTokens.kind, 'reset'), isNull(userTokens.usedAt)));
+    await queueEmail(tx, { to: actor.email, template: 'password-changed', data: { name: actor.name, scope: 'others' } });
     await audit(tx, { actor, ip: opts.ip }, { action: 'auth.password_changed', targetType: 'user', targetId: actor.id });
   });
 }

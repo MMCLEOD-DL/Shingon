@@ -80,7 +80,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
   await app.register(rateLimit, {
     global: false,
-    errorResponseBuilder: () => new HttpError(429, 'Too many attempts. Please wait 15 minutes and try again.'),
+    errorResponseBuilder: (_req, ctx) => new HttpError(429, `Too many attempts. Please wait ${ctx.after} and try again.`),
   });
 
   registerCsrf(app, config);

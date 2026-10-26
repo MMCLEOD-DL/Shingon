@@ -29,7 +29,7 @@ export const CreateTeamInput = z.strictObject({ name: z.string().trim().min(1).m
 export type CreateTeamInput = z.infer<typeof CreateTeamInput>;
 
 export const InviteInput = z.strictObject({
-  email: z.email().trim().toLowerCase(),
+  email: z.string().trim().toLowerCase().pipe(z.email()),
   name: z.string().trim().min(1).max(100),
   role: z.enum(ROLES),
   teamId: z.uuid().nullable(),

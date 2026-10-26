@@ -4,11 +4,9 @@ import { eq, sql } from 'drizzle-orm';
 import { ConfigError, loadConfig, type Config } from '../config.js';
 import { createDb, type Db } from '../db/client.js';
 import { users } from '../db/schema/index.js';
-import { audit } from '../audit/audit.js';
+import { audit, EMAIL_SHAPE } from '../audit/audit.js';
 import { inviteLink } from './invites.js';
 import { issueToken } from './tokens.js';
-
-const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
  * Creates the very first admin, with no password, and returns the link to set one. It refuses once any
@@ -25,8 +23,17 @@ export async function bootstrapAdmin(
   if (name.length < 1 || name.length > 100) throw new Error('The name must be between 1 and 100 characters.');
   return db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(4242)`);
-    const [existing] = await tx.select({ id: users.id }).from(users).where(eq(users.role, 'admin')).limit(1);
-    if (existing) throw new Error('An admin already exists. Use the app to invite more people.');
+    const admins = await tx.select({ id: users.id, email: users.email, passwordHash: users.passwordHash }).from(users).where(eq(users.role, 'admin'));
+    if (admins.length > 0) {
+      // A lost link can be re-issued, but only while no admin has set a password and the email is one of theirs.
+      const pending = admins.every((a) => a.passwordHash === null) ? admins.find((a) => a.email === email) : undefined;
+      if (!pending) throw new Error('An admin already exists. Use the app to invite more people.');
+      const fresh = await issueToken(tx, pending.id, 'invite');
+      await audit(tx, { actor: null }, {
+        action: 'user.invited', targetType: 'user', targetId: pending.id, details: { email, role: 'admin', via: 'bootstrap-admin', resent: true },
+      });
+      return { link: inviteLink(cfg.appOrigin, fresh) };
+    }
     const [taken] = await tx.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
     if (taken) throw new Error('Someone with that email already has an account.');
     const [created] = await tx.insert(users).values({ email, name, role: 'admin', teamId: null }).returning({ id: users.id });

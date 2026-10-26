@@ -4,6 +4,7 @@ import { createTestApp, call, signInAs } from './helpers/testApp.js';
 import { makeTeam, makeUser } from './helpers/factories.js';
 import { processOutbox } from '../src/email/index.js';
 import { auditLog, userTokens, users } from '../src/db/schema/index.js';
+import { requestPasswordReset, resetPassword, TOKEN_TTL } from '../src/auth/reset.js';
 import { consumeToken, issueToken } from '../src/auth/tokens.js';
 
 let t: Awaited<ReturnType<typeof createTestApp>>;
@@ -115,4 +116,59 @@ test('an invite for a disabled account is refused', async () => {
   expect((await call(t, null, 'POST', '/api/auth/accept-invite', { token, password: 'a good long password' })).status).toBe(400);
   const [row] = await t.db.select({ p: users.passwordHash }).from(users).where(eq(users.id, String(r.json.user.id)));
   expect(row!.p).toBeNull();
+});
+
+test('the 429 text matches the limit that was hit', async () => {
+  let last = { status: 0, json: undefined as any };
+  for (let i = 0; i < 6; i++) last = await call(t, null, 'POST', '/api/auth/forgot-password', { email: 'wait@hf.test' });
+  expect(last.status).toBe(429);
+  expect(last.json.error).toContain('1 hour');
+  expect(last.json.error).not.toContain('15 minutes');
+});
+
+test('email is trimmed before it is checked; invited users cannot sign in before accepting', async () => {
+  const admin = await makeUser(t.db, { role: 'admin' });
+  const auth = await signInAs(t, admin);
+  const r = await call(t, auth, 'POST', '/api/users/invite', { email: ' A@b.co ', name: 'Trim', role: 'admin', teamId: null });
+  expect([r.status, r.json.user.email]).toEqual([201, 'a@b.co']);
+  const token = await tokenFrom(/accept-invite#([A-Za-z0-9_-]{43})/);
+  expect((await call(t, null, 'POST', '/api/auth/sign-in', { email: 'a@b.co', password: 'a good long password' })).status).toBe(401);
+  // Accepting ends a session sent with the request.
+  const other = await makeUser(t.db, { role: 'admin' });
+  const stale = await signInAs(t, other);
+  const acc = await call(t, stale, 'POST', '/api/auth/accept-invite', { token, password: 'a good long password' });
+  expect(acc.status).toBe(200);
+  expect((await call(t, stale, 'GET', '/api/me')).status).toBe(401);
+  const rows = JSON.stringify(await t.db.select().from(auditLog));
+  expect(rows).not.toContain(token);
+});
+
+test('a reset link still works 1 ms before it expires', async () => {
+  await makeUser(t.db, { role: 'admin', email: 'edge@hf.test' });
+  const t0 = new Date('2026-12-01T10:00:00Z');
+  await requestPasswordReset(t.db, 'edge@hf.test', { now: t0, appOrigin: 'http://hf.test' });
+  const token = await tokenFrom(/reset-password#([A-Za-z0-9_-]{43})/);
+  await expect(resetPassword(t.db, token, 'brand new password', { now: new Date(t0.getTime() + TOKEN_TTL.reset - 1) })).resolves.toBeUndefined();
+});
+
+test('the two password-changed mails say the right thing about sessions', async () => {
+  const u = await makeUser(t.db, { role: 'admin', email: 'words@hf.test' });
+  const s = await signInAs(t, u);
+  await call(t, s, 'POST', '/api/me/password', { currentPassword: u.password, newPassword: 'brand new password' });
+  await processOutbox(t.db, t.mail, site);
+  expect(t.mail.sent.at(-1)!.text).toContain('your other sessions have been signed out');
+  expect(t.mail.sent.at(-1)!.text).not.toContain('everywhere');
+  await call(t, null, 'POST', '/api/auth/forgot-password', { email: 'words@hf.test' });
+  const token = await tokenFrom(/reset-password#([A-Za-z0-9_-]{43})/);
+  await call(t, null, 'POST', '/api/auth/reset-password', { token, password: 'another new password' });
+  await processOutbox(t.db, t.mail, site);
+  expect(t.mail.sent.at(-1)!.text).toContain('signed out everywhere');
+});
+
+test('changing your password kills an outstanding reset link', async () => {
+  const u = await makeUser(t.db, { role: 'admin', email: 'kill@hf.test' });
+  await call(t, null, 'POST', '/api/auth/forgot-password', { email: 'kill@hf.test' });
+  const token = await tokenFrom(/reset-password#([A-Za-z0-9_-]{43})/);
+  await call(t, await signInAs(t, u), 'POST', '/api/me/password', { currentPassword: u.password, newPassword: 'brand new password' });
+  expect((await call(t, null, 'POST', '/api/auth/reset-password', { token, password: 'sneaky new password' })).status).toBe(400);
 });

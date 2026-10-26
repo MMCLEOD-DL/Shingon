@@ -69,7 +69,9 @@ export function renderTemplate(name: TemplateName, data: Record<string, string>,
       };
     }
     case 'password-changed': {
-      const lines = [`Hello ${v('name')},`, `Your ${appName} password was just changed, and you have been signed out everywhere.`, 'If this was you, there is nothing more to do. If it was not, ask your administrator for help straight away.'];
+      // scope 'others': changed from inside the app, so the session in use stays signed in.
+      const signedOut = data['scope'] === 'others' ? 'your other sessions have been signed out' : 'you have been signed out everywhere';
+      const lines = [`Hello ${v('name')},`, `Your ${appName} password was just changed, and ${signedOut}.`, 'If this was you, there is nothing more to do. If it was not, ask your administrator for help straight away.'];
       return {
         subject: `Your ${appName} password was changed`,
         text: `${lines.join('\n\n')}\n`,

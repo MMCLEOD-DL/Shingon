@@ -11,7 +11,9 @@ import { changePassword, requestPasswordReset, resetPassword } from './reset.js'
 import type { Config } from '../config.js';
 import { audit, auditableEmail } from '../audit/audit.js';
 
-const TOO_MANY = 'Too many attempts. Please wait 15 minutes and try again.';
+const tooMany = (wait: string): string => `Too many attempts. Please wait ${wait} and try again.`;
+const SIGN_IN_WINDOW = '15 minutes';
+const FORGOT_WINDOW = '1 hour';
 const BAD_SIGN_IN = "That email and password don't match an account.";
 
 
@@ -32,10 +34,10 @@ export function registerAuthRoutes(app: FastifyInstance, config: Pick<Config, 'c
   // Computed now, at registration, so the first unknown-email request is not faster than later ones.
   const dummyHash = hashPassword('not-a-real-password-for-timing-only');
   // Backstop: many attempts from one address across different emails.
-  const perAddress = app.createRateLimit({ max: 50, timeWindow: '15 minutes', keyGenerator: (req) => req.ip });
+  const perAddress = app.createRateLimit({ max: 50, timeWindow: SIGN_IN_WINDOW, keyGenerator: (req) => req.ip });
 
   // Backstop for reset requests: many addresses from one place.
-  const forgotPerAddress = app.createRateLimit({ max: 30, timeWindow: '1 hour', keyGenerator: (req) => req.ip });
+  const forgotPerAddress = app.createRateLimit({ max: 30, timeWindow: FORGOT_WINDOW, keyGenerator: (req) => req.ip });
   // Links carry 256-bit tokens, so guessing is hopeless; this only caps noise from one address.
   const linkAttempts = { max: 30, timeWindow: '15 minutes', keyGenerator: (req: { ip: string }) => req.ip };
 
@@ -61,7 +63,7 @@ export function registerAuthRoutes(app: FastifyInstance, config: Pick<Config, 'c
     async handler(req, reply, { db }) {
       const { email, password } = req.body;
       const gate = await perAddress(req);
-      if (!gate.isAllowed && gate.isExceeded) throw new HttpError(429, TOO_MANY);
+      if (!gate.isAllowed && gate.isExceeded) throw new HttpError(429, tooMany(SIGN_IN_WINDOW));
       const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
       const matches = await verifyPassword(password, user?.passwordHash ?? (await dummyHash));
       if (!user || user.passwordHash === null || user.disabledAt !== null || !matches) {
@@ -121,6 +123,8 @@ export function registerAuthRoutes(app: FastifyInstance, config: Pick<Config, 'c
       const at = now?.();
       if (at) meta.now = at;
       const { token, user } = await acceptInvite(db, req.body.token, req.body.password, meta);
+      // As with sign-in, a session sent with this request is ended.
+      if (req.sessionId) await db.delete(sessions).where(eq(sessions.id, req.sessionId));
       void reply.setCookie(SESSION_COOKIE, token, { ...cookieOpts, maxAge: SESSION_ABSOLUTE_MS / 1000 });
       return { user };
     },
@@ -145,7 +149,7 @@ export function registerAuthRoutes(app: FastifyInstance, config: Pick<Config, 'c
     },
     async handler(req, reply, { db }) {
       const gate = await forgotPerAddress(req);
-      if (!gate.isAllowed && gate.isExceeded) throw new HttpError(429, 'Too many requests. Please wait an hour and try again.');
+      if (!gate.isAllowed && gate.isExceeded) throw new HttpError(429, tooMany(FORGOT_WINDOW));
       const at = now?.();
       await requestPasswordReset(db, req.body.email, { appOrigin: config.appOrigin, ip: req.ip, ...(at ? { now: at } : {}) });
       return reply.code(202).send(FORGOT_REPLY);
