@@ -42,7 +42,7 @@ test('sign-in, failed sign-in and admin changes are audited with who and what', 
 
 test('users are disabled, never deleted: a user with audit history cannot be removed', async () => {
   // admin has audit rows from the test above (user.disabled)
-  await expectDbError(t.db.execute(sql`delete from users where id = ${admin.id}`), /violates foreign key constraint/);
+  await expectDbError(t.db.execute(sql`delete from users where id = ${admin.id}`), /audit_log_actor_id_users_id_fk/);
 });
 
 test('secrets never reach the audit details', () => {
@@ -95,4 +95,25 @@ test('role, team, name, enable, team creation and sign-out are audited; nested s
   expect(entries.map((e) => e.action).slice(0, 5)).toEqual(['auth.sign_out', 'user.updated', 'user.enabled', 'user.updated', 'team.created']);
   expect(entries[3]!.details).toEqual({ changed: { role: ['member', 'manager'], teamId: [expect.any(String), teamId] } });
   expect(redactDetails({ nested: { password: 'x', ok: 1 } })).toEqual({ nested: { password: '[redacted]', ok: 1 } });
+});
+
+test('non-admins get 403 on the audit log', async () => {
+  const N = await makeTeam(t.db, 'Audit-403 team');
+  const mgr = await makeUser(t.db, { role: 'manager', teamId: N.id });
+  const mem = await makeUser(t.db, { role: 'member', teamId: N.id });
+  expect((await call(t, await signInAs(t, mgr), 'GET', '/api/audit')).status).toBe(403);
+  expect((await call(t, await signInAs(t, mem), 'GET', '/api/audit')).status).toBe(403);
+});
+
+test('audit() itself masks secrets in what it stores', async () => {
+  await audit(t.db, { actor: null }, { action: 'seed.demo', targetId: 'redact-check', details: { password: 'x', nested: { token: 'y' }, note: 'ok' } });
+  const row = (await t.db.execute(sql`select details from audit_log where target_id = 'redact-check'`)).rows[0]!;
+  expect(row.details).toEqual({ password: '[redacted]', nested: { token: '[redacted]' }, note: 'ok' });
+});
+
+test('a password typed into the email box never reaches the audit row', async () => {
+  await call(t, null, 'POST', '/api/auth/sign-in', { email: 'hunter2 secret', password: 'whatever-whatever' });
+  const rows = (await t.db.execute(sql`select details::text as d from audit_log where action = 'auth.sign_in_failed' order by id desc limit 1`)).rows;
+  expect(rows[0]!.d).not.toContain('hunter2');
+  expect(JSON.parse(rows[0]!.d as string)).toEqual({ email: '[not an email address]' });
 });

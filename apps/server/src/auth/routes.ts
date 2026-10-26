@@ -10,6 +10,9 @@ import type { Config } from '../config.js';
 import { audit } from '../audit/audit.js';
 
 const TOO_MANY = 'Too many attempts. Please wait 15 minutes and try again.';
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/** A password pasted into the email box must not reach the audit log, so only email-shaped input is kept. */
+const auditableEmail = (v: string): string => (v.length <= 254 && EMAIL_SHAPE.test(v) ? v : '[not an email address]');
 const BAD_SIGN_IN = "That email and password don't match an account.";
 
 
@@ -52,7 +55,7 @@ export function registerAuthRoutes(app: FastifyInstance, config: Pick<Config, 'c
       const matches = await verifyPassword(password, user?.passwordHash ?? (await dummyHash));
       if (!user || user.passwordHash === null || user.disabledAt !== null || !matches) {
         // Never the password, only the email that was tried.
-        await audit(db, { actor: null, ip: req.ip }, { action: 'auth.sign_in_failed', details: { email } });
+        await audit(db, { actor: null, ip: req.ip }, { action: 'auth.sign_in_failed', details: { email: auditableEmail(email) } });
         throw new HttpError(401, BAD_SIGN_IN);
       }
       const meta: { ip?: string; userAgent?: string } = { ip: req.ip };
