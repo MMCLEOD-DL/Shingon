@@ -42,7 +42,8 @@ const withAdmin = async <T>(fn: (c: pg.Client) => Promise<T>): Promise<T> => {
 const dropDb = (): Promise<unknown> => withAdmin((c) => c.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`));
 
 const uploadDir = await mkdtemp(path.join(tmpdir(), 'hf-e2e-uploads-'));
-await rm(mailDir, { recursive: true, force: true });
+// Only a folder meant for this purpose is ever emptied: never an arbitrary path someone set.
+if (path.basename(path.resolve(mailDir)).startsWith('hf-e2e')) await rm(mailDir, { recursive: true, force: true });
 await mkdir(mailDir, { recursive: true });
 
 await withAdmin((c) => c.query(`CREATE DATABASE ${dbName} ENCODING 'UTF8' TEMPLATE template0 LC_COLLATE 'C' LC_CTYPE 'C'`));

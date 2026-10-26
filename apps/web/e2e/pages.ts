@@ -15,7 +15,7 @@ export const PAGES = [
   { name: 'sign-in', route: '/sign-in', path: '/sign-in', as: 'anon', ready: 'Sign in' },
   { name: 'forgot-password', route: '/forgot-password', path: '/forgot-password', as: 'anon', ready: 'Forgot your password?' },
   { name: 'reset-password', route: '/reset-password', path: '/reset-password#example', as: 'anon', ready: 'Choose a new password' },
-  { name: 'accept-invite', route: '/accept-invite', path: '/accept-invite#example', as: 'anon', ready: 'Welcome' },
+  { name: 'accept-invite', route: '/accept-invite', path: '/accept-invite#example', as: 'anon', ready: 'Set up your account' },
   { name: 'notes', route: '/notes', path: '/notes', as: 'member', ready: 'Notes' },
   { name: 'note-new', route: '/notes/new', path: '/notes/new', as: 'member', ready: 'New note' },
   { name: 'note-view', route: '/notes/:id', path: (fx) => `/notes/${fx.memberNoteWithPhoto}`, as: 'member', ready: (fx) => fx.memberNoteTitle },

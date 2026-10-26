@@ -49,7 +49,9 @@ test('a member creates a note with a photo', async ({ page }, info) => {
   await expect(page.locator('img[src*="/api/files/"]').first()).toBeVisible();
 
   await page.goto('/notes');
-  await expect(page.getByText(title).first()).toBeVisible();
+  // The first row (desktop table) or first card (phone) on the page is the new note.
+  const first = page.locator('main tbody tr, main [role="button"]').first();
+  await expect(first).toContainText(title);
   const newest = await page.request.get('/api/notes?limit=1');
   expect(((await newest.json()) as { notes: { title: string }[] }).notes[0]?.title, 'the new note is listed first').toBe(title);
 

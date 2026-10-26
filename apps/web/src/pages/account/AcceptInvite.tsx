@@ -14,10 +14,10 @@ export function AcceptInvite() {
   const back = <Anchor component={Link} to="/sign-in">Back to sign in</Anchor>;
 
   if (token === '') {
-    return <AuthCard title="Welcome" footer={back}><Alert color="red" variant="light" role="alert">{INCOMPLETE_LINK}</Alert></AuthCard>;
+    return <AuthCard title="Set up your account" footer={back}><Alert color="red" variant="light" role="alert">{INCOMPLETE_LINK}</Alert></AuthCard>;
   }
   return (
-    <AuthCard title="Welcome" footer={back}>
+    <AuthCard title="Set up your account" footer={back}>
       <SetPasswordForm
         hint="You have been invited. Choose a password to finish setting up your account."
         onSubmit={async (password) => {

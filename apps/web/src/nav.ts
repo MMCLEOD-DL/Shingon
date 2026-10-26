@@ -6,9 +6,9 @@ export interface NavItem { label: string; to: string; icon: TablerIcon; permissi
 // Client apps add their own areas here; the shell and the role filtering stay as they are.
 export const NAV: NavItem[] = [
   { label: 'Notes', to: '/notes', icon: IconNotes, permission: 'notes:read' },
-  { label: 'Users', to: '/admin/users', icon: IconUsers, permission: 'users:list' },
+  { label: 'People', to: '/admin/users', icon: IconUsers, permission: 'users:list' },
   { label: 'Teams', to: '/admin/teams', icon: IconUsersGroup, permission: 'teams:manage' },
-  { label: 'Audit log', to: '/admin/audit', icon: IconHistory, permission: 'audit:read' },
+  { label: 'Activity log', to: '/admin/audit', icon: IconHistory, permission: 'audit:read' },
   { label: 'Profile', to: '/profile', icon: IconUser },
 ];
 

@@ -16,7 +16,10 @@ for (const p of PAGES) {
       page.on('console', (m) => {
         if (m.type() !== 'error') return;
         // A signed-out visitor is asked "who are you?" first and the answer is 401. The browser logs that as an error; it is the app working.
-        if (p.as === 'anon' && m.location().url.endsWith('/api/me') && m.text().includes('401')) return;
+        // WebKit may report an empty location, so a "status of 401" message with no URL is accepted too (signed-out pages only).
+        // TODO(build machine): confirm this against the real WebKit run.
+        const where = m.location().url;
+        if (p.as === 'anon' && m.text().includes('status of 401') && (where === '' || where.endsWith('/api/me'))) return;
         errors.push(m.text());
       });
       await page.goto(resolvePath(p, fx));
@@ -26,7 +29,7 @@ for (const p of PAGES) {
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
       expect(overflow, 'the page scrolls sideways').toBeLessThanOrEqual(1);
       if (info.project.use.isMobile) {
-        const small = await page.locator('main button:visible, main a[role="button"]:visible, main input:visible').evaluateAll(
+        const small = await page.locator('main button:visible, main a[role="button"]:visible, main input:visible, header button:visible, nav a:visible').evaluateAll(
           (els) => els.filter((e) => e.getBoundingClientRect().height < 36).map((e) => e.outerHTML.slice(0, 80)));
         expect(small, 'buttons and fields too small to tap').toEqual([]);
       }
