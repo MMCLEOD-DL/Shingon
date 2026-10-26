@@ -22,12 +22,13 @@ BASE="http://localhost:8080"
 STEP="starting"
 PASSED=false
 CATCHER_PID=""
+CREATED_IMAGES=()                         # only these are removed at the end
 START=$SECONDS
 
 say() { echo "== $*"; }
 ok() { echo "   ok: $*"; }
 fail() { echo "   FAILED: $*" >&2; exit 1; }
-dc() { (cd "$DIR" && docker compose "$@"); }
+dc() { (cd "$DIR" && docker compose -p "$PROJECT" "$@"); }
 ops_cli() { dc exec -T ops node ops/dist/cli.js "$@"; }
 notes_count() { dc exec -T db psql -U app -d app -tAc 'select count(*) from notes' | tr -d '[:space:]'; }
 alert_lines() { [ -f "$ALERTS" ] && wc -l < "$ALERTS" | tr -d ' ' || echo 0; }
@@ -66,11 +67,9 @@ teardown() {
   if [ -f "$DIR/compose.yaml" ]; then dc --profile tools --profile tunnel down -v --remove-orphans >/dev/null 2>&1; fi
   docker rm -f hf-smoke-rest >/dev/null 2>&1
   [ -n "$CATCHER_PID" ] && kill "$CATCHER_PID" >/dev/null 2>&1
-  for v in "${V:-}" "${V1:-}" "${V2:-}"; do
-    [ -n "$v" ] && docker rmi "highland/app:$v" "highland/ops:$v" >/dev/null 2>&1
-  done
+  for img in "${CREATED_IMAGES[@]}"; do docker rmi "$img" >/dev/null 2>&1; done
   rm -rf "$DIR" "$COOKIES" "/tmp/hf-smoke-images-${V1:-x}.tar"
-  echo "   Removed the containers, volumes, network and highland images this run made. The alert log is kept at $ALERTS."
+  echo "   Removed the containers, volumes, network and the highland images this run built. The alert log is kept at $ALERTS."
   echo "   Pulled third-party images (postgres, caddy, $REST_IMAGE, $MAILPIT_IMAGE) are left; remove them with docker rmi if you like."
   if [ "$PASSED" = true ]; then echo "SMOKE PASSED in $(( (SECONDS - START) / 60 )) min $(( (SECONDS - START) % 60 )) s"; fi
 }
@@ -79,8 +78,12 @@ teardown() {
 command -v docker >/dev/null || { echo "Docker is not installed. Run this on a throwaway VM with Docker." >&2; exit 2; }
 docker compose version >/dev/null 2>&1 || { echo "The Docker Compose plugin is missing." >&2; exit 2; }
 command -v node >/dev/null || { echo "Node.js 22 is needed (for the bundle and the alert catcher)." >&2; exit 2; }
-if [ -n "$(docker ps -aq --filter label=com.docker.compose.project=highland)" ]; then
-  echo "This machine runs a Highland deployment (Compose project \"highland\"). The smoke test must never run on a client box. Stopping." >&2; exit 2
+# A real deployment has an edge-check container (whatever its project name), or at least highland images.
+if [ -n "$(docker ps -aq --filter label=com.docker.compose.project=highland)" ] || [ -n "$(docker ps -aq --filter label=com.docker.compose.service=edge-check)" ]; then
+  echo "This machine runs a Highland deployment (a Compose project \"highland\" or an edge-check container). The smoke test must never run on a client box. Stopping." >&2; exit 2
+fi
+if docker images --format '{{.Repository}}' | grep -qE '(^|/)highland/(app|ops)$'; then
+  echo "This machine already has highland/app or highland/ops images (local or from a registry), so it may be a client box or someone's build machine. The smoke test builds and deletes those images, so it runs only where there are none. Stopping." >&2; exit 2
 fi
 if [ -e "$DIR" ] || [ -n "$(docker ps -aq --filter name='^hf-smoke-rest$')" ] || [ -n "$(docker ps -aq --filter label=com.docker.compose.project=$PROJECT)" ]; then
   echo "A previous smoke run was left behind ($DIR, the hf-smoke-rest container or the $PROJECT project). Remove it first." >&2; exit 2
@@ -96,12 +99,15 @@ COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo smoke)"
 # ---- 1. Images: V, V1 (a plain retag, delivered as a docker save file), V2 (deliberately broken).
 STEP="step 1 (images)"
 say "Step 1: build the images for $V, retag $V1, build a broken $V2"
+CREATED_IMAGES+=("highland/app:$V" "highland/ops:$V")
 docker build -q -f deploy/Dockerfile -t "highland/app:$V" --build-arg "APP_VERSION=$V" --build-arg "GIT_COMMIT=$COMMIT" . >/dev/null
 docker build -q -f deploy/ops.Dockerfile -t "highland/ops:$V" --build-arg "APP_VERSION=$V" --build-arg "GIT_COMMIT=$COMMIT" . >/dev/null
+CREATED_IMAGES+=("highland/app:$V1" "highland/ops:$V1")   # loaded back from the file by the update in step 8
 docker tag "highland/app:$V" "highland/app:$V1"
 docker tag "highland/ops:$V" "highland/ops:$V1"
 docker save "highland/app:$V1" "highland/ops:$V1" -o "/tmp/hf-smoke-images-$V1.tar"
 docker rmi "highland/app:$V1" "highland/ops:$V1" >/dev/null   # so the update has to load them from the file
+CREATED_IMAGES+=("highland/app:$V2" "highland/ops:$V2")
 docker build -q -f deploy/test/broken-image.Dockerfile --build-arg "BASE=highland/app:$V" -t "highland/app:$V2" deploy/test >/dev/null
 docker tag "highland/ops:$V" "highland/ops:$V2"
 ok "highland/app and highland/ops $V built; $V1 saved to a file; broken $V2 built"
@@ -138,12 +144,12 @@ setenv BACKUP_REPOSITORY rest:http://host.docker.internal:8000/smoke
 setenv ALERT_WEBHOOK_URL http://host.docker.internal:8099/
 setenv HTTP_PORT "$BIND:8080"
 setenv HTTPS_PORT "$BIND:8443"
-cat > "$DIR/compose.override.yaml" <<'YAML'
+cat > "$DIR/compose.override.yaml" <<YAML
 # Smoke test only: ops and the updater reach the REST server and the catcher on the host; Mailpit catches the app's mail.
 services:
   ops: { extra_hosts: ["host.docker.internal:host-gateway"] }
   updater: { extra_hosts: ["host.docker.internal:host-gateway"] }
-  mailpit: { image: axllent/mailpit:v1.21.8, networks: [backend] }
+  mailpit: { image: $MAILPIT_IMAGE, networks: [backend] }
 YAML
 ls "$DIR"/RUNBOOK.md >/dev/null || fail "the bundle has no RUNBOOK.md"
 ok "bundle unpacked ($(cd "$DIR" && ls | tr '\n' ' ')), .env made by ops init (mode 600)"
@@ -243,7 +249,8 @@ LOGS="$(dc --profile tools logs --no-color 2>&1)"
 for key in DB_PASSWORD HEALTH_TOKEN BACKUP_PASSWORD; do
   val="$(sed -n "s/^$key=//p" "$DIR/.env")"
   [ -n "$val" ] || continue
-  if grep -qF "$val" "$ALERTS" || printf '%s' "$LOGS" | grep -qF "$val"; then fail "$key appears in the alerts or logs"; fi
+  # The value goes to grep as a pattern file, never as a command-line argument (where ps could show it).
+  if grep -qF -f <(printf '%s\n' "$val") "$ALERTS" || printf '%s' "$LOGS" | grep -qF -f <(printf '%s\n' "$val"); then fail "$key appears in the alerts or logs"; fi
 done
 ok "no secret found"
 

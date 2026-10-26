@@ -23,6 +23,9 @@ test('the building guide has its sections', () => {
   expect(headings).toEqual(['Starting a client app', 'Making it theirs', 'Adding a feature (follow notes)', 'Numbers people rely on', 'Permissions', 'Taking foundation fixes', 'The quality gates']);
 });
 test('LICENCES.md is current', async () => {
-  const { renderMarkdown, collectLicences } = await import('../../scripts/check-licences.js');
-  expect(doc('docs/LICENCES.md')).toBe(renderMarkdown(await collectLicences(new URL('../../', import.meta.url).pathname)));
+  // Made from package-lock.json, which is the same on every computer (it lists the platform-specific builds for every OS).
+  const { renderMarkdown, collectLockfile } = await import('../../scripts/check-licences.js');
+  const locked = await collectLockfile(new URL('../../', import.meta.url).pathname);
+  expect(locked).not.toBeNull();
+  expect(doc('docs/LICENCES.md')).toBe(renderMarkdown(locked ?? []));
 });

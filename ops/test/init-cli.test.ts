@@ -2,7 +2,7 @@ import { test, expect } from 'vitest';
 import { mkdtempSync, rmSync, statSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { runInit, realIo, type InitIo } from '../src/init-cli.js';
+import { runHelp, runInit, realIo, USAGE, type InitIo } from '../src/init-cli.js';
 
 const base = ['--client', 'Acme Ltd', '--origin', 'https://app.acme.co.uk', '--site', 'app.acme.co.uk', '--dir', '/opt/highland/acme'];
 function fakeIo(tty: boolean): InitIo & { out: string; err: string } {
@@ -73,4 +73,16 @@ test('--tunnel forces SITE_ADDRESS=:80 even when a public name is given, keeps t
   expect(/^APP_ORIGIN=(.*)$/m.exec(io.out)![1]).toBe('https://app.acme.co.uk');
   expect(/^TUNNEL_ENABLED=(.*)$/m.exec(io.out)![1]).toBe('true');
   expect(io.err).toContain('SITE_ADDRESS has been set to :80');
+});
+
+test('ops help prints every command and exits 0; extra words are a usage error', () => {
+  let out = '';
+  let err = '';
+  expect(runHelp([], (t) => { out += t; }, (t) => { err += t; })).toBe(0);
+  expect(out).toBe(`${USAGE}\n`);
+  expect(err).toBe('');
+  for (const cmd of ['help', 'init', 'backup', 'restore-test', 'restore', 'check', 'check-edge', 'update', 'daemon']) expect(out).toContain(`\n  ${cmd}`);
+  expect(out).toContain('docker compose run --rm ops <command>');
+  expect(runHelp(['now'], () => undefined, (t) => { err += t; })).toBe(2);
+  expect(err).toContain('help takes no options');
 });

@@ -8,7 +8,7 @@ A short-hand used throughout: **"run `ops <command>`"** means
 docker compose run --rm ops <command>
 ```
 
-which starts a one-off copy of the ops container with the deployment's own settings. `docker compose run --rm ops` with no command prints the full list of ops commands.
+which starts a one-off copy of the ops container with the deployment's own settings. `docker compose run --rm ops help` prints the full list of ops commands. **Always name a command:** `docker compose run --rm ops` on its own starts a second copy of the ops daemon (the monitor and the scheduled backups) next to the real one.
 
 ## What this is
 
@@ -33,13 +33,22 @@ You need: a Linux machine with Docker Engine and the Compose plugin; the release
    tar -xzf ~/highland-bundle-0.1.0.tar.gz      # compose.yaml, Caddyfile, .env.example, RUNBOOK.md
    ```
 
-2. **Load the images.** From a file (kept in the bundle folder, so later updates can use the same place):
+2. **Load the images.** Either way works; pick one per deployment and keep to it for updates.
+   - **From a file** (kept in the bundle folder, so later updates can use the same place):
 
-   ```bash
-   docker load -i images-0.1.0.tar     # made on the build machine with: docker save highland/app:0.1.0 highland/ops:0.1.0 -o images-0.1.0.tar
-   ```
+     ```bash
+     docker load -i images-0.1.0.tar     # made on the build machine with: docker save highland/app:0.1.0 highland/ops:0.1.0 -o images-0.1.0.tar
+     ```
 
-   The default image names (`highland/app`, `highland/ops`) are **local only**: they are never downloaded, because those names on Docker Hub belong to someone else. To use a private registry instead, set `APP_IMAGE` and `OPS_IMAGE` to the full names (such as `registry.example.com/highland/app`) and `IMAGE_PULL_POLICY=missing` in `.env` (see "Updating").
+     The default image names (`highland/app`, `highland/ops`) are **local only**: they are never downloaded, because those names on Docker Hub belong to someone else.
+   - **From your private registry:** sign in once, into a folder inside the bundle folder (the updater uses the same folder later, and the password never goes on a command line), then fetch the ops image so that `ops init` can run:
+
+     ```bash
+     docker --config "$PWD/.docker" login registry.example.com
+     DOCKER_CONFIG="$PWD/.docker" docker pull registry.example.com/highland/ops:0.1.0
+     ```
+
+     In step 3 use the full name (`registry.example.com/highland/ops:0.1.0`) instead of `highland/ops:0.1.0`. In step 4 also set `APP_IMAGE=registry.example.com/highland/app`, `OPS_IMAGE=registry.example.com/highland/ops` and `IMAGE_PULL_POLICY=missing` (remove the `# ` in front of each). In step 5 start with `DOCKER_CONFIG="$PWD/.docker" docker compose up -d`, so Docker uses that sign-in to fetch the app image: a plain `docker compose up -d` uses your own sign-in on the box, which does not have it. Any later host-side command that may need to fetch one of your images takes the same `DOCKER_CONFIG="$PWD/.docker"` prefix.
 
 3. **Make the settings file with `ops init`.** It writes a new `.env` with strong random secrets and prints a checklist. Run it from the ops image, as your own user so that you own the file:
 
@@ -67,7 +76,7 @@ You need: a Linux machine with Docker Engine and the Compose plugin; the release
 5. **Start it:**
 
    ```bash
-   docker compose up -d                       # add --profile tunnel when the tunnel is used
+   docker compose up -d                       # add --profile tunnel when the tunnel is used; registry boxes: DOCKER_CONFIG="$PWD/.docker" docker compose up -d
    docker compose ps                          # db, app, ops and proxy running; migrate and edge-check exited 0
    ```
 
@@ -84,7 +93,7 @@ You need: a Linux machine with Docker Engine and the Compose plugin; the release
 7. **Check the box and take the first backup:**
 
    ```bash
-   docker compose run --rm ops check          # one line per check; ✗ app:backups and ✗ app:restore-test are expected until step 7 is done
+   docker compose run --rm ops check          # one line per check; ✗ app:backups and ✗ app:restore-test are expected until the backup and restore test below have run
    docker compose run --rm ops backup
    docker compose run --rm ops restore-test
    docker compose run --rm ops check          # now every line should start with ✓
@@ -216,10 +225,10 @@ To see the current state at any time: `docker compose run --rm ops check`. The o
 - **List the backups:** restic is in the ops image:
 
   ```bash
-  docker compose run --rm --entrypoint sh ops -c 'RESTIC_REPOSITORY="$BACKUP_REPOSITORY" RESTIC_PASSWORD="$BACKUP_PASSWORD" RESTIC_CACHE_DIR=/state/restic-cache restic snapshots'
+  docker compose run --rm --entrypoint sh ops -c 'RESTIC_REPOSITORY="$BACKUP_REPOSITORY" RESTIC_PASSWORD="$BACKUP_PASSWORD" RESTIC_CACHE_DIR=/state/restic-cache restic snapshots --host acme-ltd'
   ```
 
-  The tags say what each one is: `hf scheduled`, `hf manual`, `hf pre-update` or `safety`. Add `--tag pre-update` to see only pre-update backups. The same form runs any restic command; `restic unlock` clears a stale lock left by a crashed run (only when you are sure nothing is backing up).
+  `--host` is this box's short name: `CLIENT_LABEL` in lower case, with every run of other characters turned into one `-` (so "Acme Ltd" is `acme-ltd`; the HOST column of a plain `restic snapshots` shows it). It matters when several boxes share one destination: without `--host` you see every box's backups, and only the ones with this box's name are this box's. Ops itself only ever looks at its own. The tags say what each one is: `hf scheduled`, `hf manual`, `hf pre-update` or `hf safety`. Add `--tag pre-update` to see only pre-update backups. The same form runs any restic command; `restic unlock` clears a stale lock left by a crashed run (only when you are sure nothing is backing up).
 
 **How a restore swaps the database in.** The backup is first restored into a new database called `app_incoming`. Only when that has fully worked is the live database renamed to `app_old`, `app_incoming` renamed to `app`, and `app_old` dropped. So there is never a moment without a complete database under a known name. Then the uploads folder is replaced and handed back to the app's user. If the restore stops, the message says exactly where things are:
 
@@ -250,7 +259,7 @@ What it does, in order: stops the app **and the monitor (ops)**, takes an encryp
 
 **Getting the new images onto the box:**
 - **From a file** (the default, local-only image names): copy the `docker save` file into the bundle folder and add `--image-file`: `docker compose run --rm updater update --to 0.1.1 --image-file images-0.1.1.tar`. The file must be inside the bundle folder.
-- **From your private registry:** set `APP_IMAGE=registry.example.com/highland/app`, `OPS_IMAGE=registry.example.com/highland/ops` and `IMAGE_PULL_POLICY=missing` in `.env`. Sign the box in once with `docker --config "$PWD/.docker" login registry.example.com` (the updater uses that folder; the password never goes on a command line). Use `IMAGE_PULL_POLICY=missing` **only** with full registry names, never with the default `highland/*` names. Image names that point at Docker Hub (`docker.io/…`) are refused.
+- **From your private registry:** `APP_IMAGE`, `OPS_IMAGE` and `IMAGE_PULL_POLICY=missing` are set in `.env` and the box is signed in to the registry in `<bundle folder>/.docker`, as in "Setting up a new deployment" step 2. The updater finds that folder by itself and pulls the new version. Host-side commands that may fetch your images (for example `docker compose up -d` after a manual fix) need the prefix `DOCKER_CONFIG="$PWD/.docker"`. Use `IMAGE_PULL_POLICY=missing` **only** with full registry names, never with the default `highland/*` names. Image names that point at Docker Hub (`docker.io/…`) are refused.
 
 **The outcomes** (the same message goes to your alert channel):
 
@@ -334,7 +343,7 @@ Remote access uses an **outbound-only tunnel**: the box connects out to the tunn
 
 **Cloudflare tunnel:**
 1. In the Cloudflare dashboard (Zero Trust, Networks, Tunnels), create a tunnel for this client and copy its token into `TUNNEL_TOKEN` in `.env`. Set `TUNNEL_ENABLED=true`, so the monitor watches it.
-2. Add its routes in the dashboard: the staff web address (for example `staff.acme.co.uk`) to **`http://proxy:80`**, and, if you want SSH, a second name to **`ssh://host.docker.internal:22`** (the box's own SSH server).
+2. Add its routes in the dashboard (**not yet tried on a real box: the foundation's tests never contact Cloudflare, so try this on a spare box first**): the staff web address (for example `staff.acme.co.uk`) to **`http://proxy:80`**, and, if you want SSH, a second name to **`ssh://host.docker.internal:22`** (the box's own SSH server).
 3. `SITE_ADDRESS` must be `:80` (Cloudflare provides the HTTPS). Keep `APP_ORIGIN` as the `https://` address staff use. `ops init --tunnel` sets this for you; any other `SITE_ADDRESS` with the tunnel makes visitors loop forever.
 4. Start with the profile, every time you run `up`: `docker compose --profile tunnel up -d`. (You can put `COMPOSE_PROFILES=tunnel` in `.env` instead, so a plain `docker compose up -d` includes it.)
 
@@ -345,7 +354,7 @@ Remember Cloudflare can see the traffic that passes through it (see "Where data 
 - `TUNNEL_IP` must be inside `EDGE_SUBNET`, and not its first address (`.0`, the network), its second (`.1`, the gateway, where traffic from the box itself arrives) or its last (broadcast);
 - the `edge-check` service checks the pair before the front door starts. On a mismatch the front door stays down (`docker compose up -d` reports that `edge-check` did not complete successfully), while ops keeps running, keeps backing up and sends a critical alert. Fix `.env` and run `docker compose up -d` again.
 
-**Tailscale instead of Cloudflare.** If the data policy rules Cloudflare out, replace the `tunnel` service with Tailscale, which is also outbound-only and does not see the traffic. Leave out `--profile tunnel`, keep `TUNNEL_ENABLED=false` (the monitor's tunnel check is cloudflared's), and add a `compose.override.yaml` in the bundle folder. This is a starting point; it is not covered by the foundation's smoke test, so try it on a spare box first and pin an exact `tailscale/tailscale` version tag (never `latest`):
+**Tailscale instead of Cloudflare.** If the data policy rules Cloudflare out, replace the `tunnel` service with Tailscale, which is also outbound-only and does not see the traffic. Leave out `--profile tunnel`, keep `TUNNEL_ENABLED=false` (the monitor's tunnel check is cloudflared's), and add a `compose.override.yaml` in the bundle folder. This is a starting point. **Not yet tried on a real box (nor by the foundation's smoke test): try it on a spare box first.** Pin an exact `tailscale/tailscale` version tag (never `latest`):
 
 ```yaml
 services:
@@ -423,7 +432,7 @@ It is public (not a secret) and stays the same for years; it lives in the `caddy
 
 Rotate a secret when someone who knew it leaves, when it may have been exposed, or as routine. Use long random values that are safe inside a web address, for example from `openssl rand -hex 32`. Do it in a quiet hour.
 
-**`DB_PASSWORD`** (the database password). PostgreSQL keeps its own copy, set when the database was first created, so change both:
+**`DB_PASSWORD`** (the database password). **Not yet tried on a real box: try it on a spare box first.** PostgreSQL keeps its own copy, set when the database was first created, so change both:
 
 ```bash
 docker compose exec db psql -U app -d app
@@ -435,7 +444,7 @@ docker compose run --rm ops check
 
 **`HEALTH_TOKEN`** (lets ops read the app's detailed health and version). Put a new value in `.env` and run `docker compose up -d`: the app and ops both read it from there. If an outside monitor also uses it, update it there too.
 
-**`MATRIX_ACCESS_TOKEN`** (the alert bot's token). Sign the bot in afresh to get a new token (for example sign in as the bot in Element, then Settings, Help & About, Access token), put it in `.env`, and run `docker compose up -d ops`. Check `docker compose logs ops` shows no "alert could not be sent" lines at the next problem. Then sign out the bot's old session, which makes the old token useless.
+**`MATRIX_ACCESS_TOKEN`** (the alert bot's token). **Not yet tried on a real box: try it on a spare box first.** Sign the bot in afresh to get a new token (for example sign in as the bot in Element, then Settings, Help & About, Access token), put it in `.env`, and run `docker compose up -d ops`. Check `docker compose logs ops` shows no "alert could not be sent" lines at the next problem. Then sign out the bot's old session, which makes the old token useless.
 
 **`BACKUP_PASSWORD`** is the key to every existing backup, so **never just edit the variable**: ops would then be locked out of its own backups ("The backup password does not match the backup destination"). Add a new key to the repository, switch, prove it, then remove the old key:
 

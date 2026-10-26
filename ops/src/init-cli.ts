@@ -3,9 +3,12 @@ import { parseArgs } from 'node:util';
 import { generateEnv } from './init.js';
 
 export const USAGE = [
-  'Usage: ops <command>',
+  'Usage: ops <command>   (on a box: docker compose run --rm ops <command>; always name a command, because with none the',
+  '                       ops service starts its daemon, a second copy of the monitor)',
   '',
   'Commands:',
+  '  help',
+  '      Shows this list.',
   '  init --client <name> --origin <web address> --site <address> --dir <bundle folder> [--tunnel] [--demo] [--out <file>]',
   '      Makes a new .env with strong random secrets and prints a checklist.',
   '      --out .env     writes the file (readable only by its owner) and refuses to overwrite an existing one.',
@@ -39,6 +42,16 @@ export const USAGE = [
   '  daemon',
   '      Runs the scheduled backups, restore tests, audit-log tidy-up and health checks with alerts (the ops service does this).',
 ].join('\n');
+
+/** `ops help` (also -h and --help): the command list on standard output, exit 0. */
+export function runHelp(args: string[], out: (text: string) => void, err: (text: string) => void): number {
+  if (args.length > 0) {
+    err(`help takes no options.\n\n${USAGE}\n`);
+    return 2;
+  }
+  out(`${USAGE}\n`);
+  return 0;
+}
 
 export interface InitIo {
   stdoutIsTTY: boolean;

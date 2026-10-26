@@ -10,7 +10,7 @@ The foundation every Highland client app is built from: a staff web app for one 
 - **Data safety.** Backups are encrypted and never kept only on the box; a restore test runs every week; an update stops the app, backs up first, and puts everything back if the new version fails.
 - **Plain UK English** in every message staff or the operator see, with no stack traces and no secrets in logs or alerts.
 - **Phone first.** Every page is screenshot at desktop and phone width (Chromium and WebKit) and checked for sideways scrolling and small tap targets.
-- **Licences.** Every installed npm package must have a permissive licence; the build fails otherwise (see [docs/LICENCES.md](docs/LICENCES.md)).
+- **Licences.** Every npm package, installed or recorded in `package-lock.json` (including the builds for other operating systems), must have a permissive licence; the build fails otherwise (see [docs/LICENCES.md](docs/LICENCES.md)).
 
 ## Commands
 

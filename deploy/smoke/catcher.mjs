@@ -2,7 +2,8 @@
 import { appendFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 const LOG = process.env.HF_SMOKE_ALERT_LOG ?? '/tmp/hf-smoke-alerts.log';
-const HOST = process.env.HF_SMOKE_CATCHER_HOST ?? '0.0.0.0';
+// Loopback unless told otherwise: the smoke script binds it to Docker's bridge address so containers can reach it.
+const HOST = process.env.HF_SMOKE_CATCHER_HOST ?? '127.0.0.1';
 createServer((req, res) => {
   let body = '';
   req.on('data', (chunk) => { body += chunk; if (body.length > 1e6) req.destroy(); });

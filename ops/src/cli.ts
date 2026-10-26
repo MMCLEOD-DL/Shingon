@@ -4,7 +4,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { desc, eq } from 'drizzle-orm';
 import { opsRuns } from '@hf/server/db/schema';
-import { realIo, runInit, USAGE } from './init-cli.js';
+import { realIo, runHelp, runInit, USAGE } from './init-cli.js';
 import { checkEdgePair, loadOpsConfig, OpsConfigError, type OpsConfig } from './config.js';
 import { BackupError, runBackup, firstLine } from './backup.js';
 import { RestoreError, restoreDataFrom, restoreLive, ukDate, verifyLatestRestore } from './restore.js';
@@ -169,6 +169,10 @@ async function main(argv: string[]): Promise<number> {
   switch (command) {
     case 'init':
       return runInit(rest, realIo);
+    case 'help':
+    case '-h':
+    case '--help':
+      return runHelp(rest, (t) => process.stdout.write(t), (t) => process.stderr.write(t));
     case 'backup': {
       const force = rest.length === 1 && rest[0] === '--force';
       if (rest.length > 0 && !force) { complain(`backup takes only --force.\n\n${USAGE}`); return 2; }
