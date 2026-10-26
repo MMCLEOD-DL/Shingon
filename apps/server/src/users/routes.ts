@@ -12,6 +12,8 @@ import type { Config } from '../config.js';
 import { getUser, listTeams, listUsers } from './repo.js';
 
 const IdParams = z.strictObject({ id: z.uuid() });
+// The lists take no query parameters yet; anything sent is refused rather than ignored.
+const NoQuery = z.strictObject({});
 
 const isUniqueViolation = (e: unknown): boolean => {
   const err = e as { code?: string; cause?: { code?: string } } | null;
@@ -23,6 +25,7 @@ export function registerUserRoutes(app: FastifyInstance, config: Pick<Config, 'a
     method: 'GET',
     url: '/api/users',
     access: { permission: 'users:list' },
+    schema: { query: NoQuery },
     async handler(_req, _reply, { actor, db }) {
       if (!actor) throw unauthorized();
       return { users: await listUsers(db, actor) };
@@ -129,6 +132,7 @@ export function registerUserRoutes(app: FastifyInstance, config: Pick<Config, 'a
     method: 'GET',
     url: '/api/teams',
     access: { permission: 'teams:list' },
+    schema: { query: NoQuery },
     async handler(_req, _reply, { actor, db }) {
       if (!actor) throw unauthorized();
       return { teams: await listTeams(db, actor) };

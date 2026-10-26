@@ -111,3 +111,10 @@ test('a teamless member can be disabled (emergency revoke); setting a member rol
   const bad = await call(t, a, 'PATCH', `/api/users/${u.id}`, { role: 'member', teamId: null });
   expect(bad.status).toBe(400);
 });
+
+test('the user and team lists refuse query parameters they do not know', async () => {
+  const auth = await signInAs(t, admin);
+  expect((await call(t, auth, 'GET', '/api/users?role=admin')).status).toBe(400);
+  expect((await call(t, auth, 'GET', '/api/teams?all=1')).status).toBe(400);
+  expect((await call(t, auth, 'GET', '/api/users')).status).toBe(200);
+});

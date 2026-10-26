@@ -8,7 +8,7 @@ let hashed: Promise<string> | undefined;
 const passwordHash = (): Promise<string> => (hashed ??= hashPassword('correct horse battery'));
 
 type UserKey = keyof (typeof IDS)['users'];
-const PEOPLE: { key: UserKey; label: string; role: 'admin' | 'manager' | 'member'; team: 'north' | 'south' | null; activated: boolean }[] = [
+const PEOPLE: { key: UserKey; label: string; role: 'admin' | 'manager' | 'member'; team: 'north' | 'south' | null; activated: boolean; disabled?: boolean }[] = [
   { key: 'admin', label: 'Ada Admin', role: 'admin', team: null, activated: true },
   { key: 'northManager', label: 'Nina North', role: 'manager', team: 'north', activated: true },
   { key: 'northAlice', label: 'Alice North', role: 'member', team: 'north', activated: true },
@@ -19,6 +19,8 @@ const PEOPLE: { key: UserKey; label: string; role: 'admin' | 'manager' | 'member
   { key: 'disabledDave', label: 'Dave North', role: 'member', team: 'north', activated: true },
   // Invited but never activated: a resource only, never an actor.
   { key: 'pendingPat', label: 'Pat North', role: 'member', team: 'north', activated: false },
+  // Invited, never activated, then switched off: resending her invite must be refused (409).
+  { key: 'disabledPenny', label: 'Penny North', role: 'member', team: 'north', activated: false, disabled: true },
 ];
 
 export async function seedUsersAndTeams(t: TestApp, ids: typeof IDS): Promise<WorldResource[]> {
@@ -35,8 +37,9 @@ export async function seedUsersAndTeams(t: TestApp, ids: typeof IDS): Promise<Wo
     const id = ids.users[p.key];
     const teamId = p.team === null ? null : ids.teams[p.team];
     await t.db.insert(users).values({
-      id, email: `${p.key.toLowerCase()}@hf.test`, name: `${p.label} ${canary}`, role: p.role, teamId,
-      passwordHash: p.activated ? hash : null,
+      // The canary is in the email too (lower-cased; the harness compares without case).
+      id, email: `${canary.toLowerCase()}@hf.test`, name: `${p.label} ${canary}`, role: p.role, teamId,
+      passwordHash: p.activated ? hash : null, disabledAt: p.disabled ? new Date() : null,
     });
     // A user row's owner is the user themself.
     out.push({ type: 'user', key: p.key, id, ownerId: id, teamId, canary, table: 'users' });

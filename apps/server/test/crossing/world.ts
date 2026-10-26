@@ -28,8 +28,9 @@ export const IDS = {
     southCarol: '0a000000-0000-4000-8000-000000000006',
     disabledDave: '0a000000-0000-4000-8000-000000000007',
     pendingPat: '0a000000-0000-4000-8000-000000000008',
+    disabledPenny: '0a000000-0000-4000-8000-000000000009',
   },
-} as const satisfies { teams: { north: string; south: string }; users: Record<Exclude<ActorKey, 'anon'> | 'pendingPat', string> };
+} as const satisfies { teams: { north: string; south: string }; users: Record<Exclude<ActorKey, 'anon'> | 'pendingPat' | 'disabledPenny', string> };
 
 export const PASSWORD = 'correct horse battery';
 
