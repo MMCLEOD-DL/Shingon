@@ -24,6 +24,9 @@ export const megabytes = (bytes: number): string => {
 
 export type BackupKind = 'scheduled' | 'pre-update' | 'manual';
 
+/** The real backups of a deployment, everything but safety backups. Each `--tag a,b` needs both tags; several are alternatives. */
+export const LATEST_TAGS = ['--tag', 'hf,scheduled', '--tag', 'hf,manual', '--tag', 'hf,pre-update'];
+
 /** Time limits, so a destination that stops answering gives a plain failure instead of a backup that hangs for ever. */
 export const TIMEOUTS = {
   resticQuick: 2 * 60e3,      // cat config, init, snapshots
@@ -217,9 +220,10 @@ async function backupLocked(deps: OpsDeps, kind: BackupKind, opts: BackupOptions
     if (backup.code !== 0) throw new BackupError(resticProblem(deps, backup, TIMEOUTS.resticBackup, 'The backup failed'));
     if (snapshotId === undefined) throw new BackupError('The backup finished but restic did not report which backup it saved.');
 
-    // 7. Only the daily backup prunes, only this box's backups, and never a safety backup.
+    // 7. Only the daily backup prunes, and only this box's real backups: the same selection as "latest". Safety backups
+    //    are outside the policy altogether, so they never take a daily/weekly/monthly slot from a real backup, and are never pruned.
     if (kind === 'scheduled') {
-      const forget = await run.run('restic', ['forget', '--tag', 'hf', '--group-by', 'host', '--host', host, '--keep-tag', 'safety', '--prune', ...cfg.backup.keep], { env, timeoutMs: TIMEOUTS.resticForget });
+      const forget = await run.run('restic', ['forget', ...LATEST_TAGS, '--group-by', 'host', '--host', host, '--prune', ...cfg.backup.keep], { env, timeoutMs: TIMEOUTS.resticForget });
       if (forget.code !== 0) {
         throw new BackupError(`Backup ${snapshotId.slice(0, 8)} was saved, but old backups could not be tidied away. ${resticProblem(deps, forget, TIMEOUTS.resticForget, 'The tidy-up failed')}`);
       }

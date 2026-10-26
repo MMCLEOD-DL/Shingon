@@ -7,6 +7,7 @@ import { createOpsDeps, runDaemon } from './daemon.js';
 import { redact } from './runner.js';
 
 const say = (line: string): void => { console.log(line); };
+const MANUAL_BACKUP_LOCK_WAIT = 2 * 60e3;
 const complain = (line: string): void => { console.error(line); };
 
 /** The last line of defence: a plain sentence, never a stack trace, and never a secret from the environment. */
@@ -50,7 +51,8 @@ async function main(argv: string[]): Promise<number> {
     case 'backup':
       if (rest.length > 0) { complain(`backup takes no options.\n\n${USAGE}`); return 2; }
       // runBackup logs and records its own outcome; only the exit code is added here.
-      return withDeps(async (deps) => { await runBackup(deps, 'manual'); return 0; });
+      // Waits up to 2 minutes for a running backup, restore test or restore, then refuses in plain English.
+      return withDeps(async (deps) => { await runBackup(deps, 'manual', { lockWaitMs: MANUAL_BACKUP_LOCK_WAIT }); return 0; });
     case 'restore-test':
       if (rest.length > 0) { complain(`restore-test takes no options.\n\n${USAGE}`); return 2; }
       return withDeps(async (deps) => ((await verifyLatestRestore(deps)).ok ? 0 : 1));
@@ -65,12 +67,12 @@ async function main(argv: string[]): Promise<number> {
       const which = parsed.positionals[0];
       if (which === undefined || parsed.positionals.length > 1) { complain('restore needs one backup id, or latest.\n\n' + USAGE); return 2; }
       if (parsed.values['yes-replace-live-data'] !== true) {
-        complain('This replaces the live database and uploaded files with the backup. Nothing has been changed. To go ahead, stop the app (docker compose stop app) and add --yes-replace-live-data.');
+        complain('This replaces the live database and uploaded files with the backup. Nothing has been changed. To go ahead, stop the app and ops (docker compose stop app ops), then run: docker compose run --rm ops restore <backup id | latest> --yes-replace-live-data');
         return 2;
       }
       return withDeps(async (deps) => {
         await restoreLive(deps, which);
-        say('Done. Start the app again: docker compose start app');
+        say('Done. Start the app and ops again: docker compose start app ops');
         return 0;
       });
     }

@@ -4,7 +4,7 @@ import { sql } from 'drizzle-orm';
 import { runBackup, BackupError } from '../src/backup.js';
 import { verifyLatestRestore, restoreDatabase, restoreLive } from '../src/restore.js';
 import { lastRun } from '../src/runs.js';
-import { purgeAuditLog } from '../src/daemon.js';
+import { purgeAuditLog, onJobFailure } from '../src/daemon.js';
 import { withDeps, okBackup, deps0, TEST_BACKUP_PASSWORD } from './helpers.js';
 
 const ok = { code: 0, stdout: '', stderr: '' };
@@ -42,9 +42,11 @@ test('the dump and the manifest come from one snapshot, from a fixed folder, and
   const backup = calls.find((c) => c.args[0] === 'backup')!;
   expect(backup.args).toEqual(expect.arrayContaining([`${deps0.cfg.workDir}/backup/db.dump`, `${deps0.cfg.workDir}/backup/manifest.json`, deps0.cfg.uploadsDir]));
   const forget = calls.find((c) => c.args[0] === 'forget')!;
-  expect(forget.args.slice(0, 5)).toEqual(['forget', '--tag', 'hf', '--group-by', 'host']);
-  // Only this box's backups are pruned, and never a safety backup.
-  expect(forget.args.slice(5, 10)).toEqual(['--host', 'acme-test-ltd', '--keep-tag', 'safety', '--prune']);
+  // The same selection as "latest": this box's real backups only. Safety backups are outside the retention policy, so they
+  // can never take a daily/weekly/monthly slot from a real backup, and are never pruned (review round 2 ruling).
+  expect(forget.args.slice(0, 7)).toEqual(['forget', '--tag', 'hf,scheduled', '--tag', 'hf,manual', '--tag', 'hf,pre-update']);
+  expect(forget.args.slice(7, 12)).toEqual(['--group-by', 'host', '--host', 'acme-test-ltd', '--prune']);
+  expect(forget.args).not.toContain('safety');
 });
 
 test('a pre-update backup does not prune', async () => {
@@ -188,5 +190,18 @@ test('the daily audit-log tidy-up uses the retention setting and is recorded', a
     await deps.db.execute(sql`insert into audit_log (actor_label, action, at) values ('system', 'seed.demo', now() - interval '40 days'), ('system', 'seed.demo', now() - interval '10 days')`);
     expect(await purgeAuditLog(deps)).toBe(1);
     expect(await lastRun(deps.db, 'audit-purge', { okOnly: true })).toMatchObject({ detail: 'Audit log tidied: 1 entry older than 30 days removed.' });
+  });
+});
+
+test('a failed audit-log tidy-up is recorded and logged once, and marked so the failure hook does not log it again', async () => {
+  await withDeps({}, async (deps, rec) => {
+    await deps.db.execute(sql`drop function audit_purge_before(timestamptz)`);
+    const err = await purgeAuditLog(deps).then(() => null, (e: unknown) => e as Error & { reported?: boolean });
+    expect(err?.reported).toBe(true);
+    const line = 'The audit log could not be tidied. Check that the database is running and up to date.';
+    expect(rec.logs).toEqual([line]);
+    await onJobFailure(deps)('audit-purge', err!);
+    expect(rec.logs).toEqual([line]);
+    expect(await lastRun(deps.db, 'audit-purge', { okOnly: false })).toMatchObject({ ok: false, detail: line });
   });
 });

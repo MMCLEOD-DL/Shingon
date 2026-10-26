@@ -11,14 +11,19 @@ import type { OpsDeps } from './runs.js';
  * The lock is re-entrant within one run: the safety backup inside a restore runs under the restore's lock.
  */
 export class OpsBusyError extends Error {
-  constructor(message: string) {
+  /** `unreachable`: the database could not be reached at all, rather than another run holding the lock. */
+  constructor(message: string, public readonly unreachable = false) {
     super(message);
     this.name = 'OpsBusyError';
   }
 }
 
 const CLASS_ID = 0x48460001;
-const held = new AsyncLocalStorage<true>();
+interface Held { client: pg.Client; key: number }
+const held = new AsyncLocalStorage<Held>();
+
+/** The application name of the session holding a deployment's lock (seen in pg_stat_activity). */
+export const lockSessionName = (key: number): string => `hf-ops-lock-${String(key >>> 0)}`;
 
 /** FNV-1a, folded into a signed 32-bit integer for pg_try_advisory_lock(int, int). */
 export function lockKey(databaseName: string): number {
@@ -31,7 +36,24 @@ export function lockKey(databaseName: string): number {
 }
 
 /** True when the current run already holds the ops lock. */
-export const holdsOpsLock = (): boolean => held.getStore() === true;
+export const holdsOpsLock = (): boolean => held.getStore() !== undefined;
+
+/**
+ * Checks, right before a destructive step, that this run still holds the lock: the session that took it must still be
+ * alive and still own it. Re-taking an advisory lock on the same session succeeds (it is re-entrant), and is undone at once.
+ */
+export async function confirmOpsLock(): Promise<boolean> {
+  const h = held.getStore();
+  if (h === undefined) return false;
+  try {
+    const r = await h.client.query<{ ok: boolean }>('select pg_try_advisory_lock($1, $2) as ok', [CLASS_ID, h.key]);
+    if (r.rows[0]?.ok !== true) return false;
+    await h.client.query('select pg_advisory_unlock($1, $2)', [CLASS_ID, h.key]);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Runs `fn` while holding the ops lock. Waits up to `waitMs` for it (checking every second); if another run still holds it,
@@ -42,9 +64,9 @@ export async function withOpsLock<T>(deps: Pick<OpsDeps, 'cfg'>, opts: { waitMs:
   const key = lockKey(pgEnv(deps.cfg.databaseUrl).PGDATABASE);
   let c: pg.Client;
   try {
-    c = await connect(deps.cfg.databaseUrl, 'postgres');
+    c = await connect(deps.cfg.databaseUrl, 'postgres', lockSessionName(key));
   } catch {
-    throw new OpsBusyError('The database could not be reached, so ops could not make sure nothing else is running. Check that the database is running.');
+    throw new OpsBusyError('The database could not be reached, so ops could not make sure nothing else is running. Check that the database is running.', true);
   }
   try {
     const deadline = Date.now() + opts.waitMs;
@@ -55,7 +77,7 @@ export async function withOpsLock<T>(deps: Pick<OpsDeps, 'cfg'>, opts: { waitMs:
       await new Promise((res) => setTimeout(res, Math.min(1000, Math.max(50, deadline - Date.now()))));
     }
     try {
-      return await held.run(true, fn);
+      return await held.run({ client: c, key }, fn);
     } finally {
       await c.query('select pg_advisory_unlock($1, $2)', [CLASS_ID, key]).catch(() => undefined);
     }

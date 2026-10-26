@@ -15,6 +15,7 @@ import { execRunner } from './runner.js';
 import { startScheduler, type Job } from './scheduler.js';
 
 export const AUDIT_PURGE_SCHEDULE = '15 3 * * *';
+export const SCHEDULED_BACKUP_LOCK_WAIT = 60 * 60e3;
 
 /** Everything an ops command needs, with a pool that survives the database being dropped and recreated under it. */
 export function createOpsDeps(cfg: OpsConfig, log: (line: string) => void = (l) => { console.log(l); }): { deps: OpsDeps; pool: pg.Pool; close: () => Promise<void> } {
@@ -36,13 +37,15 @@ export async function purgeAuditLog(deps: OpsDeps): Promise<number> {
   } catch {
     const msg = 'The audit log could not be tidied. Check that the database is running and up to date.';
     await recordRun(deps, 'audit-purge', false, msg);
-    throw new Error(msg);
+    // Already logged and recorded; marked so the failure hook does not log it again.
+    throw Object.assign(new Error(msg), { reported: true });
   }
 }
 
 export function daemonJobs(deps: OpsDeps): Job[] {
   return [
-    { name: 'backup', cron: deps.cfg.backup.schedule, run: async () => { await runBackup(deps, 'scheduled'); } },
+    // Waits up to an hour for a restore test or restore to finish rather than skipping the night's backup.
+    { name: 'backup', cron: deps.cfg.backup.schedule, run: async () => { await runBackup(deps, 'scheduled', { lockWaitMs: SCHEDULED_BACKUP_LOCK_WAIT }); } },
     {
       name: 'restore-test',
       cron: deps.cfg.backup.restoreTestSchedule,
@@ -92,23 +95,38 @@ export async function sweepLeftovers(deps: OpsDeps, maxAgeMs = 3600e3): Promise<
           removed.push(`folder ${name}`);
         }
       }
-      const incoming = `${pgEnv(deps.cfg.databaseUrl).PGDATABASE}_incoming`;
+      const appDb = pgEnv(deps.cfg.databaseUrl).PGDATABASE;
+      const copies = [`${appDb}_incoming`, `${appDb}_old`];
       const c = await connect(deps.cfg.databaseUrl, 'postgres');
       try {
-        const dbs = await c.query<{ datname: string }>(`select datname from pg_database where datname like 'hf\\_restore\\_test\\_%' or datname = $1`, [incoming]);
-        for (const { datname } of dbs.rows) {
+        const dbs = (await c.query<{ datname: string }>(`select datname from pg_database where datname like 'hf\\_restore\\_test\\_%' or datname = any($1) or datname = $2`, [copies, appDb])).rows.map((r) => r.datname);
+        for (const datname of dbs) {
           const m = SCRATCH_DB.exec(datname);
-          if (datname === incoming || (m?.[1] !== undefined && stampTime(m[1]).getTime() < cutoff)) {
+          if (m?.[1] !== undefined && stampTime(m[1]).getTime() < cutoff) {
             await c.query(`DROP DATABASE IF EXISTS "${datname}" WITH (FORCE)`);
             removed.push(`database ${datname}`);
           }
+        }
+        const left = copies.filter((d) => dbs.includes(d));
+        if (dbs.includes(appDb)) {
+          // The live database is there, so these are leftovers of an interrupted restore.
+          for (const d of left) {
+            await c.query(`DROP DATABASE IF EXISTS "${d}" WITH (FORCE)`);
+            removed.push(`database ${d}`);
+          }
+        } else if (left.length > 0) {
+          // No live database: these may be the only copies of the data. Never drop them.
+          const what = left.map((d) => (d.endsWith('_old') ? `${d} (the data from before an interrupted restore)` : `${d} (a restored copy)`)).join(' and ');
+          deps.log(`Warning: the app database ${appDb} is missing, but ${what} still exists. Nothing has been removed. Rename the right one to ${appDb} by hand (ALTER DATABASE … RENAME TO ${appDb}).`);
         }
       } finally {
         await c.end().catch(() => undefined);
       }
     });
   } catch (e) {
-    if (!(e instanceof OpsBusyError)) deps.log('Leftovers from earlier runs could not be checked. Nothing has been changed; ops tries again at its next start.');
+    deps.log(e instanceof OpsBusyError && !e.unreachable
+      ? 'Leftovers from earlier runs were not checked because another backup or restore is running. Ops checks again at its next start.'
+      : 'Leftovers from earlier runs were not checked because the database could not be reached. Ops checks again at its next start.');
     return removed;
   }
   if (removed.length > 0) deps.log(`Removed leftovers of interrupted runs: ${removed.join(', ')}.`);

@@ -3,7 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { readdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { sql } from 'drizzle-orm';
-import { runBackup } from '../src/backup.js';
+import { runBackup, resticEnv } from '../src/backup.js';
+import { slug } from '../src/config.js';
+import { execRunner } from '../src/runner.js';
 import { verifyLatestRestore, restoreDatabase } from '../src/restore.js';
 import { lastRun } from '../src/runs.js';
 import { withRealDeps, q, TEST_BACKUP_PASSWORD } from './helpers.js';
@@ -71,4 +73,42 @@ describe.runIf(has('restic', ['version']) && has('pg_dump') && has('pg_restore')
       expect(leftover.rows).toEqual([]);
     });
   }, 120_000);
+
+  test('safety backups never take a retention slot from a real backup, and are never pruned', async () => {
+    await withRealDeps(async (deps) => {
+      deps.cfg.backup.keep = ['--keep-daily', '2'];
+      await runBackup(deps, 'scheduled');                 // today's backup (and the repository)
+      const env = resticEnv(deps.cfg);
+      const host = slug(deps.cfg.client);
+      const day = (back: number): string => {
+        const y = new Date(Date.now() - back * 86400e3);
+        return `${String(y.getFullYear())}-${String(y.getMonth() + 1).padStart(2, '0')}-${String(y.getDate()).padStart(2, '0')}`;
+      };
+      const make = async (tag: string, when: string): Promise<string> => {
+        const r = await execRunner.run('restic', ['backup', '--json', '--host', host, '--tag', 'hf', '--tag', tag, '--time', when, deps.cfg.uploadsDir], { env, timeoutMs: 60_000 });
+        expect(r.code, r.stderr).toBe(0);
+        return (JSON.parse(r.stdout.trim().split('\n').pop()!) as { snapshot_id: string }).snapshot_id;
+      };
+      // Three nights of scheduled backups; yesterday a restore also took a safety backup, later than that night's backup.
+      const n3 = await make('scheduled', `${day(3)} 02:30:00`);
+      const n2 = await make('scheduled', `${day(2)} 02:30:00`);
+      const n1 = await make('scheduled', `${day(1)} 02:30:00`);
+      const safety = await make('safety', `${day(1)} 15:00:00`);
+
+      // The old selection (every hf snapshot, safety kept by tag) gives yesterday's daily slot to the safety backup,
+      // so yesterday's real backup would be pruned.
+      const old = await execRunner.run('restic', ['forget', '--dry-run', '--json', '--tag', 'hf', '--group-by', 'host', '--host', host, '--keep-tag', 'safety', '--keep-daily', '2'], { env, timeoutMs: 60_000 });
+      expect(old.code, old.stderr).toBe(0);
+      const removedByOld = (JSON.parse(old.stdout) as { remove: { id: string }[] | null }[]).flatMap((g) => (g.remove ?? []).map((x) => x.id));
+      expect(removedByOld).toContain(n1);
+
+      await runBackup(deps, 'scheduled');                 // runs the real forget --prune with keep-daily 2
+      const after = await execRunner.run('restic', ['snapshots', '--json', '--host', host], { env, timeoutMs: 60_000 });
+      const ids = (JSON.parse(after.stdout) as { id: string }[]).map((x) => x.id);
+      expect(ids).toContain(n1);        // yesterday's real backup keeps its daily slot
+      expect(ids).toContain(safety);    // outside the policy: never pruned
+      expect(ids).not.toContain(n2);    // older real backups beyond keep-daily 2 are pruned as usual
+      expect(ids).not.toContain(n3);
+    });
+  }, 180_000);
 });

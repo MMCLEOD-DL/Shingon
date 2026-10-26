@@ -15,11 +15,11 @@ export function pgEnv(databaseUrl: string): PgEnv {
 }
 
 /** A single connection (not from the pool) to `database`, or to the one in the address when not given. */
-export async function connect(databaseUrl: string, database?: string): Promise<pg.Client> {
+export async function connect(databaseUrl: string, database?: string, applicationName = 'hf-ops'): Promise<pg.Client> {
   const e = pgEnv(databaseUrl);
   const c = new pg.Client({
     host: e.PGHOST, port: Number(e.PGPORT), user: e.PGUSER, password: e.PGPASSWORD, database: database ?? e.PGDATABASE,
-    connectionTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 30_000, application_name: applicationName,
   });
   // An error on an idle client would otherwise crash the process; the next query reports it instead.
   c.on('error', () => undefined);

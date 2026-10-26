@@ -1,4 +1,4 @@
-import { test, expect } from 'vitest';
+import { describe, test, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, writeFile, utimes } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
@@ -6,8 +6,10 @@ import path from 'node:path';
 import pg from 'pg';
 import { sql } from 'drizzle-orm';
 import { runBackup, workFiles } from '../src/backup.js';
-import { verifyLatestRestore, restoreDatabase, restoreLive, stamp } from '../src/restore.js';
-import { createOpsDeps, onJobFailure, sweepLeftovers } from '../src/daemon.js';
+import { verifyLatestRestore, restoreDatabase, restoreLive, stamp, type SwapFault } from '../src/restore.js';
+import { createOpsDeps, daemonJobs, onJobFailure, sweepLeftovers } from '../src/daemon.js';
+import { withOpsLock, lockKey, lockSessionName } from '../src/opsLock.js';
+import type { OpsDeps } from '../src/runs.js';
 import { lastRun } from '../src/runs.js';
 import { withDeps, okBackup, q, type Call } from './helpers.js';
 
@@ -145,7 +147,7 @@ test('a restore that fails part-way leaves the live database exactly as it was, 
     const dbName = new URL(deps.cfg.databaseUrl).pathname.slice(1);
     await deps.db.execute(sql`insert into teams (name) values ('Still here')`);
     rec.respond((c) => (c.cmd === 'pg_restore' && !c.args.includes('--list') ? { code: 1, stdout: '', stderr: 'pg_restore: error: boom' } : ok));
-    await expect(restoreDatabase(deps, 'c'.repeat(64), dbName)).rejects.toThrow('The saved database could not be put back. The live database has not been changed.');
+    await expect(restoreDatabase(deps, 'c'.repeat(64), dbName)).rejects.toThrow(`The saved database could not be put back. The live database ${dbName} has not been changed.`);
     const restoreCall = rec.calls.find((c) => c.cmd === 'pg_restore' && !c.args.includes('--list'))!;
     expect(restoreCall.args).toContain(`--dbname=${dbName}_incoming`);
     expect(await q(deps.cfg.databaseUrl, `select name from teams`)).toEqual([{ name: 'Still here' }]);
@@ -164,12 +166,13 @@ test('at start the daemon removes leftovers of interrupted runs older than an ho
     const admin = new pg.Client({ connectionString: deps.cfg.databaseUrl });
     await admin.connect();
     try {
-      for (const n of [oldDb, newDb, `${dbName}_incoming`]) await admin.query(`create database "${n}"`);
+      for (const n of [oldDb, newDb, `${dbName}_incoming`, `${dbName}_old`]) await admin.query(`create database "${n}"`);
       const removed = await sweepLeftovers(deps);
-      expect(removed.sort()).toEqual([`database ${dbName}_incoming`, `database ${oldDb}`, 'folder backup', 'folder restore-old', 'folder verify-old'].sort());
+      // The live database is there, so its _incoming and _old copies are leftovers.
+      expect(removed.sort()).toEqual([`database ${dbName}_incoming`, `database ${dbName}_old`, `database ${oldDb}`, 'folder backup', 'folder restore-old', 'folder verify-old'].sort());
       expect(existsSync(path.join(deps.cfg.workDir, 'verify-new'))).toBe(true);
       expect(existsSync(path.join(deps.cfg.workDir, 'unrelated-old'))).toBe(true);
-      const left = await admin.query<{ datname: string }>(`select datname from pg_database where datname in ($1, $2, $3)`, [oldDb, newDb, `${dbName}_incoming`]);
+      const left = await admin.query<{ datname: string }>(`select datname from pg_database where datname in ($1, $2, $3, $4)`, [oldDb, newDb, `${dbName}_incoming`, `${dbName}_old`]);
       expect(left.rows.map((r) => r.datname)).toEqual([newDb]);
     } finally {
       await admin.query(`drop database if exists "${newDb}"`).catch(() => undefined);
@@ -183,8 +186,8 @@ test('a failed scheduled job is logged once: failures that were already recorded
     const hook = onJobFailure(deps);
     await hook('restore-test', Object.assign(new Error('The restore test failed. x'), { reported: true }));
     expect(rec.logs).toEqual([]);
-    await hook('audit-purge', new Error('boom'));
-    expect(rec.logs).toEqual(['The scheduled audit-purge did not work: boom']);
+    await hook('some-job', new Error('boom'));
+    expect(rec.logs).toEqual(['The scheduled some-job did not work: boom']);
   });
 });
 
@@ -214,5 +217,145 @@ test('the pool ops builds survives its idle connections being killed (as a resto
     } finally {
       await close();
     }
+  });
+});
+
+/** Holds the ops lock from the test, as another run would, until `release` is called. */
+async function holdLock(deps: OpsDeps): Promise<{ release: () => void; done: Promise<void> }> {
+  const g = gate();
+  const done = withOpsLock(deps, { waitMs: 0, busyMessage: 'busy' }, async () => { g.reach(); await g.wait; });
+  await g.reached;
+  return { release: g.release, done };
+}
+
+test('the startup sweep never drops _incoming or _old when the app database itself is missing, and says which to recover', async () => {
+  await withDeps({}, async (base, rec) => {
+    const missing = `hf_missing_${stamp(new Date())}`;
+    const u = new URL(base.cfg.databaseUrl);
+    u.pathname = `/${missing}`;
+    const deps: OpsDeps = { ...base, cfg: { ...base.cfg, databaseUrl: u.toString() } };
+    const admin = new pg.Client({ connectionString: base.cfg.databaseUrl });
+    await admin.connect();
+    try {
+      for (const n of [`${missing}_old`, `${missing}_incoming`]) await admin.query(`create database "${n}"`);
+      expect(await sweepLeftovers(deps)).toEqual([]);
+      const left = await admin.query<{ datname: string }>(`select datname from pg_database where datname like $1 order by datname`, [`${missing}_%`]);
+      expect(left.rows.map((r) => r.datname)).toEqual([`${missing}_incoming`, `${missing}_old`]);
+      expect(rec.logs).toEqual([
+        `Warning: the app database ${missing} is missing, but ${missing}_incoming (a restored copy) and ${missing}_old (the data from before an interrupted restore) still exists. Nothing has been removed. Rename the right one to ${missing} by hand (ALTER DATABASE … RENAME TO ${missing}).`,
+      ]);
+    } finally {
+      for (const n of [`${missing}_old`, `${missing}_incoming`]) await admin.query(`drop database if exists "${n}"`).catch(() => undefined);
+      await admin.end();
+    }
+  });
+});
+
+test('the sweep says in one plain line when it is skipped because another run is busy, or the database cannot be reached', async () => {
+  await withDeps({}, async (deps, rec) => {
+    const held = await holdLock(deps);
+    expect(await sweepLeftovers(deps)).toEqual([]);
+    held.release();
+    await held.done;
+    expect(rec.logs).toEqual(['Leftovers from earlier runs were not checked because another backup or restore is running. Ops checks again at its next start.']);
+    rec.logs.length = 0;
+    const u = new URL(deps.cfg.databaseUrl);
+    u.port = '1';
+    expect(await sweepLeftovers({ ...deps, cfg: { ...deps.cfg, databaseUrl: u.toString() } })).toEqual([]);
+    expect(rec.logs).toEqual(['Leftovers from earlier runs were not checked because the database could not be reached. Ops checks again at its next start.']);
+  });
+});
+
+test('a scheduled backup waits for a running restore test or restore instead of giving up', async () => {
+  await withDeps({}, async (deps, rec) => {
+    rec.respond(okBackup);
+    const held = await holdLock(deps);
+    const backup = daemonJobs(deps).find((j) => j.name === 'backup')!.run();
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(rec.calls).toEqual([]);   // still waiting
+    held.release();
+    await held.done;
+    await backup;
+    expect((await lastRun(deps.db, 'backup', { okOnly: true }))!.detail).toMatch(/^Backup 01234567 saved/);
+  });
+});
+
+test('the app check runs again once the lock is held: an app started while waiting stops the restore', async () => {
+  await withDeps({}, async (deps, rec) => {
+    const answers: ('stopped' | 'running')[] = ['stopped', 'running'];
+    await expect(restoreLive(deps, 'latest', { appState: () => Promise.resolve(answers.shift() ?? 'running') })).rejects.toThrow(/^The app is still running, so nothing has been changed\. Stop both the app and ops first \(docker compose stop app ops\)/);
+    expect(answers).toEqual([]);
+    expect(rec.calls).toEqual([]);
+  });
+});
+
+describe('every failure point of the database swap leaves the data under a name the message gives', () => {
+  const dbs = async (url: string, name: string) => (await q(url, `select datname from pg_database where datname in ('${name}', '${name}_old', '${name}_incoming') order by datname`)).map((r) => r['datname']);
+  const live = (url: string) => q(url, `select name from teams`);
+  async function setup(deps: OpsDeps): Promise<{ name: string; url: string }> {
+    await deps.db.execute(sql`insert into teams (name) values ('Still here')`);
+    return { name: new URL(deps.cfg.databaseUrl).pathname.slice(1), url: deps.cfg.databaseUrl };
+  }
+  const withAt = (url: string, db: string): string => { const u = new URL(url); u.pathname = `/${db}`; return u.toString(); };
+
+  test('moving the live database aside fails: it is untouched and the restored copy is removed', async () => {
+    await withDeps({}, async (deps) => {
+      const { name, url } = await setup(deps);
+      await expect(restoreDatabase(deps, 'c'.repeat(64), name, { fault: 'aside' as SwapFault })).rejects.toThrow(`The live database could not be moved aside, so it has not been changed: ${name} still holds the data from before the restore. The restored copy has been removed.`);
+      expect(await dbs(url, name)).toEqual([name]);
+      expect(await live(url)).toEqual([{ name: 'Still here' }]);
+    });
+  });
+
+  test('moving the restored copy into place fails: the live database is put back, and the copy is kept and named', async () => {
+    await withDeps({}, async (deps) => {
+      const { name, url } = await setup(deps);
+      await expect(restoreDatabase(deps, 'c'.repeat(64), name, { fault: 'into-place' })).rejects.toThrow(`so the live database was put back as it was: ${name} holds the data from before the restore. The restored copy is kept as ${name}_incoming.`);
+      expect(await dbs(url, name)).toEqual([name, `${name}_incoming`]);
+      expect(await live(url)).toEqual([{ name: 'Still here' }]);   // connections allowed again
+      await q(url, `drop database "${name}_incoming"`);
+    });
+  });
+
+  test('putting the old one back also fails: both copies are kept, and the message says which holds what', async () => {
+    await withDeps({}, async (deps) => {
+      const { name, url } = await setup(deps);
+      await expect(restoreDatabase(deps, 'c'.repeat(64), name, { fault: 'into-place-and-back' })).rejects.toThrow(`${name}_old holds the data from before the restore and ${name}_incoming holds the restored copy; rename one of them to ${name} by hand.`);
+      expect(await dbs(withAt(url, 'postgres'), name)).toEqual([`${name}_incoming`, `${name}_old`]);
+      // The sweep must not destroy them while the live database is missing.
+      expect(await sweepLeftovers(deps)).toEqual([]);
+      const admin = withAt(url, 'postgres');
+      expect(await dbs(admin, name)).toEqual([`${name}_incoming`, `${name}_old`]);
+      await q(admin, `alter database "${name}_old" with allow_connections true`);
+      await q(admin, `alter database "${name}_old" rename to "${name}"`);
+      await q(admin, `drop database "${name}_incoming"`);
+      expect(await live(url)).toEqual([{ name: 'Still here' }]);
+    });
+  });
+
+  test('dropping the old copy fails: the restore still counts, and the old copy is named for removal', async () => {
+    await withDeps({}, async (deps, rec) => {
+      const { name, url } = await setup(deps);
+      await restoreDatabase(deps, 'c'.repeat(64), name, { fault: 'drop-old' });
+      expect(await dbs(url, name)).toEqual([name, `${name}_old`]);
+      expect(rec.logs).toContain(`The restore worked, but the copy of the database from before it (${name}_old) could not be removed. Remove it by hand when convenient.`);
+      await q(url, `drop database "${name}_old"`);
+    });
+  });
+
+  test('the lock is lost before the swap: nothing is renamed or dropped, and the message says where the copy is', async () => {
+    await withDeps({}, async (deps, rec) => {
+      const { name, url } = await setup(deps);
+      rec.respond(async (c) => {
+        if (c.cmd === 'pg_restore' && !c.args.includes('--list')) {
+          await q(url, `select pg_terminate_backend(pid) from pg_stat_activity where application_name = '${lockSessionName(lockKey(name))}'`);
+        }
+        return ok;
+      });
+      await expect(restoreDatabase(deps, 'c'.repeat(64), name)).rejects.toThrow(`The restore stopped before changing anything because ops lost its lock (its database connection dropped). ${name} is unchanged; the restored copy is in ${name}_incoming.`);
+      expect(await dbs(url, name)).toEqual([name, `${name}_incoming`]);
+      expect(await live(url)).toEqual([{ name: 'Still here' }]);
+      await q(url, `drop database "${name}_incoming"`);
+    });
   });
 });

@@ -4,8 +4,8 @@ import path from 'node:path';
 import { sql } from 'drizzle-orm';
 import type pg from 'pg';
 import { describeRepo, slug } from './config.js';
-import { BackupError, firstLine, resticEnv, resticProblem, runBackup, TIMEOUTS, workFiles } from './backup.js';
-import { OpsBusyError, withOpsLock } from './opsLock.js';
+import { BackupError, firstLine, LATEST_TAGS, resticEnv, resticProblem, runBackup, TIMEOUTS, workFiles } from './backup.js';
+import { confirmOpsLock, OpsBusyError, withOpsLock } from './opsLock.js';
 import { checkRestoredFiles, compareManifest, countTables, type Manifest } from './manifest.js';
 import { connect, DB_IDENT, pgEnv } from './pg.js';
 import { recordRun, scrub, type OpsDeps } from './runs.js';
@@ -34,8 +34,6 @@ export const stamp = (d: Date): string => `${d.toISOString().replace(/[-:TZ.]/g,
 export const ukDate = (d: Date): string =>
   new Intl.DateTimeFormat('en-GB', { dateStyle: 'long', timeStyle: 'short', timeZone: 'Europe/London' }).format(d);
 
-/** Each `--tag a,b` matches snapshots with both tags; several are alternatives. Everything but `safety`. */
-export const LATEST_TAGS = ['--tag', 'hf,scheduled', '--tag', 'hf,manual', '--tag', 'hf,pre-update'];
 
 export interface SnapshotInfo { id: string; short: string; time: Date }
 
@@ -181,33 +179,61 @@ async function verifyLocked(deps: OpsDeps, problems: string[]): Promise<Snapshot
 
 type SavedRun = { kind: string; ok: boolean; detail: string; snapshot_id: string | null; at: string } & Record<string, unknown>;
 
+/** Test seam only: make one step of the database swap fail, to prove what each failure leaves behind. */
+export type SwapFault = 'aside' | 'into-place' | 'into-place-and-back' | 'drop-old';
+
 /**
  * Puts the database from a backup into `targetDb` (used by `ops restore` and by an update's rollback). The backup is first
- * restored into a new `<targetDb>_incoming` database; only when that has fully worked is the old database dropped and the
- * new one renamed into its place. So nothing a failed migration created survives, and a restore that fails leaves the live
- * database exactly as it was. Runs under the ops lock. When `targetDb` is ops' own database, the ops log entries newer than
- * the backup are kept.
+ * restored into `<targetDb>_incoming`. Only when that has fully worked is the live database renamed aside to `<targetDb>_old`,
+ * the new one renamed into place, and the old one dropped, so there is never a moment without a complete database under a
+ * known name. Nothing a failed migration created survives, and a restore that fails leaves the live database as it was.
+ * Runs under the ops lock, re-checked before any rename or drop. When `targetDb` is ops' own database, the ops log entries
+ * newer than the backup are kept.
  */
-export async function restoreDatabase(deps: OpsDeps, snapshotId: string, targetDb: string, opts: { lockWaitMs?: number } = {}): Promise<void> {
-  const incoming = `${targetDb}_incoming`;
-  if (!DB_IDENT.test(targetDb) || !DB_IDENT.test(incoming)) throw new RestoreError('That is not a database name ops can restore into (use lower-case letters, numbers and _ only, at most 54 characters).');
+export async function restoreDatabase(deps: OpsDeps, snapshotId: string, targetDb: string, opts: { lockWaitMs?: number; fault?: SwapFault } = {}): Promise<void> {
+  const names = { target: targetDb, incoming: `${targetDb}_incoming`, old: `${targetDb}_old` };
+  if (!DB_IDENT.test(targetDb) || !DB_IDENT.test(names.incoming)) throw new RestoreError('That is not a database name ops can restore into (use lower-case letters, numbers and _ only, at most 54 characters).');
   if (!/^[0-9a-f]{8,64}$/.test(snapshotId)) throw new RestoreError('That is not a backup id (8 to 64 letters a-f and numbers).');
   try {
-    await withOpsLock(deps, { waitMs: opts.lockWaitMs ?? LOCK_WAIT.restore, busyMessage: `Another backup or restore is running, so the database was not restored. ${STOP_BOTH}` }, () => restoreDatabaseLocked(deps, snapshotId, targetDb, incoming));
+    await withOpsLock(deps, { waitMs: opts.lockWaitMs ?? LOCK_WAIT.restore, busyMessage: `Another backup or restore is running, so the database was not restored. ${STOP_BOTH}` }, () => restoreDatabaseLocked(deps, snapshotId, names, opts.fault));
   } catch (e) {
     if (e instanceof OpsBusyError) throw new RestoreError(e.message);
     throw e;
   }
 }
 
-async function restoreDatabaseLocked(deps: OpsDeps, snapshotId: string, targetDb: string, incoming: string): Promise<void> {
+const exists_ = async (c: pg.Client, db: string): Promise<boolean> =>
+  (await c.query('select 1 from pg_database where datname = $1', [db])).rowCount === 1;
+
+/** Renames a database once nobody is connected to it; new connections are refused first, then existing ones ended. */
+async function renameClosed(c: pg.Client, from: string, to: string): Promise<void> {
+  await c.query(`ALTER DATABASE "${from}" WITH ALLOW_CONNECTIONS false`);
+  try {
+    for (let attempt = 0; ; attempt++) {
+      await c.query('select pg_terminate_backend(pid) from pg_stat_activity where datname = $1 and pid <> pg_backend_pid()', [from]);
+      try {
+        await c.query(`ALTER DATABASE "${from}" RENAME TO "${to}"`);
+        return;
+      } catch (e) {
+        if (attempt >= 20) throw e;
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    }
+  } catch (e) {
+    await c.query(`ALTER DATABASE "${from}" WITH ALLOW_CONNECTIONS true`).catch(() => undefined);
+    throw e;
+  }
+}
+
+async function restoreDatabaseLocked(deps: OpsDeps, snapshotId: string, n: { target: string; incoming: string; old: string }, fault: SwapFault | undefined): Promise<void> {
   const { cfg } = deps;
-  const target = path.join(cfg.workDir, `restore-${stamp(deps.now())}`);
+  const folder = path.join(cfg.workDir, `restore-${stamp(deps.now())}`);
   const dumpPath = workFiles(cfg.workDir).dump;
-  const dump = path.join(target, dumpPath);
+  const dump = path.join(folder, dumpPath);
+  const inject = (step: SwapFault): void => { if (fault === step || (step === 'into-place' && fault === 'into-place-and-back')) throw new Error(`injected ${step}`); };
   let incomingMade = false;
   try {
-    const r = await deps.run.run('restic', ['restore', snapshotId, '--target', target, '--include', dumpPath], { env: resticEnv(cfg), timeoutMs: TIMEOUTS.resticRestore });
+    const r = await deps.run.run('restic', ['restore', snapshotId, '--target', folder, '--include', dumpPath], { env: resticEnv(cfg), timeoutMs: TIMEOUTS.resticRestore });
     if (r.code !== 0) throw new RestoreError(resticProblem(deps, r, TIMEOUTS.resticRestore, `Backup ${snapshotId.slice(0, 8)} could not be fetched`));
     // Prove the dump is there and readable before anything else.
     const list = await deps.run.run('pg_restore', ['--list', dump], { env: pgEnv(cfg.databaseUrl), timeoutMs: TIMEOUTS.pgRestore });
@@ -215,31 +241,63 @@ async function restoreDatabaseLocked(deps: OpsDeps, snapshotId: string, targetDb
 
     try {
       await withMaintenance(deps, async (c) => {
-        await c.query(`DROP DATABASE IF EXISTS "${incoming}" WITH (FORCE)`);
-        await c.query(`CREATE DATABASE "${incoming}"`);
+        await c.query(`DROP DATABASE IF EXISTS "${n.incoming}" WITH (FORCE)`);
+        await c.query(`CREATE DATABASE "${n.incoming}"`);
       });
       incomingMade = true;
     } catch {
       throw new RestoreError("A database to restore into could not be made, so nothing has been changed. Check that the database is running and that ops' database user may create databases.");
     }
-    const pr = await deps.run.run('pg_restore', ['--no-owner', '--exit-on-error', '--single-transaction', `--dbname=${incoming}`, dump], { env: pgEnv(cfg.databaseUrl), timeoutMs: TIMEOUTS.pgRestore });
-    if (pr.code !== 0) throw new RestoreError('The saved database could not be put back. The live database has not been changed.');
+    const pr = await deps.run.run('pg_restore', ['--no-owner', '--exit-on-error', '--single-transaction', `--dbname=${n.incoming}`, dump], { env: pgEnv(cfg.databaseUrl), timeoutMs: TIMEOUTS.pgRestore });
+    if (pr.code !== 0) throw new RestoreError(`The saved database could not be put back. The live database ${n.target} has not been changed.`);
 
-    const own = pgEnv(cfg.databaseUrl).PGDATABASE === targetDb;
+    const own = pgEnv(cfg.databaseUrl).PGDATABASE === n.target;
     const saved: SavedRun[] = own
       ? await deps.db.execute<SavedRun>(sql`select kind, ok, detail, snapshot_id, at::text as at from ops_runs order by id`).then((x) => x.rows, () => [])
       : [];
 
-    // The swap: DROP … WITH (FORCE) ends every session on the old database (the app is stopped), then the new one takes its name.
-    try {
-      await withMaintenance(deps, async (c) => {
-        await c.query(`DROP DATABASE IF EXISTS "${targetDb}" WITH (FORCE)`);
-        await c.query(`ALTER DATABASE "${incoming}" RENAME TO "${targetDb}"`);
-      });
-      incomingMade = false;
-    } catch {
-      throw new RestoreError(`The restored database could not be swapped into place. It is kept as ${incoming}; check the database and rename it to ${targetDb} by hand.`);
+    // From here on databases are renamed and dropped: only while this run still holds the lock.
+    if (!(await confirmOpsLock())) {
+      incomingMade = false;   // keep it: nothing is dropped without the lock
+      throw new RestoreError(`The restore stopped before changing anything because ops lost its lock (its database connection dropped). ${n.target} is unchanged; the restored copy is in ${n.incoming}. Run the restore again.`);
     }
+    await withMaintenance(deps, async (c) => {
+      const hadTarget = await exists_(c, n.target);
+      if (hadTarget) {
+        // A leftover _old next to a live database is stale: the live database is complete.
+        await c.query(`DROP DATABASE IF EXISTS "${n.old}" WITH (FORCE)`);
+        try {
+          inject('aside');
+          await renameClosed(c, n.target, n.old);
+        } catch {
+          throw new RestoreError(`The live database could not be moved aside, so it has not been changed: ${n.target} still holds the data from before the restore. The restored copy has been removed. Check that nothing else is connected to ${n.target}, then run the restore again.`);
+        }
+      }
+      try {
+        inject('into-place');
+        await c.query(`ALTER DATABASE "${n.incoming}" RENAME TO "${n.target}"`);
+        incomingMade = false;
+      } catch {
+        incomingMade = false;   // the restored copy is kept, and named in the message
+        if (!hadTarget) throw new RestoreError(`The restored database could not be put in place. It is kept as ${n.incoming}; rename it to ${n.target} by hand.`);
+        try {
+          if (fault === 'into-place-and-back') throw new Error('injected back');
+          await c.query(`ALTER DATABASE "${n.old}" RENAME TO "${n.target}"`);
+          await c.query(`ALTER DATABASE "${n.target}" WITH ALLOW_CONNECTIONS true`);
+        } catch {
+          throw new RestoreError(`The restored database could not be put in place, and the old one could not be put back. ${n.old} holds the data from before the restore and ${n.incoming} holds the restored copy; rename one of them to ${n.target} by hand.`);
+        }
+        throw new RestoreError(`The restored database could not be put in place, so the live database was put back as it was: ${n.target} holds the data from before the restore. The restored copy is kept as ${n.incoming}.`);
+      }
+      if (hadTarget) {
+        try {
+          inject('drop-old');
+          await c.query(`DROP DATABASE IF EXISTS "${n.old}" WITH (FORCE)`);
+        } catch {
+          deps.log(`The restore worked, but the copy of the database from before it (${n.old}) could not be removed. Remove it by hand when convenient.`);
+        }
+      }
+    });
 
     if (own && saved.length > 0) {
       try {
@@ -253,13 +311,11 @@ async function restoreDatabaseLocked(deps: OpsDeps, snapshotId: string, targetDb
       }
     }
   } catch (e) {
-    // A failed restore never leaves a half-made database behind (unless the swap itself failed: then it is the only copy).
-    if (incomingMade && !(e instanceof RestoreError && e.message.startsWith('The restored database could not be swapped'))) {
-      await withMaintenance(deps, (c) => c.query(`DROP DATABASE IF EXISTS "${incoming}" WITH (FORCE)`)).catch(() => undefined);
-    }
+    // A restored copy that was never meant to survive is removed; one named in a message is kept.
+    if (incomingMade) await withMaintenance(deps, (c) => c.query(`DROP DATABASE IF EXISTS "${n.incoming}" WITH (FORCE)`)).catch(() => undefined);
     throw e;
   } finally {
-    await rm(target, { recursive: true, force: true }).catch(() => undefined);
+    await rm(folder, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
@@ -279,13 +335,28 @@ export async function appState(url: string, timeoutMs: number): Promise<'stopped
  * `ops restore`: puts a backup back over the live data. Refuses while the app answers; takes a safety backup first;
  * then restores the database and replaces the uploads folder, which ends up owned by the app's user. Records the outcome.
  */
-export async function restoreLive(deps: OpsDeps, which: string, opts: { lockWaitMs?: number; appCheckTimeoutMs?: number } = {}): Promise<{ snapshotId: string }> {
+export interface RestoreLiveOptions {
+  lockWaitMs?: number;
+  appCheckTimeoutMs?: number;
+  /** Test seam: how the app's state is found (default: ask its /healthz). */
+  appState?: () => Promise<'stopped' | 'running' | 'unclear'>;
+}
+
+export async function restoreLive(deps: OpsDeps, which: string, opts: RestoreLiveOptions = {}): Promise<{ snapshotId: string }> {
   const { cfg } = deps;
-  const app = await appState(cfg.appInternalUrl, opts.appCheckTimeoutMs ?? 3000);
-  if (app === 'running') throw new RestoreError(`The app is still running, so nothing has been changed. ${STOP_BOTH}`);
-  if (app === 'unclear') throw new RestoreError(`The app may still be running (it did not answer clearly), so nothing has been changed. ${STOP_BOTH}`);
+  const check = opts.appState ?? (() => appState(cfg.appInternalUrl, opts.appCheckTimeoutMs ?? 3000));
+  const refuseIfRunning = async (): Promise<void> => {
+    const app = await check();
+    if (app === 'running') throw new RestoreError(`The app is still running, so nothing has been changed. ${STOP_BOTH}`);
+    if (app === 'unclear') throw new RestoreError(`The app may still be running (it did not answer clearly), so nothing has been changed. ${STOP_BOTH}`);
+  };
+  await refuseIfRunning();
   try {
-    return await withOpsLock(deps, { waitMs: opts.lockWaitMs ?? LOCK_WAIT.restore, busyMessage: `Another backup or restore is running, so nothing has been changed. ${STOP_BOTH}` }, () => restoreLiveLocked(deps, which));
+    return await withOpsLock(deps, { waitMs: opts.lockWaitMs ?? LOCK_WAIT.restore, busyMessage: `Another backup or restore is running, so nothing has been changed. ${STOP_BOTH}` }, async () => {
+      // Again after the wait for the lock: the app may have been started meanwhile.
+      await refuseIfRunning();
+      return restoreLiveLocked(deps, which);
+    });
   } catch (e) {
     if (e instanceof OpsBusyError) throw new RestoreError(e.message);
     throw e;
@@ -335,6 +406,7 @@ async function restoreLiveLocked(deps: OpsDeps, which: string): Promise<{ snapsh
     deps.log('Putting the database back.');
     await restoreDatabase(deps, snap.id, pgEnv(cfg.databaseUrl).PGDATABASE);
 
+    if (!(await confirmOpsLock())) throw new RestoreError('The database was put back, but ops lost its lock before the uploaded files, so they have not been touched. Run the restore again.');
     deps.log('Putting the uploaded files back.');
     for (const entry of await readdir(cfg.uploadsDir)) await rm(path.join(cfg.uploadsDir, entry), { recursive: true, force: true });
     await cp(stagedUploads, cfg.uploadsDir, { recursive: true, preserveTimestamps: true });
