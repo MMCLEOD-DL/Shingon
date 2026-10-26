@@ -1,5 +1,7 @@
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 import cookie from '@fastify/cookie';
+import fastifyStatic from '@fastify/static';
+import path from 'node:path';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import { hasZodFastifySchemaValidationErrors, serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
@@ -62,8 +64,13 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.decorate('hf', { db, routes: [], allRoutes: [], staticRoutes: [] } satisfies HfState);
   app.decorateRequest('actor', null);
   app.decorateRequest('sessionId', null);
+  // True only while @fastify/static registers the built web app's files: those routes (and only those) go on the allow-list.
+  let staticLoading = false;
   app.addHook('onRoute', (r) => {
-    for (const method of Array.isArray(r.method) ? r.method : [r.method]) app.hf.allRoutes.push({ method, url: r.url });
+    for (const method of Array.isArray(r.method) ? r.method : [r.method]) {
+      app.hf.allRoutes.push({ method, url: r.url });
+      if (staticLoading) app.hf.staticRoutes.push({ method, url: r.url });
+    }
   });
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -102,7 +109,29 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     if (req.url.startsWith('/api/') && !String(reply.getHeader('cache-control') ?? '').includes('no-store')) reply.header('cache-control', 'no-store');
   });
 
-  app.setNotFoundHandler((_req, reply) => reply.code(404).send({ error: "We couldn't find that." }));
+  const notFound = { error: "We couldn't find that." };
+  if (config.webDistDir === undefined) {
+    app.setNotFoundHandler((_req, reply) => reply.code(404).send(notFound));
+  } else {
+    // The built web app. Files under /assets/ have hashed names, so they can be kept for a year; the page itself is always rechecked.
+    staticLoading = true;
+    await app.register(fastifyStatic, {
+      root: path.resolve(config.webDistDir),
+      wildcard: false,
+      index: false,
+      setHeaders(reply, filePath) {
+        const cacheable = filePath.split(path.sep).includes('assets');
+        reply.header('cache-control', cacheable ? 'public, max-age=31536000, immutable' : 'no-cache');
+      },
+    });
+    staticLoading = false; // awaiting register loads the plugin, so its routes arrived while the flag was set
+    app.setNotFoundHandler(async (req, reply) => {
+      const url = req.url.split('?')[0] ?? '/';
+      // Unknown API paths, missing files and other methods get the plain 404; only page paths get the app.
+      if (req.method !== 'GET' || url === '/api' || url.startsWith('/api/') || url.startsWith('/assets/')) return reply.code(404).send(notFound);
+      return reply.header('cache-control', 'no-cache').sendFile('index.html');
+    });
+  }
   app.setErrorHandler((err: FastifyError, req, reply) => {
     if (err instanceof HttpError) {
       return reply.code(err.status).send(err.issues === undefined ? { error: err.userMessage } : { error: err.userMessage, issues: err.issues });
