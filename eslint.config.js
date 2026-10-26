@@ -1,0 +1,30 @@
+import tseslint from 'typescript-eslint';
+
+const ROUTE_SELECTOR =
+  'CallExpression[callee.object.name=/^(app|fastify|instance|server)$/][callee.property.name=/^(get|post|put|patch|delete|head|options|all|route)$/]';
+
+export default tseslint.config(
+  { ignores: ['**/dist/**', 'apps/web/e2e/**/*.png', '**/node_modules/**', '**/vitest.config.ts', 'vitest.config.ts', 'eslint.config.js'] },
+  ...tseslint.configs.strictTypeChecked,
+  {
+    languageOptions: {
+      parserOptions: {
+        projectService: { allowDefaultProject: ['*.ts'] },
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+  },
+  {
+    files: ['apps/server/src/**/*.ts'],
+    ignores: ['apps/server/src/http/route.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: ROUTE_SELECTOR,
+          message: 'Register routes with defineRoute (src/http/route.ts), not directly on the Fastify instance.',
+        },
+      ],
+    },
+  },
+);
