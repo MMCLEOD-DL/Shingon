@@ -43,3 +43,15 @@ test('a member cannot invite; a duplicate email is explained; an un-activated us
   const dup = await call(t, await signInAs(t, admin), 'POST', '/api/users/invite', { email: m.email, name: 'X', role: 'member', teamId: N.id });
   expect(dup.json.error).toBe('Someone with that email already has an account.');
 });
+
+test('accepting an invite carries the team name', async () => {
+  const admin = await makeUser(t.db, { role: 'admin' });
+  const team = await makeTeam(t.db, 'South Ops');
+  await call(t, await signInAs(t, admin), 'POST', '/api/users/invite', { email: 'tn@hf.test', name: 'Tess', role: 'member', teamId: team.id });
+  await processOutbox(t.db, t.mail, site);
+  const m = t.mail.sent.at(-1)!;
+  const token = /accept-invite#([A-Za-z0-9_-]{43})/.exec(m.text)![1];
+  const r = await call(t, null, 'POST', '/api/auth/accept-invite', { token, password: 'tess password 1' });
+  expect(r.status).toBe(200);
+  expect(r.json.user).toMatchObject({ email: 'tn@hf.test', teamName: 'South Ops' });
+});

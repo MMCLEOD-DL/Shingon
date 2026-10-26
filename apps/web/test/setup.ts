@@ -25,6 +25,9 @@ beforeEach(() => {
       dispatchEvent: () => false,
     }),
   });
+  // jsdom has no font loading API; Mantine's autosizing textarea listens to it.
+  Object.defineProperty(document, 'fonts', { configurable: true, value: { addEventListener: () => undefined, removeEventListener: () => undefined } });
+  Element.prototype.scrollIntoView = () => undefined;
   window.ResizeObserver = class { observe(): void { /* stub */ } unobserve(): void { /* stub */ } disconnect(): void { /* stub */ } };
 });
 

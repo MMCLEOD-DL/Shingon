@@ -1,46 +1,9 @@
 import { test, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { MantineProvider } from '@mantine/core';
-import { Notifications } from '@mantine/notifications';
-import { createMemoryRouter } from 'react-router';
-import { RouterProvider } from 'react-router/dom';
-import { AuthProvider } from '../src/auth.js';
-import { theme } from '../src/theme.js';
-import { routeObjects } from '../src/routes.js';
+import { screen, waitFor } from '@testing-library/react';
+import { lastBody, mockFetch, renderAt, user } from './helpers.js';
 
 const ALICE = { id: 'u1', email: 'alice@hf.test', name: 'Alice', role: 'member', teamId: 't1' };
-const user = userEvent.setup();
 
-type Reply = [number, unknown];
-function mockFetch(replies: Record<string, Reply>) {
-  const f = vi.fn(async (url: string, init?: RequestInit) => {
-    const key = `${init?.method ?? 'GET'} ${url}`;
-    const r = replies[key];
-    if (!r) return new Response(JSON.stringify({ error: `unmocked ${key}` }), { status: 500 });
-    const [status, body] = r;
-    return new Response(body === null ? null : JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
-  });
-  vi.stubGlobal('fetch', f);
-  return f;
-}
-function lastBody(f: ReturnType<typeof mockFetch>, url: string): unknown {
-  const calls = f.mock.calls.filter((c) => c[0] === url);
-  const body = calls[calls.length - 1]?.[1]?.body;
-  return typeof body === 'string' ? JSON.parse(body) : undefined;
-}
-
-function renderAt(path: string, hash = '') {
-  window.history.replaceState(null, '', '/' + hash);
-  const router = createMemoryRouter(routeObjects, { initialEntries: [path] });
-  render(
-    <MantineProvider theme={theme}>
-      <Notifications />
-      <AuthProvider><RouterProvider router={router} /></AuthProvider>
-    </MantineProvider>,
-  );
-  return { router };
-}
 async function signIn() {
   await user.type(screen.getByLabelText('Email'), 'alice@hf.test');
   await user.type(screen.getByLabelText('Password'), 'a good long password');
@@ -145,4 +108,12 @@ test('profile saves the name and changes the password', async () => {
   await user.type(screen.getByLabelText('New password'), 'a new long password');
   await user.click(screen.getByRole('button', { name: 'Change password' }));
   await waitFor(() => { expect(lastBody(f, '/api/me/password')).toEqual({ currentPassword: 'old password here', newPassword: 'a new long password' }); });
+});
+
+test('profile does not ask the server for the team name again', async () => {
+  const f = mockFetch({ 'GET /api/me': [200, { user: ALICE }] });
+  renderAt('/profile');
+  expect(await screen.findByLabelText('Your name')).toBeInTheDocument();
+  await new Promise((r) => setTimeout(r, 50));
+  expect(f.mock.calls.filter((c) => c[0] === '/api/me')).toHaveLength(1);
 });

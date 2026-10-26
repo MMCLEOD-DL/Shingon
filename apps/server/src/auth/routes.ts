@@ -10,10 +10,17 @@ import { SESSION_ABSOLUTE_MS, SESSION_COOKIE, createSession, type Actor } from '
 import { acceptInvite } from './invites.js';
 import { changePassword, requestPasswordReset, resetPassword } from './reset.js';
 import type { Config } from '../config.js';
+import type { Db } from '../db/client.js';
 import { audit, auditableEmail } from '../audit/audit.js';
 
 /** What /api/me says about the signed-in person: the actor plus the name of their team, for the profile page. */
 type MeView = Actor & { teamName: string | null };
+
+async function withTeamName(db: Db, who: Actor): Promise<MeView> {
+  if (!who.teamId) return { ...who, teamName: null };
+  const [team] = await db.select({ name: teams.name }).from(teams).where(eq(teams.id, who.teamId)).limit(1);
+  return { ...who, teamName: team?.name ?? null };
+}
 
 const tooMany = (wait: string): string => `Too many attempts. Please wait ${wait} and try again.`;
 const SIGN_IN_WINDOW = '15 minutes';
@@ -83,7 +90,7 @@ export function registerAuthRoutes(app: FastifyInstance, config: Pick<Config, 'c
         return created;
       });
       void reply.setCookie(SESSION_COOKIE, token, { ...cookieOpts, maxAge: SESSION_ABSOLUTE_MS / 1000 });
-      return { user: who };
+      return { user: await withTeamName(db, who) };
     },
   });
 
@@ -133,7 +140,7 @@ export function registerAuthRoutes(app: FastifyInstance, config: Pick<Config, 'c
       // As with sign-in, a session sent with this request is ended.
       if (req.sessionId) await db.delete(sessions).where(eq(sessions.id, req.sessionId));
       void reply.setCookie(SESSION_COOKIE, token, { ...cookieOpts, maxAge: SESSION_ABSOLUTE_MS / 1000 });
-      return { user };
+      return { user: await withTeamName(db, user) };
     },
   });
 

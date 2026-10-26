@@ -2,7 +2,8 @@ import type { KeyboardEvent, ReactNode } from 'react';
 import { Card, Group, Stack, Table, Text } from '@mantine/core';
 import { useMediaQuery } from '@mantine/hooks';
 
-export interface Column<T> { key: string; label: string; render: (item: T) => ReactNode }
+/** cardHidden: left out of the phone cards, for a column the card title already shows. */
+export interface Column<T> { key: string; label: string; render: (item: T) => ReactNode; cardHidden?: boolean }
 
 function activate(e: KeyboardEvent, open: () => void) {
   if (e.key === 'Enter' || e.key === ' ') {
@@ -34,7 +35,7 @@ export function ResponsiveList<T extends { id: string | number }>({ items, colum
           >
             <Text fw={600} mb="xs">{cardTitle(item)}</Text>
             <Stack gap={6}>
-              {columns.map((c) => (
+              {columns.filter((c) => !c.cardHidden).map((c) => (
                 <Group key={c.key} justify="space-between" align="flex-start" wrap="nowrap" gap="md">
                   <Text size="sm" c="dimmed">{c.label}</Text>
                   <Text size="sm" ta="right" component="div" style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{c.render(item)}</Text>

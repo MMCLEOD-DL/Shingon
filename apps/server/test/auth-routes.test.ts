@@ -1,6 +1,6 @@
 import { test, expect, beforeAll, afterAll } from 'vitest';
 import { createTestApp, call, signInAs } from './helpers/testApp.js';
-import { makeUser } from './helpers/factories.js';
+import { makeTeam, makeUser } from './helpers/factories.js';
 
 let t: Awaited<ReturnType<typeof createTestApp>>;
 beforeAll(async () => { t = await createTestApp(); });
@@ -74,4 +74,15 @@ test('every route Fastify knows went through defineRoute', () => {
   const stray = t.app.hf.allRoutes.filter((r) => r.method !== 'HEAD')
     .filter((r) => !declared.has(`${r.method} ${r.url}`));
   expect(stray).toEqual([]);
+});
+
+test('sign-in carries the team name, so the profile needs no extra call', async () => {
+  const team = await makeTeam(t.db, 'North Sales');
+  const u = await makeUser(t.db, { role: 'member', teamId: team.id });
+  const r = await call(t, null, 'POST', '/api/auth/sign-in', { email: u.email, password: u.password });
+  expect(r.status).toBe(200);
+  expect(r.json.user).toMatchObject({ id: u.id, teamId: team.id, teamName: 'North Sales' });
+  const admin = await makeUser(t.db, { role: 'admin' });
+  const a = await call(t, null, 'POST', '/api/auth/sign-in', { email: admin.email, password: admin.password });
+  expect(a.json.user).toHaveProperty('teamName', null);
 });

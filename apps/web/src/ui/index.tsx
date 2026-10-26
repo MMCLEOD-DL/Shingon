@@ -6,3 +6,4 @@ export { ErrorNotice } from './ErrorNotice.js';
 export { FormCard } from './FormCard.js';
 export { notifySaved, notifyError } from './notify.js';
 export { formatDateTime } from './format.js';
+export { FileDropzone, FilePreview, fileUrl } from './FileDropzone.js';

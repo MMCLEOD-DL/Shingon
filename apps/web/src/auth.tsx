@@ -2,10 +2,10 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { Navigate, useLocation } from 'react-router';
 import { Center, Loader } from '@mantine/core';
 import { can, type Permission, type Role } from '@hf/shared';
-import { api, onUnauthorized } from './api.js';
+import { ApiError, api, onUnauthorized } from './api.js';
 import { EmptyState } from './ui/EmptyState.js';
 
-/** teamName arrives with /api/me; the sign-in and invite replies do not carry it, so it can be absent until the next refresh. */
+/** teamName arrives with /api/me, sign-in and accept-invite. */
 export interface Actor { id: string; email: string; name: string; role: Role; teamId: string | null; teamName?: string | null }
 
 interface AuthState {
@@ -38,9 +38,9 @@ export function AuthProvider({ children, onSignedOut }: { children: ReactNode; o
     try {
       const me = await api<{ user: Actor | null }>('GET', '/api/me');
       setUserState(me.user);
-    } catch {
-      // A 401 already cleared the user; any other failure leaves the person signed out on screen rather than guessing.
-      setUserState(null);
+    } catch (e) {
+      // Only a 401 means the session is gone. A dropped connection or a server fault keeps the person on screen.
+      if (e instanceof ApiError && e.status === 401) setUserState(null);
     } finally {
       setLoading(false);
     }

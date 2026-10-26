@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Button, Container, PasswordInput, Stack, Text, TextInput } from '@mantine/core';
 import { useForm, schemaResolver } from '@mantine/form';
 import { ChangePasswordInput, UpdateMeInput, type Role } from '@hf/shared';
@@ -87,10 +87,7 @@ function PasswordForm() {
 }
 
 export function Profile() {
-  const { user, refresh } = useAuth();
-  // Signing in does not carry the team's name; fetch it once if it is missing.
-  const missingTeam = user !== null && user.teamName === undefined;
-  useEffect(() => { if (missingTeam) void refresh(); }, [missingTeam, refresh]);
+  const { user } = useAuth();
   if (!user) return null;
   return (
     <Container size="sm" p={0}>
