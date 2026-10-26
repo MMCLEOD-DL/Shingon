@@ -4,9 +4,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { isAllowed, collectLicences, checkLicences } from './check-licences.js';
 
-function fakeRepo(pkgs: Record<string, object>) {
+function fakeRepo(pkgs: Record<string, object>, workspaces: string[] = []) {
   const root = mkdtempSync(path.join(tmpdir(), 'lic-'));
-  writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'root', workspaces: [] }));
+  writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'root', workspaces }));
   for (const [name, pj] of Object.entries(pkgs)) {
     const dir = path.join(root, 'node_modules', ...name.split('/'));
     mkdirSync(dir, { recursive: true });
@@ -49,4 +49,47 @@ test('checkLicences explains each problem in plain English and honours exception
   ]);
   const ok = await checkLicences(root, { 'bad@1.0.0': 'operator accepted 2026-11-01 for X', 'none@1.0.0': 'checked LICENSE file: MIT' });
   expect(ok).toEqual({ ok: true, problems: [] });
+});
+
+test('scans workspace-local node_modules', async () => {
+  const root = fakeRepo({ good: { license: 'MIT' } }, ['apps/*']);
+  const dir = path.join(root, 'apps', 'x', 'node_modules', 'pkg');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'pkg', version: '2.0.0', license: 'GPL-3.0' }));
+  const r = await checkLicences(root, {});
+  expect(r.ok).toBe(false);
+  expect(r.problems[0]).toContain('pkg@2.0.0 uses GPL-3.0');
+});
+
+test('an empty or missing node_modules fails', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'lic-'));
+  const r = await checkLicences(root, {});
+  expect(r.ok).toBe(false);
+  expect(r.problems[0]).toContain('npm ci');
+});
+
+test('an exception needs a non-blank reason', async () => {
+  const root = fakeRepo({ bad: { license: 'GPL-3.0' } });
+  for (const reason of ['', '   ', 5 as unknown as string]) {
+    const r = await checkLicences(root, { 'bad@1.0.0': reason });
+    expect(r.ok).toBe(false);
+    expect(r.problems[0]).toContain('no reason');
+  }
+});
+
+test('a malformed package.json is reported with its path', async () => {
+  const root = fakeRepo({ good: { license: 'MIT' } });
+  const dir = path.join(root, 'node_modules', 'broken');
+  mkdirSync(dir);
+  writeFileSync(path.join(dir, 'package.json'), '{ nope');
+  const r = await checkLicences(root, {});
+  expect(r.ok).toBe(false);
+  expect(r.problems.join('\n')).toContain(path.join(dir, 'package.json'));
+});
+
+test('an alias shows both names but exceptions use the folder name', async () => {
+  const root = fakeRepo({ alias: { name: 'real-name', license: 'GPL-3.0' } });
+  const r = await checkLicences(root, {});
+  expect(r.problems[0]).toContain('alias (real-name)@1.0.0');
+  expect((await checkLicences(root, { 'alias@1.0.0': 'ok' })).ok).toBe(true);
 });
