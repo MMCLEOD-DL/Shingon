@@ -13,8 +13,9 @@ import { registerCsrf } from './http/csrf.js';
 import { HttpError } from './http/errors.js';
 import type { RouteAccess } from './http/route.js';
 
-// Task 6 and Task 9 supply the real mail transport and file storage; until then the app only holds them.
-export interface EmailTransport { send(message: unknown): unknown }
+import { createTransport, startOutboxWorker, type EmailTransport } from './email/index.js';
+
+// Task 9 supplies the real file storage; until then the app only holds it.
 export interface Storage { readonly kind: string }
 
 export interface AppDeps {
@@ -117,6 +118,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     req.log.error({ errName: err.name, errCode: err.code, url: req.url.split('?')[0], method: req.method }, 'Unhandled error');
     return reply.code(500).send({ error: 'Something went wrong on our side. It has been logged.' });
   });
+
+  const transport = deps.emailTransport ?? createTransport(config.email);
+  if (config.instanceMode !== 'test') {
+    const stop = startOutboxWorker(db, transport, { appName: config.appName, appOrigin: config.appOrigin, from: config.email.from }, { log: app.log });
+    app.addHook('onClose', async () => { await stop(); });
+  }
 
   registerRoutes(app, config, deps.now);
   return app;

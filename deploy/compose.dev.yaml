@@ -1,0 +1,19 @@
+# Local development services. Mail sent by the app is caught by Mailpit: open http://localhost:8025.
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: hf
+      POSTGRES_PASSWORD: hf-dev-only
+      POSTGRES_DB: hf
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - dev-db:/var/lib/postgresql/data
+  mailpit:
+    image: axllent/mailpit
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
+volumes:
+  dev-db:

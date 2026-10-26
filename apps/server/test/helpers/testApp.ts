@@ -6,10 +6,10 @@ import type { Config } from '../../src/config.js';
 import type { Db } from '../../src/db/client.js';
 import { buildApp } from '../../src/app.js';
 import { SESSION_COOKIE, createSession } from '../../src/auth/sessions.js';
+import { memoryTransport } from '../../src/email/index.js';
 import { createTestDb } from './testDb.js';
 
-// Stand-in until Task 6 provides the real memory transport.
-export interface MemoryTransport { sent: unknown[]; send(message: unknown): void }
+export type MemoryTransport = ReturnType<typeof memoryTransport>;
 
 export interface TestApp {
   app: FastifyInstance;
@@ -44,7 +44,7 @@ export async function createTestApp(
       commit: 'test',
       ...configOverrides,
     };
-    const mail: MemoryTransport = { sent: [], send(m) { this.sent.push(m); } };
+    const mail = memoryTransport();
     app = await buildApp({ config, db: testDb.db, emailTransport: mail });
     await beforeReady?.(app);
     await app.ready();
