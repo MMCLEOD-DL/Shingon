@@ -45,9 +45,10 @@ export function defineRoute<S extends RouteSchemas>(app: FastifyInstance, spec: 
     url: spec.url,
     schema: spec.schema ?? {},
     ...(spec.config ? { config: spec.config } : {}),
-    // preValidation runs before the body and query are checked, so the 401/403 order in the
-    // status-code oracle holds even for malformed input.
-    preValidation: (req, _reply, done) => {
+    // A route-level onRequest hook runs after the app-wide ones (CSRF, then session load, so req.actor is set)
+    // and before the body is read or parsed, so the 401/403 order in the status-code oracle holds
+    // whatever the body, content type or size.
+    onRequest: (req, _reply, done) => {
       if ('permission' in access && !req.actor) done(unauthorized());
       else if ('permission' in access && req.actor && !can(req.actor.role, access.permission)) done(forbidden());
       else done();

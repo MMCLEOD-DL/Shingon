@@ -36,6 +36,7 @@ export async function createTestApp(
       port: 0,
       databaseUrl: testDb.url,
       cookieSecure: false,
+      trustProxyHops: 1,
       uploadDir: storageDir,
       uploadMaxBytes: 15 * 1024 * 1024,
       email: { transport: 'memory', from: 'Test <t@hf.test>' },

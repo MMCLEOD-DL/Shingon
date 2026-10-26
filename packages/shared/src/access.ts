@@ -9,5 +9,6 @@ export const PERMISSIONS = {
 export type Permission = keyof typeof PERMISSIONS;
 
 export function can(role: Role, perm: Permission): boolean {
-  return (PERMISSIONS[perm] as readonly Role[]).includes(role);
+  // An unknown permission name is refused, never an error.
+  return (PERMISSIONS as Record<string, readonly Role[] | undefined>)[perm]?.includes(role) ?? false;
 }

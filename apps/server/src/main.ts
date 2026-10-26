@@ -14,10 +14,22 @@ try {
 }
 
 const { db, close } = createDb(config.databaseUrl);
-// Development only. Production runs migrations through the separate `migrate` service.
-if (process.env['RUN_MIGRATIONS'] === 'true') await runMigrations(db);
+const fail = (what: string, e: unknown): never => {
+  // One plain line, no stack trace, and never the error text itself: database messages can contain connection details.
+  const code = (e as { code?: unknown } | null)?.code;
+  console.error(`The app could not start: ${what}${typeof code === 'string' ? ` (${code})` : ''}. Check the database address and that the database is running.`);
+  process.exit(1);
+};
 
-const app = await buildApp({ config, db });
+let app: Awaited<ReturnType<typeof buildApp>>;
+try {
+  // Development only. Production runs migrations through the separate `migrate` service.
+  if (process.env['RUN_MIGRATIONS'] === 'true') await runMigrations(db);
+  app = await buildApp({ config, db });
+} catch (e) {
+  fail('it could not set up the database or the web server', e);
+  throw e;
+}
 const shutdown = async () => {
   await app.close();
   await close();
@@ -26,4 +38,8 @@ const shutdown = async () => {
 process.on('SIGTERM', () => void shutdown());
 process.on('SIGINT', () => void shutdown());
 
-await app.listen({ host: '0.0.0.0', port: config.port });
+try {
+  await app.listen({ host: '0.0.0.0', port: config.port });
+} catch (e) {
+  fail(`it could not listen on port ${String(config.port)}`, e);
+}

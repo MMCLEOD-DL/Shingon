@@ -44,7 +44,8 @@ const INVALID = 'Some of the details are not valid.';
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const { config, db } = deps;
   const app = Fastify({
-    trustProxy: true,
+    // Only the proxies we run are trusted, so a client cannot choose its own address by sending X-Forwarded-For.
+    trustProxy: config.trustProxyHops === 0 ? false : (_address: string, hop: number) => hop < config.trustProxyHops,
     logger: config.instanceMode === 'test'
       ? false
       : {
@@ -105,19 +106,21 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       return reply.code(400).send({ error: INVALID, issues });
     }
     const status = (err as { statusCode?: number }).statusCode;
-    if (status === 429) return reply.code(429).send({ error: 'Too many attempts. Please wait 15 minutes and try again.' });
     if (status === 413) return reply.code(413).send({ error: 'That file is too large.' });
-    if (status !== undefined && status >= 400 && status < 500) return reply.code(400).send({ error: INVALID });
-    // Log the failure without the request body, headers or cookies.
-    req.log.error({ err: { message: err.message, stack: err.stack }, url: req.url, method: req.method }, 'Unhandled error');
+    if (status !== undefined && status >= 400 && status < 500) {
+      const msg = status === 401 ? 'Please sign in.' : status === 403 ? "You don't have permission to do that." : status === 404 ? "We couldn't find that." : INVALID;
+      return reply.code(status).send({ error: msg });
+    }
+    // Database error messages carry SQL parameters (emails, hashes), so only a fixed text, the error name and its code are logged.
+    req.log.error({ errName: err.name, errCode: err.code, url: req.url.split('?')[0], method: req.method }, 'Unhandled error');
     return reply.code(500).send({ error: 'Something went wrong on our side. It has been logged.' });
   });
 
-  registerRoutes(app, config);
+  registerRoutes(app, config, deps.now);
   return app;
 }
 
 /** Later tasks append their route modules here. */
-function registerRoutes(app: FastifyInstance, config: Config): void {
-  registerAuthRoutes(app, config);
+function registerRoutes(app: FastifyInstance, config: Config, now?: () => Date): void {
+  registerAuthRoutes(app, config, now);
 }

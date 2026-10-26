@@ -8,18 +8,22 @@ import { hashPassword, verifyPassword } from './password.js';
 import { SESSION_ABSOLUTE_MS, SESSION_COOKIE, createSession } from './sessions.js';
 import type { Config } from '../config.js';
 
+const TOO_MANY = 'Too many attempts. Please wait 15 minutes and try again.';
 const BAD_SIGN_IN = "That email and password don't match an account.";
 
-// Checked when no usable account exists, so the time taken does not reveal whether an email is registered.
-let dummyHash: Promise<string> | undefined;
-const getDummyHash = () => (dummyHash ??= hashPassword('not-a-real-password-for-timing-only'));
 
 const signInBody = z.strictObject({
   email: z.string().trim().toLowerCase().max(320),
   password: z.string().max(200),
 });
 
-export function registerAuthRoutes(app: FastifyInstance, config: Pick<Config, 'cookieSecure'>): void {
+export function registerAuthRoutes(app: FastifyInstance, config: Pick<Config, 'cookieSecure'>, now?: () => Date): void {
+  // Checked when no usable account exists, so the time taken does not reveal whether an email is registered.
+  // Computed now, at registration, so the first unknown-email request is not faster than later ones.
+  const dummyHash = hashPassword('not-a-real-password-for-timing-only');
+  // Backstop: many attempts from one address across different emails.
+  const perAddress = app.createRateLimit({ max: 50, timeWindow: '15 minutes', keyGenerator: (req) => req.ip });
+
   const cookieOpts = { httpOnly: true, sameSite: 'lax', secure: config.cookieSecure, path: '/' } as const;
 
   defineRoute(app, {
@@ -41,8 +45,10 @@ export function registerAuthRoutes(app: FastifyInstance, config: Pick<Config, 'c
     },
     async handler(req, reply, { db }) {
       const { email, password } = req.body;
+      const gate = await perAddress(req);
+      if (!gate.isAllowed && gate.isExceeded) throw new HttpError(429, TOO_MANY);
       const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
-      const matches = await verifyPassword(password, user?.passwordHash ?? (await getDummyHash()));
+      const matches = await verifyPassword(password, user?.passwordHash ?? (await dummyHash));
       if (!user || user.passwordHash === null || user.disabledAt !== null || !matches) {
         throw new HttpError(401, BAD_SIGN_IN);
       }
@@ -51,7 +57,7 @@ export function registerAuthRoutes(app: FastifyInstance, config: Pick<Config, 'c
       const meta: { ip?: string; userAgent?: string } = { ip: req.ip };
       const ua = req.headers['user-agent'];
       if (ua) meta.userAgent = ua;
-      const { token } = await createSession(db, user.id, meta);
+      const { token } = await createSession(db, user.id, meta, now?.());
       void reply.setCookie(SESSION_COOKIE, token, { ...cookieOpts, maxAge: SESSION_ABSOLUTE_MS / 1000 });
       return { user: { id: user.id, email: user.email, name: user.name, role: user.role, teamId: user.teamId } };
     },

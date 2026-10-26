@@ -7,6 +7,8 @@ export interface Config {
   port: number;
   databaseUrl: string;
   cookieSecure: boolean;
+  /** How many reverse proxies sit in front of the app (Caddy = 1, none = 0). Used to find the real client address. */
+  trustProxyHops: number;
   uploadDir: string;
   uploadMaxBytes: number;
   email: { transport: 'smtp' | 'file' | 'memory'; smtpUrl?: string; fileDir?: string; from: string };
@@ -98,6 +100,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
 
   const cookieSecure = bool('COOKIE_SECURE', !(rawOrigin ?? '').startsWith('http://'));
+  const trustProxyHops = int('TRUST_PROXY_HOPS', 0, 10, 1, 'between 0 and 10 (0 means no proxy in front of the app, 1 means one proxy such as Caddy)');
   const uploadDirRaw = required('UPLOAD_DIR');
   if (uploadDirRaw && !uploadDirRaw.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(uploadDirRaw)) {
     problems.push(`UPLOAD_DIR must be a full folder path starting with / (got "${uploadDirRaw}").`);
@@ -132,7 +135,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (problems.length > 0) throw new ConfigError(problems);
 
   const cfg: Config = {
-    instanceMode, appName, appOrigin, port, databaseUrl, cookieSecure,
+    instanceMode, appName, appOrigin, port, databaseUrl, cookieSecure, trustProxyHops,
     uploadDir: uploadDirRaw, uploadMaxBytes, email,
     appVersion: get('APP_VERSION') ?? '0.0.0-dev', commit: get('GIT_COMMIT') ?? 'unknown',
   };
