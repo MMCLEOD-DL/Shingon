@@ -8,7 +8,7 @@ import type { EmailTransport } from './transport.js';
 export const RETRY_DELAYS_MS = [60_000, 5 * 60_000, 30 * 60_000, 2 * 60 * 60_000, 6 * 60 * 60_000] as const;
 
 export async function queueEmail(tx: Db | Tx, m: { to: string; template: TemplateName; data: Record<string, string> }): Promise<void> {
-  await tx.insert(emailOutbox).values({ toAddress: m.to, template: m.template, data: m.data });
+  await tx.insert(emailOutbox).values({ toAddress: m.to, template: m.template, data: m.data, nextAttemptAt: new Date() });
 }
 
 type Row = { id: string; to_address: string; template: TemplateName; data: Record<string, string>; attempts: number };
@@ -23,31 +23,35 @@ export async function processOutbox(
   const batch = opts.batch ?? 20;
   const from = opts.from ?? site.from ?? `${site.appName} <noreply@${new URL(site.appOrigin).hostname}>`;
   const counts = { sent: 0, retried: 0, failed: 0 };
-  await db.transaction(async (tx) => {
-    const rows = (await tx.execute(sql`
-      select id, to_address, template, data, attempts from email_outbox
-      where status = 'pending' and next_attempt_at <= ${now}
-      order by created_at limit ${batch} for update skip locked`)).rows as unknown as Row[];
-    for (const r of rows) {
+  // One row per transaction: a bookkeeping failure cannot roll back (and so re-send) other mails,
+  // and no lock is held across a whole batch.
+  for (let i = 0; i < batch; i++) {
+    const outcome = await db.transaction(async (tx): Promise<'sent' | 'retried' | 'failed' | null> => {
+      const r = ((await tx.execute(sql`
+        select id, to_address, template, data, attempts from email_outbox
+        where status = 'pending' and next_attempt_at <= ${now}
+        order by created_at, id limit 1 for update skip locked`)).rows as unknown as Row[])[0];
+      if (!r) return null;
       try {
         const mail = renderTemplate(r.template, r.data, site);
         await transport.send({ to: r.to_address, from, ...mail });
         await tx.execute(sql`update email_outbox set status = 'sent', sent_at = ${now}, data = '{}'::jsonb, last_error = null where id = ${r.id}`);
-        counts.sent++;
+        return 'sent';
       } catch (e) {
         const attempts = r.attempts + 1;
         const message = (e instanceof Error ? e.message : String(e)).slice(0, 500);
         if (attempts > RETRY_DELAYS_MS.length) {
-          await tx.execute(sql`update email_outbox set status = 'failed', attempts = ${attempts}, last_error = ${message} where id = ${r.id}`);
-          counts.failed++;
-        } else {
-          const next = new Date(now.getTime() + (RETRY_DELAYS_MS[attempts - 1] ?? 0));
-          await tx.execute(sql`update email_outbox set attempts = ${attempts}, last_error = ${message}, next_attempt_at = ${next} where id = ${r.id}`);
-          counts.retried++;
+          await tx.execute(sql`update email_outbox set status = 'failed', attempts = ${attempts}, last_error = ${message}, data = '{}'::jsonb where id = ${r.id}`);
+          return 'failed';
         }
+        const next = new Date(now.getTime() + (RETRY_DELAYS_MS[attempts - 1] ?? 0));
+        await tx.execute(sql`update email_outbox set attempts = ${attempts}, last_error = ${message}, next_attempt_at = ${next} where id = ${r.id}`);
+        return 'retried';
       }
-    }
-  });
+    });
+    if (outcome === null) break;
+    counts[outcome]++;
+  }
   return counts;
 }
 
