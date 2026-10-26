@@ -27,4 +27,14 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // Tests read untyped JSON replies and assert on rows they know exist.
+    files: ['**/test/**/*.ts', '**/*.test.ts'],
+    rules: {
+      '@typescript-eslint/no-non-null-assertion': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-explicit-any': 'off',
+    },
+  },
 );

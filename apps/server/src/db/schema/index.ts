@@ -1,2 +1,4 @@
 // Later tasks add `export * from './<table>.js';` lines here, one per table module.
-export {};
+export * from './teams.js';
+export * from './users.js';
+export * from './sessions.js';
