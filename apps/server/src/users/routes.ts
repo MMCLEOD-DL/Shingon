@@ -6,6 +6,7 @@ import { defineRoute } from '../http/route.js';
 import { badRequest, conflict, notFound, unauthorized } from '../http/errors.js';
 import { revokeSessions } from '../auth/sessions.js';
 import { teams, users } from '../db/schema/index.js';
+import { audit } from '../audit/audit.js';
 import { getUser, listTeams, listUsers } from './repo.js';
 
 const IdParams = z.strictObject({ id: z.uuid() });
@@ -75,6 +76,16 @@ export function registerUserRoutes(app: FastifyInstance, now: () => Date = () =>
           await tx.update(users).set(set).where(eq(users.id, target.id));
         }
         if (body.disabled === true) await revokeSessions(tx, target.id);
+
+        const changed: Record<string, [unknown, unknown]> = {};
+        if (body.name !== undefined && body.name !== target.name) changed.name = [target.name, body.name];
+        if (body.role !== undefined && body.role !== target.role) changed.role = [target.role, body.role];
+        if (body.teamId !== undefined && body.teamId !== target.teamId) changed.teamId = [target.teamId, body.teamId];
+        const ctx = { actor, ip: req.ip };
+        const ref = { targetType: 'user', targetId: target.id };
+        if (Object.keys(changed).length > 0) await audit(tx, ctx, { action: 'user.updated', ...ref, details: { changed } });
+        if (body.disabled === true && !target.disabled) await audit(tx, ctx, { action: 'user.disabled', ...ref });
+        if (body.disabled === false && target.disabled) await audit(tx, ctx, { action: 'user.enabled', ...ref });
       });
       const user = await getUser(db, actor, target.id);
       if (!user) throw notFound();
@@ -97,9 +108,14 @@ export function registerUserRoutes(app: FastifyInstance, now: () => Date = () =>
     url: '/api/teams',
     access: { permission: 'teams:manage' },
     schema: { body: CreateTeamInput },
-    async handler(req, reply, { db }) {
+    async handler(req, reply, { actor, db }) {
       try {
-        const [team] = await db.insert(teams).values({ name: req.body.name }).returning({ id: teams.id, name: teams.name });
+        const team = await db.transaction(async (tx) => {
+          const [created] = await tx.insert(teams).values({ name: req.body.name }).returning({ id: teams.id, name: teams.name });
+          if (!created) throw new Error('Team insert returned no row');
+          await audit(tx, { actor, ip: req.ip }, { action: 'team.created', targetType: 'team', targetId: created.id, details: { name: created.name } });
+          return created;
+        });
         return await reply.code(201).send({ team });
       } catch (e) {
         if (isUniqueViolation(e)) throw conflict(`There is already a team called "${req.body.name}".`);
@@ -115,7 +131,15 @@ export function registerUserRoutes(app: FastifyInstance, now: () => Date = () =>
     schema: { body: UpdateMeInput },
     async handler(req, _reply, { actor, db }) {
       if (!actor) throw unauthorized();
-      await db.update(users).set({ name: req.body.name, updatedAt: now() }).where(eq(users.id, actor.id));
+      await db.transaction(async (tx) => {
+        await tx.update(users).set({ name: req.body.name, updatedAt: now() }).where(eq(users.id, actor.id));
+        if (req.body.name !== actor.name) {
+          await audit(tx, { actor, ip: req.ip }, {
+            action: 'user.updated', targetType: 'user', targetId: actor.id,
+            details: { changed: { name: [actor.name, req.body.name] } },
+          });
+        }
+      });
       const user = await getUser(db, actor, actor.id);
       if (!user) throw notFound();
       return { user };

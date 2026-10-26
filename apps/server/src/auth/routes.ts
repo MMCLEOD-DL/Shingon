@@ -7,6 +7,7 @@ import { users, sessions } from '../db/schema/index.js';
 import { hashPassword, verifyPassword } from './password.js';
 import { SESSION_ABSOLUTE_MS, SESSION_COOKIE, createSession } from './sessions.js';
 import type { Config } from '../config.js';
+import { audit } from '../audit/audit.js';
 
 const TOO_MANY = 'Too many attempts. Please wait 15 minutes and try again.';
 const BAD_SIGN_IN = "That email and password don't match an account.";
@@ -50,16 +51,23 @@ export function registerAuthRoutes(app: FastifyInstance, config: Pick<Config, 'c
       const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
       const matches = await verifyPassword(password, user?.passwordHash ?? (await dummyHash));
       if (!user || user.passwordHash === null || user.disabledAt !== null || !matches) {
+        // Never the password, only the email that was tried.
+        await audit(db, { actor: null, ip: req.ip }, { action: 'auth.sign_in_failed', details: { email } });
         throw new HttpError(401, BAD_SIGN_IN);
       }
-      // A fresh token on every sign-in; a session presented with this request is ended.
-      if (req.sessionId) await db.delete(sessions).where(eq(sessions.id, req.sessionId));
       const meta: { ip?: string; userAgent?: string } = { ip: req.ip };
       const ua = req.headers['user-agent'];
       if (ua) meta.userAgent = ua;
-      const { token } = await createSession(db, user.id, meta, now?.());
+      const who = { id: user.id, email: user.email, name: user.name, role: user.role, teamId: user.teamId };
+      // A fresh token on every sign-in; a session presented with this request is ended.
+      const { token } = await db.transaction(async (tx) => {
+        if (req.sessionId) await tx.delete(sessions).where(eq(sessions.id, req.sessionId));
+        const created = await createSession(tx, user.id, meta, now?.());
+        await audit(tx, { actor: who, ip: req.ip }, { action: 'auth.sign_in', targetType: 'user', targetId: user.id });
+        return created;
+      });
       void reply.setCookie(SESSION_COOKIE, token, { ...cookieOpts, maxAge: SESSION_ABSOLUTE_MS / 1000 });
-      return { user: { id: user.id, email: user.email, name: user.name, role: user.role, teamId: user.teamId } };
+      return { user: who };
     },
   });
 
@@ -67,8 +75,11 @@ export function registerAuthRoutes(app: FastifyInstance, config: Pick<Config, 'c
     method: 'POST',
     url: '/api/auth/sign-out',
     access: { permission: 'self:manage' },
-    async handler(req, reply, { db }) {
-      if (req.sessionId) await db.delete(sessions).where(eq(sessions.id, req.sessionId));
+    async handler(req, reply, { actor, db }) {
+      await db.transaction(async (tx) => {
+        if (req.sessionId) await tx.delete(sessions).where(eq(sessions.id, req.sessionId));
+        await audit(tx, { actor, ip: req.ip }, { action: 'auth.sign_out', ...(actor ? { targetType: 'user', targetId: actor.id } : {}) });
+      });
       void reply.clearCookie(SESSION_COOKIE, cookieOpts);
       return undefined;
     },
