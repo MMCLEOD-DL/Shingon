@@ -57,6 +57,20 @@
       "when": 1793026077477,
       "tag": "0007_notes",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793029282636,
+      "tag": "0008_instance_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793029283070,
+      "tag": "0009_instance_guard",
+      "breakpoints": true
     }
   ]
 }

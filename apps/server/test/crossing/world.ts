@@ -1,8 +1,9 @@
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import type { Role } from '@hf/shared';
 import type { TestApp } from '../helpers/testApp.js';
 import { SESSION_COOKIE, createSession } from '../../src/auth/sessions.js';
 import { users } from '../../src/db/schema/index.js';
+import { wipeAllData } from '../../src/db/wipe.js';
 import { RESOURCE_SEEDERS } from './resources/index.js';
 
 /** Everyone the harness signs in as. `anon` has no cookie; `disabledDave` holds a session issued before he was disabled. */
@@ -62,13 +63,7 @@ export async function buildWorld(t: TestApp): Promise<World> {
     actors,
     resources,
     async reset() {
-      const tables = await t.db.execute<{ tablename: string }>(sql`select tablename from pg_tables where schemaname = 'public' order by tablename`);
-      const list = tables.rows.map((r) => `"${r.tablename}"`).join(', ');
-      await t.db.transaction(async (tx) => {
-        // The audit log refuses TRUNCATE unless this flag is set for the transaction (Task 5).
-        await tx.execute(sql`set local hf.audit_purge = 'on'`);
-        if (list) await tx.execute(sql.raw(`truncate ${list} restart identity cascade`));
-      });
+      await wipeAllData(t.db);
 
       for (const key of Object.keys(resources)) Reflect.deleteProperty(resources, key);
       for (const seed of RESOURCE_SEEDERS) {

@@ -1,6 +1,7 @@
 import { ConfigError, loadConfig, type Config } from './config.js';
 import { createDb, runMigrations } from './db/client.js';
 import { buildApp } from './app.js';
+import { ensureInstance, InstanceModeError } from './instance.js';
 
 let config: Config;
 try {
@@ -25,8 +26,14 @@ let app: Awaited<ReturnType<typeof buildApp>>;
 try {
   // Development only. Production runs migrations through the separate `migrate` service.
   if (process.env['RUN_MIGRATIONS'] === 'true') await runMigrations(db);
+  // A live database never starts as a demo, and one that held demo data never goes live (Ruling 11).
+  await ensureInstance(db, config.instanceMode);
   app = await buildApp({ config, db });
 } catch (e) {
+  if (e instanceof InstanceModeError) {
+    console.error(e.message);
+    process.exit(1);
+  }
   fail('it could not set up the database or the web server', e);
   throw e;
 }

@@ -22,6 +22,7 @@ const WHAT: Record<string, string> = {
   'note.updated': 'Changed a note',
   'note.deleted': 'Deleted a note',
   'seed.demo': 'Loaded demo data',
+  'instance.promoted': 'Started the live app on this database',
 };
 
 const columns: Column<AuditEntry>[] = [

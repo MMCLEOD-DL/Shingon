@@ -5,6 +5,7 @@
   "type": "module",
   "license": "UNLICENSED",
   "dependencies": {
+    "@faker-js/faker": "10.6.0",
     "@fastify/cookie": "11.1.3",
     "@fastify/helmet": "13.2.0",
     "@fastify/multipart": "10.1.6",
@@ -26,6 +27,8 @@
   "scripts": {
     "db:generate": "drizzle-kit generate",
     "db:custom": "drizzle-kit generate --custom",
-    "build": "tsc -b"
+    "build": "tsc -b",
+    "seed:demo": "node dist/seed/cli.js",
+    "seed:demo:dev": "tsx src/seed/cli.ts"
   }
 }
