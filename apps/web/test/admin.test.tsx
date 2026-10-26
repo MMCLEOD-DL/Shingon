@@ -82,3 +82,16 @@ test('an empty activity log says so', async () => {
   renderAt('/admin/audit');
   expect(await screen.findByText('Nothing recorded yet')).toBeInTheDocument();
 });
+
+test('switching an account off asks first, naming the person', async () => {
+  const f = mockFetch({ 'GET /api/me': [200, { user: ADMIN }], 'GET /api/teams': [200, { teams: [] }], 'GET /api/users': [200, { users: [USER_ALICE] }],
+    'PATCH /api/users/u1': [200, { user: { ...USER_ALICE, disabled: true } }] });
+  renderAt('/admin/users');
+  await user.click(await screen.findByText('alice@hf.test'));
+  await user.click(await screen.findByLabelText('Account active'));
+  await user.click(screen.getByRole('button', { name: 'Save changes' }));
+  expect(await screen.findByText("Switch off Alice's account?")).toBeInTheDocument();
+  expect(lastBody(f, '/api/users/u1')).toBeUndefined();
+  await user.click(screen.getByRole('button', { name: 'Switch off account' }));
+  await waitFor(() => { expect(lastBody(f, '/api/users/u1')).toEqual({ disabled: true }); });
+});

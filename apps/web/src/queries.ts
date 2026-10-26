@@ -85,10 +85,8 @@ export function useDeleteNote(id: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api('DELETE', `/api/notes/${encodeURIComponent(id)}`),
-    onSuccess: async () => {
-      qc.removeQueries({ queryKey: keys.note(id) });
-      await qc.invalidateQueries({ queryKey: keys.notes });
-    },
+    // The note's own query is removed by the page after it has left, so the page never flashes a 404.
+    onSuccess: async () => { await qc.invalidateQueries({ queryKey: keys.notes }); },
   });
 }
 

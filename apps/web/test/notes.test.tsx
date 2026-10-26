@@ -66,3 +66,16 @@ test('the server refusal is shown as it is written', async () => {
   renderAt('/notes/zz');
   expect(await screen.findByText("We couldn't find that.")).toBeInTheDocument();
 });
+
+test('a title-only edit of a note with a photo sends exactly the title', async () => {
+  const f = mockFetch({ 'GET /api/me': [200, { user: ALICE }], 'GET /api/notes/n1': [200, { note: { ...NOTE, attachment: FILE } }],
+    'PATCH /api/notes/n1': [200, { note: { ...NOTE, title: 'Taxi home', attachment: FILE } }] });
+  renderAt('/notes/n1');
+  await user.click(await screen.findByRole('button', { name: 'Edit' }));
+  expect(screen.getByText('r.jpg')).toBeInTheDocument();
+  const title = screen.getByLabelText('Title');
+  await user.clear(title);
+  await user.type(title, 'Taxi home');
+  await user.click(screen.getByRole('button', { name: 'Save note' }));
+  await waitFor(() => { expect(lastBody(f, '/api/notes/n1')).toEqual({ title: 'Taxi home' }); });
+});

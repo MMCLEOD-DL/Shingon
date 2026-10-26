@@ -5,9 +5,15 @@ import { useMediaQuery } from '@mantine/hooks';
 import { IconCamera, IconFile, IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
 import { formatLimit, type FileView } from '@hf/shared';
 import { uploadFile } from '../api.js';
+import { formatSize } from './format.js';
 import { ErrorNotice } from './ErrorNotice.js';
 
 export const ACCEPTED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'];
+// HEIC and HEIF carry their extensions too, because some computers report no type for them. The server looks at the bytes anyway.
+const DROP_ACCEPT: Record<string, string[]> = Object.fromEntries(
+  ACCEPTED_TYPES.map((t) => [t, t === 'image/heic' ? ['.heic'] : t === 'image/heif' ? ['.heif'] : []]),
+);
+const PICK_ACCEPT = 'image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf,.heic,.heif';
 const RASTER = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const DEFAULT_MAX = 15 * 1024 * 1024;
 
@@ -28,7 +34,7 @@ export function FilePreview({ file, onRemove }: { file: FileView; onRemove?: () 
           : <IconFile size={40} aria-hidden="true" />}
         <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
           <Anchor href={fileUrl(file.id)} target="_blank" rel="noopener" truncate="end">{file.name}</Anchor>
-          <Text size="xs" c="dimmed">{formatLimit(file.size)}</Text>
+          <Text size="xs" c="dimmed">{formatSize(file.size)}</Text>
         </Stack>
         {onRemove ? <Button variant="subtle" color="red" size="compact-md" leftSection={<IconX size={16} />} onClick={onRemove}>Remove</Button> : null}
       </Group>
@@ -92,20 +98,27 @@ export function FileDropzone({ onUploaded, onRemoved, value = null, maxBytes = D
           <Progress value={100} animated aria-label="Uploading" />
         </Paper>
       ) : mobile ? (
-        <>
+        <Stack gap="xs">
           <Button fullWidth size="lg" leftSection={<IconCamera size={20} />} onClick={() => { document.getElementById('hf-camera-input')?.click(); }}>
-            Take or choose a photo
+            Take a photo
+          </Button>
+          <Button fullWidth size="lg" variant="default" leftSection={<IconPhoto size={20} />} onClick={() => { document.getElementById('hf-file-input')?.click(); }}>
+            Choose a file
           </Button>
           <input
-            id="hf-camera-input" type="file" accept="image/*,application/pdf" capture="environment" data-testid="file-input" hidden
+            id="hf-camera-input" type="file" accept="image/*" capture="environment" data-testid="camera-input" hidden
             onChange={(e) => { const f = e.currentTarget.files?.[0]; e.currentTarget.value = ''; void send(f); }}
           />
-        </>
+          <input
+            id="hf-file-input" type="file" accept={PICK_ACCEPT} data-testid="file-input" hidden
+            onChange={(e) => { const f = e.currentTarget.files?.[0]; e.currentTarget.value = ''; void send(f); }}
+          />
+        </Stack>
       ) : (
         <Dropzone
           onDrop={(files) => { void send(files[0]); }}
           onReject={rejected}
-          accept={ACCEPTED_TYPES}
+          accept={DROP_ACCEPT}
           maxSize={maxBytes}
           multiple={false}
           inputProps={{ 'data-testid': 'file-input' } as React.InputHTMLAttributes<HTMLInputElement>}

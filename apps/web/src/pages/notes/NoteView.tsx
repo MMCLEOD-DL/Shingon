@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { Button, Card, Center, Container, Group, Loader, Stack, Text } from '@mantine/core';
+import { useQueryClient } from '@tanstack/react-query';
 import { IconEdit } from '@tabler/icons-react';
 import type { NoteView as Note } from '@hf/shared';
 import { ConfirmAction, ErrorNotice, FilePreview, PageHeader, formatDateTime, notifySaved } from '../../ui/index.js';
-import { useDeleteNote, useNote, useUpdateNote } from '../../queries.js';
+import { keys, useDeleteNote, useNote, useUpdateNote } from '../../queries.js';
 import { NoteForm } from './NoteForm.js';
 
 function Editing({ note, done }: { note: Note; done: () => void }) {
@@ -32,6 +33,7 @@ export function NoteView() {
   const navigate = useNavigate();
   const q = useNote(id);
   const remove = useDeleteNote(id);
+  const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
 
   if (q.isPending) return <Center py="xl"><Loader aria-label="Loading" /></Center>;
@@ -58,7 +60,10 @@ export function NoteView() {
               label="Delete"
               confirmTitle="Delete this note?"
               confirmBody="This can't be undone."
-              onConfirm={async () => { await remove.mutateAsync(); void navigate('/notes'); }}
+              onConfirm={async () => { await remove.mutateAsync();
+                void navigate('/notes');
+                setTimeout(() => { qc.removeQueries({ queryKey: keys.note(id) }); }, 0);
+              }}
             />
           </>
         ) : undefined}

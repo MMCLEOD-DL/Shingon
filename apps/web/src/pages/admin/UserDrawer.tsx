@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Badge, Button, Divider, Drawer, Group, Select, Stack, Switch, Text, TextInput } from '@mantine/core';
+import { Badge, Button, Divider, Drawer, Modal, Group, Select, Stack, Switch, Text, TextInput } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { useMediaQuery } from '@mantine/hooks';
 import type { UpdateUserInput, UserView } from '@hf/shared';
@@ -15,11 +15,24 @@ function DrawerBody({ person, onClose }: { person: UserView; onClose: () => void
   const update = useUpdateUser(person.id);
   const resend = useResendInvite(person.id);
   const [error, setError] = useState<unknown>(null);
+  const [pending, setPending] = useState<UpdateUserInput | null>(null);
   const form = useForm({
     mode: 'controlled',
     initialValues: { name: person.name, role: person.role, teamId: person.teamId, active: !person.disabled },
     validate: { name: (v) => (v.trim() === '' ? 'Enter a name.' : null) },
   });
+
+  const save = async (changes: UpdateUserInput) => {
+    try {
+      await update.mutateAsync(changes);
+      notifySaved();
+      onClose();
+    } catch (e) {
+      setError(e);
+    } finally {
+      setPending(null);
+    }
+  };
 
   const submit = form.onSubmit(async (v) => {
     setError(null);
@@ -30,13 +43,9 @@ function DrawerBody({ person, onClose }: { person: UserView; onClose: () => void
     if (v.teamId !== person.teamId) changes.teamId = v.teamId;
     if (!isSelf && v.active === person.disabled) changes.disabled = !v.active;
     if (Object.keys(changes).length === 0) { onClose(); return; }
-    try {
-      await update.mutateAsync(changes);
-      notifySaved();
-      onClose();
-    } catch (e) {
-      setError(e);
-    }
+    // Switching someone off signs them out, so it asks first.
+    if (changes.disabled === true) { setPending(changes); return; }
+    await save(changes);
   });
 
   const sendAgain = async () => {
@@ -49,6 +58,14 @@ function DrawerBody({ person, onClose }: { person: UserView; onClose: () => void
   };
 
   return (
+    <>
+    <Modal opened={pending !== null} onClose={() => { setPending(null); }} title={`Switch off ${person.name}'s account?`} centered>
+      <Text mb="md">{person.name} will be signed out everywhere and won't be able to sign in until you switch the account back on.</Text>
+      <Group justify="flex-end">
+        <Button variant="default" onClick={() => { setPending(null); }} disabled={update.isPending}>Cancel</Button>
+        <Button color="red" loading={update.isPending} onClick={() => { if (pending) void save(pending); }}>Switch off account</Button>
+      </Group>
+    </Modal>
     <form onSubmit={submit} noValidate>
       <Stack gap="md">
         <ErrorNotice error={error} />
@@ -83,6 +100,7 @@ function DrawerBody({ person, onClose }: { person: UserView; onClose: () => void
         </Group>
       </Stack>
     </form>
+    </>
   );
 }
 
