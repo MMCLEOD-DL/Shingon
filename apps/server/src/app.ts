@@ -13,6 +13,7 @@ import { registerCsrf } from './http/csrf.js';
 import { HttpError } from './http/errors.js';
 import type { RouteAccess } from './http/route.js';
 
+import { registerNoteRoutes } from './notes/routes.js';
 import { registerFileRoutes } from './files/routes.js';
 import { sweepOrphans } from './files/repo.js';
 import { LocalDiskStorage, type Storage } from './files/storage.js';
@@ -153,4 +154,5 @@ function registerRoutes(app: FastifyInstance, config: Config, storage: Storage, 
   registerUserRoutes(app, config, now);
   registerAuditRoutes(app);
   registerFileRoutes(app, config, storage);
+  registerNoteRoutes(app, storage, now);
 }

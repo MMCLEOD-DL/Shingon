@@ -50,6 +50,13 @@
       "when": 1793025161172,
       "tag": "0006_files",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793026077477,
+      "tag": "0007_notes",
+      "breakpoints": true
     }
   ]
 }

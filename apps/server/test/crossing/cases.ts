@@ -28,6 +28,12 @@ export const EXPECTED_ROLES: Record<Route, readonly Role[]> = {
   'GET /api/files/:id': ALL,
   'GET /api/files/:id/content': ALL,
   'DELETE /api/files/:id': ALL,
+  // Notes: every signed-in role may use the routes. Who may see or change a given note is the item rule in CASES, not a role rule.
+  'GET /api/notes': ALL,
+  'POST /api/notes': ALL,
+  'GET /api/notes/:id': ALL,
+  'PATCH /api/notes/:id': ALL,
+  'DELETE /api/notes/:id': ALL,
 };
 
 /**
@@ -91,6 +97,18 @@ export const CASES: CrossingCase[] = [
   { kind: 'action', route: 'POST /api/files', okStatus: 201, mutates: true, multipart: { field: 'file', filename: 'receipt.png', bytes: TINY_PNG },
     // Anything beside the one file is refused, so a client cannot choose the owner, team or type of the new file.
     forbiddenFields: [{ ownerId: SOME_ID }, { teamId: IDS.teams.south }, { contentType: 'text/html' }, { storageKey: 'aaaaaa' }, { id: SOME_ID }] },
+
+  // Notes. The list has 14 notes in the world and is read three at a time, so a leak on a later page is seen.
+  { kind: 'list', route: 'GET /api/notes', resource: 'note',
+    paginate: { query: 'limit=3', next: (j) => { const c: unknown = j?.nextCursor; return typeof c === 'string' ? `limit=3&cursor=${c}` : null; } } },
+  { kind: 'item', route: 'GET /api/notes/:id', resource: 'note' },
+  { kind: 'item', route: 'PATCH /api/notes/:id', resource: 'note', body: () => ({ title: 'Changed' }), mutates: true,
+    allowed: (a, r) => a.role === 'admin' || a.id === r.ownerId,
+    forbiddenFields: [{ ownerId: IDS.users.southCarol }, { teamId: IDS.teams.south }, { id: SOME_ID }, { createdAt: LONG_AGO }, { updatedAt: LONG_AGO }, { ownerName: 'x' }, { canEdit: true }, { attachment: null }, { attachmentFileId: SOME_ID }] },
+  { kind: 'item', route: 'DELETE /api/notes/:id', resource: 'note', mutates: true,
+    allowed: (a, r) => a.role === 'admin' || a.id === r.ownerId },
+  { kind: 'action', route: 'POST /api/notes', body: () => ({ title: 'New' }), okStatus: 201, mutates: true,
+    forbiddenFields: [{ ownerId: IDS.users.southCarol }, { teamId: IDS.teams.south }, { id: SOME_ID }, { createdAt: LONG_AGO }, { updatedAt: LONG_AGO }, { ownerName: 'x' }, { canEdit: true }, { attachmentFileId: SOME_ID }] },
 
   // Public routes: every actor, signed in or not, gets the same answer, nothing leaks and a refusal changes nothing.
   { kind: 'action', route: 'POST /api/auth/sign-in', body: () => ({ email: 'canary-user-northalice@hf.test', password: 'not the right password' }), okStatus: 401, mutates: true },

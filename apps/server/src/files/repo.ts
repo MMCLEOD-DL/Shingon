@@ -4,7 +4,7 @@ import type { Actor } from '../auth/sessions.js';
 import type { Db, Tx } from '../db/client.js';
 import { files, type FileRow } from '../db/schema/index.js';
 import { canEdit, visibleTo } from '../access/scope.js';
-import { notFound } from '../http/errors.js';
+import { conflict, notFound } from '../http/errors.js';
 import type { Storage } from './storage.js';
 
 export type { FileRow };
@@ -19,10 +19,16 @@ export async function getVisibleFile(db: Db | Tx, actor: Actor, id: string): Pro
   return row ?? null;
 }
 
-/** Links an uploaded file to the record it belongs to. Only the owner (or an admin) may; anything else is a 404. */
+/**
+ * Links an uploaded file to the record it belongs to. Only the owner (or an admin) may; anything else is a 404.
+ * A file already attached to a different record is a 409: it is never moved from one parent to another.
+ */
 export async function attachFile(tx: Tx, actor: Actor, fileId: string, parent: { type: string; id: string }): Promise<void> {
   const [row] = await tx.select().from(files).where(eq(files.id, fileId)).for('update');
-  if (!row || !canEdit(actor, row)) throw notFound();
+  if (!row || !canEdit(actor, row)) throw notFound("We couldn't find that file.");
+  if (row.attachedType !== null && (row.attachedType !== parent.type || row.attachedId !== parent.id)) {
+    throw conflict('That file is already attached to something else.');
+  }
   await tx.update(files).set({ attachedType: parent.type, attachedId: parent.id }).where(eq(files.id, fileId));
 }
 

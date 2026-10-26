@@ -6,3 +6,4 @@ export * from './audit.js';
 export * from './email.js';
 export * from './tokens.js';
 export * from './files.js';
+export * from './notes.js';
