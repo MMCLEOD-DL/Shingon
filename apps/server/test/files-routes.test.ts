@@ -1,10 +1,11 @@
 import { test, expect, beforeAll, afterAll } from 'vitest';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { eq, sql } from 'drizzle-orm';
 import { createTestApp, signInAs } from './helpers/testApp.js';
 import { makeTeam, makeUser } from './helpers/factories.js';
-import { files } from '../src/db/schema/index.js';
+import { cleanName } from '../src/files/routes.js';
+import { files, auditLog } from '../src/db/schema/index.js';
 
 let t: Awaited<ReturnType<typeof createTestApp>>;
 let alice: { id: string }, carol: { id: string }, northId: string, auth: { cookie: string };
@@ -73,7 +74,7 @@ test('a disguised SVG/HTML, an empty file and an oversized file are refused', as
   const big = Buffer.concat([fx('tiny.jpg'), Buffer.alloc(1025 - fx('tiny.jpg').length)]);
   const r = await upload(auth.cookie, 'big.jpg', big);
   expect(r.statusCode).toBe(413);
-  expect(body(r).error).toBe('That file is too large. The limit is 0 MB.');
+  expect(body(r).error).toBe('That file is too large. The limit is 1 KB.');
   expect(readdirCount(t.storageDir)).toBe(before + 1); // only the exact-size file; nothing partial left behind
 });
 
@@ -112,6 +113,67 @@ test('an extra field, or a field after the file, is refused and nothing is kept'
     expect(r.statusCode).toBe(400);
   }
   expect(readdirCount(t.storageDir)).toBe(before);
+});
+
+test('a missing stored object gives a plain 404 with no download headers', async () => {
+  const id = body(await upload(auth.cookie, 'lost.png', fx('tiny.png'))).file.id;
+  const [row] = await t.db.select().from(files).where(eq(files.id, id));
+  rmSync(path.join(t.storageDir, row!.storageKey.slice(0, 2), row!.storageKey));
+  const d = await t.app.inject({ method: 'GET', url: `/api/files/${id}/content`, headers: { cookie: auth.cookie } });
+  expect(d.statusCode).toBe(404);
+  expect(d.json()).toEqual({ error: 'We could not find that file.' });
+  expect(d.headers['content-disposition']).toBeUndefined();
+  expect(d.headers['cache-control']).toBe('no-store');
+});
+
+test('malformed and non-multipart uploads are a plain 400', async () => {
+  const h = { cookie: auth.cookie, origin: 'http://hf.test' };
+  const cases: [string, string | Buffer][] = [
+    ['application/json', '{}'],
+    ['multipart/form-data', 'whatever'],
+    ['multipart/form-data; boundary=zz', '--zz\r\nContent-Disposition: form-data; name="file"; filename="a.png"\r\n\r\nabc'],
+    ['multipart/form-data; boundary=zz', ''],
+  ];
+  for (const [type, payload] of cases) {
+    const r = await t.app.inject({ method: 'POST', url: '/api/files', payload, headers: { ...h, 'content-type': type } });
+    expect(r.statusCode, type).toBe(400);
+    expect(typeof body(r).error).toBe('string');
+  }
+});
+
+test('file names lose control characters and bidi overrides; long non-ASCII names are accepted', async () => {
+  expect(cleanName('a\u0085b\u202ec\u2066d\u0007.png')).toBe('abcd.png');
+  expect(cleanName('///')).toBe('file');
+  const long = '\u00e9'.repeat(150) + '.png';
+  const r = await upload(auth.cookie, long, fx('tiny.png'));
+  expect(r.statusCode).toBe(201);
+  expect(body(r).file.name).toBe(long);
+});
+
+test('HEAD on the content route does not write a download audit row; GET does', async () => {
+  const id = body(await upload(auth.cookie, 'h.png', fx('tiny.png'))).file.id;
+  const count = async () => (await t.db.select().from(auditLog).where(eq(auditLog.action, 'file.downloaded'))).length;
+  const n = await count();
+  await t.app.inject({ method: 'HEAD', url: `/api/files/${id}/content`, headers: { cookie: auth.cookie } });
+  expect(await count()).toBe(n);
+  await t.app.inject({ method: 'GET', url: `/api/files/${id}/content`, headers: { cookie: auth.cookie } });
+  expect(await count()).toBe(n + 1);
+});
+
+test('delete refuses a query string', async () => {
+  const id = body(await upload(auth.cookie, 'q.png', fx('tiny.png'))).file.id;
+  const r = await t.app.inject({ method: 'DELETE', url: `/api/files/${id}?x=1`, headers: { cookie: auth.cookie, origin: 'http://hf.test' } });
+  expect(r.statusCode).toBe(400);
+});
+
+test('uploads are limited to 60 per 15 minutes per user', async () => {
+  const u = await makeUser(t.db, { role: 'member', teamId: northId });
+  const a = await signInAs(t, u);
+  let last = 0;
+  for (let i = 0; i < 61; i++) last = (await upload(a.cookie, 'r.png', fx('tiny.png'))).statusCode;
+  expect(last).toBe(429);
+  // Another user is not affected.
+  expect((await upload(auth.cookie, 'ok.png', fx('tiny.png'))).statusCode).toBe(201);
 });
 
 test('the owner can delete a file, which removes the bytes too', async () => {

@@ -31,7 +31,7 @@ export async function attachFile(tx: Tx, actor: Actor, fileId: string, parent: {
  * so a crash leaves at worst a row whose object is gone (the next sweep removes it), never an object no row points to.
  * The row is locked and re-checked first, so a file attached a moment ago is not removed.
  */
-export async function sweepOrphans(db: Db, storage: Storage, olderThan: Date): Promise<number> {
+export async function sweepOrphans(db: Db, storage: Storage, olderThan: Date, log?: { error(obj: object, msg: string): void }): Promise<number> {
   const old = await db.select({ id: files.id }).from(files).where(and(isNull(files.attachedType), lt(files.createdAt, olderThan)));
   let removed = 0;
   for (const { id } of old) {
@@ -45,8 +45,10 @@ export async function sweepOrphans(db: Db, storage: Storage, olderThan: Date): P
         return true;
       });
       if (done) removed++;
-    } catch {
-      // One bad file must not stop the rest; the next sweep tries it again.
+    } catch (e) {
+      // One bad file must not stop the rest; the next sweep tries it again. Only the error name/code and the file id are logged.
+      const err = e as { name?: string; code?: string };
+      log?.error({ fileId: id, errName: err.name, errCode: err.code }, 'File sweep could not remove a file');
     }
   }
   return removed;

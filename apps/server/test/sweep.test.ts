@@ -38,3 +38,26 @@ test('the orphan sweep removes only old, unattached files, from storage and from
   await expect(text(storage.get('cc0003'))).rejects.toThrow(/ENOENT/);
   await t.close();
 });
+
+test('a file the sweep cannot remove is logged by id and error code, and the rest are still swept', async () => {
+  const t = await createTestDb();
+  const real = new LocalDiskStorage(mkdtempSync(path.join(tmpdir(), 'sw-')));
+  const N = await makeTeam(t.db, 'N');
+  const u = await makeUser(t.db, { role: 'member', teamId: N.id });
+  const old = new Date('2026-01-01T00:00:00Z');
+  const ids: Record<string, string> = {};
+  for (const key of ['dd0004', 'ee0005']) {
+    const { size, sha256 } = await real.put(key, Readable.from(['x']));
+    const [row] = await t.db.insert(files).values({ ownerId: u.id, teamId: N.id, storageKey: key, originalName: 'a.png', contentType: 'image/png', size, sha256, createdAt: old }).returning();
+    ids[key] = row!.id;
+  }
+  const flaky = Object.assign(Object.create(real) as LocalDiskStorage, {
+    delete: async (key: string) => { if (key === 'dd0004') throw Object.assign(new Error('/secret/path/dd0004 denied'), { code: 'EACCES' }); await real.delete(key); },
+  });
+  const logged: object[] = [];
+  expect(await sweepOrphans(t.db, flaky, new Date('2026-06-01T00:00:00Z'), { error: (o) => { logged.push(o); } })).toBe(1);
+  expect(logged).toEqual([{ fileId: ids['dd0004'], errName: 'Error', errCode: 'EACCES' }]);
+  expect(JSON.stringify(logged)).not.toContain('secret');
+  expect((await t.db.select({ id: files.id }).from(files)).map((r) => r.id)).toEqual([ids['dd0004']]);
+  await t.close();
+});

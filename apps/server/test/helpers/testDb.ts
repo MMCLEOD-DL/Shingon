@@ -22,7 +22,7 @@ export async function createTestDb(opts: { migrate?: (db: Db) => Promise<void> }
   const url = u.toString();
   const dropDb = () => withAdmin((c) => c.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`));
 
-  await withAdmin((c) => c.query(`CREATE DATABASE ${name}`));
+  await withAdmin((c) => c.query(`CREATE DATABASE ${name} ENCODING 'UTF8' TEMPLATE template0 LC_COLLATE 'C' LC_CTYPE 'C'`));
   // From here on, any failure must drop the database again so nothing is left behind.
   let handle: ReturnType<typeof createDb> | undefined;
   try {
