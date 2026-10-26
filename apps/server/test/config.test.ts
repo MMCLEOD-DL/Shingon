@@ -9,7 +9,7 @@ const base = {
 test('defaults are applied', () => {
   const c = loadConfig(base);
   expect(c).toMatchObject({ instanceMode: 'demo', appName: 'Highland App', port: 3000, cookieSecure: true,
-    uploadMaxBytes: 15728640, email: { transport: 'smtp', smtpUrl: 'smtp://localhost:1025', from: 'App <app@example.co.uk>' },
+    uploadMaxBytes: 15728640, email: { transport: 'smtp', smtpUrl: 'smtp://localhost:1025', from: 'App <app@example.co.uk>', pollMs: 5000 },
     appVersion: '0.0.0-dev', commit: 'unknown' });
 });
 
@@ -56,4 +56,10 @@ test('APP_ORIGIN with a username or password is refused and never echoed', () =>
   }
   expect(() => loadConfig({ ...base, APP_ORIGIN: 'https://u:p@app.example.co.uk' }))
     .toThrow('APP_ORIGIN must not contain a username or password');
+});
+
+test('the mail check interval defaults to 5 seconds and can be set', () => {
+  expect(loadConfig(base).email.pollMs).toBe(5000);
+  expect(loadConfig({ ...base, EMAIL_POLL_MS: '300' }).email.pollMs).toBe(300);
+  expect(() => loadConfig({ ...base, EMAIL_POLL_MS: 'soon' })).toThrow(/EMAIL_POLL_MS must be a whole number/);
 });

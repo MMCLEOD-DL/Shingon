@@ -155,7 +155,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   const transport = deps.emailTransport ?? createTransport(config.email);
   if (config.instanceMode !== 'test') {
-    const stop = startOutboxWorker(db, transport, { appName: config.appName, appOrigin: config.appOrigin, from: config.email.from }, { log: app.log });
+    const stop = startOutboxWorker(db, transport, { appName: config.appName, appOrigin: config.appOrigin, from: config.email.from }, { log: app.log, intervalMs: config.email.pollMs });
     app.addHook('onClose', async () => { await stop(); });
   }
 

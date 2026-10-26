@@ -11,7 +11,7 @@ export interface Config {
   trustProxyHops: number;
   uploadDir: string;
   uploadMaxBytes: number;
-  email: { transport: 'smtp' | 'file' | 'memory'; smtpUrl?: string; fileDir?: string; from: string };
+  email: { transport: 'smtp' | 'file' | 'memory'; smtpUrl?: string; fileDir?: string; from: string; /** How often the outbox is checked, in milliseconds. */ pollMs: number };
   healthToken?: string;
   appVersion: string;
   commit: string;
@@ -111,7 +111,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (instanceMode === 'production' && (transport === 'file' || transport === 'memory')) {
     problems.push(`EMAIL_TRANSPORT ${transport} is only for testing and cannot be used when INSTANCE_MODE is production.`);
   }
-  const email: Config['email'] = { transport, from: '' };
+  const email: Config['email'] = { transport, from: '', pollMs: int('EMAIL_POLL_MS', 50, 3600000, 5000, 'of milliseconds, 50 or more') };
   if (transport === 'smtp') {
     const v = get('SMTP_URL');
     if (v === undefined) problems.push('SMTP_URL is missing (needed because EMAIL_TRANSPORT is smtp).');

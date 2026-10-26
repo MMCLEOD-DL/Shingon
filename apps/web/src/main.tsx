@@ -1,3 +1,4 @@
+import './zodSetup.js';
 import '@mantine/core/styles.css';
 import '@mantine/notifications/styles.css';
 import { StrictMode } from 'react';

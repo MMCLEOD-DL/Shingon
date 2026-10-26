@@ -5,3 +5,4 @@ test-results/
 playwright-report/
 .env
 *.tsbuildinfo
+apps/web/e2e/.auth/

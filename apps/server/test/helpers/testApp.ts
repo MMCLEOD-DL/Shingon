@@ -39,7 +39,7 @@ export async function createTestApp(
       trustProxyHops: 1,
       uploadDir: storageDir,
       uploadMaxBytes: 15 * 1024 * 1024,
-      email: { transport: 'memory', from: 'Test <t@hf.test>' },
+      email: { transport: 'memory', from: 'Test <t@hf.test>', pollMs: 5000 },
       appVersion: '0.0.0-test',
       commit: 'test',
       ...configOverrides,
