@@ -40,6 +40,7 @@ test('the tunnel address must sit inside the edge network, and not on its networ
 const good = {
   INSTANCE_MODE: 'production', DATABASE_URL: 'postgres://app:dbpw@db:5432/app', APP_INTERNAL_URL: 'http://app:3000',
   CLIENT_LABEL: 'Acme Ltd', BACKUP_REPOSITORY: 'sftp:backup@nas.acme.lan:/srv/restic', BACKUP_PASSWORD: 'a-long-random-backup-password-xyz',
+  ALERT_WEBHOOK_URL: 'https://hooks.acme.test/ops',
 };
 
 test('loadOpsConfig reads the Compose settings with the documented defaults', () => {
@@ -96,4 +97,29 @@ test('settings problems are listed one per line and never repeat a secret', () =
   ]));
   expect(err!.problems.some((p) => p.startsWith('BACKUP_KEEP may only hold restic --keep-… options'))).toBe(true);
   expect(err!.problems.some((p) => /BACKUP_REPOSITORY points at this box/.test(p))).toBe(true);
+});
+
+test('alert settings: Matrix needs all three values, and production refuses to start with no alert channel at all', () => {
+  const noAlerts: Record<string, string> = { ...good };
+  delete noAlerts['ALERT_WEBHOOK_URL'];
+  const refused = (() => { try { loadOpsConfig(noAlerts); return undefined; } catch (e) { return e as OpsConfigError; } })();
+  expect(refused?.problems).toEqual(['No alert channel is set. Set MATRIX_HOMESERVER, MATRIX_ACCESS_TOKEN and MATRIX_ROOM_ID, or ALERT_WEBHOOK_URL.']);
+  // Demo and test boxes may run with the log as their only channel.
+  expect(loadOpsConfig({ ...noAlerts, INSTANCE_MODE: 'demo' }).alerts).toEqual({});
+
+  const matrix = { MATRIX_HOMESERVER: 'https://matrix.example/', MATRIX_ACCESS_TOKEN: 'syt_abc_123456', MATRIX_ROOM_ID: '!room:example' };
+  expect(loadOpsConfig({ ...noAlerts, ...matrix }).alerts).toEqual({ matrix: { homeserver: 'https://matrix.example', accessToken: 'syt_abc_123456', roomId: '!room:example' } });
+  expect(loadOpsConfig({ ...good, HEARTBEAT_URL: 'https://kuma.example/api/push/x' })).toMatchObject({ alerts: { webhookUrl: 'https://hooks.acme.test/ops' }, heartbeatUrl: 'https://kuma.example/api/push/x' });
+
+  const partial = (() => { try { loadOpsConfig({ ...good, MATRIX_ACCESS_TOKEN: 'syt_abc_123456' }); return undefined; } catch (e) { return e as OpsConfigError; } })();
+  expect(partial?.problems).toEqual(['MATRIX_HOMESERVER, MATRIX_ACCESS_TOKEN and MATRIX_ROOM_ID must all be set for Matrix alerts (or leave all three empty).']);
+  expect(partial?.message).not.toContain('syt_abc_123456');
+
+  const badUrls = (() => { try { loadOpsConfig({ ...good, ALERT_WEBHOOK_URL: 'hooks?key=sekrit-1', HEARTBEAT_URL: 'ftp://x/sekrit-2', ...matrix, MATRIX_HOMESERVER: 'matrix.example' }); return undefined; } catch (e) { return e as OpsConfigError; } })();
+  expect(badUrls?.problems).toEqual([
+    'MATRIX_HOMESERVER must be a web address such as https://matrix.example.com (got "matrix.example").',
+    'ALERT_WEBHOOK_URL must be a web address starting with https:// or http:// (the value is hidden here for safety).',
+    'HEARTBEAT_URL must be a web address starting with https:// or http:// (the value is hidden here for safety).',
+  ]);
+  expect(badUrls?.message).not.toContain('sekrit');
 });

@@ -5,6 +5,8 @@ import { BackupError, runBackup, firstLine } from './backup.js';
 import { RestoreError, restoreLive, verifyLatestRestore } from './restore.js';
 import { createOpsDeps, runDaemon } from './daemon.js';
 import { redact } from './runner.js';
+import { formatChecks, monitorChecks } from './checks.js';
+import { alertSecrets, redactAlert } from './alerts.js';
 
 const say = (line: string): void => { console.log(line); };
 const MANUAL_BACKUP_LOCK_WAIT = 2 * 60e3;
@@ -75,6 +77,15 @@ async function main(argv: string[]): Promise<number> {
         say('Done. Start the app and ops again: docker compose start app ops');
         return 0;
       });
+    }
+    case 'check': {
+      if (rest.length > 0) { complain(`check takes no options.\n\n${USAGE}`); return 2; }
+      const cfg = config();
+      if (cfg === undefined) return 2;
+      const secrets = alertSecrets(cfg);
+      const { lines, ok } = formatChecks(await monitorChecks({ cfg }));
+      for (const l of lines) say(redactAlert(l, secrets));
+      return ok ? 0 : 1;
     }
     case 'check-edge': {
       // Run by the one-shot edge-check service: the front door does not start until this passes.

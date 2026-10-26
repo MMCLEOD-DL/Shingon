@@ -87,7 +87,8 @@ services:
     environment: *opsenv
     volumes: [uploads:/data/uploads, state:/state]
     depends_on: { db: { condition: service_healthy } }
-    networks: [backend]
+    # tunnelmon: only so the monitor can ask the tunnel whether it is connected (http://tunnel:2000/ready).
+    networks: [backend, tunnelmon]
     # Locked down like the app. Ops runs as root only so that it can read the app's private uploads for a backup and put
     # them back with the app's owner (uid 1000) after a restore: those three file powers and nothing else. It never has the
     # Docker socket. All it writes is the state volume (work folder, restic cache), the uploads volume and /tmp.
@@ -140,17 +141,22 @@ services:
     command: ["tunnel", "--no-autoupdate", "--metrics", "0.0.0.0:2000", "run"]
     environment: { TUNNEL_TOKEN: "${TUNNEL_TOKEN:-}" }   # empty → cloudflared exits; the monitor reports it (Task 19)
     extra_hosts: ["host.docker.internal:host-gateway"]
-    # The tunnel shares a network with the front door only: it cannot reach the app or the database directly.
+    # The tunnel shares a network with the front door only: it cannot reach the app or the database directly. Its second
+    # network, tunnelmon, is internal (no way out) and holds only ops, which has no open ports: the monitor reads the
+    # tunnel's readiness there (port 2000).
     networks:
       edge:
         ipv4_address: ${TUNNEL_IP:-172.30.250.10}
+      tunnelmon: {}
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
 # backend: database, migrations, app, ops. frontend: front door and app. edge: front door and tunnel only.
+# tunnelmon: ops and the tunnel only, internal, so the monitor can check the tunnel.
 networks:
   backend: {}
   frontend: {}
+  tunnelmon: { internal: true }
   edge:
     ipam:
       config:

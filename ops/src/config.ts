@@ -22,6 +22,10 @@ export interface OpsConfig {
   workDir: string;
   uploadsDir: string;
   tunnelEnabled: boolean;
+  /** Where alerts go (Task 19). Every configured channel is used, in every mode. */
+  alerts: { matrix?: { homeserver: string; accessToken: string; roomId: string }; webhookUrl?: string };
+  /** Pinged on every monitor tick (Uptime Kuma push format), so an outside watcher notices when the whole box goes silent. */
+  heartbeatUrl?: string;
   /**
    * Settings that are wrong but must not stop backups, such as a TUNNEL_IP that does not match EDGE_SUBNET (the front door
    * is held back by the edge-check service instead). Logged at start-up; Task 19 raises them as a standing alert.
@@ -229,6 +233,34 @@ export function loadOpsConfig(env: NodeJS.ProcessEnv = process.env): OpsConfig {
   // keeps the front door from starting, and Task 19 raises the warning as a standing alert.
   const warnings = checkEdgePair(get('TUNNEL_IP') ?? '172.30.250.10', get('EDGE_SUBNET') ?? '172.30.250.0/28');
 
+  // Alerts. Web addresses that may carry a secret (a webhook key, a push token) are never repeated in a message.
+  const alerts: OpsConfig['alerts'] = {};
+  const webAddress = (v: string): boolean => /^https?:\/\/[^\s/?#]+[^\s]*$/i.test(v);
+  const mHome = get('MATRIX_HOMESERVER');
+  const mToken = get('MATRIX_ACCESS_TOKEN');
+  const mRoom = get('MATRIX_ROOM_ID');
+  if (mHome !== undefined || mToken !== undefined || mRoom !== undefined) {
+    if (mHome === undefined || mToken === undefined || mRoom === undefined) {
+      problems.push('MATRIX_HOMESERVER, MATRIX_ACCESS_TOKEN and MATRIX_ROOM_ID must all be set for Matrix alerts (or leave all three empty).');
+    } else if (!webAddress(mHome) || mHome.includes('@')) {
+      problems.push(`MATRIX_HOMESERVER must be a web address such as https://matrix.example.com (got "${mHome.includes('@') ? 'hidden here for safety' : mHome}").`);
+    } else {
+      alerts.matrix = { homeserver: mHome.replace(/\/+$/, ''), accessToken: mToken, roomId: mRoom };
+    }
+  }
+  const webhookUrl = get('ALERT_WEBHOOK_URL');
+  if (webhookUrl !== undefined) {
+    if (webAddress(webhookUrl)) alerts.webhookUrl = webhookUrl;
+    else problems.push('ALERT_WEBHOOK_URL must be a web address starting with https:// or http:// (the value is hidden here for safety).');
+  }
+  const heartbeatUrl = get('HEARTBEAT_URL');
+  if (heartbeatUrl !== undefined && !webAddress(heartbeatUrl)) problems.push('HEARTBEAT_URL must be a web address starting with https:// or http:// (the value is hidden here for safety).');
+  // A live box must reach the operator. Checked only once the Matrix settings are complete, so one problem is not reported twice.
+  const matrixHalfSet = (mHome !== undefined || mToken !== undefined || mRoom !== undefined) && alerts.matrix === undefined;
+  if (instanceMode === 'production' && modeRaw === 'production' && alerts.matrix === undefined && webhookUrl === undefined && !matrixHalfSet) {
+    problems.push('No alert channel is set. Set MATRIX_HOMESERVER, MATRIX_ACCESS_TOKEN and MATRIX_ROOM_ID, or ALERT_WEBHOOK_URL.');
+  }
+
   const healthToken = get('HEALTH_TOKEN');
   const cfg: OpsConfig = {
     instanceMode,
@@ -241,9 +273,11 @@ export function loadOpsConfig(env: NodeJS.ProcessEnv = process.env): OpsConfig {
     workDir: folder('OPS_WORK_DIR', '/state/work'),
     uploadsDir: folder('OPS_UPLOADS_DIR', '/data/uploads'),
     tunnelEnabled: bool('TUNNEL_ENABLED', false),
+    alerts,
     warnings,
   };
   if (problems.length > 0) throw new OpsConfigError(problems);
   if (healthToken !== undefined) cfg.healthToken = healthToken;
+  if (heartbeatUrl !== undefined) cfg.heartbeatUrl = heartbeatUrl;
   return cfg;
 }

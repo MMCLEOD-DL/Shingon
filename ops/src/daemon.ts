@@ -6,16 +6,40 @@ import { sql } from 'drizzle-orm';
 import * as schema from '@hf/server/db/schema';
 import type { Db } from '@hf/server/db';
 import { type OpsConfig } from './config.js';
-import { runBackup, LOCAL_WARNING } from './backup.js';
+import { runBackup, LOCAL_WARNING, BackupError, firstLine } from './backup.js';
 import { verifyLatestRestore } from './restore.js';
 import { withOpsLock, OpsBusyError } from './opsLock.js';
 import { connect, pgEnv } from './pg.js';
 import { recordRun, scrub, type OpsDeps } from './runs.js';
 import { execRunner } from './runner.js';
 import { startScheduler, type Job } from './scheduler.js';
+import { alertSecrets, channelFromConfig, logChannel, redactAlert, redactingChannel, type AlertChannel } from './alerts.js';
+import { Monitor } from './monitor.js';
+import { monitorChecks } from './checks.js';
 
 export const AUDIT_PURGE_SCHEDULE = '15 3 * * *';
 export const SCHEDULED_BACKUP_LOCK_WAIT = 60 * 60e3;
+/** The monitor checks every minute. It is its own croner job, so a backup waiting for the ops lock never holds it up. */
+export const MONITOR_SCHEDULE = '* * * * *';
+
+/** The job names as the operator reads them in an alert. */
+const JOB_LABEL: Record<string, string> = { backup: 'backup', 'restore-test': 'restore test', 'audit-purge': 'audit-log tidy-up', monitor: 'health check' };
+
+/**
+ * The scheduled restore test. A failed test sends its alert at once, although nothing threw: `verifyLatestRestore` has
+ * already logged and recorded it. `deps.verify` replaces `verifyLatestRestore` in tests.
+ */
+export function restoreTestJob(deps: OpsDeps & { verify?: (d: OpsDeps) => Promise<{ ok: boolean; problems: string[] }> }, channel: AlertChannel, client: string): () => Promise<void> {
+  return async () => {
+    const r = await (deps.verify ?? verifyLatestRestore)(deps);
+    if (r.ok) return;
+    try {
+      await channel.send(`[${client}] Problem: the restore test failed. ${r.problems.join(' ')}`);
+    } catch (e) {
+      deps.log(`The alert about the failed restore test could not be sent: ${e instanceof Error ? e.message : 'unknown problem'}`);
+    }
+  };
+}
 
 /** Everything an ops command needs, with a pool that survives the database being dropped and recreated under it. */
 export function createOpsDeps(cfg: OpsConfig, log: (line: string) => void = (l) => { console.log(l); }): { deps: OpsDeps; pool: pg.Pool; close: () => Promise<void> } {
@@ -42,30 +66,51 @@ export async function purgeAuditLog(deps: OpsDeps): Promise<number> {
   }
 }
 
-export function daemonJobs(deps: OpsDeps): Job[] {
-  return [
+/**
+ * The daemon's scheduled jobs. Each is its own croner job with `protect`, so a job never overlaps itself (a run still going
+ * when the next is due makes that next one skip) and one job waiting or running long never delays another: the monitor
+ * keeps ticking while a backup waits up to an hour for the ops lock.
+ */
+export function daemonJobs(deps: OpsDeps, channel: AlertChannel = logChannel(deps.log), monitor?: Monitor): Job[] {
+  const jobs: Job[] = [
     // Waits up to an hour for a restore test or restore to finish rather than skipping the night's backup.
     { name: 'backup', cron: deps.cfg.backup.schedule, run: async () => { await runBackup(deps, 'scheduled', { lockWaitMs: SCHEDULED_BACKUP_LOCK_WAIT }); } },
-    {
-      name: 'restore-test',
-      cron: deps.cfg.backup.restoreTestSchedule,
-      run: async () => {
-        const r = await verifyLatestRestore(deps);
-        // Already logged and recorded by verifyLatestRestore; thrown so the failure hook (Task 19: the alert) sees it.
-        if (!r.ok) throw Object.assign(new Error(`The restore test failed. ${r.problems.join(' ')}`), { reported: true });
-      },
-    },
+    { name: 'restore-test', cron: deps.cfg.backup.restoreTestSchedule, run: restoreTestJob(deps, channel, deps.cfg.client) },
     { name: 'audit-purge', cron: AUDIT_PURGE_SCHEDULE, run: async () => { await purgeAuditLog(deps); } },
   ];
+  if (monitor !== undefined) jobs.push({ name: 'monitor', cron: MONITOR_SCHEDULE, run: () => monitor.tick() });
+  return jobs;
 }
 
-/** What the daemon does when a scheduled job fails. A failure that was already logged and recorded is not logged again. */
-export function onJobFailure(deps: OpsDeps): (name: string, err: Error) => Promise<void> {
-  return (name, err) => {
-    if ((err as { reported?: unknown }).reported !== true) deps.log(`The scheduled ${name} did not work: ${scrub(deps, err.message)}`);
-    // Task 19 routes the failure to the alert channel here.
-    return Promise.resolve();
+/**
+ * What the daemon does when a scheduled job fails: log it (unless it was already logged and recorded) and, with a monitor,
+ * alert at once with no two-strike rule. The message is plain English with secrets removed.
+ */
+export function onJobFailure(deps: OpsDeps, monitor?: Monitor): (name: string, err: Error) => Promise<void> {
+  return async (name, err) => {
+    const reported = (err as { reported?: unknown }).reported === true;
+    if (!reported) deps.log(`The scheduled ${name} did not work: ${scrub(deps, err.message)}`);
+    if (monitor === undefined) return;
+    const plain = reported || err instanceof BackupError
+      ? scrub(deps, err.message)
+      : `It stopped because of an unexpected problem: ${firstLine(scrub(deps, err.message))}.`;
+    await monitor.jobFailed(JOB_LABEL[name] ?? name, plain);
   };
+}
+
+/** The alert channel and monitor the daemon runs with: every alert, check detail and heartbeat message has secrets removed. */
+export function buildMonitor(deps: OpsDeps): { channel: AlertChannel; monitor: Monitor } {
+  const { cfg } = deps;
+  const secrets = alertSecrets(cfg);
+  const channel = redactingChannel(channelFromConfig(cfg, deps.log), secrets);
+  const monitor = new Monitor({
+    checks: async () => (await monitorChecks(deps)).map((c) => ({ ...c, detail: redactAlert(c.detail, secrets) })),
+    channel,
+    client: cfg.client,
+    ...(cfg.heartbeatUrl !== undefined ? { heartbeatUrl: cfg.heartbeatUrl } : {}),
+    log: deps.log,
+  });
+  return { channel, monitor };
 }
 
 const LEFTOVER_FOLDER = /^(verify|restore|restore-uploads)-/;
@@ -139,8 +184,11 @@ export async function runDaemon(deps: OpsDeps, close: () => Promise<void>): Prom
   deps.log(`Ops is running for ${cfg.client}. Backups: "${cfg.backup.schedule}"; restore tests: "${cfg.backup.restoreTestSchedule}"; audit-log tidy-up: "${AUDIT_PURGE_SCHEDULE}" (UK time).`);
   if (cfg.backup.allowLocal) deps.log(`BACKUP_ALLOW_LOCAL is true. ${LOCAL_WARNING}`);
   for (const w of cfg.warnings) deps.log(`Warning: ${w}`);
+  const { channel, monitor } = buildMonitor(deps);
+  const where = [cfg.alerts.matrix ? 'Matrix' : '', cfg.alerts.webhookUrl !== undefined ? 'the alert webhook' : ''].filter(Boolean).join(' and ') || 'the ops log only';
+  deps.log(`Health checks run every minute; alerts go to ${where}${cfg.heartbeatUrl !== undefined ? ', with a heartbeat to the outside watcher' : ''}.`);
   await sweepLeftovers(deps);
-  const scheduler = startScheduler(daemonJobs(deps), onJobFailure(deps));
+  const scheduler = startScheduler(daemonJobs(deps, channel, monitor), onJobFailure(deps, monitor));
   await new Promise<void>((resolve) => {
     const stop = (): void => { resolve(); };
     process.once('SIGTERM', stop);

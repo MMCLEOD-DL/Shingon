@@ -117,3 +117,46 @@ export async function q(url: string, text: string): Promise<Record<string, unkno
     await c.end();
   }
 }
+
+/** One request a test server saw. `body` is parsed JSON when it can be, otherwise the raw text. */
+export interface Seen { method: string; url: string; auth: string | undefined; body: any }
+
+/**
+ * A node:http server on 127.0.0.1 (a free port) that answers every request with `status` and records it. Stands in for
+ * Matrix, a webhook or a heartbeat service, so no test ever reaches the real thing.
+ */
+export async function withServer<T>(status: number, fn: (base: string, seen: Seen[]) => Promise<T>): Promise<T> {
+  const { createServer: createHttpServer } = await import('node:http');
+  const seen: Seen[] = [];
+  const srv = createHttpServer((req, res) => {
+    let raw = '';
+    req.setEncoding('utf8');
+    req.on('data', (d: string) => { raw += d; });
+    req.on('end', () => {
+      let body: unknown = raw;
+      try { body = raw === '' ? undefined : JSON.parse(raw); } catch { /* not JSON */ }
+      seen.push({ method: req.method ?? '', url: req.url ?? '', auth: req.headers.authorization, body });
+      res.writeHead(status, { 'content-type': 'application/json' }).end(status < 300 ? '{"event_id":"$x"}' : '{"errcode":"M_FORBIDDEN"}');
+    });
+  });
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${String((srv.address() as { port: number }).port)}`;
+  try {
+    return await fn(base, seen);
+  } finally {
+    srv.closeAllConnections();
+    await new Promise<void>((r) => srv.close(() => { r(); }));
+  }
+}
+
+/** A minimal OpsDeps with no database behind it, for code that only needs the settings, a clock and a log. */
+export const stubDeps: OpsDeps = {
+  cfg: loadOpsConfig({
+    INSTANCE_MODE: 'test', DATABASE_URL: 'postgres://app:stub-db-password@127.0.0.1:1/app', APP_INTERNAL_URL: 'http://127.0.0.1:1',
+    CLIENT_LABEL: 'Acme', BACKUP_REPOSITORY: 'sftp:backup@nas.test.lan:/srv/restic', BACKUP_PASSWORD: TEST_BACKUP_PASSWORD,
+  }),
+  run: fakeRunner(),
+  db: {} as OpsDeps['db'],
+  now: () => new Date(),
+  log: () => undefined,
+};

@@ -16,7 +16,7 @@ import { HttpError } from './http/errors.js';
 import type { RouteAccess } from './http/route.js';
 
 import { registerVersionRoute } from './version.js';
-import { defineRoute } from './http/route.js';
+import { registerHealthRoutes } from './health/routes.js';
 import { registerNoteRoutes } from './notes/routes.js';
 import { registerFileRoutes } from './files/routes.js';
 import { sweepOrphans } from './files/repo.js';
@@ -189,11 +189,5 @@ function registerRoutes(app: FastifyInstance, config: Config, storage: Storage, 
   registerFileRoutes(app, config, storage);
   registerNoteRoutes(app, storage, now);
   registerVersionRoute(app, config);
-  // Minimal liveness for Docker's health check. Task 19 replaces it with the full /healthz and /readyz.
-  defineRoute(app, {
-    method: 'GET',
-    url: '/healthz',
-    access: { public: 'liveness for Docker' },
-    handler: () => Promise.resolve({ status: 'ok' }),
-  });
+  registerHealthRoutes(app, config, storage, now);
 }

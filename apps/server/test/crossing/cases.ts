@@ -48,6 +48,7 @@ export const EXPECTED_PUBLIC: readonly Route[] = [
   'POST /api/auth/reset-password',
   'GET /api/version',
   'GET /healthz',
+  'GET /readyz',
 ];
 
 /**
@@ -130,4 +131,6 @@ export const CASES: CrossingCase[] = [
   { kind: 'action', route: 'GET /api/version', okStatus: 200 },
   // Liveness for Docker: nobody sends the health token, so everyone gets the same bare answer.
   { kind: 'action', route: 'GET /healthz', okStatus: 200 },
+  // Readiness: nobody here sends the health token, so everyone gets only the status (200: degraded, as the world has no backup).
+  { kind: 'action', route: 'GET /readyz', okStatus: 200 },
 ];

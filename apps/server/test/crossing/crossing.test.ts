@@ -20,7 +20,7 @@ test('no role can read, list or change data it is not entitled to', async () => 
   await writeCrossingReport({ routes: t.app.hf.routes.length, ...r });
   expect(r.checks).toBeGreaterThan(200);
   expect(r.failures.map((f) => f.sentence)).toEqual([]);
-});
+}, 60_000);   // about 10 s alone; the default 20 s was once exceeded while the whole suite ran in parallel
 
 test('public GET routes leak nothing to an anonymous visitor', async () => {
   const world = await buildWorld(t);
@@ -48,5 +48,23 @@ test('/api/version never shows the foundation version or commit unless the healt
   }
   const full = await t.app.inject({ method: 'GET', url: '/api/version', headers: { 'x-health-token': HEALTH_TOKEN } });
   expect(full.json()).toEqual({ app: '9.8.7', foundation, commit: 'deadbeef1234' });
+  expect(full.body).not.toContain(HEALTH_TOKEN);
+});
+
+test('/readyz never shows its checks unless the health token is sent', async () => {
+  const world = await buildWorld(t);
+  const actors = Object.values(world.actors);
+  // No header, an empty one, a wrong one, one of the wrong length and one in the wrong header: all get the status alone, whoever is signed in.
+  for (const headers of [{}, { 'x-health-token': '' }, { 'x-health-token': 'wrong' }, { 'x-health-token': HEALTH_TOKEN.slice(1) }, { 'x-health-token': HEALTH_TOKEN + 'x' }, { authorization: `Bearer ${HEALTH_TOKEN}` }] as Record<string, string>[]) {
+    for (const a of actors) {
+      const res = await t.app.inject({ method: 'GET', url: '/readyz', headers: { ...(a.cookie ? { cookie: a.cookie } : {}), ...headers } });
+      expect(Object.keys(res.json<object>()), `${JSON.stringify(headers)} as ${a.key}`).toEqual(['status']);
+      expect(['ok', 'degraded', 'down']).toContain(res.json<{ status: string }>().status);
+      expect(res.body).not.toContain('checks');
+      expect(res.body).not.toContain('detail');
+    }
+  }
+  const full = await t.app.inject({ method: 'GET', url: '/readyz', headers: { 'x-health-token': HEALTH_TOKEN } });
+  expect(full.json<{ checks: unknown[] }>().checks).toHaveLength(6);
   expect(full.body).not.toContain(HEALTH_TOKEN);
 });

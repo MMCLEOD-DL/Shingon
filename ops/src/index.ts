@@ -7,4 +7,7 @@ export { runBackup, BackupError, type BackupKind } from './backup.js';
 export { verifyLatestRestore, restoreDatabase, restoreLive, RestoreError } from './restore.js';
 export { recordRun, lastRun, type OpsDeps, type OpsRunKind } from './runs.js';
 export { startScheduler } from './scheduler.js';
-export { createOpsDeps, runDaemon } from './daemon.js';
+export { createOpsDeps, runDaemon, restoreTestJob } from './daemon.js';
+export { matrixChannel, webhookChannel, allChannels, logChannel, channelFromConfig, type AlertChannel } from './alerts.js';
+export { Monitor, type Check } from './monitor.js';
+export { monitorChecks } from './checks.js';

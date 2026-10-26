@@ -37,11 +37,17 @@ test('Caddy trusts a client-address header only from the tunnel network, and alw
 
 test('networks: the tunnel shares a network with the front door only; the database is on the backend alone', () => {
   const nets = (n: string): string[] => { const x = S[n]!.networks as string[] | Record<string, unknown> | undefined; return Array.isArray(x) ? x : Object.keys(x ?? {}); };
-  expect(nets('tunnel')).toEqual(['edge']);
+  expect(nets('tunnel').sort()).toEqual(['edge', 'tunnelmon']);
   expect(nets('proxy').sort()).toEqual(['edge', 'frontend']);
   expect(nets('app').sort()).toEqual(['backend', 'frontend']);
-  for (const n of ['db', 'migrate', 'ops', 'updater']) expect(nets(n), n).toEqual(['backend']);
-  expect(Object.keys(c.networks).sort()).toEqual(['backend', 'edge', 'frontend']);
+  for (const n of ['db', 'migrate', 'updater']) expect(nets(n), n).toEqual(['backend']);
+  expect(nets('ops').sort()).toEqual(['backend', 'tunnelmon']);
+  expect(Object.keys(c.networks).sort()).toEqual(['backend', 'edge', 'frontend', 'tunnelmon']);
+  // The monitor's way to the tunnel: internal (no route out), and holding only ops (which listens on nothing) and the tunnel.
+  expect(c.networks.tunnelmon).toEqual({ internal: true });
+  expect(Object.keys(S).filter((n) => nets(n).includes('tunnelmon')).sort()).toEqual(['ops', 'tunnel']);
+  expect(S.ops.ports).toBeUndefined();
+  expect(S.ops.expose).toBeUndefined();
   expect(c.networks.edge.ipam.config[0].subnet).toBe('${EDGE_SUBNET:-172.30.250.0/28}');
   // Nothing may share a network with the tunnel except the proxy.
   const withTunnelNet = Object.keys(S).filter((n) => nets(n).includes('edge')).sort();
