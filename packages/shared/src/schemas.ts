@@ -35,3 +35,17 @@ export const InviteInput = z.strictObject({
   teamId: z.uuid().nullable(),
 });
 export type InviteInput = z.infer<typeof InviteInput>;
+
+export interface FileView {
+  id: string;
+  name: string;
+  contentType: string;
+  size: number;
+  createdAt: string;
+  ownerId: string;
+}
+
+/** The upload limit in words for people: whole megabytes, for example "15 MB". Shared by the server message and the dropzone. */
+export function formatLimit(bytes: number): string {
+  return `${String(Math.round(bytes / 1048576))} MB`;
+}

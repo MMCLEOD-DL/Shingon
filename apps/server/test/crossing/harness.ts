@@ -7,7 +7,7 @@ import { SESSION_COOKIE, SESSION_ABSOLUTE_MS, hashToken } from '../../src/auth/s
 import { sessions } from '../../src/db/schema/index.js';
 import { ACTORS, type ActorKey, type World, type WorldActor, type WorldResource } from './world.js';
 import { sees } from './oracle.js';
-import { EXPECTED_PUBLIC, EXPECTED_ROLES, type CrossingCase, type Route } from './cases.js';
+import { EXPECTED_PUBLIC, EXPECTED_ROLES, type ActionCase, type CrossingCase, type Route } from './cases.js';
 
 export interface CrossingFailure {
   route: Route;
@@ -196,10 +196,26 @@ export async function runCrossing(
       .onConflictDoNothing();
   };
 
-  const send = async (a: WorldActor, method: string, url: string, body: unknown): Promise<LightMyRequestResponse> => {
+  /** A multipart body: the body's own keys become text fields (so forbidden fields can be replayed), then the one file. */
+  const multipartBody = (mp: NonNullable<ActionCase['multipart']>, fields: unknown): { payload: Buffer; contentType: string } => {
+    const boundary = 'hfcrossingboundary';
+    const parts: Buffer[] = [];
+    for (const [k, v] of Object.entries(typeof fields === 'object' && fields !== null ? fields : {})) {
+      parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${String(v)}\r\n`));
+    }
+    parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${mp.field}"; filename="${mp.filename}"\r\nContent-Type: application/octet-stream\r\n\r\n`), mp.bytes, Buffer.from(`\r\n--${boundary}--\r\n`));
+    return { payload: Buffer.concat(parts), contentType: `multipart/form-data; boundary=${boundary}` };
+  };
+
+  const send = async (a: WorldActor, method: string, url: string, body: unknown, mp?: ActionCase['multipart']): Promise<LightMyRequestResponse> => {
     await plantDeadSession(a);
     const headers: Record<string, string> = { origin: t.config.appOrigin };
     if (a.cookie) headers['cookie'] = a.cookie;
+    if (mp) {
+      const m = multipartBody(mp, body);
+      headers['content-type'] = m.contentType;
+      return t.app.inject({ method: method as 'POST', url, headers, payload: m.payload });
+    }
     return t.app.inject({
       method: method as 'GET' | 'POST' | 'PATCH' | 'DELETE', url, headers,
       ...(body === undefined ? {} : { payload: body as object }),
@@ -222,7 +238,8 @@ export async function runCrossing(
         sentence: `${a.key} got a session cookie from ${route} although the answer was ${String(res.statusCode)}.` });
     }
     checks++;
-    const text = res.body.toLowerCase();
+    // Headers too: a download's Content-Disposition carries the file name.
+    const text = (res.body + JSON.stringify(res.headers)).toLowerCase();
     for (const other of allResources()) {
       if (sees(a, other)) continue;
       if (text.includes(other.canary.toLowerCase())) {
@@ -247,7 +264,7 @@ export async function runCrossing(
       const target = r ? { table: r.table, id: r.id } : { table: 'users', id: a.id! };
       const rowBefore = await rowHash(t, target.table, target.id);
       const fpBefore = await fingerprint();
-      const res = await send(a, method, url, body);
+      const res = await send(a, method, url, body, c.kind === 'action' ? c.multipart : undefined);
       scan(a, c.route, res, r?.id);
       checks += 3;
       const rowSame = (await rowHash(t, target.table, target.id)) === rowBefore;
@@ -289,7 +306,7 @@ export async function runCrossing(
         const replies: LightMyRequestResponse[] = [];
         let query = c.kind === 'list' ? (c.paginate?.query ?? c.query) : undefined;
         for (;;) {
-          const res = await send(a, method, base + (query ? `?${query}` : ''), body);
+          const res = await send(a, method, base + (query ? `?${query}` : ''), body, c.kind === 'action' ? c.multipart : undefined);
           replies.push(res);
           if (c.kind !== 'list' || !c.paginate || res.statusCode !== 200) break;
           const next = c.paginate.next(res.json());

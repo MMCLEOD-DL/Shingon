@@ -13,10 +13,11 @@ import { registerCsrf } from './http/csrf.js';
 import { HttpError } from './http/errors.js';
 import type { RouteAccess } from './http/route.js';
 
+import { registerFileRoutes } from './files/routes.js';
+import { sweepOrphans } from './files/repo.js';
+import { LocalDiskStorage, type Storage } from './files/storage.js';
 import { createTransport, startOutboxWorker, type EmailTransport } from './email/index.js';
 
-// Task 9 supplies the real file storage; until then the app only holds it.
-export interface Storage { readonly kind: string }
 
 export interface AppDeps {
   config: Config;
@@ -96,7 +97,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   app.addHook('onSend', async (req, reply) => {
-    if (req.url.startsWith('/api/')) reply.header('cache-control', 'no-store');
+    // A route may set its own stricter value (file downloads: private, no-store).
+    if (req.url.startsWith('/api/') && !reply.getHeader('cache-control')) reply.header('cache-control', 'no-store');
   });
 
   app.setNotFoundHandler((_req, reply) => reply.code(404).send({ error: "We couldn't find that." }));
@@ -125,13 +127,27 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     app.addHook('onClose', async () => { await stop(); });
   }
 
-  registerRoutes(app, config, deps.now);
+  const storage = deps.storage ?? new LocalDiskStorage(config.uploadDir);
+  if (config.instanceMode !== 'test') {
+    // Files that were uploaded but never attached to anything are removed after a day.
+    const sweep = setInterval(() => {
+      const now = deps.now?.() ?? new Date();
+      sweepOrphans(db, storage, new Date(now.getTime() - 24 * 3600e3)).catch((err: unknown) => {
+        app.log.error({ errName: (err as Error).name }, 'File sweep failed');
+      });
+    }, 6 * 3600e3);
+    sweep.unref();
+    app.addHook('onClose', () => { clearInterval(sweep); });
+  }
+
+  registerRoutes(app, config, storage, deps.now);
   return app;
 }
 
 /** Later tasks append their route modules here. */
-function registerRoutes(app: FastifyInstance, config: Config, now?: () => Date): void {
+function registerRoutes(app: FastifyInstance, config: Config, storage: Storage, now?: () => Date): void {
   registerAuthRoutes(app, config, now);
   registerUserRoutes(app, config, now);
   registerAuditRoutes(app);
+  registerFileRoutes(app, config, storage);
 }

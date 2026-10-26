@@ -1,4 +1,5 @@
 import type { Role } from '@hf/shared';
+import { readFileSync } from 'node:fs';
 import { IDS, type World, type WorldActor, type WorldResource } from './world.js';
 
 export type Route = `${'GET' | 'POST' | 'PATCH' | 'DELETE'} ${string}`;
@@ -22,6 +23,11 @@ export const EXPECTED_ROLES: Record<Route, readonly Role[]> = {
   'GET /api/teams': ['admin', 'manager'],
   'POST /api/teams': ['admin'],
   'GET /api/audit': ['admin'],
+  // Files: every signed-in role. Who may see or delete a given file is the item rule in CASES, not a role rule.
+  'POST /api/files': ALL,
+  'GET /api/files/:id': ALL,
+  'GET /api/files/:id/content': ALL,
+  'DELETE /api/files/:id': ALL,
 };
 
 /**
@@ -44,9 +50,11 @@ export const EXPECTED_PUBLIC: readonly Route[] = [
 export interface ItemCase { kind: 'item'; route: Route; resource: string; visible?: (a: WorldActor, r: WorldResource) => boolean; allowed?: (a: WorldActor, r: WorldResource) => boolean; body?: (r: WorldResource) => unknown; okStatus?: number | ((r: WorldResource, a: WorldActor) => number); mutates?: boolean; why?: string; forbiddenFields?: Record<string, unknown>[] }
 /** `paginate`: the first page's query, and how to get the next page's query from a reply (null at the end). Every page is checked. */
 export interface ListCase { kind: 'list'; route: Route; resource: string; visible?: (a: WorldActor, r: WorldResource) => boolean; query?: string; paginate?: { query: string; next: (json: any) => string | null } }
-export interface ActionCase { kind: 'action'; route: Route; body?: (w: World) => unknown; okStatus?: number; mutates?: boolean; why?: string; forbiddenFields?: Record<string, unknown>[] }
+/** `multipart`: send one file as multipart/form-data instead of JSON; `body` keys (and forbiddenFields) go in as extra text fields. */
+export interface ActionCase { kind: 'action'; route: Route; multipart?: { field: string; filename: string; bytes: Buffer }; body?: (w: World) => unknown; okStatus?: number; mutates?: boolean; why?: string; forbiddenFields?: Record<string, unknown>[] }
 export type CrossingCase = ItemCase | ListCase | ActionCase;
 
+const TINY_PNG = readFileSync(new URL('../fixtures/files/tiny.png', import.meta.url));
 const own = (a: WorldActor, r: WorldResource) => a.id === r.id;
 const LONG_AGO = '2020-01-01T00:00:00.000Z';
 const SOME_ID = '0a000000-0000-4000-8000-0000000000ff';
@@ -77,6 +85,12 @@ export const CASES: CrossingCase[] = [
   { kind: 'action', route: 'POST /api/teams', body: () => ({ name: 'East' }), mutates: true,
     forbiddenFields: [{ id: SOME_ID }, { createdAt: LONG_AGO }] },
   { kind: 'action', route: 'GET /api/audit', okStatus: 200 },
+  { kind: 'item', route: 'GET /api/files/:id', resource: 'file' },
+  { kind: 'item', route: 'GET /api/files/:id/content', resource: 'file' },
+  { kind: 'item', route: 'DELETE /api/files/:id', resource: 'file', allowed: (a, r) => a.role === 'admin' || a.id === r.ownerId, mutates: true },
+  { kind: 'action', route: 'POST /api/files', okStatus: 201, mutates: true, multipart: { field: 'file', filename: 'receipt.png', bytes: TINY_PNG },
+    // Anything beside the one file is refused, so a client cannot choose the owner, team or type of the new file.
+    forbiddenFields: [{ ownerId: SOME_ID }, { teamId: IDS.teams.south }, { contentType: 'text/html' }, { storageKey: 'aaaaaa' }, { id: SOME_ID }] },
 
   // Public routes: every actor, signed in or not, gets the same answer, nothing leaks and a refusal changes nothing.
   { kind: 'action', route: 'POST /api/auth/sign-in', body: () => ({ email: 'canary-user-northalice@hf.test', password: 'not the right password' }), okStatus: 401, mutates: true },

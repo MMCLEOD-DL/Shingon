@@ -5,3 +5,4 @@ export * from './sessions.js';
 export * from './audit.js';
 export * from './email.js';
 export * from './tokens.js';
+export * from './files.js';

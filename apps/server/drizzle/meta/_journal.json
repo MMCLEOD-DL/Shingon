@@ -43,6 +43,13 @@
       "when": 1793022582754,
       "tag": "0005_user_tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793025161172,
+      "tag": "0006_files",
+      "breakpoints": true
     }
   ]
 }
