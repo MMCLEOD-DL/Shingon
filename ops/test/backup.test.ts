@@ -43,6 +43,8 @@ test('the dump and the manifest come from one snapshot, from a fixed folder, and
   expect(backup.args).toEqual(expect.arrayContaining([`${deps0.cfg.workDir}/backup/db.dump`, `${deps0.cfg.workDir}/backup/manifest.json`, deps0.cfg.uploadsDir]));
   const forget = calls.find((c) => c.args[0] === 'forget')!;
   expect(forget.args.slice(0, 5)).toEqual(['forget', '--tag', 'hf', '--group-by', 'host']);
+  // Only this box's backups are pruned, and never a safety backup.
+  expect(forget.args.slice(5, 10)).toEqual(['--host', 'acme-test-ltd', '--keep-tag', 'safety', '--prune']);
 });
 
 test('a pre-update backup does not prune', async () => {
@@ -80,7 +82,15 @@ test('busy, wrong-password, unreadable-database and unknown failures each have t
     [{}, (c) => c.cmd === 'restic' ? { code: 1, stdout: '', stderr: 'Fatal: wrong password or no key found' } : ok, 'The backup password does not match the backup destination.'],
     [{}, (c) => c.cmd === 'pg_dump' ? { code: 1, stdout: '', stderr: 'pg_dump: error: connection failed' } : ok, 'The database could not be read for the backup.'],
     [{}, (c) => c.cmd === 'restic' && c.args[0] === 'backup' ? { code: 1, stdout: '', stderr: `\nFatal: something odd happened ${TEST_BACKUP_PASSWORD}\nmore` } : ok,
-      'The backup failed: Fatal: something odd happened [hidden].'],
+      'The backup failed (restic stopped with code 1).'],
+    [{}, (c) => c.cmd === 'restic' ? { code: 1, stdout: '', stderr: 'Fatal: unable to open config file: unexpected HTTP response (401): 401 Unauthorized' } : ok,
+      'The backup destination refused the sign-in details (sftp:backup@nas.test.lan:/srv/restic). Check the destination\'s user name and password settings.'],
+    [{}, (c) => c.cmd === 'restic' ? { code: 1, stdout: '', stderr: 'Fatal: Save(<data/ab>) failed: unexpected HTTP response (500): 500 Internal Server Error' } : ok,
+      'The backup destination had a fault of its own (HTTP 500) (sftp:backup@nas.test.lan:/srv/restic). Try again later; if it keeps happening, check the destination.'],
+    [{}, (c) => c.cmd === 'restic' && c.args[0] === 'backup' ? { code: 1, stdout: '', stderr: 'Fatal: unable to save snapshot: write /srv/x: no space left on device' } : ok,
+      'There is not enough disk space for the backup, either at the backup destination (sftp:backup@nas.test.lan:/srv/restic) or in the ops work folder on this box.'],
+    [{}, (c) => c.cmd === 'restic' && c.args[0] === 'cat' ? { code: 1, stdout: '', stderr: 'Fatal: some other trouble' } : ok,
+      'The backup failed (restic stopped with code 1).'],
   ];
   for (const [env, respond, message] of cases) {
     await withDeps(env, async (deps, rec) => {
@@ -116,7 +126,7 @@ test('restore test: no backups yet, and a destination it cannot read, are both r
     rec.respond((c) => c.args[0] === 'snapshots' ? { code: 0, stdout: '[]', stderr: '' } : ok);
     expect(await verifyLatestRestore(deps)).toEqual({ ok: false, problems: ['There are no backups yet.'] });
     expect(await lastRun(deps.db, 'restore-test', { okOnly: false })).toMatchObject({ ok: false, detail: 'There are no backups yet.' });
-    expect(rec.calls.find((c) => c.args[0] === 'snapshots')!.args).toEqual(['snapshots', '--json', '--tag', 'hf', '--group-by', 'host', '--latest', '1']);
+    expect(rec.calls.find((c) => c.args[0] === 'snapshots')!.args).toEqual(['snapshots', '--json', '--tag', 'hf,scheduled', '--tag', 'hf,manual', '--tag', 'hf,pre-update', '--group-by', 'host', '--host', 'acme-test-ltd', '--latest', '1']);
   });
   await withDeps({}, async (deps, rec) => {
     const at = new Date(Date.now() - 30 * 3600e3).toISOString();
@@ -127,7 +137,7 @@ test('restore test: no backups yet, and a destination it cannot read, are both r
     expect(r.ok).toBe(false);
     expect(r.problems).toEqual([
       'The newest backup is 30 hours old (expected one every day).',
-      'Backup ffffffff could not be restored: Fatal: load index: ciphertext verification failed.',
+      'Backup ffffffff could not be restored: some of the saved data could not be read back from sftp:backup@nas.test.lan:/srv/restic, so the copy there may be damaged.',
     ]);
     expect((await lastRun(deps.db, 'restore-test', { okOnly: false }))!.detail).toBe(r.problems.join(' '));
     const leftover = await deps.db.execute(sql`select datname from pg_database where datname like 'hf_restore_test_%'`);
@@ -149,7 +159,7 @@ test('ops restore refuses while the app answers, before touching anything', asyn
   const port = (server.address() as { port: number }).port;
   try {
     await withDeps({ APP_INTERNAL_URL: `http://127.0.0.1:${String(port)}` }, async (deps, rec) => {
-      await expect(restoreLive(deps, 'latest')).rejects.toThrow('Stop the app first: docker compose stop app');
+      await expect(restoreLive(deps, 'latest')).rejects.toThrow(/^The app is still running, so nothing has been changed\. Stop both the app and ops first \(docker compose stop app ops\)/);
       expect(rec.calls).toEqual([]);
     });
   } finally {

@@ -1,6 +1,6 @@
 import { parseArgs } from 'node:util';
 import { realIo, runInit, USAGE } from './init-cli.js';
-import { loadOpsConfig, OpsConfigError, type OpsConfig } from './config.js';
+import { checkEdgePair, loadOpsConfig, OpsConfigError, type OpsConfig } from './config.js';
 import { BackupError, runBackup, firstLine } from './backup.js';
 import { RestoreError, restoreLive, verifyLatestRestore } from './restore.js';
 import { createOpsDeps, runDaemon } from './daemon.js';
@@ -73,6 +73,16 @@ async function main(argv: string[]): Promise<number> {
         say('Done. Start the app again: docker compose start app');
         return 0;
       });
+    }
+    case 'check-edge': {
+      // Run by the one-shot edge-check service: the front door does not start until this passes.
+      const problems = checkEdgePair(process.env['TUNNEL_IP']?.trim() || '172.30.250.10', process.env['EDGE_SUBNET']?.trim() || '172.30.250.0/28');
+      if (problems.length > 0) {
+        complain(`The front door has not been started because the tunnel settings do not match:\n- ${problems.join('\n- ')}\nFix TUNNEL_IP and EDGE_SUBNET in .env (change both together), then run docker compose up -d again. Backups carry on meanwhile.`);
+        return 1;
+      }
+      say('The tunnel address and the edge network match.');
+      return 0;
     }
     case 'daemon': {
       const cfg = config();

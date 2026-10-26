@@ -36,14 +36,14 @@ async function hasFilesTable(client: pg.ClientBase): Promise<boolean> {
  * Builds the manifest on `client`, the connection holding the exported snapshot, so every number describes exactly what
  * pg_dump saves. The file totals come from the files table in that snapshot, not from the uploads folder, which keeps changing.
  */
-export async function buildManifest(client: pg.ClientBase, versions: { app: string; foundation: string }): Promise<Manifest> {
+export async function buildManifest(client: pg.ClientBase, versions: { app: string; foundation: string }, createdAt: Date = new Date()): Promise<Manifest> {
   const tables = await countTables(client);
   let files = { count: 0, bytes: 0 };
   if (await hasFilesTable(client)) {
     const r = await client.query<{ c: string; b: string }>(`select count(*)::bigint as c, coalesce(sum(size), 0)::bigint as b from files`);
     files = { count: Number(r.rows[0]?.c ?? 0), bytes: Number(r.rows[0]?.b ?? 0) };
   }
-  return { createdAt: new Date().toISOString(), tables, files, app: versions.app, foundation: versions.foundation };
+  return { createdAt: createdAt.toISOString(), tables, files, app: versions.app, foundation: versions.foundation };
 }
 
 /**

@@ -22,6 +22,11 @@ export interface OpsConfig {
   workDir: string;
   uploadsDir: string;
   tunnelEnabled: boolean;
+  /**
+   * Settings that are wrong but must not stop backups, such as a TUNNEL_IP that does not match EDGE_SUBNET (the front door
+   * is held back by the edge-check service instead). Logged at start-up; Task 19 raises them as a standing alert.
+   */
+  warnings: string[];
 }
 
 export class OpsConfigError extends Error {
@@ -60,9 +65,40 @@ export function assertOffBox(repo: string, allowLocal: boolean): void {
   );
 }
 
-/** The destination with any password removed, safe to put in messages, logs and alerts. */
+/**
+ * The password inside a repository address, if there is one: everything between the user name and the LAST "@" of the
+ * address part, so a password containing "@", ":" or "/" is still found whole.
+ */
+export function repoPassword(repo: string): string | undefined {
+  const i = repo.indexOf('://');
+  const rest = i >= 0 ? repo.slice(i + 3) : repo.replace(/^sftp:/, '');
+  const at = rest.lastIndexOf('@');
+  if (at < 0) return undefined;
+  const userinfo = rest.slice(0, at);
+  const colon = userinfo.indexOf(':');
+  return colon >= 0 && colon < userinfo.length - 1 ? userinfo.slice(colon + 1) : undefined;
+}
+
+/**
+ * The destination with any sign-in details removed, safe to put in messages, logs and alerts. When the part before the
+ * last "@" holds a ":" (so it may hold a password), everything before that "@" goes. A user name alone (sftp:backup@host)
+ * is kept.
+ */
 export function describeRepo(repo: string): string {
-  return repo.replace(/([a-z][a-z0-9+.-]*:\/\/)[^@/\s]*:[^@/\s]*@/gi, '$1');
+  const i = repo.indexOf('://');
+  if (i >= 0) {
+    const head = repo.slice(0, i + 3);
+    const rest = repo.slice(i + 3);
+    const at = rest.lastIndexOf('@');
+    if (at >= 0 && rest.slice(0, at).includes(':')) return head + rest.slice(at + 1);
+    return repo;
+  }
+  if (repo.startsWith('sftp:')) {
+    const body = repo.slice(5);
+    const at = body.lastIndexOf('@');
+    if (at >= 0 && body.slice(0, at).includes(':')) return `sftp:${body.slice(at + 1)}`;
+  }
+  return repo;
 }
 
 /** A short name for this box made from the client's name, used as the restic host so each box's backups are grouped together. */
@@ -189,8 +225,9 @@ export function loadOpsConfig(env: NodeJS.ProcessEnv = process.env): OpsConfig {
     else problems.push(`AUDIT_RETENTION_DAYS must be a whole number of days, 1 or more (got "${days}").`);
   }
 
-  // Same defaults as compose.yaml. Checked whether or not the tunnel is in use: the front door trusts TUNNEL_IP either way.
-  problems.push(...checkEdgePair(get('TUNNEL_IP') ?? '172.30.250.10', get('EDGE_SUBNET') ?? '172.30.250.0/28'));
+  // Same defaults as compose.yaml. A mismatch is a warning here, never a reason to stop backups: the edge-check service
+  // keeps the front door from starting, and Task 19 raises the warning as a standing alert.
+  const warnings = checkEdgePair(get('TUNNEL_IP') ?? '172.30.250.10', get('EDGE_SUBNET') ?? '172.30.250.0/28');
 
   const healthToken = get('HEALTH_TOKEN');
   const cfg: OpsConfig = {
@@ -204,6 +241,7 @@ export function loadOpsConfig(env: NodeJS.ProcessEnv = process.env): OpsConfig {
     workDir: folder('OPS_WORK_DIR', '/state/work'),
     uploadsDir: folder('OPS_UPLOADS_DIR', '/data/uploads'),
     tunnelEnabled: bool('TUNNEL_ENABLED', false),
+    warnings,
   };
   if (problems.length > 0) throw new OpsConfigError(problems);
   if (healthToken !== undefined) cfg.healthToken = healthToken;

@@ -18,6 +18,8 @@ export const USAGE = [
   '      Restores the newest backup into a scratch database and checks that everything came back.',
   '  restore <backup id | latest> --yes-replace-live-data',
   '      Puts a backup back over the live data, after taking a safety backup. Stop the app first.',
+  '  check-edge',
+  '      Checks that TUNNEL_IP is a usable address inside EDGE_SUBNET (the edge-check service runs this before the front door starts).',
   '  daemon',
   '      Runs the scheduled backups, restore tests and audit-log tidy-up (the ops service does this).',
 ].join('\n');

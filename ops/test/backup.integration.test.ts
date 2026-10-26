@@ -37,6 +37,8 @@ describe.runIf(has('restic', ['version']) && has('pg_dump') && has('pg_restore')
       expect(await q(info.url, `select to_regclass('public.update_probe')::text r`)).toEqual([{ r: null }]);
       expect(await q(info.url, `select count(*)::int n from pg_type where typname = 'update_mood'`)).toEqual([{ n: 0 }]);
       expect(await q(info.url, 'select count(*)::int n from notes')).toEqual(notesBefore);
+      // restored into <db>_incoming and swapped in: nothing half-made is left behind
+      expect(await q(info.url, `select count(*)::int n from pg_database where datname = '${info.dbName}_incoming'`)).toEqual([{ n: 0 }]);
       // the same "migration" now applies cleanly again
       await q(info.url, `create type update_mood as enum ('x'); create table update_probe (id int, mood update_mood);`);
       expect(await lastRun(deps.db, 'backup', { okOnly: true })).not.toBeNull();   // ops' pool survived the forced drop

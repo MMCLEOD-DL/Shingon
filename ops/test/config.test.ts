@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { assertOffBox, describeRepo, checkEdgePair, loadOpsConfig, OpsConfigError } from '../src/config.js';
+import { assertOffBox, describeRepo, repoPassword, checkEdgePair, loadOpsConfig, OpsConfigError } from '../src/config.js';
 
 test('backups must leave the box unless explicitly allowed for development', () => {
   for (const r of ['sftp:backup@nas.acme.lan:/srv/restic', 'rest:https://nas:8000/acme', 's3:https://s3.eu-west-2.amazonaws.com/acme-backups', 'b2:acme-backups:/hf'])
@@ -51,13 +51,25 @@ test('loadOpsConfig reads the Compose settings with the documented defaults', ()
   });
 });
 
-test('a mismatched tunnel address and edge network stops ops starting, in plain English', () => {
-  expect(() => loadOpsConfig({ ...good, TUNNEL_IP: '172.31.0.10', EDGE_SUBNET: '172.30.250.0/28' })).toThrow(OpsConfigError);
-  try {
-    loadOpsConfig({ ...good, TUNNEL_IP: '172.31.0.10' });
-  } catch (e) {
-    expect((e as OpsConfigError).problems.join('\n')).toMatch(/TUNNEL_IP \(172\.31\.0\.10\) is not inside EDGE_SUBNET \(172\.30\.250\.0\/28\)/);
+test('a mismatched tunnel address and edge network is a warning for ops, never a reason to stop backups', () => {
+  const cfg = loadOpsConfig({ ...good, TUNNEL_IP: '172.31.0.10', EDGE_SUBNET: '172.30.250.0/28' });
+  expect(cfg.warnings).toHaveLength(1);
+  expect(cfg.warnings[0]).toMatch(/^TUNNEL_IP \(172\.31\.0\.10\) is not inside EDGE_SUBNET \(172\.30\.250\.0\/28\)/);
+  expect(loadOpsConfig(good).warnings).toEqual([]);
+});
+
+test('no part of a password in a destination address is ever shown, even with @, : or / in it', () => {
+  for (const [repo, shown] of [
+    ['rest:https://u:p@ss@nas:8000/x', 'rest:https://nas:8000/x'],
+    ['rest:https://u:p/ss:w@nas/x', 'rest:https://nas/x'],
+    ['s3:https://AKIA:se@cr/et@s3.example.com/bucket', 's3:https://s3.example.com/bucket'],
+    ['sftp:backup:hunter2@nas:/srv', 'sftp:nas:/srv'],
+    ['rest:https://justuser@nas/x', 'rest:https://justuser@nas/x'],
+  ] as const) {
+    expect(describeRepo(repo), repo).toBe(shown);
   }
+  expect(repoPassword('rest:https://u:p@ss@nas:8000/x')).toBe('p@ss');
+  expect(repoPassword('sftp:backup@nas:/srv')).toBeUndefined();
 });
 
 test('settings problems are listed one per line and never repeat a secret', () => {

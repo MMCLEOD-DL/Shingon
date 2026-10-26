@@ -145,7 +145,24 @@ test('the long-running ops daemon is locked down too: read-only, no extra powers
   expect(ops.ports).toBeUndefined();
 });
 
-test('ops sees the same tunnel address and edge network as the front door, so it can refuse a mismatched pair', () => {
+test('a mismatched tunnel address and edge network keeps only the front door down, checked by a locked-down one-shot service', () => {
+  const e = S['edge-check']!;
+  expect(e.image).toBe('${OPS_IMAGE:-highland/ops}:${APP_TAG}');
+  expect(e.command).toEqual(['check-edge']);
+  expect(e.environment).toEqual({ TUNNEL_IP: S.proxy.environment.TUNNEL_IP, EDGE_SUBNET: '${EDGE_SUBNET:-172.30.250.0/28}' });
+  expect(e.volumes).toBeUndefined();
+  expect(e.network_mode).toBe('none');
+  expect(e.read_only).toBe(true);
+  expect(e.cap_drop).toEqual(['ALL']);
+  expect(e.cap_add).toBeUndefined();
+  expect(e.security_opt).toContain('no-new-privileges:true');
+  expect(e.restart).toBe('no');
+  expect(S.proxy.depends_on['edge-check']).toEqual({ condition: 'service_completed_successfully' });
+  // Nothing else waits for it: the app, the database and ops (backups) start whatever the tunnel settings say.
+  for (const n of ['app', 'db', 'ops', 'migrate']) expect(Object.keys((S[n]!.depends_on ?? {}) as Record<string, unknown>), n).not.toContain('edge-check');
+});
+
+test('ops sees the same tunnel address and edge network as the front door, so it can warn about a mismatched pair', () => {
   expect(S.ops.environment.TUNNEL_IP).toBe(S.proxy.environment.TUNNEL_IP);
   expect(S.ops.environment.TUNNEL_IP).toBe(S.tunnel.networks.edge.ipv4_address);
   expect(S.ops.environment.EDGE_SUBNET).toBe(c.networks.edge.ipam.config[0].subnet);

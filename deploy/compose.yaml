@@ -28,8 +28,8 @@ x-ops-env: &opsenv
   ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
   HEARTBEAT_URL: ${HEARTBEAT_URL:-}
   TUNNEL_ENABLED: ${TUNNEL_ENABLED:-false}
-  # Ops refuses to start when these two do not match (TUNNEL_IP must be a usable address inside EDGE_SUBNET),
-  # because the front door would then trust the wrong address. Same defaults as the proxy and tunnel below.
+  # Ops warns (and Task 19 alerts) when these two do not match; the edge-check service below keeps the front door from
+  # starting. Same defaults as the proxy and tunnel below.
   TUNNEL_IP: ${TUNNEL_IP:-172.30.250.10}
   EDGE_SUBNET: ${EDGE_SUBNET:-172.30.250.0/28}
 services:
@@ -96,6 +96,18 @@ services:
     cap_drop: [ALL]
     cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
     security_opt: ["no-new-privileges:true"]
+  # One-shot check before the front door starts: TUNNEL_IP must be a usable address inside EDGE_SUBNET, or Caddy would trust
+  # the wrong address. A mismatch stops only the front door; backups and the rest of ops keep running.
+  edge-check:
+    image: ${OPS_IMAGE:-highland/ops}:${APP_TAG}
+    command: ["check-edge"]
+    environment: { TUNNEL_IP: "${TUNNEL_IP:-172.30.250.10}", EDGE_SUBNET: "${EDGE_SUBNET:-172.30.250.0/28}" }
+    restart: "no"
+    user: "1000:1000"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
   proxy:
     image: caddy:2.11.7-alpine
     restart: unless-stopped
@@ -104,7 +116,7 @@ services:
     # Not the whole network: Docker's gateway address (where traffic from the host side arrives) is on it too.
     environment: { SITE_ADDRESS: "${SITE_ADDRESS:-:80}", TUNNEL_IP: "${TUNNEL_IP:-172.30.250.10}" }
     volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro", "caddy_data:/data"]
-    depends_on: { app: { condition: service_healthy } }
+    depends_on: { app: { condition: service_healthy }, edge-check: { condition: service_completed_successfully } }
     networks: [frontend, edge]
     # Caddy needs to open ports 80 and 443 and keep its certificates in /data; nothing else.
     read_only: true

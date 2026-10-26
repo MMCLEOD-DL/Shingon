@@ -1,5 +1,6 @@
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { createServer } from 'node:net';
 import path from 'node:path';
 import pg from 'pg';
 import { createTestDb } from '../../apps/server/test/helpers/testDb.js';
@@ -37,11 +38,20 @@ export const okBackup: Responder = (c) =>
     ? { code: 0, stdout: '{"message_type":"status","percent_done":1}\n{"message_type":"summary","snapshot_id":"0123456789abcdef0123456789abcdef","total_bytes_processed":3000000}\n', stderr: '' }
     : { code: 0, stdout: '', stderr: '' };
 
-function baseEnv(dbUrl: string, dir: string): Record<string, string> {
+/** A local port nothing listens on (fetch refuses some well-known ports such as 9 outright, which is not the same as "stopped"). */
+async function closedPort(): Promise<number> {
+  const srv = createServer();
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+  const port = (srv.address() as { port: number }).port;
+  await new Promise<void>((r) => srv.close(() => { r(); }));
+  return port;
+}
+
+async function baseEnv(dbUrl: string, dir: string): Promise<Record<string, string>> {
   return {
     INSTANCE_MODE: 'test',
     DATABASE_URL: dbUrl,
-    APP_INTERNAL_URL: 'http://127.0.0.1:9',   // nothing listens: the app counts as stopped
+    APP_INTERNAL_URL: `http://127.0.0.1:${String(await closedPort())}`,   // nothing listens: the app counts as stopped
     CLIENT_LABEL: 'Acme Test Ltd',
     COMPOSE_PROJECT_NAME: 'hftest',
     BACKUP_REPOSITORY: 'sftp:backup@nas.test.lan:/srv/restic',
@@ -59,7 +69,7 @@ export async function withDeps<T>(env: Record<string, string>, fn: (deps: OpsDep
   const t = await createTestDb();
   const dir = await mkdtemp(path.join(tmpdir(), 'hf-ops-'));
   try {
-    const cfg = loadOpsConfig({ ...baseEnv(t.url, dir), ...env });
+    const cfg = loadOpsConfig({ ...(await baseEnv(t.url, dir)), ...env });
     await mkdir(cfg.uploadsDir, { recursive: true });
     const rec = fakeRunner();
     const deps: OpsDeps = { cfg, run: rec, db: t.db, now: () => new Date(), log: (l) => rec.logs.push(l) };
@@ -78,7 +88,7 @@ export async function withRealDeps<T>(fn: (deps: OpsDeps, info: RealInfo) => Pro
   const t = await createTestDb();
   const dir = await mkdtemp(path.join(tmpdir(), 'hf-ops-real-'));
   try {
-    const cfg = loadOpsConfig({ ...baseEnv(t.url, dir), BACKUP_REPOSITORY: path.join(dir, 'repo'), BACKUP_ALLOW_LOCAL: 'true' });
+    const cfg = loadOpsConfig({ ...(await baseEnv(t.url, dir)), BACKUP_REPOSITORY: path.join(dir, 'repo'), BACKUP_ALLOW_LOCAL: 'true' });
     await mkdir(cfg.uploadsDir, { recursive: true });
     const serverCfg = loadConfig({
       INSTANCE_MODE: 'test', APP_ORIGIN: 'http://localhost:3000', DATABASE_URL: t.url, UPLOAD_DIR: cfg.uploadsDir,

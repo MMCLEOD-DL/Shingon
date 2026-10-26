@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { repoPassword } from './config.js';
 
 export interface RunResult {
   code: number;
@@ -25,6 +26,9 @@ export function redact(text: string, env: Record<string, string>): string {
   let out = text;
   for (const [k, v] of Object.entries(env)) {
     if (SECRET_KEY.test(k) && v.length >= 4) out = out.split(v).join('[hidden]');
+    // A password written inside an address, such as RESTIC_REPOSITORY=rest:https://user:password@host/repo.
+    const inner = repoPassword(v);
+    if (inner !== undefined && inner.length >= 4) out = out.split(inner).join('[hidden]');
   }
   return out.replace(/([a-z][a-z0-9+.-]*:\/\/[^:/\s@]+):[^@\s/]+@/gi, '$1:***@');
 }
