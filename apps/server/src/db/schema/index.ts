@@ -4,3 +4,4 @@ export * from './users.js';
 export * from './sessions.js';
 export * from './audit.js';
 export * from './email.js';
+export * from './tokens.js';

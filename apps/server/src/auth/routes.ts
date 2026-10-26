@@ -2,17 +2,16 @@ import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { defineRoute } from '../http/route.js';
-import { HttpError } from '../http/errors.js';
+import { HttpError, unauthorized } from '../http/errors.js';
 import { users, sessions } from '../db/schema/index.js';
 import { hashPassword, verifyPassword } from './password.js';
 import { SESSION_ABSOLUTE_MS, SESSION_COOKIE, createSession } from './sessions.js';
+import { acceptInvite } from './invites.js';
+import { changePassword, requestPasswordReset, resetPassword } from './reset.js';
 import type { Config } from '../config.js';
-import { audit } from '../audit/audit.js';
+import { audit, auditableEmail } from '../audit/audit.js';
 
 const TOO_MANY = 'Too many attempts. Please wait 15 minutes and try again.';
-const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-/** A password pasted into the email box must not reach the audit log, so only email-shaped input is kept. */
-const auditableEmail = (v: string): string => (v.length <= 254 && EMAIL_SHAPE.test(v) ? v : '[not an email address]');
 const BAD_SIGN_IN = "That email and password don't match an account.";
 
 
@@ -21,12 +20,24 @@ const signInBody = z.strictObject({
   password: z.string().max(200),
 });
 
-export function registerAuthRoutes(app: FastifyInstance, config: Pick<Config, 'cookieSecure'>, now?: () => Date): void {
+const tokenBody = z.string().max(200);
+const acceptInviteBody = z.strictObject({ token: tokenBody, password: z.string().max(200) });
+const forgotBody = z.strictObject({ email: z.string().trim().toLowerCase().max(320) });
+const resetBody = z.strictObject({ token: tokenBody, password: z.string().max(200) });
+const changePasswordBody = z.strictObject({ currentPassword: z.string().max(200), newPassword: z.string().max(200) });
+const FORGOT_REPLY = { message: "If that email has an account, we've sent a link to reset the password." };
+
+export function registerAuthRoutes(app: FastifyInstance, config: Pick<Config, 'cookieSecure' | 'appOrigin'>, now?: () => Date): void {
   // Checked when no usable account exists, so the time taken does not reveal whether an email is registered.
   // Computed now, at registration, so the first unknown-email request is not faster than later ones.
   const dummyHash = hashPassword('not-a-real-password-for-timing-only');
   // Backstop: many attempts from one address across different emails.
   const perAddress = app.createRateLimit({ max: 50, timeWindow: '15 minutes', keyGenerator: (req) => req.ip });
+
+  // Backstop for reset requests: many addresses from one place.
+  const forgotPerAddress = app.createRateLimit({ max: 30, timeWindow: '1 hour', keyGenerator: (req) => req.ip });
+  // Links carry 256-bit tokens, so guessing is hopeless; this only caps noise from one address.
+  const linkAttempts = { max: 30, timeWindow: '15 minutes', keyGenerator: (req: { ip: string }) => req.ip };
 
   const cookieOpts = { httpOnly: true, sameSite: 'lax', secure: config.cookieSecure, path: '/' } as const;
 
@@ -94,6 +105,85 @@ export function registerAuthRoutes(app: FastifyInstance, config: Pick<Config, 'c
     access: { permission: 'self:manage' },
     handler(_req, _reply, { actor }) {
       return Promise.resolve({ user: actor });
+    },
+  });
+
+  defineRoute(app, {
+    method: 'POST',
+    url: '/api/auth/accept-invite',
+    access: { public: 'accepting an invite' },
+    schema: { body: acceptInviteBody },
+    config: { rateLimit: linkAttempts },
+    async handler(req, reply, { db }) {
+      const meta: { ip?: string; userAgent?: string; now?: Date } = { ip: req.ip };
+      const ua = req.headers['user-agent'];
+      if (ua) meta.userAgent = ua;
+      const at = now?.();
+      if (at) meta.now = at;
+      const { token, user } = await acceptInvite(db, req.body.token, req.body.password, meta);
+      void reply.setCookie(SESSION_COOKIE, token, { ...cookieOpts, maxAge: SESSION_ABSOLUTE_MS / 1000 });
+      return { user };
+    },
+  });
+
+  defineRoute(app, {
+    method: 'POST',
+    url: '/api/auth/forgot-password',
+    access: { public: 'asking for a reset link' },
+    schema: { body: forgotBody },
+    config: {
+      rateLimit: {
+        max: 5,
+        timeWindow: '1 hour',
+        // The body is only parsed by preHandler, so the key really is address + email.
+        hook: 'preHandler',
+        keyGenerator: (req: { ip: string; body?: unknown }) => {
+          const email = (req.body as { email?: unknown } | undefined)?.email;
+          return req.ip + '|' + (typeof email === 'string' ? email.trim().toLowerCase() : '');
+        },
+      },
+    },
+    async handler(req, reply, { db }) {
+      const gate = await forgotPerAddress(req);
+      if (!gate.isAllowed && gate.isExceeded) throw new HttpError(429, 'Too many requests. Please wait an hour and try again.');
+      const at = now?.();
+      await requestPasswordReset(db, req.body.email, { appOrigin: config.appOrigin, ip: req.ip, ...(at ? { now: at } : {}) });
+      return reply.code(202).send(FORGOT_REPLY);
+    },
+  });
+
+  defineRoute(app, {
+    method: 'POST',
+    url: '/api/auth/reset-password',
+    access: { public: 'using a reset link' },
+    schema: { body: resetBody },
+    config: { rateLimit: linkAttempts },
+    async handler(req, _reply, { db }) {
+      const at = now?.();
+      await resetPassword(db, req.body.token, req.body.password, { ip: req.ip, ...(at ? { now: at } : {}) });
+      return undefined;
+    },
+  });
+
+  defineRoute(app, {
+    method: 'POST',
+    url: '/api/me/password',
+    access: { permission: 'self:manage' },
+    schema: { body: changePasswordBody },
+    config: {
+      rateLimit: {
+        // A stolen session must not be able to guess the current password at speed.
+        max: 10,
+        timeWindow: '15 minutes',
+        hook: 'preHandler',
+        keyGenerator: (req: { ip: string; actor?: { id: string } | null }) => req.actor?.id ?? req.ip,
+      },
+    },
+    async handler(req, _reply, { actor, db }) {
+      if (!actor) throw unauthorized();
+      const at = now?.();
+      await changePassword(db, actor, req.sessionId, req.body, { ip: req.ip, ...(at ? { now: at } : {}) });
+      return undefined;
     },
   });
 }

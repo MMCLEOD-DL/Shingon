@@ -132,6 +132,6 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 /** Later tasks append their route modules here. */
 function registerRoutes(app: FastifyInstance, config: Config, now?: () => Date): void {
   registerAuthRoutes(app, config, now);
-  registerUserRoutes(app, now);
+  registerUserRoutes(app, config, now);
   registerAuditRoutes(app);
 }

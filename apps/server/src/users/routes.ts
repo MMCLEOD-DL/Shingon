@@ -1,12 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { CreateTeamInput, UpdateMeInput, UpdateUserInput } from '@hf/shared';
+import { CreateTeamInput, InviteInput, UpdateMeInput, UpdateUserInput } from '@hf/shared';
 import { defineRoute } from '../http/route.js';
 import { badRequest, conflict, notFound, unauthorized } from '../http/errors.js';
 import { revokeSessions } from '../auth/sessions.js';
 import { teams, users } from '../db/schema/index.js';
 import { audit } from '../audit/audit.js';
+import { createInvite, resendInvite } from '../auth/invites.js';
+import type { Config } from '../config.js';
 import { getUser, listTeams, listUsers } from './repo.js';
 
 const IdParams = z.strictObject({ id: z.uuid() });
@@ -16,7 +18,7 @@ const isUniqueViolation = (e: unknown): boolean => {
   return err?.code === '23505' || err?.cause?.code === '23505';
 };
 
-export function registerUserRoutes(app: FastifyInstance, now: () => Date = () => new Date()): void {
+export function registerUserRoutes(app: FastifyInstance, config: Pick<Config, 'appOrigin'>, now: () => Date = () => new Date()): void {
   defineRoute(app, {
     method: 'GET',
     url: '/api/users',
@@ -37,6 +39,36 @@ export function registerUserRoutes(app: FastifyInstance, now: () => Date = () =>
       const user = await getUser(db, actor, req.params.id);
       if (!user) throw notFound();
       return { user };
+    },
+  });
+
+  defineRoute(app, {
+    method: 'POST',
+    url: '/api/users/invite',
+    access: { permission: 'users:manage' },
+    schema: { body: InviteInput },
+    async handler(req, reply, { actor, db }) {
+      if (!actor) throw unauthorized();
+      const { userId } = await db.transaction((tx) => createInvite(tx, actor, req.body, { appOrigin: config.appOrigin, now: now(), ip: req.ip }));
+      const user = await getUser(db, actor, userId);
+      if (!user) throw notFound();
+      return reply.code(201).send({ user });
+    },
+  });
+
+  defineRoute(app, {
+    method: 'POST',
+    url: '/api/users/:id/resend-invite',
+    access: { permission: 'users:manage' },
+    schema: { params: IdParams },
+    async handler(req, _reply, { actor, db }) {
+      if (!actor) throw unauthorized();
+      const target = await getUser(db, actor, req.params.id);
+      if (!target) throw notFound();
+      if (target.activated) throw conflict('This person has already set their password.');
+      if (target.disabled) throw conflict('This account is switched off. Switch it back on before sending a new invite.');
+      await db.transaction((tx) => resendInvite(tx, actor, target, { appOrigin: config.appOrigin, now: now(), ip: req.ip }));
+      return undefined;
     },
   });
 

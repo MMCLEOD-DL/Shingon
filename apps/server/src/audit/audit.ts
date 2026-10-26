@@ -13,6 +13,10 @@ export const AUDIT_ACTIONS = [
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/** A password pasted into an email box must not reach the audit log, so only email-shaped input is kept. */
+export const auditableEmail = (v: string): string => (v.length <= 254 && EMAIL_SHAPE.test(v) ? v : '[not an email address]');
+
 const SECRET_KEY = /pass|token|secret|key/i;
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
