@@ -12,6 +12,7 @@ export function scriptedAsk(answers) {
   };
   return {
     asked, said,
+    isTTY: true, // a test sets it to false to play a run with no terminal
     async text(q, { def, check } = {}) {
       let a = next(q);
       if (a === null) return null;

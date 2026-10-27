@@ -13,6 +13,8 @@ function io(isTTY = true) {
 
 test('without a terminal every question fails closed and prints nothing', async () => {
   const { ask, out } = io(false);
+  assert.equal(ask.isTTY, false);
+  assert.equal(io().ask.isTTY, true);
   assert.equal(await ask.text('Host?'), null);
   assert.equal(await ask.secret('Token'), null);
   assert.equal(await ask.confirm('Sure?'), false);

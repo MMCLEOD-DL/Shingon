@@ -47,6 +47,8 @@ export function createAsk({ input, output, isTTY }) {
   }
 
   return {
+    isTTY: Boolean(isTTY),
+
     async text(q, { def, check } = {}) {
       if (!isTTY) return null;
       for (;;) {

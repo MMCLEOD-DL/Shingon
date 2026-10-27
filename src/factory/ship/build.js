@@ -24,7 +24,7 @@ const SAVE_TIMEOUT_MS = 30 * 60000;
 const COPY_TIMEOUT_MS = 60 * 60000;
 
 const qp = (p) => shQuote(assertSafe('path', p));
-function assertRef(ref) {
+export function assertRef(ref) {
   if (typeof ref !== 'string' || !REF_RE.test(ref) || ref.split('/').includes('..')) throw new Error(`unsafe image for a remote command: ${JSON.stringify(ref)}`);
   return ref;
 }
