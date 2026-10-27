@@ -273,3 +273,15 @@ test('approveBuild: approve, feedback, and no terminal', async () => {
   assert.match(n.text(), /There is no terminal to ask you, so the build was not approved and the app's main branch is unchanged/);
   for (const x of [a, f, n]) x.t.close();
 });
+
+test('final-fix 6: approveBuild asks again on a blank feedback line; end of input is a stop, never a rejection', async () => {
+  const blank = term({ answers: ['f', '', '   ', 'Make the totals bold.'] });
+  assert.deepEqual(await blank.t.approveBuild({ summary: 's' }), { note: 'Make the totals bold.' });
+  assert.match(blank.text(), /Please type your feedback/);
+  const eofAtNote = term({ answers: ['f'] });
+  assert.deepEqual(await eofAtNote.t.approveBuild({ summary: 's' }), { stop: true });
+  const eofAtChoice = term({ answers: [] });
+  assert.deepEqual(await eofAtChoice.t.approveBuild({ summary: 's' }), { stop: true });
+  assert.equal(await term({ answers: ['r'] }).t.approveBuild({ summary: 's' }), false, '[r] still rejects');
+  for (const x of [blank, eofAtNote, eofAtChoice]) x.t.close();
+});

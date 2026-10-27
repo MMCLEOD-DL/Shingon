@@ -144,13 +144,19 @@ export async function runFinal(bctx) {
     save();
   }
 
+  // The council sends event objects (Plan 9); the build log and hooks.onEvent want a string type.
+  const councilEvent = (e) => {
+    const { type, ...data } = e && typeof e === 'object' ? e : {};
+    emit(type == null || type === '' ? 'council-event' : String(type), data);
+  };
+
   // ---- 5: the council hook ---------------------------------------------------------------------------------
   let councilText = NO_COUNCIL_YET;
   if (typeof hooks.council === 'function') {
     if (build.council?.sha !== sha || build.council.status === 'paused') {
       progress('The council is reviewing the whole app');
       const r = await hooks.council({
-        projectDir, appDir, sha, brief, policy: brief.policy, runId: build.runId, slug, team, factory, onEvent: emit, checks: build.checks,
+        projectDir, appDir, sha, brief, policy: brief.policy, runId: build.runId, slug, team, factory, onEvent: councilEvent, checks: build.checks,
       });
       // Fail closed: an answer that is not one of the four statuses counts as blocked, with nothing to fix.
       const known = r && typeof r === 'object' && COUNCIL_STATUSES.has(r.status);
@@ -211,6 +217,11 @@ export async function runFinal(bctx) {
   let answer;
   try { answer = await hooks.approveBuild({ summary }); } catch { answer = false; }
   if (answer === true) return approve();
+  // { stop: true }: the operator stopped without deciding (end of input at the gate). Not a rejection: the build
+  // stays at the gate and "conductor build <slug>" asks again.
+  if (answer && typeof answer === 'object' && answer.stop === true) {
+    return finish('stopped', `You stopped at the build's approval without deciding. The app's main branch is unchanged; run "conductor build ${slug}" to be asked again.`);
+  }
   if (answer && typeof answer === 'object' && typeof answer.note === 'string' && answer.note.trim()) {
     fixUnit({
       build, prefix: 'feedback', title: 'Operator feedback',

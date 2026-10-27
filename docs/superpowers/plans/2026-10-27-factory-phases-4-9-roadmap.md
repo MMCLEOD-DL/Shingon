@@ -276,6 +276,7 @@ Plans 9 and 10 stay as drafted against v0.1.0, with text parsers pinned by fixtu
 - **`app-profile.json`.** Plan 8 writes it in `nameApp`, in the same commit as the BRAND line.
 - **Approval record.** `project.json.approved` is written straight after `main` moves by compare-and-swap, so its `sha` is the commit actually on `main`.
 - **Gates.** A gate that refuses returns `false`. A gate returns `{ note }` only when the operator asks for changes, because Plan 8 turns a note into a fix unit.
+  The build's gate (`hooks.approveBuild`) may also return `{ stop: true }` when the operator stopped without deciding (end of input). Plan 8 then ends the build as `stopped`, not `rejected`, so `conductor build <slug>` asks again. A gate that wraps `approveBuild` passes it on unchanged.
 - **Handler signature.** `handler(cli, ctx) -> Promise<number|null>`. The fields of `ctx`:
   - `{ cwd, env, stdin, stdout, isTTY, onSignal, exit }`;
   - `factory`, the result of `factoryConfig`;

@@ -231,3 +231,40 @@ test('review fix 3 and 4: a council fix without a title and instructions is no f
     .trim().split('\n').map((l) => JSON.parse(l)).filter((e) => e.type === 'build-council');
   assert.deepEqual(events.map((e) => e.status), ['blocked']);
 });
+
+test('final-fix 1: the council hook\'s onEvent takes event objects; the log and hooks.onEvent get a string type', async () => {
+  const s = await setup();
+  const seen = [];
+  const council = async ({ onEvent }) => {
+    onEvent({ type: 'council-round', round: 1, members: 2 });
+    onEvent({ type: 7, note: 'odd' });
+    onEvent(null);
+    return { status: 'approved', text: 'Council report: approved' };
+  };
+  const hooks = { ...s.hooks, ...gate([true]), council, onEvent: (e) => seen.push(e) };
+  const out = await runBuild({ factory: s.factory, slug: s.slug, baseDir: s.baseDir, team: team(), hooks, deps: { ...s.deps, runAppChecks: async () => green }, env: {} });
+  assert.equal(out.status, 'ready');
+  const log = readFileSync(path.join(buildDirOf(s.projectDir, out.runId), 'build-log.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const round = log.find((e) => e.type === 'council-round');
+  assert.ok(round, 'the event is logged under its own type');
+  assert.deepEqual([round.round, round.members], [1, 2]);
+  assert.ok(log.some((e) => e.type === '7' && e.note === 'odd'), 'a non-string type is made a string');
+  assert.ok(log.some((e) => e.type === 'council-event'), 'an event with no type is logged as council-event');
+  for (const e of log) assert.equal(typeof e.type, 'string');
+  const fromHook = seen.find((e) => e.type === 'council-round');
+  assert.deepEqual([fromHook?.round, fromHook?.members], [1, 2]);
+  for (const e of seen) assert.equal(typeof e.type, 'string');
+});
+
+test('final-fix 6: a gate answer of { stop: true } stops the build resumably; the next run asks again', async () => {
+  const s = await setup();
+  const g = gate([{ stop: true }]);
+  const out = await runBuild({ factory: s.factory, slug: s.slug, baseDir: s.baseDir, team: team(), hooks: { ...s.hooks, ...g }, deps: { ...s.deps, runAppChecks: async () => green }, env: {} });
+  assert.equal(out.status, 'stopped');
+  assert.match(out.reason, /You stopped at the build's approval/);
+  const b = latestBuild(s.projectDir);
+  assert.deepEqual([b.status, b.phase], ['stopped', 'gate']);
+  const g2 = gate([true]);
+  const again = await runBuild({ factory: s.factory, slug: s.slug, baseDir: s.baseDir, team: team(), hooks: { ...s.hooks, ...g2 }, deps: { ...s.deps, runAppChecks: async () => green }, env: {} });
+  assert.deepEqual([again.status, again.runId, g2.seen.length], ['ready', out.runId, 1]);
+});
