@@ -14,7 +14,7 @@ const CHECKS = {
   host: (v) => isStr(v) && /^[A-Za-z0-9.-]{1,253}$/.test(v) && !v.startsWith('-'),
   user: (v) => isStr(v) && /^[a-z_][a-z0-9_-]{0,31}$/.test(v),
   port: (v) => Number.isInteger(v) && v >= 1 && v <= 65535,
-  client: (v) => isStr(v) && v.length >= 1 && v.length <= 80 && !/[\x00-\x1f\x7f]/.test(v),
+  client: (v) => isStr(v) && v.length >= 1 && v.length <= 120 && !/[\x00-\x1f\x7f]/.test(v),
   purpose: (v) => PURPOSES.includes(v),
   image: (v) => isStr(v) && /^[a-z0-9][a-z0-9._/-]*:[A-Za-z0-9._-]+$/.test(v),
 };

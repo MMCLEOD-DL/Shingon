@@ -8,7 +8,7 @@ import { startPreview, stopPreview } from '../src/factory/preview.js';
 import { factoryConfig } from '../src/factory/config.js';
 import { runCommand } from '../src/exec.js';
 import { git } from '../src/workspace.js';
-import { stubDockerPath, stubCurl } from './helpers/stubDocker.js';
+import { stubDockerPath, stubCurl, stubHostname } from './helpers/stubDocker.js';
 import { makeFoundationRepo, makeProject } from './helpers/factoryFixtures.js';
 
 const tmp = (p) => mkdtempSync(path.join(tmpdir(), p));
@@ -29,7 +29,7 @@ test('demoUpScript: builds, makes .env with ops init --demo, starts proxy and ma
   assert.match(r.stdout, /HF-DEMO-UP\nDemo data added/);
   const env = readFileSync(path.join(root, 'runs', P, 'bundle', '.env'), 'utf8');
   for (const line of [`COMPOSE_PROJECT_NAME=${P}`, 'APP_TAG=20261027-143005-a1b2', 'APP_IMAGE=hf-preview/acme-ltd-app', 'OPS_IMAGE=hf-preview/acme-ltd-ops',
-    'SMTP_URL=smtp://mailpit:1025', 'BACKUP_REPOSITORY=/preview-has-no-backups', 'HTTP_PORT=192.168.1.111:8080', 'HTTPS_PORT=127.0.0.1:8081']) assert.ok(env.split('\n').includes(line), line);
+    'SMTP_URL=smtp://mailpit:1025', 'INSTANCE_MODE=demo', 'BACKUP_REPOSITORY=/preview-has-no-backups', 'HTTP_PORT=192.168.1.111:8080', 'HTTPS_PORT=127.0.0.1:8081']) assert.ok(env.split('\n').includes(line), line);
   assert.match(readFileSync(path.join(root, 'runs', P, 'bundle', 'compose.override.yaml'), 'utf8'), /mailpit: \{ image: axllent\/mailpit:v1\.21\.8, networks: \[backend\] \}/);
   const calls = readFileSync(`${logFile}.json`, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   const init = calls.find((a) => a.includes('init'));
@@ -38,6 +38,63 @@ test('demoUpScript: builds, makes .env with ops init --demo, starts proxy and ma
   assert.ok(calls.some((a) => a.join(' ') === `compose -p ${P} up -d proxy mailpit`));
   assert.ok(calls.some((a) => a.join(' ').startsWith('build -q -f deploy/Dockerfile -t hf-preview/acme-ltd-app:20261027-143005-a1b2')));
   assert.equal(calls.some((a) => a.includes('ops') && a.includes('up')), false, 'ops is never started for a preview');
+  assert.equal(env.split('\n').filter((l) => l.startsWith('INSTANCE_MODE')).length, 1);
+});
+
+// Runs demoUpScript locally under bash -s (the script arrives on stdin, as over ssh) with stub docker, curl and hostname.
+async function runDemoUp(over = {}, { addresses } = {}) {
+  const root = tmp('root-');
+  const src = await makeFoundationRepo({ extra: { 'deploy/compose.yaml': 'name: x\n', 'deploy/Caddyfile': ':80\n', 'deploy/Dockerfile': 'FROM x\n', 'deploy/ops.Dockerfile': 'FROM x\n' } });
+  mkdirSync(path.join(root, 'runs', P), { recursive: true });
+  await git(src, ['archive', '--format=tar.gz', '-o', path.join(root, 'runs', P, 'source.tar.gz'), 'HEAD']);
+  const { binDir, logFile } = stubDockerPath(tmp('bin-'), { seed: SEED });
+  stubCurl(binDir);
+  if (addresses !== undefined) stubHostname(binDir, addresses);
+  const script = demoUpScript({ root, project: P, slug: 'acme-ltd', runId: '20261027-143005-a1b2', client: 'Acme Ltd', origin: 'http://hf-build.lan:8080', bindHost: '192.168.1.111', port: 8080, version: '0.1.0', commit: 'abc1234', ...over });
+  const r = await runCommand({ cmd: 'bash', args: ['-s'], input: script, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` } });
+  const envFile = path.join(root, 'runs', P, 'bundle', '.env');
+  return { r, env: existsSync(envFile) ? readFileSync(envFile, 'utf8').split('\n') : [], logFile };
+}
+
+test('demoUpScript: commands that read stdin cannot swallow the rest of the script', async () => {
+  const { r } = await runDemoUp();
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /HF-STEP seeding\nHF-DEMO-UP\nDemo data added/);
+});
+
+test('demoUpScript: with no IPv4 host, binds to the box\'s own private address, never 0.0.0.0', async () => {
+  const { r, env } = await runDemoUp({ bindHost: null }, { addresses: 'fd00::5 192.168.1.50 172.17.0.1' });
+  assert.equal(r.code, 0, r.stderr);
+  assert.ok(env.includes('HTTP_PORT=192.168.1.50:8080'), env.join('|'));
+  assert.throws(() => demoUpScript({ root: '/srv/hf-factory', project: P, slug: 'acme-ltd', runId: '20261027-143005-a1b2', client: 'A', origin: 'http://h:1', bindHost: '0.0.0.0', port: 1, version: '0.1.0', commit: 'abc' }), /unsafe bindHost/);
+});
+
+test('demoUpScript: refuses plainly when the box has no private address', async () => {
+  const { r, logFile } = await runDemoUp({ bindHost: null }, { addresses: '8.8.8.8 fe80::1' });
+  assert.notEqual(r.code, 0);
+  assert.match(r.stderr, /no private network address/);
+  assert.equal(existsSync(logFile), false, 'nothing was built');
+});
+
+test('a 120-character client name is accepted and stays one argument', async () => {
+  const long = `Acme '${'x'.repeat(114)}`;
+  assert.equal(long.length, 120);
+  const { r, logFile } = await runDemoUp({ client: long });
+  assert.equal(r.code, 0, r.stderr);
+  const init = readFileSync(`${logFile}.json`, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).find((a) => a.includes('init'));
+  assert.equal(init[init.indexOf('--client') + 1], long);
+  assert.throws(() => demoUpScript({ root: '/srv/hf-factory', project: P, slug: 'acme-ltd', runId: '20261027-143005-a1b2', client: 'x'.repeat(121), origin: 'http://h:1', bindHost: '1.2.3.4', port: 1, version: '0.1.0', commit: 'abc' }), /unsafe client/);
+});
+
+test('bringUpDemo: a host name (not IPv4) makes the script find the private address on the box', async () => {
+  const appDir = await makeFoundationRepo();
+  const sha = (await git(appDir, ['rev-parse', 'HEAD'])).stdout.trim();
+  let script = '';
+  const ssh = { exec: async (m, s) => { if (/HF-STEP/.test(s)) script = s; return { code: 0, stdout: /HF-STEP/.test(s) ? `HF-DEMO-UP\n${SEED}\n` : '', stderr: '' }; }, upload: async () => ({ code: 0, stdout: '', stderr: '' }) };
+  const out = await bringUpDemo({ machine: { host: 'hf-build.lan', previewPort: 8080, runDir: `/srv/x/runs/${P}`, ssh: {} }, appDir, sha, slug: 'acme-ltd', runId: '20261027-143005-a1b2', client: 'A', ssh });
+  assert.equal(out.url, 'http://hf-build.lan:8080/');
+  assert.match(script, /hostname -I/);
+  assert.doesNotMatch(script, /0\.0\.0\.0/);
 });
 
 test('demoUpScript refuses unsafe values before writing anything', () => {
@@ -116,6 +173,14 @@ test('a preview whose machine vanished is recorded as gone; a failed start relea
   await assert.rejects(startPreview({ factory: s.factory, slug: s.slug, deps: failing }), /The preview did not start/);
   assert.equal(s.provider.held.size, 0);
   assert.equal(existsSync(path.join(s.projectDir, 'preview.json')), false);
+});
+
+test('a failure writing preview.json after bring-up releases the machine', async () => {
+  const s = await previewSetup();
+  const blocking = { ...s.deps, bringUpDemo: async () => { mkdirSync(path.join(s.projectDir, 'preview.json')); return { url: 'http://192.168.1.111:8080/', seedText: SEED }; } };
+  await assert.rejects(startPreview({ factory: s.factory, slug: s.slug, deps: blocking }));
+  assert.equal(s.provider.held.size, 0);
+  assert.equal(s.provider.released.length, 1);
 });
 
 test('no app yet is refused in plain words', async () => {

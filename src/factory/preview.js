@@ -97,14 +97,14 @@ export async function startPreview({ factory, slug, deps = {} }) {
     let up;
     try {
       up = await d.bringUpDemo({ machine, appDir, sha, slug, runId, client: project.client, ssh: d.ssh });
+      writeJsonAtomic(recordFile(projectDir), {
+        schema: 1, runId, machineId: machine.id, provider: d.provider.kind ?? d.provider.provider, host: machine.host,
+        url: up.url, sha, from, startedAt: d.now().toISOString(),
+      });
     } catch (err) {
       try { await machine.release(); } catch (re) { err.message = `${err.message} Releasing the machine also failed: ${re.message}`; }
       throw err;
     }
-    writeJsonAtomic(recordFile(projectDir), {
-      schema: 1, runId, machineId: machine.id, provider: d.provider.kind ?? d.provider.provider, host: machine.host,
-      url: up.url, sha, from, startedAt: d.now().toISOString(),
-    });
     return { status: 'started', url: up.url, seedText: up.seedText, sha, from };
   } finally {
     release();

@@ -15,19 +15,28 @@ const path = require('node:path');
 fs.appendFileSync(${JSON.stringify(logFile)}, args.join(' ') + '\\n');
 fs.appendFileSync(${JSON.stringify(`${logFile}.json`)}, JSON.stringify(args) + '\\n');
 const out = { ps: ${JSON.stringify(ps)}, volume: ${JSON.stringify(volumes)}, network: ${JSON.stringify(networks)}, seed: ${JSON.stringify(seed)} };
+// Like the real commands, compose exec and run read stdin: a script fed to bash -s loses its remaining lines
+// unless the call has </dev/null.
+const drain = () => { try { fs.readFileSync(0); } catch { /* no stdin */ } };
 const after = (flag) => { const i = args.indexOf(flag); return i >= 0 ? args[i + 1] : undefined; };
 if (args[0] === 'ps') process.stdout.write(out.ps);
 else if (args[0] === 'volume' && args[1] === 'ls') process.stdout.write(out.volume);
 else if (args[0] === 'network' && args[1] === 'ls') process.stdout.write(out.network);
 else if (args[0] === 'run' && args.includes('init') && after('--out') === '/out/.env') {
+  drain();
   const mount = after('-v') || '';
   const host = mount.slice(0, mount.lastIndexOf(':/out'));
   fs.mkdirSync(host, { recursive: true });
   fs.writeFileSync(path.join(host, '.env'), 'CLIENT_LABEL=' + after('--client') + '\\n# APP_TAG=\\nINSTANCE_MODE=demo\\n', { mode: 0o600 });
 }
-else if (args[0] === 'compose' && args.includes('exec')) process.stdout.write(out.seed);
+else if (args[0] === 'compose' && args.includes('exec')) { drain(); process.stdout.write(out.seed); }
 `);
   return { binDir: dir, logFile };
+}
+
+// A fake `hostname` whose -I prints the given addresses.
+export function stubHostname(binDir, addresses) {
+  return writeStubCli(binDir, 'hostname', `process.stdout.write(${JSON.stringify(`${addresses}\n`)});`);
 }
 
 // A fake `curl` that prints body and exits 0.
