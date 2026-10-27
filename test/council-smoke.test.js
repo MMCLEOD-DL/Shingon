@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync, spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { parseSmokeLog, runSmoke, pushCommit, cleanSmoke, SMOKE_STEPS, SmokeError } from '../src/council/smoke.js';
 import { fakeMachine, fakeSsh } from './helpers/councilFull.js';
 import { makeRepo } from './helpers/gitRepo.js';
@@ -100,15 +101,17 @@ test('runSmoke: unreachable, refused, timed out', async () => {
 
 // Runs the generated script locally under bash with the stub docker (never real docker or ssh). HF_SMOKE_TMP points the
 // clean-up at a private folder, so the shared /tmp is never touched; hf-smoke and hf-smoke-cookies there must be gone.
-function runLocally(script, { ps = '' } = {}) {
+// files: more names to create in the private temp folder, reported in leftovers if they survive.
+function runLocally(script, { ps = '', files = [] } = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), 'smoke-stub-'));
   try {
     const { binDir, logFile } = stubDockerPath(path.join(dir, 'bin'), { ps, volumes: 'vol1\n', networks: 'net1\n' });
     const smokeTmp = path.join(dir, 'tmp');
     mkdirSync(path.join(smokeTmp, 'hf-smoke'), { recursive: true });
     writeFileSync(path.join(smokeTmp, 'hf-smoke-cookies'), 'x');
+    for (const f of files) writeFileSync(path.join(smokeTmp, f), 'x');
     const r = spawnSync('bash', ['-s'], { input: script, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}`, HF_SMOKE_TMP: smokeTmp }, encoding: 'utf8' });
-    return { ...r, docker: existsSync(logFile) ? readFileSync(logFile, 'utf8') : '', leftovers: ['hf-smoke', 'hf-smoke-cookies'].filter((n) => existsSync(path.join(smokeTmp, n))) };
+    return { ...r, docker: existsSync(logFile) ? readFileSync(logFile, 'utf8') : '', leftovers: ['hf-smoke', 'hf-smoke-cookies', ...files].filter((n) => existsSync(path.join(smokeTmp, n))) };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -212,4 +215,37 @@ test('the generated script, run locally: the start line comes just before the ap
     const none = runLocally(calls[0].script.replace(/run-smoke\.sh/g, 'missing.sh'));
     assert.doesNotMatch(none.stdout, /COUNCIL-SMOKE-START/);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+// A stand-in catcher that only sleeps, started the way run-smoke.sh starts the real one (node deploy/smoke/catcher.mjs).
+function startCatcher(appDir, env) {
+  const child = spawn('node', ['deploy/smoke/catcher.mjs'], { cwd: appDir, env, stdio: 'ignore' });
+  const exited = once(child, 'exit').then(() => true);
+  return { child, gone: (ms) => Promise.race([exited, new Promise((r) => setTimeout(() => r(false), ms))]) };
+}
+
+test('the clean-up, run locally: stops only the smoke\'s own leftover catcher, and removes its image file and logs', async () => {
+  const app = mkdtempSync(path.join(tmpdir(), 'smoke-catcher-'));
+  mkdirSync(path.join(app, 'deploy', 'smoke'), { recursive: true });
+  writeFileSync(path.join(app, 'deploy', 'smoke', 'catcher.mjs'), 'setInterval(() => {}, 1000);\n');
+  writeFileSync(path.join(app, 'other.mjs'), 'setInterval(() => {}, 1000);\n');
+  const base = { PATH: process.env.PATH };
+  const smoke = startCatcher(app, { ...base, HF_SMOKE_ALERT_LOG: path.join(app, 'alerts.log'), HF_SMOKE_CATCHER_HOST: '127.0.0.1' });
+  const lookalike = startCatcher(app, base);   // same command line, not started by the smoke
+  const other = spawn('node', ['other.mjs'], { cwd: app, env: { ...base, HF_SMOKE_ALERT_LOG: 'x' }, stdio: 'ignore' });
+  try {
+    await new Promise((r) => setTimeout(r, 300));
+    const { ssh, calls } = fakeSsh([]);
+    await cleanSmoke({ ssh, machine: fakeMachine({ runDir: app }), remoteDir: path.join(app, 'smoke-app') });
+    const files = ['hf-smoke-images-0.1.0.tar', 'hf-smoke-alerts.log', 'hf-smoke-catcher.out', 'keep-me.tar'];
+    const r = runLocally(calls[0].script, { files });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(r.leftovers, ['keep-me.tar']);
+    assert.equal(await smoke.gone(5000), true, "the smoke's own catcher is stopped");
+    assert.equal(await lookalike.gone(300), false, 'a look-alike without the smoke\'s settings is left alone');
+    assert.equal(other.exitCode, null, 'an unrelated process is left alone');
+  } finally {
+    for (const c of [smoke.child, lookalike.child, other]) { try { c.kill('SIGKILL'); } catch { /* gone */ } }
+    rmSync(app, { recursive: true, force: true });
+  }
 });
