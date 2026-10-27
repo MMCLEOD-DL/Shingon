@@ -1,11 +1,13 @@
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import { ConfigError, loadConfig, type Config } from '../config.js';
 import { createDb, type Db } from '../db/client.js';
 import { users } from '../db/schema/index.js';
 import { audit, EMAIL_SHAPE } from '../audit/audit.js';
 import { inviteLink } from './invites.js';
+import { resetLink } from './reset.js';
+import { revokeSessions } from './sessions.js';
 import { issueToken } from './tokens.js';
 
 /**
@@ -46,16 +48,67 @@ export async function bootstrapAdmin(
   });
 }
 
+export const NOT_LOCKED_OUT = 'An admin can still sign in (an account that is switched on and has a password), so recovery has been refused and nothing was changed. That admin can switch accounts back on and invite people in the app; a forgotten password can be reset from the sign-in page.';
+
+/**
+ * Lockout recovery (`bootstrap-admin --recover`): when no admin can sign in (every admin is switched off or has never set
+ * a password), switches the named existing admin back on and returns a fresh link to set a password. Refused while any
+ * admin is both switched on and activated, and for an email that is not an admin's. The admin's old sessions are ended
+ * (they must not come back to life with the account), and the change is audited. No mail is sent: the box's mail may be
+ * what is broken.
+ */
+export async function recoverAdmin(
+  db: Db,
+  cfg: Pick<Config, 'appOrigin'>,
+  input: { email: string },
+): Promise<{ link: string; kind: 'invite' | 'reset' }> {
+  const email = input.email.trim().toLowerCase();
+  if (email.length > 254 || !EMAIL_SHAPE.test(email)) throw new Error('That email address does not look right.');
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(4242)`);
+    const [canSignIn] = await tx.select({ id: users.id }).from(users)
+      .where(and(eq(users.role, 'admin'), isNull(users.disabledAt), isNotNull(users.passwordHash))).limit(1);
+    if (canSignIn) throw new Error(NOT_LOCKED_OUT);
+    const admins = await tx.select({ id: users.id, email: users.email, passwordHash: users.passwordHash, disabledAt: users.disabledAt }).from(users).where(eq(users.role, 'admin'));
+    if (admins.length === 0) throw new Error('There is no admin yet, so there is nothing to recover. Create the first admin with bootstrap-admin --email <email address> --name <full name>.');
+    const target = admins.find((a) => a.email === email);
+    if (!target) throw new Error('That email address is not an admin\'s account, so nothing was changed. Recovery only works for an existing admin: give the email address of one.');
+    const ref = { targetType: 'user', targetId: target.id } as const;
+    const via = 'bootstrap-admin --recover';
+    if (target.disabledAt !== null) {
+      await tx.update(users).set({ disabledAt: null, updatedAt: new Date() }).where(eq(users.id, target.id));
+      await audit(tx, { actor: null }, { action: 'user.enabled', ...ref, details: { via } });
+    }
+    await revokeSessions(tx, target.id);
+    if (target.passwordHash === null) {
+      // Never activated: the invite link sets the first password.
+      const token = await issueToken(tx, target.id, 'invite');
+      await audit(tx, { actor: null }, { action: 'user.invited', ...ref, details: { email, role: 'admin', via, resent: true } });
+      return { link: inviteLink(cfg.appOrigin, token), kind: 'invite' };
+    }
+    const token = await issueToken(tx, target.id, 'reset');
+    await audit(tx, { actor: null }, { action: 'auth.password_reset_requested', ...ref, details: { email, via } });
+    return { link: resetLink(cfg.appOrigin, token), kind: 'reset' };
+  });
+}
+
+const USAGE = [
+  'Usage: bootstrap-admin --email <email address> --name <full name>',
+  '       bootstrap-admin --recover --email <email address of an existing admin>',
+  '         (only when no admin can sign in: switches that admin back on and prints a link to set a password)',
+].join('\n');
+
 async function main(): Promise<number> {
-  let values: { email?: string; name?: string };
+  let values: { email?: string; name?: string; recover?: boolean };
   try {
-    ({ values } = parseArgs({ options: { email: { type: 'string' }, name: { type: 'string' } }, strict: true }));
+    ({ values } = parseArgs({ options: { email: { type: 'string' }, name: { type: 'string' }, recover: { type: 'boolean' } }, strict: true }));
   } catch {
-    console.error('Usage: bootstrap-admin --email <email address> --name <full name>');
+    console.error(USAGE);
     return 1;
   }
-  if (!values.email || !values.name) {
-    console.error('Usage: bootstrap-admin --email <email address> --name <full name>');
+  const recover = values.recover === true;
+  if (!values.email || (recover ? values.name !== undefined : !values.name)) {
+    console.error(USAGE);
     return 1;
   }
   let config: Config;
@@ -67,13 +120,22 @@ async function main(): Promise<number> {
   }
   const handle = createDb(config.databaseUrl);
   try {
-    const { link } = await bootstrapAdmin(handle.db, config, { email: values.email, name: values.name });
+    if (recover) {
+      const { link, kind } = await recoverAdmin(handle.db, config, { email: values.email });
+      console.log(kind === 'invite'
+        ? `The admin account is switched on again. Open this link within 7 days to set its password:\n${link}`
+        : `The admin account is switched on again. Open this link within 1 hour to set a new password (run this again for a fresh link if it runs out):\n${link}`);
+      return 0;
+    }
+    const { link } = await bootstrapAdmin(handle.db, config, { email: values.email, name: values.name ?? '' });
     console.log(`Open this link within 7 days to set the admin password:\n${link}`);
     return 0;
   } catch (e) {
     const code = (e as { code?: unknown } | null)?.code;
     // Our own messages are plain English; anything else (a database error) is shown only as a fixed line.
-    console.error(e instanceof Error && !code && e.name === 'Error' ? e.message : 'The admin could not be created. Check that the database is running and up to date.');
+    console.error(e instanceof Error && !code && e.name === 'Error' ? e.message
+      : recover ? 'The admin could not be recovered. Check that the database is running and up to date.'
+        : 'The admin could not be created. Check that the database is running and up to date.');
     return 1;
   } finally {
     await handle.close().catch(() => undefined);
