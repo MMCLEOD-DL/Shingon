@@ -66,3 +66,13 @@ test('collect: timed out and refused are ToolRun status error; fallbacks', async
   const [n] = await RELIABILITY.collect({ brief: {}, evidence: { smoke: null, smokeStatus: 'missing' } });
   assert.match(n.findings[0].title, /^Reliability was not proven: the reliability test gave no result$/);
 });
+
+test('odd steps in a smoke result never crash the member: a non-list or non-object step is skipped', async () => {
+  for (const steps of ['x', { n: 1 }, [null, 7, 'a', { n: '5', title: 'back up, then test a restore', ok: false }]]) {
+    const [run] = await RELIABILITY.collect({ brief: {}, evidence: { smokeStatus: 'ran', machine: 'm', smoke: { passed: false, failure: 'boom', steps, failedStep: '5' } } });
+    assert.equal(run.findings[0].grade, 'blocking', JSON.stringify(steps));
+    assert.ok(run.context.endsWith('(the test stops and starts the app and ops cleanly).'));
+  }
+  const [run] = await RELIABILITY.collect({ brief: {}, evidence: { smokeStatus: 'ran', machine: 'm', smoke: { passed: false, failure: 'boom', steps: [null, { title: 'back up', ok: false }] } } });
+  assert.match(run.context, /^✗ back up\n/);
+});

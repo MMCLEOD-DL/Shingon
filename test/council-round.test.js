@@ -306,3 +306,17 @@ test('a project round adds the foundation problem as a locked warning, and missi
   assert.deepEqual(r.report.checked.map((l) => l.split(':')[0]), ['Design']);
   assert.match(r.report.checked[0], /^Design: the page check \(desktop and phone\), the screen list check, house style check$/);
 });
+
+test('a project round: a member whose checks throw is a locked "not proven" warning the interpreter cannot set aside', async () => {
+  const reply = () => ({ text: fence({ findings: [{ id: 'L1', decision: 'dismiss', grade: 'note', why: 'just a glitch' }] }) });
+  const { ctx } = await ctxWith(reply, { councilTools: { ...councilStubs(mkdtempSync(path.join(tmpdir(), 'crnd-')), {}), axe: false } });
+  const buildDir = path.join(mkdtempSync(path.join(tmpdir(), 'crnd-p-')), 'builds', '20261027-100000-abcd');
+  const project = { slug: 'acme', runId: '20261027-100000-abcd', buildDir, brief: BRIEF, policy: BRIEF.policy, briefText: '# Acme Ltd', checks: null, factory: {}, problem: null,
+    deps: { run: fakeGatesRun().run, helpers: { browsersInstalled: () => ({ ok: true, why: '' }), testDatabaseProblem: () => null }, getMachineProvider: () => null } };
+  const broken = { member: 'legal', label: 'Legal', alwaysInterpret: false, collect: async () => { throw new Error('bug'); } };
+  const r = await runCouncilRound(ctx, { files: [], tests: null, diff: '', members: [MEMBERS.reliability, broken], project });
+  const f = r.report.warnings.find((x) => x.member === 'legal');
+  assert.deepEqual([f.title, f.locked, f.dismissed ?? false], ['Legal was not proven: its checks hit a problem (bug)', true, false]);
+  assert.equal(r.report.warnings[0], f, 'it heads the warnings with the other "not proven" ones');
+  assert.ok(r.report.warnings.some((x) => x.title.startsWith('Reliability was not proven')));
+});

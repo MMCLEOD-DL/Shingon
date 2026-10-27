@@ -171,8 +171,13 @@ export async function runCouncilRound(ctx, { files, tests, diff, members = MEMBE
       runs = await m.collect(input);
     } catch (e) {
       const msg = String(e?.message ?? e);
+      // A project round makes it a locked "not proven" warning (the interpreter cannot set it aside);
+      // an ordinary round keeps the Plan 5 wording.
+      const crashed = project
+        ? makeFinding({ member: m.member, grade: 'warning', locked: true, title: `${m.label} was not proven: its checks hit a problem (${clip(msg, 120)})`, detail: msg })
+        : makeFinding({ member: m.member, grade: 'warning', title: `The ${m.label} checks hit a problem (${clip(msg, 120)}), so they gave no answer.`, detail: msg });
       runs = [{ tool: m.member, label: `${m.label} checks`, status: 'error', note: `The ${m.label} checks hit a problem (${clip(msg, 200)}), so they gave no answer.`,
-        findings: [makeFinding({ member: m.member, grade: 'warning', title: `The ${m.label} checks hit a problem (${clip(msg, 120)}), so they gave no answer.`, detail: msg })] }];
+        findings: [crashed] }];
     }
     for (const r of runs) log.event('council-tool', { member: m.member, tool: r.tool, status: r.status, findings: r.findings.length });
     toolRuns.push(...runs);

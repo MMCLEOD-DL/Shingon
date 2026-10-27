@@ -22,7 +22,9 @@ const byMember = (list) => list
 // Project rounds (Plan 9): the "not proven / not checked" locked warnings head the warnings (index Ruling 7).
 const NOT_PROVEN = ['Reliability was not proven', 'Brief coverage was not proven', 'The pages were not checked',
   'The role-crossing tests were not proven', 'Accessibility was not'];
-const notProven = (f) => f.locked && NOT_PROVEN.some((p) => String(f.title).startsWith(p));
+// A member whose checks crashed on a project round: "<Member> was not proven: ...".
+const MEMBER_NOT_PROVEN = Object.values(MEMBER_LABEL).map((l) => `${l} was not proven: `);
+const notProven = (f) => f.locked && [...NOT_PROVEN, ...MEMBER_NOT_PROVEN].some((p) => String(f.title).startsWith(p));
 const notProvenFirst = (list) => [...list.filter(notProven), ...list.filter((f) => !notProven(f))];
 
 // checked / coverage / files are given on project rounds only; an ordinary report has none of them.

@@ -46,7 +46,8 @@ export function smokeFindings(smoke, { machine } = {}) {
 }
 
 function smokeContext(smoke) {
-  const lines = (smoke?.steps ?? []).map((s) => `${s.ok ? '✓' : '✗'} ${s.title}`);
+  const steps = Array.isArray(smoke?.steps) ? smoke.steps : [];
+  const lines = steps.filter((s) => s && typeof s === 'object').map((s) => `${s.ok ? '✓' : '✗'} ${s.title ?? s.n ?? 'a step'}`);
   return [...lines, NOT_COVERED].join('\n');
 }
 
