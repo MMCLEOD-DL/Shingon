@@ -27,6 +27,7 @@ export const OUTBOUND_PACKAGES = Object.freeze([
 export const IGNORED_HOST = /^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|.+\.(test|example|invalid|local|localhost)|example\.(com|org|net)|www\.w3\.org|json-schema\.org|schemas\..+)$/i;
 
 const SKIP_FILE = /(^|\/)(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|package\.json)$|(^|\/)node_modules\/|\.(md|txt|rst|adoc)$|(^|\/)docs?\//i;
+const DOC_FILE = /\.(md|txt|rst|adoc)$|(^|\/)docs?\//i;
 const MAX_BYTES = 1024 * 1024;
 const MAX_FINDINGS = 20;
 const URL_RE = /\b(?:https?|wss?):\/\/(?:[^\s/@'"`<>]*@)?(\[[0-9a-f:]+\]|[a-z0-9][a-z0-9.-]*)/gi;
@@ -165,7 +166,7 @@ export function retentionFindings({ dir, files, policy, tables }) {
       detail: 'Personal data was found in the app, but the brief does not say how long it may be kept.' })];
   }
   const handled = (files ?? []).some((f) => {
-    if (TEST_FILE.test(f)) return false;
+    if (TEST_FILE.test(f) || DOC_FILE.test(f)) return false;
     if (RETENTION.test(f)) return true;
     const text = readText(dir, f);
     return text !== null && RETENTION.test(text);

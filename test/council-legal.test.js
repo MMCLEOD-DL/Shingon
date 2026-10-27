@@ -241,3 +241,27 @@ test('licence exceptions: a file that is not an object of strings accepts nothin
     assert.equal(runs.find((r) => r.tool === 'licences').findings.length, 1, bad);
   }
 });
+
+test('licence exceptions: only exact name@version keys are accepted (a licence id never is)', async () => {
+  const runs = await LEGAL.collect(await project10({ 'licence-exceptions.json': JSON.stringify({ 'WTFPL': 'whatever', '@scope/pkg@1.0.0': 'fine', 'left-pad@1.3.0': 'ok' }) }));
+  assert.deepEqual(runs.find((r) => r.tool === 'licences').findings, []);
+  assert.deepEqual(titles10(runs, 'licence-exceptions').map((x) => x[1]), [
+    'licence-exceptions.json lists WTFPL, which is not name@version, so the council did not accept it',
+    "left-pad@1.3.0 is accepted by the app's licence exceptions: ok",
+  ]);
+  const only = await LEGAL.collect(await project10({ 'licence-exceptions.json': JSON.stringify({ 'WTFPL': 'whatever' }) }));
+  assert.equal(only.find((r) => r.tool === 'licences').findings.length, 1, 'a licence id accepts nothing');
+});
+
+test('licence exceptions: a symlinked file is refused; data-flow context names ids', async () => {
+  const input = await project10();
+  const outside = mkdtempSync(path.join(tmpdir(), 'cleg-out-'));
+  writeFileSync(path.join(outside, 'x.json'), JSON.stringify({ 'left-pad@1.3.0': 'ok' }));
+  symlinkSync(path.join(outside, 'x.json'), path.join(input.dir, 'licence-exceptions.json'));
+  const runs = await LEGAL.collect({ ...input, brief: { policy: { outbound: ['cloudflare-tunnel', 'nope'] } } });
+  assert.equal(runs.find((r) => r.tool === 'licences').findings.length, 1);
+  assert.equal(titles10(runs, 'licence-exceptions')[0][0], 'warning');
+  const ctx = runs.find((r) => r.tool === 'data-flow').context.join('\n');
+  assert.match(ctx, /cloudflare-tunnel \(Cloudflare Tunnel\): \*\.cloudflare\.com, \*\.argotunnel\.com/);
+  assert.match(ctx, /nope \(not a known service\)/);
+});

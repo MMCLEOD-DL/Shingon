@@ -93,3 +93,9 @@ test('a wildcard host does not match a look-alike, and data-flow groups by host'
   assert.match(f[0].detail, /and 2 more/);
   assert.match(f[0].detail, /allows: none/);
 });
+
+test('a docs file mentioning retention does not count as a retention job', () => {
+  const a = app({ 'apps/server/src/db/schema/c.ts': "export const c = pgTable('c', { email: text('email') });\n", 'docs/retention.md': 'retention policy', 'NOTES.md': 'purge' });
+  const p = personalDataFindings(a);
+  assert.equal(retentionFindings({ ...a, policy: { retention: { days: 30 } }, tables: p.tables }).length, 1);
+});

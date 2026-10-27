@@ -1,14 +1,13 @@
 // src/council/licences.js
 // Legal member: dependency licences from the npm lockfile (permissive-only rule, spec §5a) and
 // an optional ScanCode pass over the files this run changed (copied copyleft code).
-import { mkdtempSync, mkdirSync, copyFileSync, rmSync, lstatSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, copyFileSync, rmSync, lstatSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { makeFinding } from './findings.js';
 import { runTool, skipped, TOOL_LABEL } from './tools.js';
 import { isIntroduced } from './security.js';
 import { lockPackages, readLock, lockDelta, hasLicenceData } from './lockfile.js';
-import { readFileSync } from 'node:fs';
 import { OUTBOUND_SERVICES } from '../factory/outbound.js';
 import { outboundDestinations, packageDestinations, dataFlowFindings, personalDataFindings, retentionFindings } from './dataflow.js';
 
@@ -173,11 +172,15 @@ async function collectScancode(input) {
   }
 }
 
+const NAME_AT_VERSION = /^(@[^/@\s]+\/)?[^/@\s]+@[^@\s]+$/;
 // The app's own licence-exceptions.json: { "name@version": "the operator's reason" } (Contract 7.7).
 export async function licenceExceptions({ dir }) {
   let text;
-  try { text = readFileSync(path.join(dir, 'licence-exceptions.json'), 'utf8'); } catch (e) {
-    if (e?.code === 'ENOENT') return { accept: [], findings: [], notes: [] };
+  try {
+    const p = path.join(dir, 'licence-exceptions.json');
+    text = lstatSync(p).isFile() ? readFileSync(p, 'utf8') : null; // a symlink is never followed
+  } catch (e) {
+    if (e?.code === 'ENOENT') return { accept: [], findings: [] };
     text = null;
   }
   let data = null;
@@ -197,6 +200,12 @@ export async function licenceExceptions({ dir }) {
       findings.push(makeFinding({ member: 'legal', tool: 'licence-exceptions', grade: 'warning', file: 'licence-exceptions.json',
         title: `licence-exceptions.json lists ${key} with no reason, so the council did not accept it`,
         detail: "An exception needs the operator's reason written down (spec §5a)." }));
+      continue;
+    }
+    if (!NAME_AT_VERSION.test(key)) {
+      findings.push(makeFinding({ member: 'legal', tool: 'licence-exceptions', grade: 'warning', file: 'licence-exceptions.json',
+        title: `licence-exceptions.json lists ${key}, which is not name@version, so the council did not accept it`,
+        detail: 'An exception names one package and version, such as "left-pad@1.3.0"; a licence name is never accepted this way.' }));
       continue;
     }
     accept.push(key);
@@ -219,10 +228,10 @@ async function collectDataFlow(input) {
   const base = input.baseSha ? await readLock(input.dir, input.baseSha) : null;
   const introduced = lockDelta(lockPackages(base), headPkgs);
   const dests = [...outboundDestinations(input), ...packageDestinations(headPkgs.filter((p) => introduced.has(p.name)))];
-  const known = (Array.isArray(policy.outbound) ? policy.outbound : []).filter((id) => typeof id === 'string' && Object.hasOwn(OUTBOUND_SERVICES, id));
+  const policyIds = Array.isArray(policy.outbound) ? policy.outbound : [];
   return { tool: 'data-flow', label, status: 'ran', note: null, findings: dataFlowFindings(dests, policy, OUTBOUND_SERVICES),
     context: [`Outside destinations found: ${dests.length ? dests.map((d) => `${d.service ?? d.host} (${d.how === 'package' ? d.pkg : `${d.file}:${d.line}`})`).join('; ') : 'none'}.`,
-      `Outside services the policy allows: ${known.length ? known.map((id) => `${OUTBOUND_SERVICES[id].label} (${OUTBOUND_SERVICES[id].hosts.join(', ')})`).join('; ') : 'none'}.`] };
+      `Outside services the policy names: ${policyIds.length ? policyIds.map((id) => (Object.hasOwn(OUTBOUND_SERVICES, id) ? `${id} (${OUTBOUND_SERVICES[id].label}): ${OUTBOUND_SERVICES[id].hosts.join(', ')}` : `${id} (not a known service)`)).join('; ') : 'none'}.`] };
 }
 
 function collectDataPolicy(input) {
