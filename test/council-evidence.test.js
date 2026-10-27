@@ -286,3 +286,40 @@ test('symlinks in the build\'s screenshots are not copied', async () => {
   assert.equal(existsSync(path.join(ctx.ws.dir, 'reports', 'screenshots', 'leak.png')), false);
   assert.equal(readdirSync(e.shotsDir).includes('leak.png'), false);
 });
+
+test('Plan 8\'s checks for a different commit are not reused; checks with no commit named still are', async () => {
+  const ctx = await ctxFor();
+  const { run, calls } = fakeGatesRun();
+  const deps = { run, helpers: okChecks, getMachineProvider: () => null, createSsh: () => fakeSsh([]).ssh };
+  const e = await collectEvidence(ctx, { project: { ...project, checks: { ...buildChecks(), sha: 'f'.repeat(40) } }, head, round: 1, deps });
+  assert.deepEqual(e.gates.source, { verify: 'council', browser: 'council', a11y: null });
+  assert.deepEqual(calls.map((c) => c.step), ['npm-ci', 'lint', 'typecheck', 'licences', 'vitest', 'build', 'browser']);
+  assert.ok(!stages(ctx).includes('reuse:ok'));
+  for (const sha of [null, undefined]) {
+    const c2 = await ctxFor();
+    const same = await collectEvidence(c2, { project: { ...project, checks: { ...buildChecks(), sha } }, head, round: 1, deps: { ...deps, run: fakeGatesRun().run } });
+    assert.deepEqual(same.gates.source, { verify: 'build', browser: 'build', a11y: null });
+  }
+  const c3 = await ctxFor();
+  const match = await collectEvidence(c3, { project: { ...project, checks: { ...buildChecks(), sha: head } }, head, round: 1, deps: { ...deps, run: fakeGatesRun().run } });
+  assert.deepEqual(match.gates.source, { verify: 'build', browser: 'build', a11y: null });
+});
+
+test('a provider that hands back no machine: "not proven", never a TypeError', async () => {
+  for (const m of [null, undefined]) {
+    const provider = { async acquire() { return m; } };
+    const e = await collectEvidence(await ctxFor(), { project, head, round: 1, deps: { run: fakeGatesRun().run, helpers: okChecks, getMachineProvider: () => provider, createSsh: () => fakeSsh([]).ssh } });
+    assert.deepEqual([e.smoke, e.smokeStatus, e.machine], [null, 'error', null]);
+    assert.equal(e.smokeNote, 'The test machine could not be started (the machine provider gave no machine).');
+  }
+});
+
+test('mergeGates: the council\'s own browser or a11y step ran with axe ok but left no accessibility results → "could not read", whatever the exit code', () => {
+  const base = { 'npm-ci': 0, lint: null, typecheck: null, licences: null, vitest: null, build: 0, browser: null, a11y: null };
+  const reused = { verify: { status: 'failed', summary: '', output: '' }, tests: null, browser: [], crossing: null, screenshotsDir: null };
+  const own = (steps, extra = {}) => ({ steps: { ...base, ...steps }, verify: null, tests: null, browser: [], a11y: null, crossing: null, screenshots: [], logs: {}, axe: { status: 'ok' }, note: null, source: {}, ...extra });
+  assert.match(mergeGates(reused, own({ browser: 1 })).note ?? '', /could not read the accessibility scan results/);
+  assert.match(mergeGates(reused, own({ a11y: 1 })).note ?? '', /could not read the accessibility scan results/);
+  assert.equal(mergeGates(reused, own({ a11y: 1 }, { a11y: [] })).note, null);
+  assert.equal(mergeGates(reused, own({ a11y: 1 }, { axe: { status: 'off' } })).note, null);
+});

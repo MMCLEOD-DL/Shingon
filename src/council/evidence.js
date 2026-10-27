@@ -84,7 +84,8 @@ export function mergeGates(reused, own) {
   let note = own?.note ?? null;
   // Ruling R20: a step that exits 0 but leaves no report is "could not read", never clean.
   if (ran('browser') && steps.browser === 0 && own.browser == null) note = join(note, PAGES_UNREAD);
-  if (ownA11y && (steps.a11y === 0 || steps.browser === 0) && own.a11y == null) note = join(note, A11Y_UNREAD);
+  // Whatever the exit code: the council's own browser or a11y step ran with axe and left no results to read.
+  if (ownA11y && own.a11y == null) note = join(note, A11Y_UNREAD);
   return {
     steps,
     verify: reused.verify ?? null,
@@ -155,6 +156,10 @@ async function smokeStage({ ctx, project, head, deps, emit }) {
     emit('acquire', 'error');
     return { ...out, smokeStatus: 'error', smokeNote: `The test machine could not be started (${plain(e)}).` };
   }
+  if (!machine) {
+    emit('acquire', 'error');
+    return { ...out, smokeStatus: 'error', smokeNote: 'The test machine could not be started (the machine provider gave no machine).' };
+  }
   const id = machine.id;
   emit('acquire', 'ok', id);
   out.machine = id;
@@ -222,8 +227,10 @@ export async function collectEvidence(ctx, { project, head, round, deps = {} }) 
       return saved.value;
     }
 
-    // Plan 8's checks for this commit.
-    const checks = project.checks ? { ...project.checks, reports: reportsInside(project.checks.reports, project.buildDir) } : null;
+    // Plan 8's checks for this commit. Checks that name a different commit prove nothing here (no commit named is allowed).
+    const sameCommit = (c) => c?.sha == null || String(c.sha) === String(head);
+    const checks = project.checks && sameCommit(project.checks)
+      ? { ...project.checks, reports: reportsInside(project.checks.reports, project.buildDir) } : null;
     const reused = reuseChecks(checks);
     if (checks) emit('reuse', 'ok');
 
