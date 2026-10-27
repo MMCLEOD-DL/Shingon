@@ -325,8 +325,7 @@ safe.
 - `factory` (client projects and briefs):
   - `projectsRoot`: where project folders go (default `~/highland-projects`). It must start with
     `/` or `~`, and the `CONDUCTOR_PROJECTS_ROOT` environment variable overrides it;
-  - `operatorName`: the name recorded on approved briefs (default: your computer login name).
-
+  - `operatorName`: the name recorded on approved briefs (default: your computer login name);
   - `foundation`: `repo` (the foundation's folder or address, default `/root/highland-foundation`)
     and `tag` (the release to build from, default `v0.1.0`);
   - `build`: `browserGate` (default `true`), `fixRounds` (default 2), `councilFixRounds`

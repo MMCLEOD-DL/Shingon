@@ -1,6 +1,7 @@
 # Plan 8 build and preview smoke: result
 
-Run with `bash spikes/factory-build-smoke/run-build-smoke.sh`. Date: ____  Operator: ____
+Run with `bash spikes/factory-build-smoke/run-build-smoke.sh`. The script uses a throwaway projects folder under /var/tmp/hf-build-smoke.* (printed at the start); it is kept for evidence and never touches ~/highland-projects.
+Date: ____  Operator: ____
 
 - [ ] Step 0: pre-flight passed — result:
 - [ ] Step 1: project new, slug harbour-cafe — result:

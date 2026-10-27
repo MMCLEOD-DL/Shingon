@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Plan 8 smoke (operator-run in a real terminal): real models, real CT 111, a local PostgreSQL role, YOU at the gate.
-# Never run by the test suite. Uses the real ~/highland-projects, so it refuses if harbour-cafe already exists.
+# Never run by the test suite. Uses a throwaway projects folder (CONDUCTOR_PROJECTS_ROOT) that is KEPT afterwards as evidence;
+# it never touches the real ~/highland-projects.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 HERE="$ROOT/spikes/factory-build-smoke"
 C="node $ROOT/bin/conductor.js"
-PROJ="$HOME/highland-projects/harbour-cafe"
+export CONDUCTOR_PROJECTS_ROOT="$(mktemp -d /var/tmp/hf-build-smoke.XXXXXX)"
+PROJ="$CONDUCTOR_PROJECTS_ROOT/harbour-cafe"
+echo "projects folder (kept for evidence): $CONDUCTOR_PROJECTS_ROOT"
 CT=192.168.1.111
 [ -t 0 ] && [ -t 1 ] || { echo "Run this in a real terminal (it asks you questions)."; exit 2; }
 
@@ -49,7 +52,7 @@ $C build harbour-cafe || echo "(exit $?)"
 ok "Steps 4, 5 and 6: it carried on without redoing work; the preview worked on the phone; the feedback feature ran; approved."
 
 step "7. git and project.json"
-git -C "$PROJ/app" log --oneline main | head -8
+git -C "$PROJ/app" log --oneline -8 main
 echo "tags on main (expect none):"; git -C "$PROJ/app" tag --points-at main
 cat "$PROJ/project.json"
 echo "Expect: one commit per feature, 'Name the app: Harbour Café' (with app-profile.json), then the foundation's history;"
@@ -63,7 +66,7 @@ ok "It replaced the earlier preview; the new address opens."
 step "9. stop the preview; nothing may be left on CT 111"
 $C preview harbour-cafe --stop
 $C machines
-ssh "root@$CT" 'docker ps -a --format "{{.Names}}" | grep -c "^hf-" || true; ls /srv/hf-factory/runs; docker images "hf-preview/*" -q | wc -l'
+ssh "root@$CT" 'docker ps -a --format "{{.Names}}" | grep -c "^hf-harbour-cafe-" || true; ls /srv/hf-factory/runs; docker images "hf-preview/*" -q | wc -l'
 ok "No machines in use; container count 0, runs folder empty, image count 0."
 
 step "10. sweep"
