@@ -70,9 +70,35 @@ test('a hand-edited compose.yaml is left alone, with a note', async () => {
 });
 
 test('an update that could not start changes nothing', async () => {
-  const r = await go([{ match: 'setsid', code: 1, stderr: 'setsid: command not found\n' }]);
+  const r = await go([{ match: 'setsid', code: 1 }]); // cd/mkdir/rm failed: no launch marker
   assert.equal(r.outcome, 'cancelled');
-  assert.match(r.text, /^The update could not be started on acme-office \(setsid: command not found\)\. Nothing was changed\./);
+  assert.match(r.text, /^The update could not be started on acme-office \(code 1\)\. Nothing was changed\./);
+  assert.equal(r.dep.pendingCheck, null);
+  assert.equal(r.saved[0].pendingCheck.why, 'in-progress'); // saved before the box was touched
+});
+
+test('an update that was launched but never wrote its log is unsure, never "nothing changed"', async () => {
+  const r = await go([{ match: 'setsid', code: 1, stdout: 'launched\n' }]);
+  assert.equal(r.outcome, 'lost-contact');
+  assert.deepEqual(r.dep.pendingCheck, { since: '2026-10-27T10:00:00.000Z', version: '0.1.4', foundation: 'v0.1.1', why: 'lost-contact' });
+  assert.match(r.text, /^Conductor started the update on acme-office but could not see it begin; check the box\./);
+  assert.doesNotMatch(r.text, /Nothing was changed/);
+});
+
+test('a crash while polling leaves the in-progress pending check in place', async () => {
+  const f = fakeSsh(mkdtempSync(path.join(tmpdir(), 'ls-')), [{ match: 'setsid', stdout: 'launched\n' }, { match: 'exit=running', stdout: 'exit=running\nStopping the app.\n' }]);
+  const saved = [];
+  await assert.rejects(runLaterShip({ dep: live(), target: T, version: '0.1.4', foundation: 'v0.1.1', imagesFile: 'images-0.1.4.tar', runId: '20261027-100000-a1b2',
+    say: (s) => { if (s.startsWith('  box:')) throw new Error('interrupted'); }, save: (d) => { saved.push(d); return d; }, env: f.env(),
+    now: () => 'now', opts: { pollMs: 1, sleep: async () => {} } }), /interrupted/);
+  assert.equal(saved.length, 1);
+  assert.deepEqual(saved[0].pendingCheck, { since: 'now', version: '0.1.4', foundation: 'v0.1.1', why: 'in-progress' });
+});
+
+test('every recorded outcome replaces the in-progress check', async () => {
+  const r = await go([{ match: 'setsid' }, { match: 'exit=running', stdout: `exit=1\n${ROLLED}\n` }]);
+  assert.equal(r.dep.pendingCheck, null);
+  assert.equal(r.saved.at(-1).pendingCheck, null);
 });
 
 test('urgent sets a pending check', async () => {
@@ -88,7 +114,7 @@ test('the start command backgrounds only the update, then checks the log inside 
   const r = await startDetachedUpdate(T, { dir: '/opt/highland/acme', version: '0.1.4', imagesFile: 'images-0.1.4.tar', runId: '20261027-100000-a1b2', registry: false, env: f.env() });
   assert.deepEqual(r, { ok: true, problem: null, unsure: false });
   const cmd = f.calls()[0].command;
-  assert.match(cmd, /^cd '\/opt\/highland\/acme' && mkdir -p \.conductor && rm -f \.conductor\/update-20261027-100000-a1b2\.exit \.conductor\/update-20261027-100000-a1b2\.log && \{ setsid nohup sh -c '.*' >\/dev\/null 2>&1 <\/dev\/null & \} && sleep 1 && \[ -f \.conductor\/update-20261027-100000-a1b2\.log \]$/s);
+  assert.match(cmd, /^cd '\/opt\/highland\/acme' && mkdir -p \.conductor && rm -f \.conductor\/update-20261027-100000-a1b2\.exit \.conductor\/update-20261027-100000-a1b2\.log && \{ setsid nohup sh -c '.*' >\/dev\/null 2>&1 <\/dev\/null & \} && echo launched && \{ i=0; while \[ ! -f \.conductor\/update-20261027-100000-a1b2\.log \] && \[ "\$i" -lt 5 \]; do sleep 1; i=\$\(\(i\+1\)\); done; \[ -f \.conductor\/update-20261027-100000-a1b2\.log \]; \}$/s);
   assert.ok(cmd.includes("docker compose run --rm -T updater update --to '\\''0.1.4'\\'' --image-file '\\''images-0.1.4.tar'\\'' > .conductor/update-20261027-100000-a1b2.log 2>&1; echo $? > .conductor/update-20261027-100000-a1b2.exit"));
   assert.ok(!cmd.includes('DOCKER_CONFIG'));
 });

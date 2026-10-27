@@ -33,18 +33,23 @@ function plainVersion(v) {
   return p !== null && v === `${p.major}.${p.minor}.${p.patch}`;
 }
 
-// Starts the update in its own session on the box and returns once its log exists. `unsure` = the connection broke,
-// so the update may or may not have started.
+// Starts the update in its own session on the box and returns once its log exists (waiting up to about 5 s).
+// `unsure` = the update may or may not be running (the connection broke, or it was launched but wrote no log).
 export async function startDetachedUpdate(t, { dir, version, imagesFile = null, runId, registry = false, env = process.env }) {
   const { log, exit } = files(checkRunId(runId));
   const cfg = registry ? 'DOCKER_CONFIG="$PWD/.docker" ' : '';
   const imageArg = imagesFile ? ` --image-file ${shQuote(imagesFile)}` : '';
   const inner = `${cfg}docker compose run --rm -T updater update --to ${shQuote(version)}${imageArg} > ${log} 2>&1; echo $? > ${exit}`;
   const cmd = `cd ${shQuote(assertSafe('path', dir))} && mkdir -p .conductor && rm -f ${exit} ${log} && `
-    + `{ setsid nohup sh -c ${shQuote(inner)} >/dev/null 2>&1 </dev/null & } && sleep 1 && [ -f ${log} ]`;
+    + `{ setsid nohup sh -c ${shQuote(inner)} >/dev/null 2>&1 </dev/null & } && echo launched && `
+    + `{ i=0; while [ ! -f ${log} ] && [ "$i" -lt 5 ]; do sleep 1; i=$((i+1)); done; [ -f ${log} ]; }`;
   const r = await remoteRun(t, cmd, { env, timeoutMs: MINUTE });
   if (r.code === 0) return { ok: true, problem: null, unsure: false };
   if (r.unreachable) return { ok: false, problem: sshProblem(t, r), unsure: true };
+  // Once launched, a missing log cannot prove nothing will happen (a slow start, or a failure hidden by /dev/null).
+  if (/^launched$/m.test(String(r.stdout ?? ''))) {
+    return { ok: false, problem: `Conductor started the update on ${t.label} but could not see it begin; check the box.`, unsure: true, launched: true };
+  }
   return { ok: false, problem: `The update could not be started on ${t.label} (${why(r)}).`, unsure: false };
 }
 
@@ -158,18 +163,26 @@ export async function runLaterShip({ dep, target, version, foundation, imagesFil
   const dir = assertSafe('path', dep.bundleDir);
   const from = dep.currentVersion;
   const record = (d, outcome, text) => save(addHistory(d, { at: now(), version, from, outcome, detail: String(text).split('\n')[0] }));
-  const pending = (why) => ({ ...dep, pendingCheck: { since: now(), version, foundation, why } });
   const blocked = `Conductor will not ship to ${t.label} again until conductor deployments status has seen how it ended.`;
+
+  // Ruling S19: saved before the box is touched, so a Ctrl-C or crash from here on still blocks the next ship until
+  // conductor deployments status has seen how it ended. Every recorded outcome below replaces or clears it.
+  const before = dep;
+  save({ ...before, pendingCheck: { since: now(), version, foundation, why: 'in-progress' } });
+  const settled = { ...before, pendingCheck: null };
+  const pending = (why) => ({ ...settled, pendingCheck: { since: now(), version, foundation, why } });
 
   say(`Updating ${t.label} to ${version} through the box's own safe update…`);
   const started = await startDetachedUpdate(t, { dir, version, imagesFile: registry ? null : imagesFile, runId, registry, env });
   if (!started.ok) {
     if (started.unsure) {
-      const text = redact(`Conductor lost touch with ${t.label} while starting the update to ${version}, so it cannot tell whether the update started. ${started.problem} ${blocked}`);
+      const text = redact(started.launched
+        ? `${started.problem} ${blocked}`
+        : `Conductor lost touch with ${t.label} while starting the update to ${version}, so it cannot tell whether the update started. ${started.problem} ${blocked}`);
       return { outcome: 'lost-contact', text, dep: record(pending('lost-contact'), 'lost-contact', text) };
     }
     const text = redact(`${started.problem} Nothing was changed.`);
-    return { outcome: 'cancelled', text, dep: record(dep, 'cancelled', text) };
+    return { outcome: 'cancelled', text, dep: record(settled, 'cancelled', text) };
   }
 
   const polled = await pollUpdate(t, { dir, runId, say, env, updateTimeoutMs, pollMs, sleep, clock });
@@ -184,11 +197,11 @@ export async function runLaterShip({ dep, target, version, foundation, imagesFil
     return { outcome, text, dep: record(pending('lost-contact'), outcome, text) };
   }
   if (outcome === 'urgent') return { outcome, text, dep: record(pending('urgent'), outcome, text) };
-  if (outcome === 'already-on') return { outcome, text, dep: record({ ...dep, currentVersion: version, foundation }, outcome, text) };
-  if (outcome !== 'updated') return { outcome, text, dep: record(dep, outcome, text) };
+  if (outcome === 'already-on') return { outcome, text, dep: record({ ...settled, currentVersion: version, foundation }, outcome, text) };
+  if (outcome !== 'updated') return { outcome, text, dep: record(settled, outcome, text) };
 
   // Conductor's record of the foundation comes from the release (project.json), never from the box's claim.
-  let saved = record({ ...dep, currentVersion: version, foundation }, outcome, text);
+  let saved = record({ ...settled, currentVersion: version, foundation }, outcome, text);
   const { warnings } = await refreshBundleFiles(t, saved, { version, env });
   const pruned = await pruneImageFiles(t, { dir, version, from, env });
   if (!pruned.ok) warnings.push(pruned.problem);
