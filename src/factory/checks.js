@@ -9,9 +9,7 @@ import { git } from '../workspace.js';
 import { runCommand } from '../exec.js';
 import { strictChildEnv, redact, secretValues } from '../secrets.js';
 import { clip } from '../text.js';
-
-// Task 10's src/factory/remote.js will own this; kept local until that file exists.
-const shQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+import { shQuote } from './remote.js';
 
 export const VERIFY_COMMAND = '{ [ node_modules/.package-lock.json -nt package-lock.json ] || npm ci --no-audit --no-fund --loglevel=error; } && npm run verify';
 
