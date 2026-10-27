@@ -1,5 +1,5 @@
-import { describe, test, expect } from 'vitest';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { afterAll, describe, test, expect } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { readFileSync as readReal } from 'node:fs';
@@ -32,8 +32,13 @@ test('the audit check fails closed when the audit could not run', () => {
   expect(AUDIT_UNAVAILABLE).not.toMatch(/at .*:\d+/);
 });
 
+// Every temporary release folder is removed after the file's tests.
+const roots: string[] = [];
+afterAll(() => { for (const r of roots) rmSync(r, { recursive: true, force: true }); });
+
 function setup(over: Partial<ReleaseDeps> = {}): { deps: ReleaseDeps; calls: string[]; root: string } {
   const root = mkdtempSync(path.join(tmpdir(), 'hf-release-'));
+  roots.push(root);
   writeFileSync(path.join(root, 'CHANGELOG.md'), '# Changelog\n\n## [Unreleased]\n- **[security]** Fixed a thing.\n\n## [0.1.0] - 2026-11-15\n- First.\n');
   writeFileSync(path.join(root, 'package.json'), '{\n  "name": "x",\n  "version": "0.1.0"\n}\n');
   writeFileSync(path.join(root, 'foundation.json'), '{\n  "name": "highland-foundation",\n  "version": "0.1.0",\n  "commit": "unreleased"\n}\n');

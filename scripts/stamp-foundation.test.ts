@@ -1,10 +1,11 @@
-import { test, expect } from 'vitest';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { afterAll, test, expect } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { readStamp } from './stamp-foundation.js';
 
 const dir = mkdtempSync(path.join(tmpdir(), 'hf-stamp-'));
+afterAll(() => { rmSync(dir, { recursive: true, force: true }); });
 const put = (text: string): string => { const f = path.join(dir, `f${String(Math.random())}.json`); writeFileSync(f, text); return f; };
 
 test('reads a good stamp', () => {
