@@ -145,3 +145,14 @@ test('remotePipe and sendFile give up after the time limit and kill both sides',
   for (let i = 0; i < 50 && openFds(src).length; i++) await new Promise((res) => setTimeout(res, 20));
   assert.deepEqual(openFds(src), [], 'the local file is closed');
 });
+
+test('sshProblem strips terminal control sequences from what ssh printed (one shared box-text helper)', async () => {
+  const msg = sshProblem(BOX, { timedOut: false, code: 255, stderr: '\x1b]0;evil\x07\x1b[31mPermission denied (publickey).\x1b[0m\n' });
+  assert.equal(msg, 'Could not reach acme-office over SSH: Permission denied (publickey). Check the box is on, the SSH key is authorised and its host key is in ~/.ssh/known_hosts (see README, "Shipping client apps").');
+  const { clean, firstLine, lastLine } = await import('../src/factory/ship/boxText.js');
+  assert.equal(clean('a\x1b[2Jb\x07c'), 'abc');
+  assert.equal(clean('abcdef', 3), 'abc');
+  assert.equal(firstLine('\n  \x1b[0m\n  first line.  \nsecond'), 'first line');
+  assert.equal(lastLine('one\ntwo...\n\n'), 'two');
+  assert.equal(firstLine('x'.repeat(300)).length, 160);
+});

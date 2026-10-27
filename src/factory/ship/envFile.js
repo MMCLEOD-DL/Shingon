@@ -4,8 +4,8 @@
 // Foundation v0.1.0 has no command for this; v0.2.0's `ops set-env` replaces setEnvCommand later (Contract 7 §7.9).
 import { remoteRun, sshProblem } from './remote.js';
 import { assertSafe, shQuote } from '../remote.js';
-import { redact, rememberSecret } from '../../secrets.js';
-import { terminalText } from '../brief.js';
+import { rememberSecret } from '../../secrets.js';
+import { firstLine } from './boxText.js';
 
 // Conductor may write only these. DB_PASSWORD, HEALTH_TOKEN and BACKUP_PASSWORD are made by `ops init` on the box.
 export const SETTABLE = Object.freeze(['APP_TAG', 'APP_IMAGE', 'OPS_IMAGE', 'IMAGE_PULL_POLICY', 'COMPOSE_PROFILES', 'SMTP_URL',
@@ -41,9 +41,6 @@ mv "$tmp" .env
 trap - EXIT
 `;
 }
-
-const firstLine = (s) => String(redact(terminalText(String(s ?? '').split('\n').map((l) => l.trim()).find(Boolean) ?? '')))
-  .slice(0, 160).replace(/[.\s]+$/, '');
 
 export async function setEnv(t, dir, settings, { env = process.env, timeoutMs = 120000 } = {}) {
   if (!settings.length) return { ok: true }; // an empty stdin would make awk read .env as its first file

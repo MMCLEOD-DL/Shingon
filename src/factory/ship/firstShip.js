@@ -12,6 +12,7 @@ import { SETUP_STEPS, withStep, addHistory, validOrigin } from '../deployments/s
 import { assertSafe, shQuote } from '../remote.js';
 import { terminalText } from '../brief.js';
 import { redact, rememberSecret } from '../../secrets.js';
+import { firstLine, lastLine } from './boxText.js';
 
 const VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const FOUNDATION_RE = /^v\d+\.\d+\.\d+$/;
@@ -21,10 +22,6 @@ const SITE_RE = /^(?::\d{1,5}|[A-Za-z0-9][A-Za-z0-9.:/*-]{0,252})$/;
 const REG_USER_RE = /^[^\s\x00-\x1f\x7f-][^\s\x00-\x1f\x7f]{0,127}$/;
 const MINUTE = 60000;
 
-const clean = (s) => String(redact(terminalText(s))).trim().slice(0, 160).replace(/[.\s]+$/, '');
-const lines = (s) => String(s ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
-const firstLine = (s) => clean(lines(s)[0] ?? '');
-const lastLine = (s) => clean(lines(s).at(-1) ?? '');
 const minutes = (ms) => { const n = Math.max(1, Math.round(ms / MINUTE)); return `${n} minute${n === 1 ? '' : 's'}`; };
 
 // The URL characters of RFC 3986: anything else after the link (an escape sequence from the box) is not part of it.
@@ -50,15 +47,15 @@ function checkedInitArgs(dep, brief) {
   const client = brief?.client;
   try { assertSafe('client', client); } catch { return { problem: "The client's name in the brief cannot be given to ops init (it is empty, too long or holds control characters)." }; }
   if (client.trim() === '' || client.trim().startsWith('-')) return { problem: "The client's name in the brief cannot be given to ops init." };
-  if (!validOrigin(dep.origin)) return { problem: `The web address ${clean(dep.origin)} cannot be given to ops init.` };
+  if (!validOrigin(dep.origin)) return { problem: `The web address ${firstLine(dep.origin)} cannot be given to ops init.` };
   if (dep.access !== 'cloudflare-tunnel' && !(typeof dep.site === 'string' && SITE_RE.test(dep.site))) {
-    return { problem: `The site address ${clean(dep.site)} cannot be given to ops init.` };
+    return { problem: `The site address ${firstLine(dep.site)} cannot be given to ops init.` };
   }
   return { args: initArgs(dep, brief) };
 }
 
 function alertsLine(a) {
-  const room = a?.matrix ? clean(a.matrix.roomId) : null;
+  const room = a?.matrix ? firstLine(a.matrix.roomId) : null;
   if (room && a.webhook) return `Alerts go to Matrix (${room}) and to the webhook.`;
   if (room) return `Alerts go to Matrix (${room}).`;
   if (a?.webhook) return 'Alerts go to the webhook.';

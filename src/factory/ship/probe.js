@@ -2,14 +2,11 @@
 // The health token never leaves the box: the version probe runs inside the ops container and reads it from there.
 import { remoteRun, sshProblem } from './remote.js';
 import { assertSafe, shQuote } from '../remote.js';
-import { redact } from '../../secrets.js';
-import { terminalText } from '../brief.js';
+import { clean, firstLine } from './boxText.js';
 
 const MIN_FREE_KB = 4194304;
 
-// Anything kept from a box is stripped of terminal control characters and redacted.
-const clean = (s, max = 400) => String(redact(terminalText(s))).slice(0, max);
-const firstLine = (s) => clean(String(s ?? '').split('\n').map((l) => l.trim()).find(Boolean) ?? '', 160).replace(/[.\s]+$/, '');
+// Anything kept from a box goes through clean (boxText.js): control characters stripped, secrets redacted.
 
 export function composeCmd(dep, args) {
   const cfg = dep.imageDelivery === 'registry' ? 'DOCKER_CONFIG="$PWD/.docker" ' : '';

@@ -12,13 +12,12 @@ import { assertSafe, shQuote } from '../remote.js';
 import { RUN_ID_RE } from '../ids.js';
 import { terminalText } from '../brief.js';
 import { redact } from '../../secrets.js';
+import { clean, firstLine } from './boxText.js';
 
 const VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const FOUNDATION_RE = /^v\d+\.\d+\.\d+$/;
 const MINUTE = 60000;
 
-const clean = (s) => String(redact(terminalText(s)));
-const firstLine = (s) => clean(String(s ?? '').split('\n').map((l) => l.trim()).find(Boolean) ?? '').slice(0, 160).replace(/[.\s]+$/, '');
 const why = (r) => firstLine(r.stderr) || `code ${r.code}`;
 const files = (r) => ({ log: `.conductor/update-${r}.log`, exit: `.conductor/update-${r}.exit` });
 

@@ -3,9 +3,10 @@
 // Quoting and validation are Plan 8's (assertSafe, shQuote); this file has none of its own.
 import { createReadStream } from 'node:fs';
 import { runCommand, spawnTracked } from '../../exec.js';
-import { strictChildEnv, redact } from '../../secrets.js';
+import { strictChildEnv } from '../../secrets.js';
 import { findBin } from '../../council/tools.js';
 import { assertSafe } from '../remote.js';
+import { firstLine } from './boxText.js';
 
 export function missingTools(names, { env = process.env } = {}) {
   return names.filter((n) => !findBin(n, { env }));
@@ -113,11 +114,6 @@ function stream(source, to, { timeoutMs = 600000, env = process.env } = {}) {
 
 export const remotePipe = (from, to, opts) => stream({ target: from.target, command: from.command }, to, opts);
 export const sendFile = (localPath, to, opts) => stream({ localPath }, to, opts);
-
-const firstLine = (s, max) => {
-  const line = String(s ?? '').split('\n').map((l) => l.trim()).find(Boolean) ?? '';
-  return String(redact(line)).slice(0, max).replace(/[.\s]+$/, '');
-};
 
 export function sshProblem(t, r) {
   if (r.timedOut) return `${t.label} did not answer over SSH in time.`;
