@@ -58,10 +58,12 @@ export async function pushCommit({ ssh, machine, dir, sha, remoteDir, timeoutMs 
   }
 }
 
+const CLIP = 8000;
+const firstLine = (t) => redact(String(t ?? '')).split('\n').find((l) => l.trim())?.trim() ?? '';
 const STEP_RE = /^== Step (\d+[a-z]?):/;
 const TITLES = new Map(Object.entries(SMOKE_STEPS));
 
-export function parseSmokeLog(text, code, { timedOut = false } = {}) {
+export function parseSmokeLog(text, code, { timedOut = false, stderr = '' } = {}) {
   const lines = String(text ?? '').split('\n').map((l) => l.replace(/\r$/, ''));
   const steps = [];
   let open = null;
@@ -90,36 +92,41 @@ export function parseSmokeLog(text, code, { timedOut = false } = {}) {
     }
     if (failure === null) {
       failure = timedOut ? 'the smoke ran out of time'
-        : failedStep === null && steps.length === 0 ? null
+        : steps.length === 0 ? `the smoke stopped before its first step (exit code ${code})${firstLine(stderr) ? `: ${firstLine(stderr)}` : ''}`
           : `the step stopped without saying why (exit code ${code})`;
     }
   }
   if (refused) { failedStep = null; failure = null; }
   return {
     ran: !refused, passed, steps, failedStep, failure, refused, timedOut, code,
-    tail: redact(clip(lines.slice(-40).join('\n'), 8000)),
+    tail: clip(redact(lines.slice(-40).join('\n')), CLIP),
   };
 }
 
-const EXIT_RE = /^COUNCIL-SMOKE-EXIT (\d+)\s*$/m;
+const lastMatch = (text, re) => [...text.matchAll(re)].at(-1) ?? null;
+const EXIT_RE = /^COUNCIL-SMOKE-EXIT (\d+)\s*$/gm;
+const REFUSED_RE = /^COUNCIL-REFUSED (.+)$/gm;
 
 export async function runSmoke({ ssh, machine, remoteDir, timeoutMs }) {
   assertSafe('path', remoteDir);
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) throw new Error(`runSmoke needs timeoutMs as a positive whole number of milliseconds, got ${JSON.stringify(timeoutMs)}.`);
   const seconds = Math.max(60, Math.floor((timeoutMs - 300000) / 1000));
   const script = `export ROOT=${shQuote(remoteDir)}\nexport SMOKE_SECONDS=${shQuote(String(seconds))}\n${asset('smoke-clean.sh')}\n${asset('smoke.sh')}`;
   const r = await ssh.exec(machine, script, { timeoutMs });
   if (r.code === 255) throw unreachable(machine.host);
   const out = r.stdout ?? '';
-  const refusal = /^COUNCIL-REFUSED (.+)$/m.exec(out);
+  const refusal = lastMatch(out, REFUSED_RE);
   if (refusal) {
-    return { ran: false, passed: false, steps: [], failedStep: null, failure: null, refused: refusal[1].trim(), timedOut: false, code: r.code, tail: redact(clip(out, 2000)) };
+    return { ran: false, passed: false, steps: [], failedStep: null, failure: null, refused: refusal[1].trim(), timedOut: false, code: r.code, tail: clip(redact(out), 2000) };
   }
-  const m = EXIT_RE.exec(out);
+  const m = lastMatch(out, EXIT_RE);
   const code = m ? Number(m[1]) : r.code;
-  return parseSmokeLog(out, code, { timedOut: r.code === -1 || code === 124 });
+  return parseSmokeLog(out, code, { timedOut: r.code === -1 || code === 124, stderr: r.stderr });
 }
 
 export async function cleanSmoke({ ssh, machine, remoteDir }) {
+  assertSafe('path', machine.runDir);
+  if (machine.runDir === '/') throw new Error(`The machine's run folder ${machine.runDir} is not a usable folder.`);
   if (typeof remoteDir !== 'string' || !remoteDir.startsWith(`${machine.runDir}/`) || remoteDir.split('/').includes('..')) {
     throw new Error(`The clean-up path ${remoteDir} is outside the machine's run folder.`);
   }

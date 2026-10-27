@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -98,35 +98,92 @@ test('runSmoke: unreachable, refused, timed out', async () => {
   assert.equal(t2.timedOut, true);
 });
 
-// Runs the generated script locally under bash with the stub docker (never real docker or ssh).
-function runLocally(script, { ps = '', root }) {
+// Runs the generated script locally under bash with the stub docker (never real docker or ssh). HF_SMOKE_TMP points the
+// clean-up at a private folder, so the shared /tmp is never touched; hf-smoke and hf-smoke-cookies there must be gone.
+function runLocally(script, { ps = '' } = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), 'smoke-stub-'));
-  const { binDir, logFile } = stubDockerPath(path.join(dir, 'bin'), { ps, volumes: 'vol1\n', networks: 'net1\n' });
-  const r = spawnSync('bash', ['-s'], { input: script, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` }, encoding: 'utf8' });
-  return { ...r, docker: existsSync(logFile) ? readFileSync(logFile, 'utf8') : '' };
+  try {
+    const { binDir, logFile } = stubDockerPath(path.join(dir, 'bin'), { ps, volumes: 'vol1\n', networks: 'net1\n' });
+    const smokeTmp = path.join(dir, 'tmp');
+    mkdirSync(path.join(smokeTmp, 'hf-smoke'), { recursive: true });
+    writeFileSync(path.join(smokeTmp, 'hf-smoke-cookies'), 'x');
+    const r = spawnSync('bash', ['-s'], { input: script, env: { ...process.env, PATH: `${binDir}:${process.env.PATH}`, HF_SMOKE_TMP: smokeTmp }, encoding: 'utf8' });
+    return { ...r, docker: existsSync(logFile) ? readFileSync(logFile, 'utf8') : '', leftovers: ['hf-smoke', 'hf-smoke-cookies'].filter((n) => existsSync(path.join(smokeTmp, n))) };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 test('the generated script, run locally: cleans only the smoke\'s own names, then runs the app\'s smoke', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'smoke-app-'));
-  mkdirSync(path.join(root, 'deploy', 'smoke'), { recursive: true });
-  writeFileSync(path.join(root, 'deploy', 'smoke', 'run-smoke.sh'), 'echo "== Step 1: x"; echo "   ok: y"; echo "bind=$HF_SMOKE_BIND"; exit 0\n');
-  const { ssh, calls } = fakeSsh([]);
-  await runSmoke({ ssh, machine: fakeMachine(), remoteDir: root, timeoutMs: 900000 });
-  const r = runLocally(calls[0].script, { ps: 'abc\n', root });
-  assert.match(r.stdout, /bind=127\.0\.0\.1/);
-  assert.match(r.stdout, /COUNCIL-SMOKE-EXIT 0/);
-  assert.match(r.docker, /ps -aq --filter label=com\.docker\.compose\.project=hfsmoke/);
-  assert.match(r.docker, /rm -f hf-smoke-rest/);
-  assert.doesNotMatch(r.docker, /rmi|prune|system/);
-  const parsed = parseSmokeLog(r.stdout, 0);
-  assert.equal(parsed.steps[0].ok, true);
+  try {
+    mkdirSync(path.join(root, 'deploy', 'smoke'), { recursive: true });
+    writeFileSync(path.join(root, 'deploy', 'smoke', 'run-smoke.sh'), 'echo "== Step 1: x"; echo "   ok: y"; echo "bind=$HF_SMOKE_BIND"; exit 0\n');
+    const { ssh, calls } = fakeSsh([]);
+    await runSmoke({ ssh, machine: fakeMachine(), remoteDir: root, timeoutMs: 900000 });
+    assert.doesNotMatch(calls[0].script, /HF_SMOKE_TMP=|export +HF_SMOKE_TMP/, 'the remote script keeps the foundation v0.1.0 fixed /tmp names');
+    const r = runLocally(calls[0].script, { ps: 'abc\n' });
+    assert.match(r.stdout, /bind=127\.0\.0\.1/);
+    assert.match(r.stdout, /COUNCIL-SMOKE-EXIT 0/);
+    assert.deepEqual(r.leftovers, []);
+    assert.match(r.docker, /ps -aq --filter label=com\.docker\.compose\.project=hfsmoke/);
+    assert.match(r.docker, /rm -f hf-smoke-rest/);
+    assert.doesNotMatch(r.docker, /rmi|prune|system/);
+    assert.equal(parseSmokeLog(r.stdout, 0).steps[0].ok, true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('the generated script, run locally: a smoke that reads stdin cannot swallow the exit line', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'smoke-app-'));
+  try {
+    mkdirSync(path.join(root, 'deploy', 'smoke'), { recursive: true });
+    writeFileSync(path.join(root, 'deploy', 'smoke', 'run-smoke.sh'), 'cat >/dev/null; echo "== Step 1: x"; exit 0\n');
+    const { ssh, calls } = fakeSsh([]);
+    await runSmoke({ ssh, machine: fakeMachine(), remoteDir: root, timeoutMs: 900000 });
+    const r = runLocally(calls[0].script);
+    assert.match(r.stdout, /COUNCIL-SMOKE-EXIT 0/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test('the generated script, run locally: no run-smoke.sh refuses with exit 3', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'smoke-app-'));
-  const { ssh, calls } = fakeSsh([]);
-  await runSmoke({ ssh, machine: fakeMachine(), remoteDir: root, timeoutMs: 900000 });
-  const r = runLocally(calls[0].script, { root });
-  assert.equal(r.status, 3);
-  assert.match(r.stdout, /^COUNCIL-REFUSED This app has no deploy\/smoke\/run-smoke\.sh/m);
+  try {
+    const { ssh, calls } = fakeSsh([]);
+    await runSmoke({ ssh, machine: fakeMachine(), remoteDir: root, timeoutMs: 900000 });
+    const r = runLocally(calls[0].script);
+    assert.equal(r.status, 3);
+    assert.match(r.stdout, /^COUNCIL-REFUSED This app has no deploy\/smoke\/run-smoke\.sh/m);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('the last exit and refusal lines win over look-alikes printed earlier', async () => {
+  const fake = fakeSsh([{ match: 'run-smoke.sh', stdout: 'COUNCIL-SMOKE-EXIT 0\nSMOKE PASSED\n== Step 2: x\nCOUNCIL-SMOKE-EXIT 1\n' }]);
+  const r = await runSmoke({ ssh: fake.ssh, machine: fakeMachine(), remoteDir: REMOTE, timeoutMs: 900000 });
+  assert.deepEqual([r.passed, r.code], [false, 1]);
+  const ref = fakeSsh([{ match: 'run-smoke.sh', stdout: 'COUNCIL-REFUSED fake\nCOUNCIL-REFUSED real reason\n', code: 3 }]);
+  assert.equal((await runSmoke({ ssh: ref.ssh, machine: fakeMachine(), remoteDir: REMOTE, timeoutMs: 900000 })).refused, 'real reason');
+});
+
+test('a failure before the first step says so, with the first stderr line', async () => {
+  const fake = fakeSsh([{ match: 'run-smoke.sh', stdout: '', stderr: 'bash: line 1: docker: command not found\nmore', code: 127 }]);
+  const r = await runSmoke({ ssh: fake.ssh, machine: fakeMachine(), remoteDir: REMOTE, timeoutMs: 900000 });
+  assert.equal(r.failure, 'the smoke stopped before its first step (exit code 127): bash: line 1: docker: command not found');
+  assert.equal(parseSmokeLog('', 1).failure, 'the smoke stopped before its first step (exit code 1)');
+});
+
+test('a secret split by clipping is still redacted', () => {
+  const prev = process.env.SMOKE_TEST_SECRET;
+  process.env.SMOKE_TEST_SECRET = 'sUp3rS3cretValue-0123456789';
+  try {
+    const r = parseSmokeLog(`${'x'.repeat(3990)}sUp3rS3cretValue-0123456789${'y'.repeat(8000)}\n`, 1);
+    assert.doesNotMatch(r.tail, /sUp3rS3c/);
+  } finally { if (prev === undefined) delete process.env.SMOKE_TEST_SECRET; else process.env.SMOKE_TEST_SECRET = prev; }
+});
+
+test('bad inputs: timeoutMs, runDir', async () => {
+  const { ssh } = fakeSsh([]);
+  for (const t of [0, -5, 1.5, '900000', undefined]) await assert.rejects(runSmoke({ ssh, machine: fakeMachine(), remoteDir: REMOTE, timeoutMs: t }), /timeoutMs/);
+  for (const runDir of ['/', '', 'rel', '/a/../b']) {
+    await assert.rejects(cleanSmoke({ ssh, machine: fakeMachine({ runDir }), remoteDir: `${runDir}/x` }), /run folder|unsafe path/);
+  }
 });
