@@ -158,3 +158,26 @@ test('a failed first backup is part-way at started; an app that never reports th
   assert.equal(s.outcome, 'partway');
   assert.match(s.text, /did not report version 0\.1\.3 within 1 minute\./);
 });
+
+// ---- Final-wave fixes (items 5 and 7) ----
+
+test('the first-admin link keeps only URL characters, so box output cannot drive the terminal', async (t) => {
+  t.after(forgetRememberedSecrets);
+  const rules = BOX_RULES.map((r) => (r.match === 'bootstrap-admin'
+    ? { ...r, stdout: 'Send this link: https://staff.acme.co.uk/invite/tok_one_time_123\x1b]0;pwned\x07\x1b[2J\n' } : r));
+  const f = fakeSsh(mkdtempSync(path.join(tmpdir(), 'fs-')), rules);
+  const r = await run(f, dep0(), ['saved', true, 'jo@acme.co.uk', 'Jo Bloggs']);
+  assert.equal(r.outcome, 'installed', r.text);
+  assert.match(r.said, /Send this link to Jo Bloggs yourself \(it works for 7 days\): https:\/\/staff\.acme\.co\.uk\/invite\/tok_one_time_123$/m);
+  assert.ok(!r.said.includes('\x1b'), 'no escape byte reaches the terminal');
+  assert.ok(!r.said.includes('pwned'));
+});
+
+test('an .env left by an interrupted ops init gets its own message and recovery step', async () => {
+  const f = fakeSsh(mkdtempSync(path.join(tmpdir(), 'fs-')), [{ match: "\\[ ! -e \\.env \\]", code: 1 }, ...BOX_RULES]);
+  const r = await run(f, withStep(dep0(), 'delivered', 'x'), []);
+  assert.equal(r.outcome, 'stopped');
+  assert.equal(r.text, 'An .env appeared in /opt/highland/acme on acme-office after the bundle was delivered, probably from an ops init that was interrupted, so nothing was changed. '
+    + 'Check that .env on the box; if it is not a live deployment\'s, move it aside (for example: mv .env .env.interrupted), then run the ship again: conductor ship acme --to acme-office');
+  assert.doesNotMatch(r.text, /did not set up/);
+});

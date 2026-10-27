@@ -27,6 +27,11 @@ const firstLine = (s) => clean(lines(s)[0] ?? '');
 const lastLine = (s) => clean(lines(s).at(-1) ?? '');
 const minutes = (ms) => { const n = Math.max(1, Math.round(ms / MINUTE)); return `${n} minute${n === 1 ? '' : 's'}`; };
 
+// The URL characters of RFC 3986: anything else after the link (an escape sequence from the box) is not part of it.
+const LINK_RE = /https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+/;
+
+const interruptedInit = (dir, label, dep) => `An .env appeared in ${dir} on ${label} after the bundle was delivered, probably from an ops init that was interrupted, so nothing was changed. `
+  + `Check that .env on the box; if it is not a live deployment's, move it aside (for example: mv .env .env.interrupted), then run the ship again: conductor ship ${dep.project} --to ${dep.name}`;
 const notOurs = (dir, label) => `The folder ${dir} on ${label} already holds a deployment that Conductor did not set up, so nothing was changed. Choose another folder, or move that one away.`;
 
 function passwordBlock(client, name, password) {
@@ -147,7 +152,7 @@ export async function runFirstSetup({
     if (checked.problem) return partway(checked.problem);
     let r = await run(`${cd}[ ! -e .env ]`);
     if (r.unreachable) return partway(sshProblem(t, r));
-    if (r.code !== 0) return stopped();
+    if (r.code !== 0) return dep.setup.step === 'delivered' ? { outcome: 'stopped', text: interruptedInit(dir, label, dep), dep } : stopped();
     say(`Making the settings on ${label} with ops init…`);
     const cfg = registry ? 'DOCKER_CONFIG="$PWD/.docker" ' : '';
     r = await run(`${cd}${cfg}docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/out" ${shQuote(images.opsRef)} ${checked.args.map(shQuote).join(' ')}`,
@@ -232,7 +237,7 @@ export async function runFirstSetup({
     if (email !== null && name !== null) {
       const r = await run(composeCmd(dep, `run --rm -T app node apps/server/dist/auth/bootstrap-admin.js --email ${shQuote(email)} --name ${shQuote(name)}`),
         { timeoutMs: 5 * MINUTE });
-      const link = r.code === 0 ? /https?:\/\/\S+/.exec(String(r.stdout ?? ''))?.[0] : null;
+      const link = r.code === 0 ? LINK_RE.exec(String(r.stdout ?? ''))?.[0] : null;
       if (link) {
         rememberSecret(link);
         ask.sayOnce(`Send this link to ${terminalText(name)} yourself (it works for 7 days): ${link}`);
