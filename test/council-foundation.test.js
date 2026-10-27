@@ -113,3 +113,11 @@ test('when its git checks fail the member blocks with a locked finding instead o
   assert.equal(f.length, 1);
   assert.match(f[0], /^blocking! Conductor could not check the foundation rules: /);
 });
+
+test('final-fix 5: the browser gate\'s test:e2e and verify:full scripts are protected too', async () => {
+  const pkg = (over) => JSON.stringify({ name: 'highland-foundation', version: '0.1.0', scripts: { verify: 'npm run lint', 'test:e2e': 'playwright test', 'verify:full': 'npm run verify && npm run test:e2e', ...over } }) + '\n';
+  for (const over of [{ 'test:e2e': 'true' }, { 'verify:full': 'npm run verify' }]) {
+    const f = await scenario([{ 'apps/server/test/expenses/a.test.ts': TESTS }, { 'package.json': pkg(over) }], { extra: { 'package.json': pkg({}) } });
+    assert.ok(f.includes('blocking! The checks that npm run verify runs were changed in package.json'), `${Object.keys(over)[0]}: ${f.join('\n')}`);
+  }
+});

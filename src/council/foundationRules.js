@@ -37,7 +37,8 @@ export const PROTECTED_PATHS = Object.freeze([
 const PACKAGE_FILES = ['package.json', 'apps/server/package.json', 'apps/web/package.json', 'ops/package.json', 'deploy/package.json'];
 const APP_PACKAGE = /^apps\/[^/]+\/package\.json$/;
 
-const VERIFY_SCRIPTS = ['lint', 'typecheck', 'licences', 'test', 'verify'];
+// test:e2e and verify:full: the browser gate runs npm run test:e2e.
+const VERIFY_SCRIPTS = ['lint', 'typecheck', 'licences', 'test', 'verify', 'test:e2e', 'verify:full'];
 const SKIP_OR_FOCUS = /\b(?:x(?:it|test|describe)\s*\(|\.(?:skip|only|todo)\s*(?:\.each\s*)?\()/;
 const ONLY = /\.only\s*\(/;
 // Ruling Q24: ways to disable a test that need not sit on the tagged line.
@@ -55,7 +56,7 @@ const PAGES = 'apps/web/e2e/pages.ts';
 
 const BUILDING_ON = {
   protected: 'BUILDING-ON: "Resolve any conflicts (they should be rare if the foundation\'s files were left alone)". Put this file back exactly as the foundation has it and make the change in your own files instead.',
-  verify: 'BUILDING-ON: "npm run verify: lint, type checks, the licence gate and every unit and integration test (including the role-crossing harness). It must pass at every commit." Put the lint, typecheck, licences, test and verify scripts in package.json back as they were.',
+  verify: 'BUILDING-ON: "npm run verify: lint, type checks, the licence gate and every unit and integration test (including the role-crossing harness). It must pass at every commit." Put the lint, typecheck, licences, test, verify, test:e2e and verify:full scripts in package.json back as they were.',
   tests: 'Every worked example needs a test whose name carries its tag, written before the code, that runs in npm run verify.',
   migration: 'BUILDING-ON: "A Drizzle schema file in apps/server/src/db/schema/ … then npm -w @hf/server run db:generate to write the migration into apps/server/drizzle, and commit both."',
   seeder: 'BUILDING-ON: "A demo seeder in apps/server/src/seed/seeders/ (one file, plus its import line in seeders/index.ts), using ctx.faker so the same seed gives the same data."',
