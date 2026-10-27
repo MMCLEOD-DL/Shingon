@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, existsSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { demoUpScript, bringUpDemo } from '../src/factory/deploy.js';
@@ -203,4 +203,52 @@ test('the build in progress is previewed when its branch exists; previewRuns lis
   const rec = JSON.parse(readFileSync(path.join(s.projectDir, 'preview.json'), 'utf8'));
   assert.deepEqual(previewRuns(s.factory.projectsRoot), [rec.runId]);
   assert.equal(s.ups[0].client, 'Acme Ltd');
+});
+
+test('final-fix 4: a starting record is written right after acquire, so a crash mid-start can be stopped', async () => {
+  const { previewRuns } = await import('../src/factory/preview.js');
+  const s = await previewSetup();
+  // Ctrl-C during the bring-up: the process dies there, so neither the catch nor the finally ever runs.
+  let reached;
+  const atBringUp = new Promise((r) => { reached = r; });
+  const crash = { ...s.deps, bringUpDemo: async () => { reached(); return new Promise(() => {}); } };
+  startPreview({ factory: s.factory, slug: s.slug, deps: crash });
+  await atBringUp;
+  const rec = JSON.parse(readFileSync(path.join(s.projectDir, 'preview.json'), 'utf8'));
+  assert.equal(rec.status, 'starting');
+  assert.deepEqual([rec.schema, rec.machineId, rec.provider, rec.host], [1, 'h1', 'static', '192.168.1.111']);
+  assert.match(rec.runId, /^\d{8}-\d{6}-[0-9a-f]{4}$/);
+  assert.equal(rec.url, undefined);
+  assert.deepEqual(previewRuns(s.factory.projectsRoot), [rec.runId], 'the sweep spares it');
+  rmSync(path.join(s.projectDir, '.preview.lock'));   // what a dead holder's lock amounts to
+  assert.equal(s.provider.held.size, 1);
+  assert.equal((await stopPreview({ factory: s.factory, slug: s.slug, deps: s.deps })).status, 'stopped');
+  assert.deepEqual(s.provider.released, [rec.runId]);
+  assert.equal(existsSync(path.join(s.projectDir, 'preview.json')), false);
+});
+
+test('final-fix 4: a fresh start over a starting record releases its machine first; success replaces the record', async () => {
+  const s = await previewSetup();
+  const old = await s.provider.acquire({ purpose: 'preview', projectSlug: s.slug, runId: '20261027-100000-aaaa' });
+  writeFileSync(path.join(s.projectDir, 'preview.json'), JSON.stringify({ schema: 1, runId: '20261027-100000-aaaa', machineId: old.id, provider: 'static', host: old.host, status: 'starting', startedAt: '2026-10-27T10:00:00.000Z' }));
+  const r = await startPreview({ factory: s.factory, slug: s.slug, deps: s.deps });
+  assert.equal(r.status, 'started');
+  assert.deepEqual(s.provider.released, ['20261027-100000-aaaa']);
+  const rec = JSON.parse(readFileSync(path.join(s.projectDir, 'preview.json'), 'utf8'));
+  assert.equal(rec.status, 'running');
+  assert.deepEqual([rec.url, rec.sha], ['http://192.168.1.111:8080/', r.sha]);
+});
+
+test('final-fix 4: a failed start whose release also fails keeps the starting record for --stop', async () => {
+  const s = await previewSetup();
+  const realAcquire = s.provider.acquire;
+  let failRelease = true;
+  s.provider.acquire = async (a) => { const m = await realAcquire(a); const rel = m.release; m.release = async () => { if (failRelease) throw new Error('Proxmox is down.'); await rel(); }; return m; };
+  const failing = { ...s.deps, bringUpDemo: async () => { throw new Error('The preview did not start (while building): x'); } };
+  await assert.rejects(startPreview({ factory: s.factory, slug: s.slug, deps: failing }), /The preview did not start.*Releasing the machine also failed: Proxmox is down\./);
+  const rec = JSON.parse(readFileSync(path.join(s.projectDir, 'preview.json'), 'utf8'));
+  assert.equal(rec.status, 'starting');
+  failRelease = false;
+  assert.equal((await stopPreview({ factory: s.factory, slug: s.slug, deps: s.deps })).status, 'stopped');
+  assert.equal(s.provider.held.size, 0);
 });

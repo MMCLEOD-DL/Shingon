@@ -94,15 +94,22 @@ export async function startPreview({ factory, slug, deps = {} }) {
     }
 
     const machine = await d.provider.acquire({ purpose: 'preview', projectSlug: slug, runId });
+    // A 'starting' record straight away: if Conductor is stopped or crashes during the bring-up, the machine is
+    // still recorded, so the sweep spares it and "conductor preview <slug> --stop" (or the next start) frees it.
+    const base = { schema: 1, runId, machineId: machine.id, provider: d.provider.kind ?? d.provider.provider, host: machine.host };
     let up;
     try {
+      writeJsonAtomic(recordFile(projectDir), { ...base, status: 'starting', startedAt: d.now().toISOString() });
       up = await d.bringUpDemo({ machine, appDir, sha, slug, runId, client: project.client, ssh: d.ssh });
-      writeJsonAtomic(recordFile(projectDir), {
-        schema: 1, runId, machineId: machine.id, provider: d.provider.kind ?? d.provider.provider, host: machine.host,
-        url: up.url, sha, from, startedAt: d.now().toISOString(),
-      });
+      writeJsonAtomic(recordFile(projectDir), { ...base, status: 'running', url: up.url, sha, from, startedAt: d.now().toISOString() });
     } catch (err) {
-      try { await machine.release(); } catch (re) { err.message = `${err.message} Releasing the machine also failed: ${re.message}`; }
+      try {
+        await machine.release();
+        try { rmSync(recordFile(projectDir), { force: true }); } catch { /* not a file: nothing of ours to remove */ }
+      } catch (re) {
+        // The starting record stays, so the operator can free the machine with --stop.
+        err.message = `${err.message} Releasing the machine also failed: ${re.message}`;
+      }
       throw err;
     }
     return { status: 'started', url: up.url, seedText: up.seedText, sha, from };
