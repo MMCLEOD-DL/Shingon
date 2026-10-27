@@ -31,8 +31,4 @@ export async function shipCommand(cli, ctx) {
   }
 }
 
-// Task 11 replaces this stub.
-export async function deploymentsCommand(cli, ctx) {
-  ctx.stdout.write('Not available yet.\n');
-  return SHIP_EXIT.usage;
-}
+export { deploymentsCommand } from '../factory/ship/status.js';
