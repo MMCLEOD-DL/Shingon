@@ -2,7 +2,7 @@
 // Tolerates CRLF line endings and an empty block (which then fails as "not valid JSON").
 const JSON_FENCE = /```json[ \t]*\r?\n([\s\S]*?)\r?\n?```/gi;
 
-function extractJson(text) {
+export function extractJson(text) {
   const blocks = [...text.matchAll(JSON_FENCE)];
   if (blocks.length) return blocks[blocks.length - 1][1];
   const t = text.trim();
