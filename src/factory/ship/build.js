@@ -15,12 +15,21 @@ import { remoteRun, remotePipe, sendFile, targetOfMachine, sshProblem } from './
 const VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const SHA_RE = /^[0-9a-f]{40}$/;
 const SUM_RE = /^[0-9a-f]{64}$/;
+const REG_HOST_RE = /^[A-Za-z0-9.-]+(:\d+)?$/; // as Task 1's deployment store: a registry host may carry a port
+const REG_NS_RE = /^[a-z0-9][a-z0-9._/-]*$/;
+// An image ref, allowing a registry host:port in front (assertSafe('image') does not): no spaces, quotes or leading '-'.
+const REF_RE = /^[A-Za-z0-9][A-Za-z0-9.-]*(?::\d+)?\/(?:[a-z0-9][a-z0-9._-]*\/)*[a-z0-9][a-z0-9._-]*:[A-Za-z0-9._-]+$|^[a-z0-9][a-z0-9._/-]*:[A-Za-z0-9._-]+$/;
 const BUNDLE_FILES = ['compose.yaml', 'Caddyfile', '.env.example', 'RUNBOOK.md'];
 const SAVE_TIMEOUT_MS = 30 * 60000;
 const COPY_TIMEOUT_MS = 60 * 60000;
 
 const qp = (p) => shQuote(assertSafe('path', p));
-const qi = (i) => shQuote(assertSafe('image', i));
+function assertRef(ref) {
+  if (typeof ref !== 'string' || !REF_RE.test(ref) || ref.split('/').includes('..')) throw new Error(`unsafe image for a remote command: ${JSON.stringify(ref)}`);
+  return ref;
+}
+const isRef = (ref) => { try { assertRef(ref); return true; } catch { return false; } };
+const qi = (i) => shQuote(assertRef(i));
 const clean = (s, max = 160) => String(redact(terminalText(s))).trim().slice(0, max).replace(/[.\s]+$/, '');
 const lastLine = (s) => String(s ?? '').split('\n').map((l) => l.trim()).filter(Boolean).pop() ?? '';
 
@@ -33,14 +42,16 @@ export function imageNames({ imageDelivery, registry, slug, version }) {
   checkVersion(version);
   let app = 'highland/app', ops = 'highland/ops';
   if (imageDelivery === 'registry') {
-    const host = assertSafe('host', registry?.host);
+    const host = registry?.host;
+    if (typeof host !== 'string' || !REG_HOST_RE.test(host) || host.startsWith('-')) throw new Error(`unsafe registry host: ${JSON.stringify(host)}`);
     const namespace = registry?.namespace ?? `highland-${slug}`;
+    if (typeof namespace !== 'string' || !REG_NS_RE.test(namespace) || namespace.split('/').includes('..')) throw new Error(`unsafe registry namespace: ${JSON.stringify(namespace)}`);
     app = `${host}/${namespace}/app`;
     ops = `${host}/${namespace}/ops`;
   }
   const names = { app, ops, appRef: `${app}:${version}`, opsRef: `${ops}:${version}` };
-  assertSafe('image', names.appRef);
-  assertSafe('image', names.opsRef);
+  assertRef(names.appRef);
+  assertRef(names.opsRef);
   return names;
 }
 
@@ -74,6 +85,16 @@ export async function buildOnMachine({ provider, slug, runId, appDir, release, d
   const target = targetOfMachine(machine);
   const workDir = machine.runDir;
   const built = { ok: true, problem: null, machine, target, workDir, version, arch: null, images, imagesFile: null, bundleFile: null };
+  try {
+    return await buildSteps({ built, appDir, release, tarDelivery, say, env, buildTimeoutMs });
+  } catch (e) {
+    await cleanupBuild(built, { env });
+    return { ok: false, problem: `The build on the build machine stopped unexpectedly (${clean(e?.message ?? e) || 'no reason given'}).` };
+  }
+}
+
+async function buildSteps({ built, appDir, release: { sha, tag, version }, tarDelivery, say, env, buildTimeoutMs }) {
+  const { target, workDir, images } = built;
   const fail = async (problem) => {
     await cleanupBuild(built, { env });
     return { ok: false, problem };
@@ -150,7 +171,7 @@ export async function deliverToBox({ built, target, dep, version, say = () => {}
 
   let r = await remoteRun(target, `mkdir -p ${qp(c)}`, { env });
   if (r.code !== 0) {
-    return nope(boxProblem(r, `Conductor could not create ${dir} on ${label}. Create it once by hand on the box: sudo mkdir -p ${dir} && sudo chown highland ${dir}`));
+    return nope(boxProblem(r, `Conductor could not create ${dir} on ${label}. Create it once by hand on the box: sudo mkdir -p ${dir} && sudo chown ${target.user} ${dir}`));
   }
 
   const tarDelivery = dep.imageDelivery !== 'registry';
@@ -176,7 +197,7 @@ export async function deliverToBox({ built, target, dep, version, say = () => {}
       if (r.code !== 0) return nope(sshProblem(target, r));
       continue;
     }
-    if (r.unreachable) return nope(sshProblem(target, r));
+    if (r.code !== 0) return nope(sshProblem(target, r)); // could not check the copy: fail closed, never load it
     await remoteRun(target, `rm -f ${qp(part)}`, { env });
     return nope(`The copy of ${name} to ${label} arrived damaged (its checksum did not match), so nothing was loaded. Run the ship again.`);
   }
@@ -200,7 +221,7 @@ export async function cleanupBuild(built, { env = process.env } = {}) {
     const v = built?.version;
     const names = [`highland/app:${v}`, `highland/ops:${v}`];
     for (const ref of [built?.images?.appRef, built?.images?.opsRef]) if (ref && !names.includes(ref)) names.push(ref);
-    const safe = names.filter((n) => { try { assertSafe('image', n); return true; } catch { return false; } });
+    const safe = names.filter(isRef);
     if (built?.target && safe.length) await remoteRun(built.target, `docker rmi ${safe.map(shQuote).join(' ')}`, { env });
   } catch { /* an image that was never built, or a machine that is gone, is not a problem */ }
   try { await built?.machine?.release?.(); } catch { /* Plan 8's sweep frees what release could not */ }

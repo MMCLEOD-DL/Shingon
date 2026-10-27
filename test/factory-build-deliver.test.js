@@ -176,3 +176,50 @@ test('a bundle without its runbook is incomplete', async () => {
   const r = await deliverToBox({ built, target: BOX, dep: { ...DEP, imageDelivery: 'registry' }, version: '0.1.3', say: () => {}, env: f.env() });
   assert.deepEqual(r, { ok: false, problem: 'The bundle for 0.1.3 is incomplete.', imagesFile: null });
 });
+
+test('a registry host with a port (reg.lan:5000) is accepted, pushed to and cleaned up', async () => {
+  assert.equal(imageNames({ imageDelivery: 'registry', registry: { host: 'reg.lan:5000', namespace: 'highland-acme', user: 'u' }, slug: 'acme', version: '0.1.3' }).opsRef,
+    'reg.lan:5000/highland-acme/ops:0.1.3');
+  assert.throws(() => imageNames({ imageDelivery: 'registry', registry: { host: "reg.lan:5000'x", namespace: 'n', user: 'u' }, slug: 'acme', version: '0.1.3' }));
+  assert.throws(() => imageNames({ imageDelivery: 'registry', registry: { host: '-reg', namespace: 'n', user: 'u' }, slug: 'acme', version: '0.1.3' }));
+  const d = tmp();
+  const p = makeShipProject(d);
+  const reg = { ...DEP, imageDelivery: 'registry', registry: { host: 'reg.lan:5000', namespace: 'highland-acme', user: 'u' } };
+  const f = fakeSsh(d, [...BUILD_RULES(d).slice(0, 2),
+    { host: 'hf-build', match: '^docker tag', stdout: `${SUM}  ${W}/src/dist/highland-bundle-0.1.3.tar.gz\n` }]);
+  const prov = fakeProvider();
+  const b = await buildOnMachine({ provider: prov, slug: 'acme', runId: RUN_ID, appDir: p.appDir, release: rel(p), dep: reg, say: () => {}, env: f.env(), buildTimeoutMs: 60000 });
+  assert.equal(b.ok, true, b.problem);
+  assert.ok(f.calls().some((c) => c.command.includes("docker push 'reg.lan:5000/highland-acme/app:0.1.3'")));
+  await cleanupBuild(b, { env: f.env() });
+  assert.ok(f.calls().some((c) => c.command === "docker rmi 'highland/app:0.1.3' 'highland/ops:0.1.3' 'reg.lan:5000/highland-acme/app:0.1.3' 'reg.lan:5000/highland-acme/ops:0.1.3'"));
+});
+
+test('an unexpected throw after the machine is acquired still cleans up and releases it', async () => {
+  const d = tmp();
+  const p = makeShipProject(d);
+  const f = fakeSsh(d, BUILD_RULES(d));
+  const prov = fakeProvider();
+  const b = await buildOnMachine({ provider: prov, slug: 'acme', runId: RUN_ID, appDir: p.appDir, release: rel(p), dep: DEP,
+    say: () => { throw new Error('boom'); }, env: f.env(), buildTimeoutMs: 60000 });
+  assert.equal(b.ok, false);
+  assert.match(b.problem, /boom/);
+  assert.equal(prov.released(), 1);
+  assert.ok(f.calls().some((c) => c.command.startsWith("docker rmi 'highland/app:0.1.3'")));
+});
+
+test('the mkdir-failure message names the box\'s real ssh user', async () => {
+  const f = fakeSsh(tmp(), [{ host: 'acme-box', match: '^mkdir', code: 1, stderr: 'Permission denied\n' }]);
+  const built = { machine: {}, target: { host: 'hf-build', user: 'hf', port: null, keyPath: null, label: 'b' }, workDir: '/w', imagesFile: null, bundleFile: { path: '/w/b.tgz', sha256: SUM } };
+  const r = await deliverToBox({ built, target: { ...BOX, user: 'ops' }, dep: DEP, version: '0.1.3', say: () => {}, env: f.env() });
+  assert.equal(r.problem, 'Conductor could not create /opt/highland/acme on acme-office. Create it once by hand on the box: sudo mkdir -p /opt/highland/acme && sudo chown ops /opt/highland/acme');
+});
+
+test('a failing checksum command on the box is reported as a command failure, not a damaged copy, and nothing is loaded', async () => {
+  const f = fakeSsh(tmp(), [{ host: 'acme-box', match: "sha256sum .*\\.part'$", code: 1, stderr: 'sha256sum: No such file\n' }]);
+  const built = { machine: {}, target: { host: 'hf-build', user: 'hf', port: null, keyPath: null, label: 'b' }, workDir: '/w', imagesFile: null, bundleFile: { path: '/w/b.tgz', sha256: SUM } };
+  const r = await deliverToBox({ built, target: BOX, dep: { ...DEP, imageDelivery: 'registry' }, version: '0.1.3', say: () => {}, env: f.env() });
+  assert.equal(r.ok, false);
+  assert.equal(r.problem, 'A command on acme-office failed (code 1): sha256sum: No such file.');
+  assert.ok(!f.calls().some((c) => c.command.startsWith('mv ')));
+});
