@@ -246,11 +246,12 @@ export async function runBuild({ factory, slug, team, hooks, options = {}, baseD
       await assertClean();
       await gitOut(appDir, ['checkout', '-q', build.branch]);
     }
+    // Landed and recorded before a crash: only the merge is left. This comes before the clean check:
+    // a crash inside mergeFeature after the branch moved leaves the checkout at the old base (it looks dirty),
+    // and mergeFeature itself repairs that, with its own position and dirty checks (buildState.js).
+    if (f.status === 'landed' && f.landedSha && f.branch && f.baseSha) return mergeLanded(i);
     await assertClean();
     const head = await gitOut(appDir, ['rev-parse', '--verify', `refs/heads/${build.branch}^{commit}`]);
-
-    // Landed and recorded before a crash: only the merge is left (mergeFeature is idempotent).
-    if (f.status === 'landed' && f.landedSha && f.branch && f.baseSha) return mergeLanded(i);
     if (f.baseSha && f.baseSha !== head) throw new PlainError(notWhereLeft(build.branch));
 
     const runOpts = {
@@ -333,7 +334,7 @@ export async function runBuild({ factory, slug, team, hooks, options = {}, baseD
       onEvent: (e) => {
         if (e?.type === 'start' && typeof e.workspace === 'string') { f.workspaceDir = e.workspace; save(); }
         if (e?.type === 'result' && typeof e.costUsd === 'number' && Number.isFinite(e.costUsd)) build.usage.costUsd += e.costUsd;
-        hooks.onEvent?.(e);
+        try { hooks.onEvent?.(e); } catch { /* a display hook never stops a build */ }
       },
       // The feature's gate, answered here, fail closed (Ruling 7).
       approveResult: async ({ tests, council, finalReview } = {}) => {

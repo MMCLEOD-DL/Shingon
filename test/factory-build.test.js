@@ -293,3 +293,28 @@ test('a final-review concern goes to the operator; reject stops the build with t
   assert.equal(out.status, 'stopped');
   assert.match(out.reason, /Feature 1 \(Submit and list expenses\) was not accepted: you did not accept the reviewer's concern\./);
 });
+
+test('a crash inside the merge after the build branch moved but before the checkout followed: the next run finishes it with one commit', async () => {
+  const s = await setup();
+  let crashed = false;
+  // Does mergeFeature's first half (commit + move the branch ref) and dies before reset --hard: the index still holds the old base.
+  const merge = async (a) => {
+    if (crashed) return realMerge(a);
+    crashed = true;
+    const next = (await git(a.appDir, ['commit-tree', `${a.landedSha}^{tree}`, '-p', a.expectedBase, '-m', a.message])).stdout.trim();
+    await git(a.appDir, ['update-ref', `refs/heads/${a.buildBranch}`, next, a.expectedBase]);
+    throw new Error('power cut');
+  };
+  const first = await runBuild({ factory: s.factory, slug: s.slug, baseDir: s.baseDir, team: team(), hooks: s.hooks, deps: { ...s.deps, mergeFeature: merge }, env: {} });
+  assert.equal(first.status, 'failed');
+  const appDir = path.join(s.projectDir, 'app');
+  assert.notEqual((await git(appDir, ['status', '--porcelain'])).stdout.trim(), '', 'the checkout is stale, as after a real crash');
+  const t2 = team();
+  const second = await runBuild({ factory: s.factory, slug: s.slug, baseDir: s.baseDir, team: t2, hooks: s.hooks, deps: s.deps, env: {} });
+  assert.equal(second.status, 'ready', second.reason);
+  assert.equal(t2.local.calls.some((c) => /\(expenses\)/.test(c.task)), false);
+  const lines = await log(appDir, `build/${first.runId}`);
+  assert.equal(lines.filter((l) => l.startsWith('Feature 1/2')).length, 1);
+  assert.equal(lines.filter((l) => l.startsWith('Feature 2/2')).length, 1);
+  assert.equal((await git(appDir, ['status', '--porcelain'])).stdout.trim(), '');
+});
