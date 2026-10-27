@@ -66,5 +66,5 @@ export function loadConfig(filePath) {
     if (byName.has(p.name)) throw new Error(`Duplicate participant name: ${p.name}`);
     byName.set(p.name, p);
   }
-  return { participants, byName, routing, options };
+  return { participants, byName, routing, options, factory: parsed.factory ?? {} };
 }
