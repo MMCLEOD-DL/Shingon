@@ -4,7 +4,7 @@ import { MEMBER_LABEL, findingKey, tally } from './findings.js';
 import { TOOL_LABEL } from './tools.js';
 import { clip } from '../text.js';
 
-const ORDER = ['foundation', 'security', 'legal', 'correctness'];
+const ORDER = ['foundation', 'security', 'legal', 'correctness', 'design', 'reliability'];
 const MAX_ITEMS = 20;
 const FIX_MAX = 7000;
 

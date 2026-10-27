@@ -16,7 +16,9 @@ export const DEFAULT_OPTIONS = Object.freeze({
   council: false,             // true: Security, Legal and Correctness check the finished change before the gate (--council)
   councilFixRounds: 3,        // how many times blocking council findings go back to be fixed before you are asked
   councilToolTimeoutMs: 600000,
-  councilTools: Object.freeze({}),          // { semgrep: "/path/to/semgrep" | false }: a path not on PATH, or false to turn a check off
+  councilGatesTimeoutMs: 2400000, // 40 minutes: caps the local gates (install, lint, types, tests, build, browser) of one council round
+  councilSmokeTimeoutMs: 2400000, // 40 minutes: caps the reliability machine smoke (deploy, backup, restore, alerts, updates)
+  councilTools: Object.freeze({}),          // { semgrep: "/path/to/semgrep" | false }, plus axe: "/path/to/axe.min.js" | false (a file): a path not on PATH, or false to turn a check off
   councilAcceptLicences: Object.freeze([]), // licences you accept for THIS project despite the permissive-only rule, e.g. ["LGPL-3.0-only"]
   councilSemgrepConfig: 'p/default',        // Semgrep rules: a registry pack, or a local rules file to run fully offline
   councilMembers: null,   // e.g. ["foundation", "correctness"]; null = Security, Legal and Correctness

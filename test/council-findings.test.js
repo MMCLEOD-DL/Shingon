@@ -16,7 +16,7 @@ test('council options: off by default, frozen containers', () => {
 
 test('grades run blocking > warning > note; clamp only ever lowers', () => {
   assert.deepEqual(GRADES, ['blocking', 'warning', 'note']);
-  assert.deepEqual(MEMBER_LABEL, { security: 'Security', legal: 'Legal', correctness: 'Correctness', foundation: 'Foundation rules' });
+  assert.deepEqual(MEMBER_LABEL, { security: 'Security', legal: 'Legal', correctness: 'Correctness', foundation: 'Foundation rules', design: 'Design', reliability: 'Reliability' });
   assert.equal(clampGrade('blocking', 'warning'), 'warning');
   assert.equal(clampGrade('note', 'warning'), 'note');
   assert.equal(clampGrade('warning', 'blocking'), 'warning');
@@ -29,7 +29,7 @@ test('no tool evidence, or already there before the change: at most a warning', 
     member: 'security', tool: 'semgrep', grade: 'blocking', maxGrade: 'blocking', title: 't', detail: '', file: 'a.js', line: 3,
     evidence: true, locked: false, preExisting: false, dismissed: false, why: null, fix: null,
   });
-  assert.throws(() => makeFinding({ member: 'design', tool: 'x', grade: 'note', title: 't' }), /unknown council member/);
+  assert.throws(() => makeFinding({ member: 'marketing', tool: 'x', grade: 'note', title: 't' }), /unknown council member/);
   assert.throws(() => makeFinding({ member: 'legal', tool: 'x', grade: 'fatal', title: 't' }), /unknown grade/);
 });
 
@@ -63,4 +63,11 @@ test('findingKey ignores line numbers; tally skips set-aside findings', () => {
   assert.equal(findingKey(makeFinding({ member: 'correctness', grade: 'warning', title: 'gap' })), 'correctness|ai||gap');
   assert.deepEqual(tally([a, { ...b, dismissed: true }, makeFinding({ member: 'legal', tool: 'x', grade: 'note', title: 'n' })]),
     { blocking: 1, warning: 0, note: 1 });
+});
+
+test('design and reliability are council members with their own labels', () => {
+  assert.equal(MEMBER_LABEL.design, 'Design');
+  assert.equal(MEMBER_LABEL.reliability, 'Reliability');
+  assert.equal(makeFinding({ member: 'design', tool: 'page-gate', grade: 'blocking', title: 'x' }).maxGrade, 'blocking');
+  assert.equal(makeFinding({ member: 'reliability', grade: 'blocking', title: 'no tool' }).grade, 'warning');
 });

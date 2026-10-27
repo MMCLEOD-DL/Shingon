@@ -13,6 +13,11 @@ export const TOOL_LABEL = Object.freeze({
   semgrep: 'Semgrep (code scanner)', gitleaks: 'Gitleaks (secret scanner)', 'npm-audit': 'npm audit (dependency security check)',
   scancode: 'ScanCode (licence scanner)', licences: 'dependency licence check', settings: 'scanner settings check',
   tests: 'the test command', 'test-files': 'test coverage check', 'foundation-rules': 'foundation rules check',
+  crossing: 'the role-crossing tests', 'licence-exceptions': "the app's licence exceptions", 'page-gate': 'the page check (desktop and phone)',
+  registry: 'the screen list check', axe: 'axe-core (accessibility scanner)', 'house-style': 'house style check',
+  smoke: 'the reliability test (deploy, backup, restore, alerts, updates)', verify: "the foundation's checks (install, lint, types, licences, tests, build)",
+  coverage: 'brief coverage check', journeys: 'the user journey tests', money: 'money arithmetic check',
+  'data-flow': 'outside connections check', 'data-policy': 'data policy check',
 });
 
 const isExecutableFile = (p) => {

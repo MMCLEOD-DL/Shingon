@@ -54,6 +54,9 @@ export function validateCouncilOptions(o) {
   if (!Number.isInteger(o.councilToolTimeoutMs) || o.councilToolTimeoutMs <= 0) {
     throw new Error(`councilToolTimeoutMs must be a whole number of milliseconds above 0 (got ${shown(o.councilToolTimeoutMs)})`);
   }
+  for (const k of ['councilGatesTimeoutMs', 'councilSmokeTimeoutMs']) {
+    if (!Number.isInteger(o[k]) || o[k] <= 0) throw new Error(`${k} must be a whole number of milliseconds above 0 (got ${shown(o[k])})`);
+  }
   if (typeof o.councilSemgrepConfig !== 'string' || !o.councilSemgrepConfig.trim()) {
     throw new Error(`councilSemgrepConfig must be a Semgrep rules pack name or a rules file path (got ${shown(o.councilSemgrepConfig)})`);
   }
@@ -63,7 +66,7 @@ export function validateCouncilOptions(o) {
     throw new Error(`councilTools must map a tool name to a path or false (got ${shown(tools)})`);
   }
   for (const k of Object.keys(tools)) {
-    if (!COUNCIL_TOOLS.some(([n]) => n === k)) throw new Error(`councilTools: unknown tool "${k}" (known: ${COUNCIL_TOOLS.map(([n]) => n).join(', ')})`);
+    if (k !== 'axe' && !COUNCIL_TOOLS.some(([n]) => n === k)) throw new Error(`councilTools: unknown tool "${k}" (known: ${COUNCIL_TOOLS.map(([n]) => n).join(', ')})`);
   }
   const names = o.councilMembers ?? null;
   if (names !== null) {

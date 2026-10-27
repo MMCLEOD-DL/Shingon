@@ -206,3 +206,12 @@ test('carry-over (a): with diff.noprefix, a file under a top-level b/ directory 
   assert.deepEqual(out.report.blocking.map((f) => f.title), ['Bad L3'], 'the added line blocks');
   assert.deepEqual(out.report.warnings.map((f) => [f.title, f.preExisting]), [['Bad L1', true]], 'the old line is already there');
 });
+
+test('options: axe path or false is accepted; true is not; the smoke timeout is validated', () => {
+  validateCouncilOptions({ ...DEFAULT_OPTIONS, council: true, councilTools: { axe: '/x/axe.min.js', semgrep: false } });
+  assert.throws(() => validateCouncilOptions({ ...DEFAULT_OPTIONS, council: true, councilTools: { axe: true } }), /must map a tool name to a path or false/);
+  assert.throws(() => validateCouncilOptions({ ...DEFAULT_OPTIONS, council: true, councilSmokeTimeoutMs: 0 }), /councilSmokeTimeoutMs must be a whole number of milliseconds above 0/);
+  assert.throws(() => validateCouncilOptions({ ...DEFAULT_OPTIONS, council: true, councilGatesTimeoutMs: 1.5 }), /councilGatesTimeoutMs must be a whole number/);
+  assert.equal(DEFAULT_OPTIONS.councilGatesTimeoutMs, 2400000);
+  assert.equal(DEFAULT_OPTIONS.councilSmokeTimeoutMs, 2400000);
+});
