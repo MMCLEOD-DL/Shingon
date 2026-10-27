@@ -24,7 +24,7 @@ export function detectAxe({ options = {}, env = process.env } = {}) {
   }
   const file = typeof setting === 'string' && setting ? setting : path.join(env.HOME || homedir(), AXE_REL);
   let head;
-  try { head = readFileSync(file, 'utf8').slice(0, 4000); } catch {
+  try { head = readFileSync(file, 'utf8').slice(0, 4000).replace(/\s*\n\s*\*?\s*/g, ' '); } catch {
     return { path: file, version: null, status: 'missing', note: `axe-core is not installed, so the accessibility scan did not run. ${AXE_INSTALL}` };
   }
   const version = /\baxe(?:-core)?\s+v(\d+\.\d+\.\d+[\w.-]*)/i.exec(head)?.[1];
@@ -184,20 +184,23 @@ export async function runGates({ dir, axe, need = { verify: true, browser: true 
   let stopped = false;
   const step = async (name, stepEnv = childEnv) => {
     const left = deadline - Date.now();
-    let code, text;
-    if (left <= 0) { code = -1; text = TIMED_OUT; }
+    let code, text, timedOut = false;
+    if (left <= 0) { code = -1; text = TIMED_OUT; timedOut = true; }
     else {
       const r = await run({ cmd: 'sh', args: ['-c', COMMANDS[name]], cwd: dir, env: stepEnv, timeoutMs: left });
       text = redact(`${r.stdout ?? ''}${r.stderr ?? ''}`, secrets);
       code = r.timedOut ? -1 : (r.code ?? -1);
+      timedOut = !!r.timedOut;
       if (r.timedOut) text = `${text}\n${TIMED_OUT}`.trim();
     }
     result.steps[name] = code;
     writeFileSync(path.join(out, `${name}.log`), text);
     if (code !== 0) result.logs[name] = lastLines(text);
-    if (code === -1) {
+    if (timedOut) {
       stopped = true;
       result.note = [result.note, `The ${name} step took longer than the time allowed, so the later checks did not run.`].filter(Boolean).join(' ');
+    } else if (code === -1) {
+      result.note = [result.note, `The ${name} step could not run.`].filter(Boolean).join(' ');
     }
     return code;
   };
@@ -222,7 +225,11 @@ export async function runGates({ dir, axe, need = { verify: true, browser: true 
   const tryParse = (file, parse) => {
     const text = readIf(file);
     if (text == null) return null;
-    try { return parse(text); } catch (e) { result.note = [result.note, e.message].filter(Boolean).join(' '); return null; }
+    try {
+      const rows = parse(text);
+      if (Array.isArray(rows)) for (const r of rows) if (typeof r.message === 'string') r.message = redact(r.message, secrets);
+      return rows;
+    } catch (e) { result.note = [result.note, e.message].filter(Boolean).join(' '); return null; }
   };
   if (result.steps.vitest !== null) result.tests = tryParse(path.join(out, 'vitest.json'), parseVitestJson);
   if (needVerify && result.steps.vitest !== null) result.crossing = tryParse(path.join(dir, 'apps', 'server', 'reports', 'crossing.json'), parseCrossingJson);

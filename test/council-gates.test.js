@@ -103,3 +103,27 @@ test('runGates: a step that runs out of time stops the rest', async () => {
   assert.equal(r.steps.build, null);
   assert.match(r.note, /took longer than the time allowed/);
 });
+
+test('detectAxe: the real banner wraps the licence name across lines', () => {
+  const f = path.join(tmp(), 'axe.min.js');
+  writeFileSync(f, '/*! axe v4.10.3\n * Copyright (c) 2015 - 2025 Deque Systems, Inc.\n *\n * Your use of this Source Code Form is subject to the terms of the Mozilla Public\n * License, v. 2.0. If a copy of the MPL was not distributed with this\n * file, You can obtain one at https://mozilla.org/MPL/2.0/.\n *\n * This entire copyright notice must appear in every copy of this file you\n * distribute or in any file that contains substantial portions of this source\n * code.\n */\n!function e(t){var axe=1}');
+  const d = detectAxe({ options: { councilTools: { axe: f } } });
+  assert.equal(d.status, 'ok');
+  assert.equal(d.version, '4.10.3');
+});
+
+test('runGates: a spawn failure is not a time-out; messages are redacted with the passed env', async () => {
+  const dir = tmp();
+  const base = fakeGatesRun({ codes: { vitest: 1 } }).run;
+  const run = async (c) => (c.args.at(-1).includes('npm run lint') ? { stdout: '', stderr: 'spawn failed', code: -1, timedOut: false } : base(c));
+  const r = await runGates({ dir, axe: { status: 'off' }, options: opts, env: { TEST_DATABASE_URL: 'postgres://u:hunter2hunter2@h/db' }, run, helpers: okChecks });
+  assert.equal(r.steps.lint, -1);
+  assert.equal(r.steps.build, 0);
+  assert.doesNotMatch(r.note, /longer than the time allowed/);
+  assert.match(r.note, /lint step could not run/);
+});
+
+test('runGates: browser messages are redacted with the env given to runGates', async () => {
+  const r = await runGates({ dir: tmp(), axe: { status: 'off' }, options: opts, env: { TEST_DATABASE_URL: 'scrolls sideways' }, run: fakeGatesRun({ codes: { browser: 1 } }).run, helpers: okChecks });
+  assert.doesNotMatch(r.browser.map((c) => c.message).join(), /scrolls sideways/);
+});

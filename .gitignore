@@ -2,3 +2,4 @@
 /workspace/
 /transcripts/
 *.log
+!test/fixtures/**/*.log
