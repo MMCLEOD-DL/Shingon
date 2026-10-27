@@ -349,6 +349,8 @@ In plain words: the box's address or SSH alias, the login user, the SSH port, th
 
 Conductor checks your answers against the brief's data policy before it touches the box. It refuses, for example, a backup destination on the box itself.
 
+Typed a wrong address, user or folder at the first ship? If nothing was set up on a box yet (`conductor deployments` shows `first-time setup not finished (stopped after: new)`), delete `<project>/deployments/<name>.json`, or correct the address in it, and run the ship again; delete the file to be asked every question afresh.
+
 The backup password is shown **once**. Save it in your password manager, then type `saved`. Clear your terminal's scrollback afterwards. If you stop before typing `saved`, it is shown again next time.
 
 ### What Conductor keeps, and what it never keeps
