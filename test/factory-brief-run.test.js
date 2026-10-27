@@ -254,3 +254,41 @@ test('a rerun gets fresh budgets: all 8 rounds and all 3 tries again', async () 
   assert.equal(b.calls.length, 3, 'a full 3 tries in the new sitting');
   assert.ok(t.said.includes('Asking the AI to fix its draft (try 1 of 3)…'), 'the problems are kept, the count starts again');
 });
+
+// Node 22's JSON.parse quotes the raw reply text around the fault, escape characters and all.
+const HOSTILE = 'Draft.\n```json\n{"client": "Thistle", "kind": tru\x1b]0;pwned\x07}\n```';
+const hasEscape = (s) => /[\x07\x1b]/.test(s);
+
+test('escape characters in a broken reply never reach the operator or the saved problems', async () => {
+  const { p, session } = setup();
+  const t = io();
+  const out = await run(p, session, author([HOSTILE, HOSTILE, HOSTILE]), t);
+  assert.equal(out.status, 'failed');
+  assert.match(out.reason, /the brief block is not valid JSON/);
+  assert.equal(hasEscape(out.reason), false, JSON.stringify(out.reason));
+  assert.equal(t.said.some(hasEscape), false);
+  assert.equal(loadSession(p, 'thistle').problems.some(hasEscape), false);
+});
+
+test('escape characters in an adapter error are cleaned, for a failed try and for a pause', async () => {
+  const { p, session } = setup();
+  const bad = { ok: false, failure: 'error', error: 'claude said \x1b[31mno\x1b[0m\x07' };
+  const out = await run(p, session, author([bad, bad, bad]), io());
+  assert.equal(out.status, 'failed');
+  assert.match(out.reason, /the AI could not answer \(claude said no\)/);
+  assert.equal(hasEscape(out.reason), false);
+  const s = loadSession(p, 'thistle');
+  const paused = await run(p, s, author([{ ok: false, failure: 'no-participant', error: 'rate-limited \x1b]0;pwned\x07' }]), io());
+  assert.equal(paused.status, 'paused');
+  assert.match(paused.reason, /No AI model can write the brief right now \(rate-limited\)/);
+  assert.equal(hasEscape(paused.reason), false);
+});
+
+test('notes that grow too long mid-brief: the refusal says the answers are saved and how to start again', async () => {
+  const { p, session } = setup();
+  writeFileSync(path.join(p, 'notes', 'n.md'), 'x'.repeat(130_000));
+  const out = await run(p, session, author([fence(validBrief())]), io());
+  assert.equal(out.status, 'stopped');
+  assert.match(out.reason, /Your answers so far are saved/);
+  assert.match(out.reason, /conductor brief thistle --discard-draft/);
+});

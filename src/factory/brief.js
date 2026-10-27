@@ -30,6 +30,11 @@ export function cleanText(value, max) {
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
+// The same stripping for a whole message bound for the terminal: line breaks and tabs stay, nothing is clipped.
+export function terminalText(value) {
+  return String(value ?? '').replace(ANSI_CSI_RE, '').replace(ANSI_OSC_RE, '').replace(CONTROL_RE, '');
+}
+
 // ---- normalisation ----
 
 const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);

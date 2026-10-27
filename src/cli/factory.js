@@ -7,8 +7,9 @@ import { findConfig } from './config.js';
 import { loadConfig } from '../config.js';
 import { factoryConfig } from '../factory/config.js';
 import { validateSlug, createProject, readProject, listProjects } from '../factory/projects.js';
-import { currentBriefInfo, briefPaths, ukDate } from '../factory/brief.js';
-import { loadSession, importNotes, newSession, saveSession, discardSession } from '../factory/briefSession.js';
+import { currentBriefInfo, briefPaths, ukDate, loadBrief, terminalText } from '../factory/brief.js';
+import { loadSession, readNotesFile, importNotes, newSession, saveSession, discardSession } from '../factory/briefSession.js';
+import { briefDraftPrompt } from '../factory/briefPrompts.js';
 import { lockProject } from '../factory/projectLock.js';
 import { runBriefSession } from '../factory/briefRun.js';
 import { briefAuthorSeat } from '../factory/briefTeam.js';
@@ -104,7 +105,8 @@ async function briefCommand(cli, ctx) {
   if (!ctx.isTTY) { ctx.print(NO_TTY_BRIEF_START); return EXIT.stopped; }
 
   const term = createTerminal({ input: ctx.stdin, output: ctx.stdout, isTTY: ctx.isTTY, bell: cli.flags.bell });
-  const say = (s) => term.say(s);
+  // The last hop: model and adapter text can reach these messages, so no escape character gets through.
+  const say = (s) => term.say(terminalText(s));
   let release = null;
   let session = null;
   let interrupted = false;
@@ -134,7 +136,10 @@ async function briefCommand(cli, ctx) {
       // An unreadable session can still be thrown away: its own message says to run --discard-draft.
       if (!session && !unreadable) { say(`There is no unfinished brief for ${slug}.`); return EXIT.stopped; }
       if (!(await term.confirmDiscard({ slug }))) { say('Nothing was thrown away.'); return EXIT.stopped; }
-      discardSession(dir);
+      try { discardSession(dir); } catch (e) {
+        say(`Conductor could not throw away the unfinished brief for ${slug}: ${e.message}`);
+        return EXIT.failed;
+      }
       session = null;
       say(`The unfinished brief for ${slug} was thrown away. Your notes are kept in ${path.join(dir, 'notes')}`);
       return 0;
@@ -179,9 +184,15 @@ async function briefCommand(cli, ctx) {
     say(NOTES_ONLY_FRONTIER);
 
     if (!session) {
+      // A dry run of the first request: notes too long to send are refused before anything is saved.
+      const notesFile = path.resolve(ctx.cwd, cli.notes);
+      try {
+        const { text } = readNotesFile(notesFile);
+        briefDraftPrompt({ notes: [{ name: `notes/${path.basename(notesFile)}`, text }], baseBrief: cli.revise ? loadBrief(dir) : null });
+      } catch (e) { say(e.message); return EXIT.stopped; }
       const now = deps.now?.() ?? new Date();
       let imported;
-      try { imported = importNotes(dir, path.resolve(ctx.cwd, cli.notes), { now }); } catch (e) { say(e.message); return EXIT.stopped; }
+      try { imported = importNotes(dir, notesFile, { now }); } catch (e) { say(e.message); return EXIT.stopped; }
       const s = newSession({ slug, mode: cli.revise ? 'revise' : 'new', baseVersion: cli.revise ? info.version : null, notes: [imported.name], now });
       saveSession(dir, s, { now });
       session = s;
@@ -236,8 +247,14 @@ export async function runFactoryCommand(cli, { cwd, env, stdin, stdout, isTTY, o
   }
   let factory;
   let config = null;
+  let parsed = {};
+  if (configPath) {
+    try { parsed = JSON.parse(readFileSync(configPath, 'utf8')); } catch (e) {
+      print(`Conductor could not read its config file ${configPath}: ${e.message}`);
+      return EXIT.usage;
+    }
+  }
   try {
-    const parsed = configPath ? JSON.parse(readFileSync(configPath, 'utf8')) : {};
     factory = factoryConfig({ factory: parsed?.factory }, { env, home });
     if (Array.isArray(parsed?.participants)) {
       try { config = loadConfig(configPath); } catch { config = null; }

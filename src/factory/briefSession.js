@@ -7,7 +7,8 @@ import { briefPaths, renderBrief } from './brief.js';
 
 export const NOTES_FILE_MAX = 100_000;
 
-export function importNotes(projectDir, notesFile, { now = new Date() } = {}) {
+// Reads and checks a notes file without copying it anywhere.
+export function readNotesFile(notesFile) {
   const abs = path.resolve(notesFile);
   let st;
   try { st = statSync(abs); } catch { throw new Error(`There is no notes file at ${abs}.`); }
@@ -23,6 +24,11 @@ export function importNotes(projectDir, notesFile, { now = new Date() } = {}) {
     throw new Error(`${abs} is not UTF-8 text. Save it as UTF-8 and try again.`);
   }
   if (!text.trim()) throw new Error('The notes file is empty.');
+  return { abs, bytes, text };
+}
+
+export function importNotes(projectDir, notesFile, { now = new Date() } = {}) {
+  const { abs, bytes } = readNotesFile(notesFile);
 
   const stamp = now.toISOString().replace(/\.\d+Z$/, 'Z').replace(/:/g, '-');
   const base = path.basename(abs).replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 60) || 'notes.txt';

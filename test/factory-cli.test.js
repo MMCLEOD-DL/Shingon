@@ -216,3 +216,99 @@ test('the lock, discarding, an unavailable author leaves nothing behind, Ctrl-C'
     assert.equal(existsSync(path.join(s.dir, '.conductor.lock')), false);
   } finally { await s.w.close(); }
 });
+
+// ---- final-review fixes ----
+import { mkdirSync } from 'node:fs';
+import { writeStubCli } from './helpers/stubCli.js';
+
+const ESCAPES = /[\x07\x1b]/;
+
+test('escape characters in the author\'s broken reply never reach the terminal', async () => {
+  const bins = tmp();
+  // Node 22's JSON.parse quotes the raw reply text around the fault, escape characters and all.
+  const hostile = 'Draft.\n```json\n{"client": "Thistle", "kind": tru\x1b]0;pwned\x07}\n```';
+  const claude = writeStubCli(bins, 'claude', `
+    if (args[0] === '--version') { console.log('2.1.0 (Claude Code)'); process.exit(0); }
+    process.stdout.write(JSON.stringify({ result: ${JSON.stringify(hostile)}, is_error: false, total_cost_usd: 0 }));`);
+  const cfg = path.join(tmp(), 'conductor.json');
+  writeFileSync(cfg, JSON.stringify({ participants: [
+    { name: 'claude', adapter: 'claude-code', bin: claude, roles: ['author', 'reviewer'], capabilities: { is_agentic: true, can_edit_files: true } },
+  ], routing: { author: 'claude' }, factory: { operatorName: 'Malcolm' } }));
+  const root = path.join(tmp(), 'projects');
+  const env = envFor(root);
+  await runMain(['project', 'new', 'Thistle Joinery Ltd', '--slug', 'thistle', '--config', cfg], { env });
+  const notes = path.join(tmp(), 'meeting.md');
+  writeFileSync(notes, 'Met Jo. 45 staff.');
+  const t = interactive([]);
+  const r = await runMain(['brief', 'thistle', '--notes', notes, '--config', cfg, '--no-bell'], { env, isTTY: true, stdin: t.stdin, stdout: t.out });
+  assert.equal(r.code, 2, r.out);
+  assert.match(r.out, /Conductor could not get a usable brief from the AI after 3 tries\. The last problems were: the brief block is not valid JSON/);
+  assert.equal(ESCAPES.test(r.out), false, JSON.stringify(r.out));
+});
+
+test('the last hop strips escape characters from anything the brief command prints', async () => {
+  const s = await briefSetup();
+  try {
+    const r = await s.go(['--notes', s.notes], [], { deps: { buildAuthor: async () => ({ ok: false, error: 'claude: \x1b[31mbroken\x1b[0m\x07 \x1b]0;pwned\x07done' }) } });
+    assert.equal(r.code, 2);
+    assert.match(r.out, /claude: broken done/);
+    assert.equal(ESCAPES.test(r.out), false, JSON.stringify(r.out));
+  } finally { await s.w.close(); }
+});
+
+test('notes too long to send: refused before anything is saved, so the next sitting can start', async () => {
+  const s = await briefSetup();
+  try {
+    const long = Array.from({ length: 12 }, (_, i) => `Assumption ${i + 1}: ${'the client keeps paper copies of every receipt. '.repeat(38)}`.trim());
+    saveApprovedBrief(s.dir, approvedBrief({ assumptions: long }));
+    const big = path.join(tmp(), 'big.md');
+    writeFileSync(big, `Long meeting. ${'More detail about receipts and claims. '.repeat(2550)}`);
+    const r = await s.go(['--revise', '--notes', big], []);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /These notes are too long to send in one go/);
+    assert.deepEqual(readdirSync(path.join(s.dir, 'notes')), [], 'no notes copy was kept');
+    assert.equal(existsSync(briefPaths(s.dir).session), false, 'no session was saved');
+    assert.equal(existsSync(s.w.promptLog), false, 'nothing was sent');
+
+    const next = await s.go(['--revise', '--notes', s.notes], ['stop']);
+    assert.equal(next.code, 1, next.out);
+    assert.match(next.out, /Stopped\. Your answers so far are saved\./);
+  } finally { await s.w.close(); }
+});
+
+test('a session that cannot be thrown away is a plain failure, not a crash', async () => {
+  const s = await briefSetup();
+  try {
+    mkdirSync(briefPaths(s.dir).session); // rm without recursive refuses a folder
+    const r = await s.go(['--discard-draft'], ['y']);
+    assert.equal(r.code, 2, r.out);
+    assert.match(r.out, /Conductor could not throw away the unfinished brief for thistle: /);
+    assert.doesNotMatch(r.out, /\n\s+at /, 'no stack trace');
+    assert.equal(existsSync(path.join(s.dir, '.conductor.lock')), false);
+  } finally { await s.w.close(); }
+});
+
+test('Ruling P12: a corrupt session is refused plainly until it is discarded', async () => {
+  const s = await briefSetup();
+  try {
+    writeFileSync(briefPaths(s.dir).session, '{this is not json');
+    const stuck = await s.go([], []);
+    assert.equal(stuck.code, 1);
+    assert.match(stuck.out, /The unfinished brief for thistle could not be read \(it is not valid JSON\)\. Run conductor brief thistle --discard-draft to start again\./);
+    const withNotes = await s.go(['--notes', s.notes], []);
+    assert.equal(withNotes.code, 1);
+    assert.match(withNotes.out, /could not be read/);
+    const gone = await s.go(['--discard-draft'], ['y']);
+    assert.equal(gone.code, 0, gone.out);
+    assert.match(gone.out, /The unfinished brief for thistle was thrown away/);
+    assert.equal(existsSync(briefPaths(s.dir).session), false);
+  } finally { await s.w.close(); }
+});
+
+test('a config file that is not valid JSON is named in the message', async () => {
+  const cfg = path.join(tmp(), 'broken.json');
+  writeFileSync(cfg, '{not json');
+  const r = await runMain(['project', 'list', '--config', cfg], { env: envFor(tmp()) });
+  assert.equal(r.code, 64);
+  assert.ok(r.out.includes(`Conductor could not read its config file ${cfg}: `), r.out);
+});

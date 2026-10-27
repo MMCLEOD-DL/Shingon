@@ -3,7 +3,7 @@
 // the CLI handler holds lockProject(dir, 'brief') around this call.
 import { callRole } from '../runlog.js';
 import { vendorOf } from '../vendors.js';
-import { cleanText, validateBrief, renderBrief, briefPaths, nextVersion, saveApprovedBrief, loadBrief, currentBriefInfo } from './brief.js';
+import { cleanText, LIMITS, validateBrief, renderBrief, briefPaths, nextVersion, saveApprovedBrief, loadBrief, currentBriefInfo } from './brief.js';
 import { briefDraftPrompt, parseBriefReply } from './briefPrompts.js';
 import { readNotes, saveSession, discardSession } from './briefSession.js';
 import { assignExampleIds } from './acceptance.js';
@@ -18,6 +18,8 @@ export function assertFrontierSeat(seat) {
 }
 
 const money = (x) => Math.round(x * 1e6) / 1e6;
+// Model and adapter error text is untrusted: it can carry the reply's own escape characters.
+const plainError = (e) => cleanText(String(e ?? ''), LIMITS.text) || 'no reason given';
 
 export async function runBriefSession({ projectDir, session, author, io, log, operatorName, cwd, timeoutMs = 1800000, now = () => new Date() }) {
   assertFrontierSeat(author);
@@ -75,7 +77,7 @@ export async function runBriefSession({ projectDir, session, author, io, log, op
       } catch (e) {
         // Too long to send: a refusal for this sitting (the operator splits the notes); retrying cannot help.
         save();
-        return end('stopped', String(e?.message ?? e));
+        return end('stopped', `${String(e?.message ?? e)} Your answers so far are saved, but this brief cannot carry on with these notes. To start again with shorter notes, run: conductor brief ${slug} --discard-draft`);
       }
       if (session.problems.length) io.say(`Asking the AI to fix its draft (try ${session.attempts + 1} of ${BRIEF_LIMITS.attempts})…`);
       else if (!session.draft && !session.answers.length) io.say('Asking the AI to draft the brief…');
@@ -87,17 +89,17 @@ export async function runBriefSession({ projectDir, session, author, io, log, op
       if (!r.ok) {
         if (r.failure === 'no-participant') {
           save();
-          return end('paused', `No AI model can write the brief right now (${r.error}). Your answers are saved: run conductor brief ${slug} later.`);
+          return end('paused', `No AI model can write the brief right now (${plainError(r.error)}). Your answers are saved: run conductor brief ${slug} later.`);
         }
         session.attempts++;
-        session.problems = [`the AI could not answer (${r.error})`];
+        session.problems = [`the AI could not answer (${plainError(r.error)})`];
         save();
         continue;
       }
       const parsed = parseBriefReply(r.text);
       if (!parsed.ok) {
         session.attempts++;
-        session.problems = [parsed.error];
+        session.problems = [plainError(parsed.error)];
         save();
         continue;
       }
