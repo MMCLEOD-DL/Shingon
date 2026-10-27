@@ -74,3 +74,17 @@ test('raw mode is switched on and restored, also on Ctrl-C', async () => {
   assert.deepEqual(calls, [true, false, true, false]);
   forgetRememberedSecrets();
 });
+
+test('a pasted CRLF counts as one Enter, and does not answer the next prompt', async () => {
+  const { input, ask } = io();
+  const a = ask.text('Host?');
+  input.write('acme-box\r\n');
+  assert.equal(await a, 'acme-box');
+  const b = ask.text('User?', { def: 'highland' });
+  input.write('deploy\n');
+  assert.equal(await b, 'deploy');
+  const c = ask.text('One?');
+  input.write('x\r\ny\r\n'); // two answers pasted in one chunk
+  assert.equal(await c, 'x');
+  assert.equal(await ask.text('Two?', { def: 'empty' }), 'y');
+});

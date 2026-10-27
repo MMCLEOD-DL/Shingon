@@ -176,7 +176,7 @@ function shipSection(raw) {
   checkKeys(s, Object.keys(SHIP_DEFAULTS), 'factory.ship');
   const out = {};
   for (const [k, d] of Object.entries(SHIP_DEFAULTS)) {
-    const v = s[k] ?? d;
+    const v = s[k] === undefined ? d : s[k]; // an explicit null is a bad value, not "use the default"
     if (!isInt(v) || v <= 0) throw new Error(`factory.ship.${k} must be a whole number of milliseconds above 0.`);
     out[k] = v;
   }

@@ -98,3 +98,7 @@ test('alerts and ship sections: defaults, overrides and plain refusals', () => {
   assert.throws(() => factoryConfig({ factory: { ship: { pollMS: 5 } } }, { env: {}, home: '/h' }), /Unknown setting "factory\.ship\.pollMS"/);
   assert.doesNotThrow(() => factoryConfig({ factory: { alerts: {}, ship: {} } }, { env: {}, home: '/h' }), 'alerts and ship are known top-level keys');
 });
+
+test('an explicit null in the ship section is refused, not turned into the default', () => {
+  assert.throws(() => factoryConfig({ factory: { ship: { pollMs: null } } }, { env: {}, home: '/h' }), /factory\.ship\.pollMs must be a whole number of milliseconds above 0/);
+});

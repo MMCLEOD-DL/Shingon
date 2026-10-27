@@ -38,6 +38,7 @@ export function createAsk({ input, output, isTTY }) {
       }
       if (c === '\n' && lastWasCR) { lastWasCR = false; continue; }
       lastWasCR = c === '\r';
+      if (c === '\r' && buf[0] === '\n') buf = buf.slice(1); // a pasted CRLF: its LF is part of this Enter
       if (c === '\n' || c === '\r') return line;
       if (c === '\x03' && raw) return null;
       if (c === '\x7f' || c === '\b') { line = Array.from(line).slice(0, -1).join(''); continue; }

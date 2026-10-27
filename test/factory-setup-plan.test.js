@@ -120,3 +120,9 @@ test('s3 destination asks for its credentials; nothing secret is asked or said i
   for (const s of r.settings.filter((x) => x.secret)) assert.equal(text.includes(s.value), false);
   assert.ok(ask.asked.some((q) => q.includes('an S3 bucket at s3.eu-west-2.amazonaws.com/acme-bk.') && !q.includes('pw12345678')));
 });
+
+test('a registry address that looks like an option is refused at the question', async () => {
+  const ask = scriptedAsk(['srv.acme.co.uk', 'deploy', '2222', '/srv/acme', 's', 'https://staff.acme.co.uk', '', 'r', '-registry.example.com']);
+  await assert.rejects(askDeploymentBasics(ask, { name: 'acme-office', slug: 'acme', policy: { ...P, hosting: 'operator-server', outbound: [] }, defaults: DEFAULTS }),
+    /fails the check for "Registry address/);
+});

@@ -185,9 +185,10 @@ export async function releaseApp({ projectDir, bump, runId, expectedMain = null 
     // Ruling S20: the release adds only release content, in exactly the commits a release makes.
     const count = await g.out(clone, ['rev-list', '--count', `${main}..${sha}`]);
     if (count !== String(bump === 'first' ? 2 : 1)) return no('The app\'s release script made more commits than a release needs, so nothing was added.');
-    const changed = await g.out(clone, ['diff', '--name-only', '-z', main, sha]);
-    if (changed === null) return no(NOT_EXPECTED);
-    const stray = changed.split('\0').filter((f) => f !== '' && !RELEASE_FILES.has(f));
+    // Read untrimmed: a file named " CHANGELOG.md" must not pass as CHANGELOG.md.
+    const diff = await g.git(clone, ['diff', '--name-only', '-z', main, sha]);
+    if (diff.code !== 0) return no(NOT_EXPECTED);
+    const stray = String(diff.stdout).split('\0').filter((f) => f !== '' && !RELEASE_FILES.has(f));
     if (stray.length > 0) {
       const named = stray.slice(0, 5).join(', ') + (stray.length > 5 ? ` and ${stray.length - 5} more` : '');
       return no(`The app's release script changed files a release should not touch (${named}), so nothing was added.`);

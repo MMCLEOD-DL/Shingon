@@ -12,7 +12,10 @@ export function parseVersion(s) {
   const m = VERSION.exec(s);
   if (!m) return null;
   const pre = m[4] === undefined ? [] : m[4].split('.').map((id) => (/^\d+$/.test(id) ? Number(id) : id));
-  return { major: Number(m[1]), minor: Number(m[2]), patch: Number(m[3]), pre };
+  const nums = [Number(m[1]), Number(m[2]), Number(m[3])];
+  // A number too big to hold exactly would compare wrongly: not a version Conductor can use.
+  if (![...nums, ...pre.filter((id) => typeof id === 'number')].every(Number.isSafeInteger)) return null;
+  return { major: nums[0], minor: nums[1], patch: nums[2], pre };
 }
 
 const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);

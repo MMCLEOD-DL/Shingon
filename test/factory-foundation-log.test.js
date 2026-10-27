@@ -99,3 +99,10 @@ test('newest first is semver order, not file order, and pre-releases sort below 
   const t = '## [1.0.0-rc.1] - 2027-01-01\n- **[security]** a\n## [1.0.0] - 2027-01-02\n- **[security]** b\n## [0.10.0] - 2026-01-01\n- **[security]** c\n';
   assert.deepEqual(securityFixesSince(t, '0.9.0').map((s) => s.version), ['1.0.0', '1.0.0-rc.1', '0.10.0']);
 });
+
+test('parseVersion refuses numbers too big to compare exactly', () => {
+  assert.equal(parseVersion('9007199254740993.0.0'), null);
+  assert.equal(parseVersion('1.99999999999999999999.0'), null);
+  assert.equal(parseVersion('1.0.0-rc.99999999999999999999'), null);
+  assert.deepEqual(parseVersion('9007199254740991.0.0-rc.1'), { major: 9007199254740991, minor: 0, patch: 0, pre: ['rc', 1] });
+});

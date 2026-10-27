@@ -142,3 +142,11 @@ test('a record whose name differs from its file name is refused', () => {
   writeFileSync(deploymentPath(dir, 'other'), readFileSync(deploymentPath(dir, 'acme-office')));
   assert.throws(() => loadDeployment(dir, 'other'), (e) => /could not be read \(.*other/.test(e.message));
 });
+
+test('a registry host starting with "-" is refused', async () => {
+  const { REG_HOST_RE } = await import('../src/factory/deployments/store.js');
+  assert.equal(REG_HOST_RE.test('-oProxyCommand=x'), false);
+  assert.equal(REG_HOST_RE.test('-registry.example.com:5000'), false);
+  assert.equal(REG_HOST_RE.test('registry.example.com:5000'), true);
+  assert.equal(REG_HOST_RE.test('10.0.0.5'), true);
+});

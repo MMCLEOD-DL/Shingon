@@ -227,3 +227,13 @@ test('git runs without GIT_DIR, GIT_WORK_TREE or GIT_INDEX_FILE from the caller'
   assert.deepEqual(await findRelease(p.appDir, p.sha, { env: { ...process.env, ...bogus }, run }), { sha: git(p.appDir, 'rev-parse', 'v0.1.3^{commit}'), version: '0.1.3', tag: 'v0.1.3' });
   assert.ok(envs.length > 0 && envs.every((e) => !('GIT_DIR' in e) && !('GIT_WORK_TREE' in e) && !('GIT_INDEX_FILE' in e)));
 });
+
+test('a file whose name only looks like a release file after trimming is still refused (Ruling S20)', async () => {
+  const d = mkdtempSync(path.join(tmpdir(), 'rel-'));
+  const p = makeShipProject(d, { released: false });
+  const before = execFileSync('git', ['-C', p.appDir, 'rev-parse', 'main'], { encoding: 'utf8' }).trim();
+  const r = await releaseApp({ projectDir: p.projectDir, bump: 'first', runId: RUN_ID }, { env: fakeNpm(d, { extraFile: ' CHANGELOG.md' }).env() });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'The app\'s release script changed files a release should not touch ( CHANGELOG.md), so nothing was added.');
+  assert.equal(execFileSync('git', ['-C', p.appDir, 'rev-parse', 'main'], { encoding: 'utf8' }).trim(), before);
+});
