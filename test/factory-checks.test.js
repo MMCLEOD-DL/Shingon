@@ -109,3 +109,32 @@ test('TEST_DATABASE_URL is required only for the real verify', () => {
   assert.equal(testDatabaseProblem({ testCommand: null, env: { TEST_DATABASE_URL: 'postgres://x@127.0.0.1/postgres' } }), null);
   assert.equal(testDatabaseProblem({ testCommand: 'node -e 0', env: {} }), null);
 });
+
+test('the test database URL is redacted from kept output', async () => {
+  const appDir = await makeFoundationRepo();
+  const sha = await headSha(appDir);
+  const url = 'postgres://hf_test:hunter2pass@127.0.0.1/postgres';
+  const run = async (o) => (o.cmd === 'sh' ? { code: 1, stdout: `connect failed ${url}`, stderr: '', timedOut: false } : { code: 0, stdout: '', stderr: '' });
+  const c = await runAppChecks({ appDir, sha, workDir: path.join(tmp('chk-'), 'c'), reportsDir: tmp('rep-'), run, browser: false, env: { TEST_DATABASE_URL: url } });
+  assert.equal(c.verify.status, 'failed');
+  assert.ok(!c.verify.output.includes('hunter2pass'));
+  assert.ok(!checksLine(c).includes('hunter2pass'));
+});
+
+test('reports from an earlier run are not listed as current', async () => {
+  const appDir = await makeFoundationRepo();
+  const sha = await headSha(appDir);
+  const reportsDir = tmp('rep-');
+  writeFileSync(path.join(reportsDir, 'vitest.json'), 'old');
+  mkdirSync(path.join(reportsDir, 'screenshots'));
+  const { run } = fakeRun({ writeReport: false });
+  const c = await runAppChecks({ appDir, sha, workDir: path.join(tmp('chk-'), 'c'), reportsDir, run, browser: false, testCommand: 'node -e 0', env: {} });
+  assert.deepEqual(c.reports, []);
+  assert.equal(existsSync(path.join(reportsDir, 'vitest.json')), false);
+  assert.equal(existsSync(path.join(reportsDir, 'screenshots')), false);
+});
+
+test('a sha that is not hex is refused', async () => {
+  const appDir = await makeFoundationRepo();
+  await assert.rejects(runAppChecks({ appDir, sha: '--orphan', workDir: path.join(tmp('chk-'), 'c'), reportsDir: tmp('rep-'), run: fakeRun().run, env: {} }), /not a commit id/);
+});

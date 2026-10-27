@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { git } from '../workspace.js';
 import { runCommand } from '../exec.js';
-import { strictChildEnv, redact } from '../secrets.js';
+import { strictChildEnv, redact, secretValues } from '../secrets.js';
 import { clip } from '../text.js';
 
 // Task 10's src/factory/remote.js will own this; kept local until that file exists.
@@ -34,15 +34,18 @@ export function testDatabaseProblem({ testCommand = null, env = process.env } = 
   return "TEST_DATABASE_URL is not set, so the foundation's tests cannot reach a database. Set it to a PostgreSQL role that may create databases (for example postgres://hf_test@127.0.0.1/postgres) and run the command again.";
 }
 
-const outputOf = (r) => clip(redact(`${r.stdout ?? ''}${r.stderr ?? ''}`) + (r.timedOut ? '\n[timed out]' : ''), 4000);
 const firstLine = (s) => String(s ?? '').split('\n').map((l) => l.trim()).find(Boolean) ?? '';
 
 export async function runAppChecks({ appDir, sha, workDir, reportsDir, testCommand = null, browser = true, env = process.env, home, run = runCommand, timeoutMs = 3_600_000 }) {
+  if (!/^[0-9a-f]{7,64}$/i.test(String(sha))) throw new Error(`${sha} is not a commit id`);
+  const secrets = [env.TEST_DATABASE_URL, ...secretValues(env), ...secretValues()].filter(Boolean);
+  const outputOf = (r) => clip(redact(`${r.stdout ?? ''}${r.stderr ?? ''}`, secrets) + (r.timedOut ? '\n[timed out]' : ''), 4000);
+  for (const n of ['vitest.json', 'playwright.json', 'crossing.md', 'crossing.json', 'screenshots']) rmSync(path.join(reportsDir, n), { recursive: true, force: true });
   rmSync(workDir, { recursive: true, force: true });
   mkdirSync(path.dirname(workDir), { recursive: true });
   const clone = await git(path.dirname(workDir), ['clone', '--quiet', '--no-hardlinks', appDir, workDir], { timeoutMs: 300_000 });
   if (clone.code !== 0) throw new Error(`could not clone the app for the checks: ${firstLine(clone.stderr)}`);
-  const co = await git(workDir, ['checkout', '-q', '--detach', sha]);
+  const co = await git(workDir, ['checkout', '-q', '--detach', sha, '--']);
   if (co.code !== 0) { rmSync(workDir, { recursive: true, force: true }); throw new Error(`could not check out ${sha} for the checks: ${firstLine(co.stderr)}`); }
   try {
     const childEnv = strictChildEnv({ env });
