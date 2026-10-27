@@ -41,3 +41,21 @@ Follow-ups:
 8. **Limits:** confirm `maxContainers` (default 3), `cores` (2), `memoryMb` (4096) and `maxMemoryMb` (12288) suit the MS-01 alongside the existing containers.
 9. **Half-made containers:** if Conductor crashes while making a container, it can be left in the pool without its factory label. Conductor leaves unlabelled containers alone (`conductor machines` prints a note about them), so remove such a container by hand in Proxmox.
 10. Then set `"provider": "proxmox"`, run `conductor machines` (lists nothing), and repeat smoke steps 5, 8 and 9 to see a container made, labelled and destroyed in the pool.
+
+## Follow-ups from the Plan 8 final review (2026-10-27)
+
+Should fix soon:
+- A feature whose saved run `resume` keeps refusing makes every `conductor build` stop the same way until `--new`, which throws away every merged feature. Restart just that feature instead.
+- `--new` leaves the old build's `build/<runId>` branch; after a secret squash the old branch could still hold the secret. Delete superseded build branches.
+- The whole-app checks clone lives in `builds/<runId>/check` inside the project folder; move it under the workspaces folder (defence in depth for `notes/`).
+- A corrupt (non-empty) `owner.json` on a static host's lock gives an `rmdir` hint that cannot work and sweep cannot clear it.
+- The machine providers should clamp a sweep age below 60 s (the config already does).
+- `ssh` results drop the timed-out flag, so a long preview timeout reads unclearly; ssh stdout is not redacted (only stderr).
+- An explicit public IPv4 `host` (or a Proxmox container address) is bound as given; add a private-address check or a warning.
+- `newestBuild` can throw on an older damaged record past a change build (fix with Plan 11).
+- The status display shows model-written step titles without stripping terminal escape codes (shared with ordinary runs).
+- Browsers "missing" passes the build gate silently; Plan 9's "not proven" warning should surface it.
+
+Operator notes:
+- Give the test database role a long random password: its password is redacted everywhere it appears, so a common word like "postgres" would be blanked out of logs.
+- Per-workspace `tsconfig.json` files are not protected by the Foundation rules member; weakening type checks there would not be blocked.
