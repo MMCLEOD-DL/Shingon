@@ -129,18 +129,29 @@ export const DESIGN = {
     const browser = gates?.browser;
     const out = [];
 
-    if (!gates || !Array.isArray(browser) || !browser.length) {
-      const why = ev.gatesNote || gates?.note || 'no reason was given';
+    const counted = (spec) => (Array.isArray(browser) ? browser : []).filter((c) => specOf(c) === spec && !c.skipped).length;
+    if (!gates || !Array.isArray(browser) || !browser.length || !counted('responsive.spec.ts')) {
+      const why = (Array.isArray(browser) && browser.length)
+        ? 'the browser report has no page check that ran'
+        : ev.gatesNote || gates?.note || 'no reason was given';
       out.push(run('page-gate', 'skipped', [finding('page-gate', {
         grade: 'warning', locked: true, title: 'The pages were not checked at desktop and phone width',
         detail: `The page check did not run (${why}), so no page was looked at on desktop or phone.`,
       })], { note: `The page check did not run (${why}), so no page was looked at on desktop or phone.` }));
-      out.push(run('registry', 'skipped'));
     } else {
       out.push(run('page-gate', 'ran', pageGateFindings(browser), {
         context: pageContext(browser),
         attach: (gates.screenshots ?? []).map((s) => s.file),
       }));
+    }
+    if (!gates || !Array.isArray(browser) || !browser.length) {
+      out.push(run('registry', 'skipped'));
+    } else if (!counted('registry.spec.ts')) {
+      const note = 'The browser report has no screen list check that ran, so no one checked that every page has a screenshot check.';
+      out.push(run('registry', 'skipped', [finding('registry', {
+        grade: 'warning', locked: true, title: 'The screen list was not checked', detail: note,
+      })], { note }));
+    } else {
       out.push(run('registry', 'ran', registryFindings(browser)));
     }
 

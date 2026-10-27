@@ -79,3 +79,20 @@ test('R23: a missing accessibility report is a locked warning, not clean; no pro
   assert.equal(plain.length, 1);
   assert.equal(plain[0].status, 'skipped');
 });
+
+test('a browser report with no page-check case (or no screen-list case) is "not checked", not a clean run', async () => {
+  const flowsOnly = browser.filter((c) => !/responsive|registry/.test(c.file));
+  const skippedPages = browser.map((c) => (/responsive/.test(c.file) ? { ...c, skipped: true, ok: false } : c));
+  for (const b of [flowsOnly, skippedPages]) {
+    const runs = await DESIGN.collect({ brief: {}, dir: '/nope', files: [], evidence: { gates: { browser: b, a11y, screenshots: [], axe: { status: 'ok' } }, gatesNote: null } });
+    assert.equal(runs[0].status, 'skipped');
+    assert.deepEqual(runs[0].findings.map((x) => [x.title, x.grade, x.locked]), [['The pages were not checked at desktop and phone width', 'warning', true]]);
+  }
+  const noReg = await DESIGN.collect({ brief: {}, dir: '/nope', files: [], evidence: { gates: { browser: flowsOnly, a11y, screenshots: [], axe: { status: 'ok' } }, gatesNote: null } });
+  assert.equal(noReg[1].status, 'skipped');
+  assert.deepEqual(noReg[1].findings.map((x) => [x.title, x.grade, x.locked]), [['The screen list was not checked', 'warning', true]]);
+  const pagesNoReg = browser.filter((c) => !/registry/.test(c.file));
+  const r = await DESIGN.collect({ brief: {}, dir: '/nope', files: [], evidence: { gates: { browser: pagesNoReg, a11y, screenshots: [], axe: { status: 'ok' } }, gatesNote: null } });
+  assert.equal(r[0].status, 'ran');
+  assert.deepEqual(r[1].findings.map((x) => x.title), ['The screen list was not checked']);
+});
