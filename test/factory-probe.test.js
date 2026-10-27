@@ -37,7 +37,7 @@ test('preflight explains what is missing on the box', async () => {
 test('probeBox reads version, checks and backup runs; the health token never appears in any command', async () => {
   const f = fakeSsh(tmp(), [
     { match: 'entrypoint node ops', stdout: `Creating container\n${VERSION_OK}\n` },
-    { match: 'run --rm -T ops check', code: 1, stdout: '✓ app\n✗ app:restore-test: The last restore test failed: The newest backup is 40 hours old\n' },
+    { match: 'run --rm --no-deps -T ops check', code: 1, stdout: '✓ app\n✗ app:restore-test: The last restore test failed: The newest backup is 40 hours old\n' },
     { match: 'psql', stdout: `${RUNS_OK}\n` },
   ]);
   const s = await probeBox(T, DEP, { env: f.env() });
@@ -105,4 +105,11 @@ test('a check run that printed nothing is unknown, not healthy', async () => {
   const s = await probeBox(T, DEP, { env: f.env() });
   assert.equal(s.checks, null);
   assert.ok(s.notes.some((n) => /checks could not run \(code 1\)/.test(n)));
+});
+
+test('the status checks never start services on the box (Ruling S14: run --rm --no-deps)', async () => {
+  const f = fakeSsh(tmp(), [{ match: 'entrypoint node ops', stdout: VERSION_OK }, { match: 'ops check', stdout: '✓ app\n' }, { match: 'psql', stdout: RUNS_OK }]);
+  await probeBox(T, DEP, { env: f.env() });
+  const check = f.calls().find((c) => c.command.endsWith('ops check'));
+  assert.equal(check.command, "cd '/opt/highland/acme' && docker compose run --rm --no-deps -T ops check");
 });

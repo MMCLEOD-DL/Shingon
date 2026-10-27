@@ -119,7 +119,7 @@ export async function probeBox(t, dep, { env = process.env } = {}) {
   else if (v.version.foundation === null) notes.push(FOUNDATION_NOTE);
 
   let checks = null;
-  const c = await remoteRun(t, composeCmd(dep, 'run --rm -T ops check'), { env, timeoutMs: 120000 });
+  const c = await remoteRun(t, composeCmd(dep, 'run --rm --no-deps -T ops check'), { env, timeoutMs: 120000 });
   const marks = String(c.stdout ?? '').split('\n').map((l) => l.trim()).filter((l) => l.startsWith('✓ ') || l.startsWith('✗ '));
   if ((c.code === 0 || c.code === 1) && !c.unreachable && (c.code === 0 || marks.length > 0)) {
     checks = { ok: c.code === 0, failing: marks.filter((l) => l.startsWith('✗ ')).map((l) => clean(l.slice(2), 400)) };
