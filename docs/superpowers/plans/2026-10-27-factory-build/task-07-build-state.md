@@ -2,7 +2,7 @@
 
 The pieces that make a build crash-safe (index Review Focus 1):
 - `build.json` in `builds/<runId>/`, written atomically after every step that matters, plus `build-log.jsonl` (the build's own events, redacted);
-- the project-level lock is **not** here: it is Plan 7's `lockProject(projectDir, 'build')` (`src/factory/projectLock.js`, Contract 7 §7.1), used by Task 8;
+- the project-level lock is **not** here: it is Plan 7's `lockProject(projectDir, 'build')` (`src/factory/projectLock.js`, Contract 7 §7.1), taken by the `build`/`resume` handlers in Task 15 (never by `runBuild`, Contract 7 §7.11);
 - `mergeFeature`: puts a landed feature onto the build branch as **one** commit (index Ruling 4), and is safe to call again after a crash;
 - `archiveFeatureRun`: keeps a feature run's transcript in the build folder and removes its workspace.
 

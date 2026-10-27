@@ -275,7 +275,7 @@ Order of operations (each refusal prints its message from the tests and returns 
 
 1. `readProject(ctx.factory.projectsRoot, cli.slug)`, with its error printed, returns 1.
 2. `!isTTY` → print `NO_TTY_BRIEF_START` and return 1. This happens before any file or model work.
-3. Take the project lock with `lockProject(dir, 'brief', deps.isAlive ? { isAlive: deps.isAlive } : {})`. A refusal (another brief, a build or a change running) prints its message and returns 1. Release it in a `finally` on every path, including the SIGINT handler.
+3. Take the project lock with `lockProject(dir, 'brief', deps.isAlive ? { isAlive: deps.isAlive } : {})`. The handler, not `runBriefSession`, holds it (Contract 7 §7.11). A refusal (another brief, a build or a change running) prints its message and returns 1. Release it in a `finally` on every path, including the SIGINT handler.
 4. `session = loadSession(dir, slug)`. A corrupt session prints its message and returns 1.
 5. `--discard-draft`:
    - no session → `There is no unfinished brief for ${slug}.`, return 1;
@@ -289,7 +289,7 @@ Order of operations (each refusal prints its message from the tests and returns 
      - `info` and not `--revise` → the "already has an approved brief" refusal;
      - `--revise` and no `info` → the "no approved brief to revise" refusal.
 7. Load the participants config:
-   - `loadConfig(ctx.configPath)`. With no config (`ctx.configPath` null), print the `findConfig` message (call `findConfig({ cwd, env, home })` again to get it);
+   - `config = ctx.config ?? loadConfig(ctx.configPath)` (Contract 7 §7.11: `ctx.config` is null when the file has no participants, and the handler then calls `loadConfig` itself so the operator sees its plain message). With no config (`ctx.configPath` null), print the `findConfig` message (call `findConfig({ cwd, env, home })` again to get it);
    - errors print `Conductor could not read its config: …` and return `EXIT.usage`;
    - `built = await (deps.buildAuthor ?? ((c, e) => briefAuthorSeat(c.participants, { routing: c.routing, env: e })))(config, env)`;
    - `!built.ok` → print `built.error` and return `EXIT.failed` (2). Nothing has been imported yet;

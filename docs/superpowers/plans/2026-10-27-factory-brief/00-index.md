@@ -5,7 +5,7 @@
 **Goal:** The operator turns a client's meeting notes into an approved, versioned, machine-checkable brief. He runs `conductor project new "<client>"`, then `conductor brief <slug> --notes <file>`. A frontier author drafts the brief and asks him plain-English questions one at a time until nothing important is guessed. He reads the rendered Markdown and approves it. Conductor writes `brief/brief-vN.json`, `brief/brief-vN.md` and `brief/current.json`, and Plans 8–12 build from that.
 
 **Architecture:**
-- **Project folder** (roadmap Contract 1, extended by Contract 7 §7.5). `src/factory/projects.js` creates, loads and saves `<projectsRoot>/<slug>/project.json` (with `approved: null` and `builtFromBrief: null` at creation) plus the `brief/`, `notes/`, `builds/` and `deployments/` folders. Every write goes through `src/factory/fsAtomic.js`: temp file, fsync, rename, fsync the folder. `projectsRoot` and `operatorName` come from `factoryConfig` in `src/factory/config.js` (env `CONDUCTOR_PROJECTS_ROOT` > config `factory.projectsRoot` > `~/highland-projects`); `loadConfig` now keeps the `factory` section. Project commands work without a participants config. `src/factory/projectLock.js` gives one lock per project, shared by briefs, builds and changes.
+- **Project folder** (roadmap Contract 1, extended by Contract 7 §7.5). `src/factory/projects.js` creates, loads and saves `<projectsRoot>/<slug>/project.json` (with `approved: null` and `builtFromBrief: null` at creation) plus the `brief/`, `notes/`, `builds/` and `deployments/` folders. Every write goes through `src/factory/fsAtomic.js`: temp file, fsync, rename, fsync the folder. `projectsRoot` and `operatorName` come from `factoryConfig` in `src/factory/config.js` (env `CONDUCTOR_PROJECTS_ROOT` > config `factory.projectsRoot` > `~/highland-projects`); `loadConfig` now keeps the `factory` section. Project commands work without a participants config. `src/factory/projectLock.js` gives one lock per project, shared by briefs, builds and changes, plus a separate preview lock (Contract 7 §7.11). Only CLI handlers take it.
 - **The brief** (Contract 2). `src/factory/brief.js` owns the schema:
   - `normalizeBrief` turns untrusted model JSON into a brief: known keys only, control and bidi characters stripped, lengths and list sizes capped, approval fields dropped;
   - `validateBrief` returns plain-English problems at three stages (`draft` / `ready` / `approved`);
@@ -15,7 +15,7 @@
 
   The concreteness rules for worked examples live in `src/factory/acceptance.js`, so the validator and the author prompt quote the same rules. The same module stamps example ids (`<featureId>#<n>`) at approval and exports the shared readers `acceptanceIds` and `testTag`. `src/factory/outbound.js` holds the fixed list of outside services (`OUTBOUND_SERVICES`) that `policy.outbound` and `integrations[].service` must name by id.
 - **The session.** `src/factory/briefSession.js` keeps the in-progress state in `brief/session.json`, saved atomically after every model reply and every answer, so Ctrl-C loses nothing. It also copies the notes verbatim into `notes/` and writes `brief/draft.md`. The CLI holds the project lock (`lockProject(dir, 'brief')`) for the whole sitting. `src/factory/briefRun.js` runs the state machine `draft → questions → draft … → approve`, with the author seat and a terminal `io` injected. `src/factory/briefPrompts.js` builds the one author prompt and parses the reply defensively.
-- **CLI.** `src/cli/args.js` gains `project new|list|show` and `brief`. `src/cli/factory.js` exports the `FACTORY_COMMANDS` table and `runFactoryCommand`; `src/cli/main.js` sends any command in that table there **before** the "inside a git repository" check (Contract 7 §7.3). Later plans only add table entries. The brief command:
+- **CLI.** `src/cli/args.js` gains `project new|list|show` and `brief`. `src/cli/factory.js` exports the `FACTORY_COMMANDS` table and `runFactoryCommand`; `src/cli/main.js` sends any command in that table there **before** the "inside a git repository" check (Contract 7 §7.3), and carries on with the ordinary path when the handler returns `null` (§7.11). Later plans add table entries; the only later `main.js` edit is Plan 8 Task 15's move of the team set-up into `src/cli/prepareRun.js` (§7.11). The brief command:
   - builds a **frontier-only author seat** (`src/factory/briefTeam.js`: subscriptions, plus paid API only when `routing.allowApi` is true; never a `local-agent`);
   - skips worker wake/readiness, because the local model is not used;
   - fails closed without a TTY **before** reading the notes or calling any model.
@@ -49,10 +49,11 @@ Small additions beyond the exact Contract 7 names. None changes a Contract 7 sig
 - `assignExampleIds(brief, base)` and `EXAMPLE_ID_RE` in `acceptance.js`, and the brief meta field `exampleSeq`, which are how "an `n` is never reused" is kept;
 - `integrations[].service` (an `OUTBOUND_SERVICES` id), so integrations are matched on ids rather than names;
 - optional test seams: `factoryConfig`'s `user` option and `lockProject`'s third argument `{ pid, isAlive, now }`;
-- `FactoryContext` (`ctx`), the object `runFactoryCommand` hands every handler, so Plans 8, 10 and 11 get `ctx.factory` and `ctx.configPath` without re-reading the config.
+- the extras `home`, `print` and `configPath` on the Contract 7 §7.11 `ctx`, so Plans 8, 10 and 11 can call `loadConfig(ctx.configPath)` when `ctx.config` is null.
 
-Still open (Contract 7 does not settle these):
-- `factoryConfig` reads only the `factory` key, and project commands read it straight from the config file without `loadConfig`, because `loadConfig` refuses a config with no `participants`. Later plans whose commands need participants must call `loadConfig(ctx.configPath)` themselves.
+Settled by Contract 7 §7.11 (no longer open): the handler signature `handler(cli, ctx) -> Promise<number|null>` with `null` falling through to the ordinary path; `ctx = { cwd, env, stdin, stdout, isTTY, onSignal, exit, factory, config, deps }`, where `config` is the full `loadConfig` result or `null` when the file has no participants; a handler that needs participants calls `loadConfig` itself; the CLI handler, never the library, takes the project lock; and `preview` has its own lock file.
+
+Still open (Contract 7 does not settle this):
 - `OUTBOUND_SERVICES` has no ids yet for email delivery, Matrix alerts or backup storage. Per Plan 9, the foundation's own destinations are set per deployment, not in the brief. A plan that wants them in `policy.outbound` adds the ids.
 
 ## Rulings made while scoping (decided, not open)
@@ -226,7 +227,10 @@ listProjects(root) -> { projects: [{ slug, client, status, createdAt, dir }], sk
 //   builtFromBrief: number | null }        // Plan 7 creates { …, status: 'briefing', foundation: nulls, approved: null, builtFromBrief: null }
 
 // Task 1 — src/factory/projectLock.js
-lockProject(projectDir, kind: 'brief'|'build'|'change', { pid, isAlive, now } = {}) -> release()   // file <projectDir>/.conductor.lock
+lockProject(projectDir, kind: 'brief'|'build'|'change'|'preview', { pid, isAlive, now } = {}) -> release()
+//   file <projectDir>/.conductor.lock for brief/build/change (one shared lock); <projectDir>/.preview.lock for preview (Contract 7 §7.11)
+//   the shared lock is taken only by CLI handlers; runBriefSession, runBuild, runChange, runFoundationUpgrade never take it (§7.11);
+//   the preview lock is taken by Plan 8's startPreview/stopPreview
 // busy → throws 'This project is busy: a <kind> is running (pid …, since …). Wait for it to finish or stop it, then try again.'
 
 // Task 2 — src/factory/acceptance.js
@@ -292,9 +296,11 @@ askBriefQuestion, approveBrief, confirmDiscard({ slug }) -> boolean ; export NO_
 { command: 'project-new', client, slug: string|null, flags } | { command: 'project-list', flags }
 { command: 'project-show', slug, flags } | { command: 'brief', slug, notes: string|null, revise, discardDraft, flags }
 // src/cli/factory.js (Contract 7 §7.3) — main() calls runFactoryCommand for any key of FACTORY_COMMANDS, before the git-repo check
-FACTORY_COMMANDS = { 'project-new', 'project-list', 'project-show', brief }   // { [command]: async (cli, ctx) -> exitCode }; Plans 8, 10, 11 add keys
-runFactoryCommand(cli, { cwd, env, stdin, stdout, isTTY, onSignal, exit, deps = {} }) -> Promise<number>
-// FactoryContext ctx = { cwd, env, home, stdin, stdout, isTTY, onSignal, exit, deps, print, configPath: string|null, factory: FactoryConfig }
+FACTORY_COMMANDS = { 'project-new', 'project-list', 'project-show', brief }   // { [command]: async (cli, ctx) -> number | null }; Plans 8, 10, 11 add keys
+runFactoryCommand(cli, { cwd, env, stdin, stdout, isTTY, onSignal, exit, deps = {} }) -> Promise<number | null>   // null: main() carries on (Contract 7 §7.11)
+// FactoryContext ctx (Contract 7 §7.11) = { cwd, env, stdin, stdout, isTTY, onSignal, exit, factory: FactoryConfig,
+//   config: loadConfig(...) result | null /* null when the file has no participants, or none was found */, deps }
+//   + extras: home, print, configPath: string|null. A handler that needs participants calls loadConfig(ctx.configPath) itself when config is null.
 
 // Task 10 — src/factory/briefTeam.js
 briefAuthorSeat(participants, { routing = {}, env = process.env, health = checkHealth, board = new HealthBoard() } = {})

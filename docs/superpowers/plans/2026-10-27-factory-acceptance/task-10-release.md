@@ -77,7 +77,7 @@ Expected: every line PASS. Commit `OCR-RESULT.md` as evidence.
 - [ ] **Step 6: Write the docs**
 
 - `docs/BUILDING-ON.md`, "Optional modules":
-  - switching modules on in `app-profile.json`, which the factory writes from the approved brief (Plan 8's `createApp` at the first build, Plan 11 on a change: Contract 7.5);
+  - switching modules on in `app-profile.json`, which the factory writes from the approved brief (Plan 8's `nameApp` at the first build, in the BRAND-line commit, Plan 11 on a change: Contract 7.5);
   - **OCR:** copy the receipts pages' pattern. Staff always confirm; a client expense row stores the **confirmed** values and the reading's id, never the proposal; corrected field names are audited; nothing reads `proposal` after confirmation.
   - **Reports:** build one `MoneyReport` with `buildMoneyReport` and pass it to `renderPdf`, `renderXlsx` and the screen alike. Pin it with worked examples like `W1_MARCH` before the feature counts as done; serve it with `sendReport` from a `defineRoute` route.
   - **Scheduled jobs:** `registerAppJob` in a file imported from `apps/server/src/jobs/index.ts`; switch on `scheduled-jobs`; pick `catchUp`; jobs must be safe to run once late.

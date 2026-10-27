@@ -137,7 +137,7 @@ Expected: FAIL (`Cannot find module '../src/factory/ids.js'`).
 
 - [ ] **Step 5: Extend `factoryConfig` in `src/factory/config.js`**
 
-Add three section readers beside Plan 7's code, and register their keys in its known top-level keys. Each reader takes the raw section and `{ home }`, checks its own keys (an unknown key throws Plan 7's `Unknown setting "factory.<path>" in the config (known: …)` message), and returns a frozen section. `factoryConfig` adds `foundation`, `build` and `machines` to the object it returns. Plan 7's own tests must still pass.
+Add three section readers beside Plan 7's code. Plan 7's `factoryConfig` leaves unknown top-level keys alone (so later plans' sections are not refused before they land); this task adds the check: an unknown top-level key, or an unknown key inside a section, throws `Unknown setting "factory.<path>" in the config (known: …)`. The known top-level keys after this task are `projectsRoot`, `operatorName`, `foundation`, `build` and `machines`; Plan 10 Task 10 adds `alerts` and `ship`. Each reader takes the raw section and `{ home }`, checks its own keys, and returns a frozen section. `factoryConfig` adds `foundation`, `build` and `machines` to the object it returns. Plan 7's own tests must still pass.
 
 - `foundationSection` (defaults `{ repo: '/root/highland-foundation', tag: 'v0.1.0' }`):
   - `repo`: an absolute local path, `file://…` or `https://…`. Anything else throws `factory.foundation.repo must be a local folder, a file:// or an https:// address (got "<value>")`.
@@ -181,16 +181,20 @@ export async function makeFoundationRepo({ tag = 'v0.1.0', extra = {} } = {}) ->
 //          apps/web/src/appPaths.ts, apps/server/src/db/schema/index.ts, .gitignore ("node_modules/\nreports/\n"), plus `extra`;
 //   one commit on main, annotated tag `tag`.
 export function sampleBrief(over = {}) -> Brief       // passes Plan 7's validateBrief(…, { stage: 'approved' })
-//   client 'Acme Ltd', kind 'web-app', purpose, roles [{ name: 'Office manager', whatTheyDo, mapsTo: 'manager' }, { name: 'Staff', whatTheyDo, mapsTo: 'member' }],
-//   features: [{ id: 'submit-expense', title: 'Submit an expense', story, roles: ['Staff'], data: ['expense'],
+//   client 'Acme Ltd', kind 'web-app', purpose (≥ 40 characters), roles [{ name: 'Office manager', whatTheyDo, sees, mapsTo: 'manager' }, { name: 'Staff', whatTheyDo, sees, mapsTo: 'member' }],
+//   records: [{ name: 'Expense', description, holdsFiles: false, personalData: true }],
+//   features: [{ id: 'submit-expense', title: 'Submit an expense', story, roles: ['Staff'], data: ['Expense'],
 //                acceptance: [{ id: 'submit-expense#1', given: 'a member', when: 'they submit £12.40 with £2.07 VAT for Travel', then: 'it appears in their list as £12.40' },
 //                             { id: 'submit-expense#2', given: 'a member', when: 'they submit a negative amount', then: 'they are told the amount must be above £0' }] },
 //              { id: 'monthly-report', title: 'Monthly report', …, acceptance: [{ id: 'monthly-report#1', given: 'two Travel expenses of £12.40 and £7.60 in March', when: 'a manager opens March', then: 'Travel shows £20.00' }] }],
 //   outputs: [], integrations: [], modules: [],
 //   policy: { hosting: 'client-box', outbound: [], residency: 'uk', retention: { text: 'Kept for 6 years, then deleted', days: 2190 },
 //             backupDestination: { kind: 'client-owned', detail: "A USB disk kept in the client's office" }, operatorAccess: true },
-//   openQuestions: [], approvedAt: '2026-10-27T10:00:00Z', approvedBy: 'operator', schema: 1, ...over
-//   (Add any further field Plan 7's validator requires, as Step 2's last test shows.)
+//   assumptions: [], openQuestions: [],
+//   // the meta fields Plan 7 stamps at approval (its validator needs every one at stage 'approved'):
+//   exampleSeq: { 'submit-expense': 2, 'monthly-report': 1 }, slug: 'acme-ltd', version: 1, createdAt: '2026-10-27T09:00:00.000Z', revisedFrom: null,
+//   approvedAt: '2026-10-27T10:00:00.000Z' /* exact toISOString() form */, approvedBy: 'operator', schema: 1, ...over
+//   (Plan 7's own fixture is test/helpers/briefFixtures.js approvedBrief(); copy its shape. Add any further field Plan 7's validator requires, as Step 2's last test shows.)
 export function makeProject({ root = mkdtempSync(…), slug = 'acme-ltd', status = 'briefing', foundation } = {}) -> { projectsRoot, projectDir, slug }
 //   writes project.json with Plan 7's saveProject:
 //   { schema: 1, slug, client: 'Acme Ltd', createdAt, status, foundation: foundation ?? { repo: null, tag: null }, approved: null, builtFromBrief: null }

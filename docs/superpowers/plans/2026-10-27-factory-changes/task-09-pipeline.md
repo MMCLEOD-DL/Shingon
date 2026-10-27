@@ -11,8 +11,8 @@ upgrade:  prepare┘   (Plan 8 runBuild change mode + Plan 9 council + change ga
 | Stage | Work (in order) | Saved before moving on | Stops as |
 |---|---|---|---|
 | `brief` | `from = project.builtFromBrief`; `deps.reviseBrief` (notes file on the first try, `null` on resume); `briefDelta(loadBriefVersion(from), loadBriefVersion(to))`; `deltaProblem`; `buildUnits`; `profile = profileChanged ? appProfileOf(next) : null` | `brief: { from, to }`, `delta`, `units`, `profile` | brief not approved → `stopped`; paused/failed → same status, resumable |
-| `prepare` | `releaseTags`, `upgradeTargetProblem`, `readChangelogAt` + `changesBetween` + `securityFixesSince`, `prepareUpgradeMerge`; > 20 conflicts asks | `upgrade`, `baseRef = upgrade.branch`, `units = [upgradeUnit]` | refusal → `stopped` |
-| `build` | `deps.runBuild` with `options.change = { runId, baseRef, units, profile }`, `hooks.council = deps.runProjectCouncil`, `hooks.approveBuild` = the change gate (calling it again on resume carries on Plan 8's `build.json`) | the gate saves `approval` and `build: { branch, sha }` and moves the stage to `approved`; then `build.status` from the outcome | `rejected` with `run.refusal` → `stopped` with the refusal; `rejected` otherwise → `rejected`; paused/failed/stopped → same status, resumable |
+| `prepare` | `releaseTags`, `upgradeTargetProblem`, `readChangelogAt` + `changesBetween` + `securityFixesSince` (versions passed without the leading `v`: Plan 10's `parseVersion` is strict semver), `prepareUpgradeMerge`; > 20 conflicts asks | `upgrade`, `baseRef = upgrade.branch`, `units = [upgradeUnit]` | refusal → `stopped` |
+| `build` | `deps.runBuild` with `options.change = { runId, baseRef, units, profile }`, `hooks.council = (a) => deps.runProjectCouncil(a, { options })` (Plan 9's `runProjectCouncil(args, { options, deps })`, as Plan 9 Task 13 wires it for `conductor build`), `hooks.approveBuild` = the change gate (calling it again on resume carries on Plan 8's `build.json`) | the gate saves `approval` and `build: { branch, sha }` and moves the stage to `approved`; then `build.status` from the outcome | `rejected` with `run.refusal` → `stopped` with the refusal; `rejected` otherwise → `rejected`; paused/failed/stopped → same status, resumable |
 | `approved` | `refs/heads/<build.branch>` must equal `approval.sha`; `commitChangelog`; `advanceMain(mainAtStart → changelogSha)`; `saveProject` | `changelogSha`; then `project.json`: `approved = { sha: changelogSha, at, runId, briefVersion }`, plus `builtFromBrief = brief.to` (change) or `foundation = { repo, tag: toTag, commit: tagSha }` (upgrade) | `MAIN_MOVED`, `NOT_APPROVED_COMMIT` → `stopped` |
 | `merged` | `deps.releaseApp({ projectDir, bump, runId })` unless the release already exists (adoption); `releaseProblem` | `release: { version, sha, tag }` | release failed → `failed` (resumable); release check fails → `stopped` |
 | `released` / `shipping` | `shipUpdate` | `deployments[name]` after each box | a box did not update → run `paused` at `shipping` (resume asks before retrying); outcome `stopped` |
@@ -25,7 +25,7 @@ upgrade:  prepare┘   (Plan 8 runBuild change mode + Plan 9 council + change ga
 **Interfaces:**
 - Consumes:
   - everything in Tasks 1–8 (index Shared Interfaces);
-  - Plan 7's `projectDir`, `readProject`, `loadProject`, `saveProject` and `lockProject(projectDir, 'change')`;
+  - Plan 7's `projectDir`, `readProject`, `loadProject` and `saveProject` (not `lockProject`: the CLI handler holds the lock, Contract 7 §7.11);
   - Plan 8's `appProfileOf` (Task 4);
   - Plan 10's `securityFixesSince`;
   - `fakeParticipant`, `approve` (`test/helpers/fakes.js`).
@@ -117,8 +117,8 @@ test('a deployment rolled back: the run pauses at shipping; resume asks; "no" le
 test('a paused build: resume calls runBuild again with the same change.runId', ...)
 test('one unfinished change at a time: a new change is refused while one is paused; --abandon clears it', ...)
   // runChange while a paused run exists → UNFINISHED(runId, 'change'); abandonChange → status 'stopped'; runChange then starts
-test('a second command on the same project while one is running is refused by Plan 7\'s project lock', ...)
-  // lockProject(projectDir, 'build') held → runChange returns stopped with Plan 7's busy text; nothing created under builds/
+test('runChange never takes the project lock: it runs under the lock its caller holds (Contract 7 §7.11)', ...)
+  // lockProject(projectDir, 'change') held by the test (as Task 11's handler does) → runChange still reaches the brief step; no busy text
 test('a missing dep is refused before anything starts', ...)                      // MISSING_SEAMS(['releaseApp'])
 
 test('foundation upgrade with no code conflicts: merged, built from the upgrade branch, patch release, shipped with the new foundation tag', async () => {
@@ -153,7 +153,7 @@ Expected: FAIL (module not found).
 - **Every entry point:**
   - `missingSeams(deps)` → `failed` with `MISSING_SEAMS`;
   - `readProject(factory.projectsRoot, slug)` (Plan 7's plain "no such project" error becomes a `stopped` outcome);
-  - `release = lockProject(projectDir, 'change')` (Plan 7's busy message becomes `stopped`), released in `finally`;
+  - no lock: the `change`/`foundation-upgrade` handler (Task 11) holds `lockProject(projectDir, 'change')` around the whole call (Contract 7 §7.11), so `runChange`, `runFoundationUpgrade`, `resumeChange` and `abandonChange` never take it, and nothing they call (`reviseBrief`, `runBuild`) does either;
   - `findUnfinishedRun` → `UNFINISHED` (new runs), or the run to continue (`resumeChange`; none → `NOTHING_TO_RESUME`).
 - **New runs:**
   - project `status` must be `ready` or `shipped` and `approved` set (`NOT_BUILT_YET`);
@@ -169,7 +169,7 @@ Expected: FAIL (module not found).
 - **Build step:**
   ```js
   deps.runBuild({ factory, slug, team, baseDir, warnings, env,
-    hooks: { escalate: term.escalate, onEvent: term.onEvent, onProgress: term.say, council: deps.runProjectCouncil, approveBuild: gate },
+    hooks: { escalate: term.escalate, onEvent: term.onEvent, onProgress: term.say, council: (a) => deps.runProjectCouncil(a, { options }), approveBuild: gate },
     options: { ...options, change: { runId: run.runId, baseRef: run.baseRef, units: run.units, profile: run.profile ?? null } } })
   ```
   The outcome maps as follows:
@@ -189,13 +189,13 @@ Expected: FAIL (module not found).
   - `advanceMain`. On `MAIN_MOVED`, the outcome reason adds `` ` The approved work is on the branch ${approval.branch}.` ``;
   - then `saveProject` with `approved` and `builtFromBrief`/`foundation` (idempotent: it writes the same values again on resume).
 - **Release adoption on resume:** if `run.release` is missing but `appMain !== changelogSha` and `refs/tags/v<expectedVersion>` points at `appMain`, treat `{ version: expectedVersion, sha: appMain, tag: 'v' + expectedVersion }` as the release and run `releaseProblem` on it.
-- **Ship step:** `shipUpdate({ projectDir, projectsRoot: factory.projectsRoot, slug, run, version: release.version, foundation: project.foundation.tag, deps, ask: (q) => askOperator(term, { title: 'retry a deployment', message: q }), save: (r) => saveChangeRun(projectDir, r) })`.
+- **Ship step:** `shipUpdate({ projectDir, projectsRoot: factory.projectsRoot, slug, run, version: release.version, foundation: project.foundation.tag, deps, factory, say: term.say, state: ctx.shipState, ask: (q) => askOperator(term, { title: 'retry a deployment', message: q }), save: (r) => saveChangeRun(projectDir, r) })`. `ctx.shipState` is the object the CLI handler made (Task 11); Plan 10's `updateDeployment` keeps it current, so a Ctrl-C mid-update can call Plan 10's `interruptShip(shipState)` (Contract 7 §7.11).
 - **The final report** (`ChangeOutcome.report`):
   - what changed;
   - the council line: `The council approved it.`, `The council approved it with warnings.` or `You chose to ship although the council still found problems.`;
   - `` `The app is now version ${version}.` ``;
   - then `shipReport`.
-- **`abandonChange`:** the unfinished run gets `status: 'stopped'`, `reason: 'You dropped this change.'`. The outcome says what is left: before `merged`, "Nothing reached the app's main line."; at or after `merged`, "The app's main line already has this change; the deployments not yet updated stay on their current version." It takes the project lock too.
+- **`abandonChange`:** the unfinished run gets `status: 'stopped'`, `reason: 'You dropped this change.'`. The outcome says what is left: before `merged`, "Nothing reached the app's main line."; at or after `merged`, "The app's main line already has this change; the deployments not yet updated stay on their current version." Its caller (Task 11's handler) holds the project lock.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 

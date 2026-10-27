@@ -14,7 +14,7 @@ The command is wired through Plan 7's dispatch (§7.3): a parser case in `src/cl
 - Test: `test/factory-ship.test.js`, `test/factory-config.test.js` (append), `test/cli.test.js` (append), `test/cli-e2e.test.js` (append)
 
 **Interfaces:**
-- Consumes: Tasks 1–9 and 13; Plan 7: `readProject`, `validateSlug` (`src/factory/projects.js`), `loadBrief` (`src/factory/brief.js`), `factoryConfig` (`src/factory/config.js`), `FACTORY_COMMANDS` (`src/cli/factory.js`); Plan 8: `getMachineProvider(factory)` (`src/factory/machines/index.js`), `newRunId`, `RUN_ID_RE` (`src/factory/ids.js`); `killAllChildren` (`src/exec.js`); `findConfig` (`src/cli/config.js`), `loadConfig` (`src/config.js`).
+- Consumes: Tasks 1–9 and 13; Plan 7: `readProject`, `loadProject`, `saveProject`, `validateSlug` (`src/factory/projects.js`), `loadBrief` (`src/factory/brief.js`), `factoryConfig` (`src/factory/config.js`), `FACTORY_COMMANDS` (`src/cli/factory.js`); Plan 8: `getMachineProvider(factory)` (`src/factory/machines/index.js`), `newRunId`, `RUN_ID_RE` (`src/factory/ids.js`); `killAllChildren` (`src/exec.js`); `findConfig` (`src/cli/config.js`), `loadConfig` (`src/config.js`).
 - Produces: `shipProject`, `updateDeployment`, `interruptShip`, `UPDATE_OUTCOMES`, `NO_TTY_FIRST`, the `parseCli` shapes and the `FACTORY_COMMANDS` entries (index, Task 10), and the config sections:
 
 ```js
@@ -23,7 +23,8 @@ alerts: { matrix: null | { homeserver, roomId } }                     // default
 ship: { updateTimeoutMs: 2700000, pollMs: 5000, startTimeoutMs: 300000, buildTimeoutMs: 3600000 }
 //   plain-English throws: 'factory.alerts.matrix.homeserver must be a web address such as https://matrix.example.org.'
 //   'factory.alerts.matrix.roomId must be a Matrix room id such as !alerts:example.org.'
-//   'factory.ship.<key> must be a whole number of milliseconds above 0.'   'factory.ship has an unknown setting "<key>".'
+//   'factory.ship.<key> must be a whole number of milliseconds above 0.'
+//   unknown keys: Plan 8's message, 'Unknown setting "factory.ship.<key>" in the config (known: …)'; 'alerts' and 'ship' join Plan 8's known top-level keys
 
 // src/factory/ship/index.js
 shipProject({ factory, slug, name, ask, env, runId, sleep, state, deps = {} }) -> Promise<{ exit, text }>
@@ -38,7 +39,8 @@ NO_TTY_FIRST = 'Setting up a box asks you questions (its address, passwords, and
 
 // src/cli/factoryShip.js — handlers registered in FACTORY_COMMANDS (src/cli/factory.js)
 shipCommand(cli, ctx) -> Promise<number>; deploymentsCommand(cli, ctx) -> Promise<number>   // Task 11 fills deploymentsCommand
-//   ctx: runFactoryCommand's context { factory, env, stdin, stdout, isTTY, onSignal, exit, deps } (see index, "Still open" 1)
+//   ctx (Contract 7 §7.11): { cwd, env, stdin, stdout, isTTY, onSignal, exit, factory, config, deps } (+ Plan 7's extras home, print, configPath).
+//   ship needs no participants, so it never reads ctx.config
 
 // test/helpers/shipProject.js additions
 shipRules(dir, { version = '0.1.3', password = 'Zq3-backup-password-from-ops-init_xyz' } = {}) -> Rule[]   // build machine + box, for a whole first ship
@@ -60,7 +62,7 @@ releaseNext(p, version) -> sha        // "More work" commit (approved) + "releas
 11. `policyProblems(brief.policy, dep)` → each problem, joined.
 12. `preflight(targetOf(dep), { bundleDir })` problems → `acme-office is not ready for a ship:\n- …`.
 13. Step before `configured` → `settings = await askSettings(ask, { dep, policy: brief.policy, defaults: { matrix: factory.alerts.matrix } })` (null → `Nothing was changed on the box.`).
-14. **First-time** → `built = buildOnMachine(...)` (purpose `'ship'`, `buildTimeoutMs: factory.ship.buildTimeoutMs`), arch check, `try { deliverToBox } finally { cleanupBuild(built) }`, then `runFirstSetup({ …, foundation })` (`installed` → 0, `stopped` → 1, `partway` → 2). **Later** → the shared `deliverAndUpdate` below → `exitFor(outcome)`.
+14. **First-time** → `built = buildOnMachine(...)` (purpose `'ship'`, `buildTimeoutMs: factory.ship.buildTimeoutMs`), arch check, `try { deliverToBox } finally { cleanupBuild(built) }`, then `runFirstSetup({ …, foundation })` (`installed` → 0, `stopped` → 1, `partway` → 2). On `installed`, when `project.status` is `ready`, `saveProject(projectDir, { ...loadProject(projectDir), status: 'shipped' })` (Contract 7.5: `shipped` = at least one deployment installed; Plan 10 is the only plan that installs, so it owns this move). **Later** → the shared `deliverAndUpdate` below → `exitFor(outcome)`.
 15. Every path saves through `saveDeployment` and releases the lock in `finally`.
 
 **`deliverAndUpdate({ factory, provider, projectDir, slug, dep, rel, foundation, facts, runId, say, env, sleep, state })`** (internal, used by `shipProject`'s later path and by `updateDeployment`): `buildOnMachine` problem → `{ outcome: 'refused', text }`; `built.arch !== facts.arch` → `cleanupBuild`, then `{ outcome: 'refused', text: 'The box is <arch> but the app was built for <arch>. Conductor cannot ship to this box.' }`; `try { deliverToBox } finally { cleanupBuild(built) }` (problem → `refused`); then `state.phase = 'updating'` and `runLaterShip({ dep, target, version: rel.version, foundation, imagesFile, runId, say, save, env, opts: { updateTimeoutMs, pollMs, sleep } })`.
@@ -141,6 +143,7 @@ test('a first ship sets the box up end to end and no secret reaches any file or 
   assert.equal(dep.setup.step, 'done');
   assert.equal(dep.currentVersion, '0.1.3');
   assert.equal(dep.foundation, 'v0.1.0'); // from project.json.foundation.tag
+  assert.equal(JSON.parse(readFileSync(path.join(p.projectDir, 'project.json'), 'utf8')).status, 'shipped'); // Contract 7.5: at least one deployment installed
   assert.equal(r.provider.released(), 1);
   assert.equal(r.provider.acquired()[0].purpose, 'ship');
   const files = [path.join(p.projectDir, 'deployments', 'acme-office.json'),
@@ -242,7 +245,8 @@ test('alerts and ship sections: defaults, overrides and plain refusals', () => {
   assert.equal(factoryConfig({ factory: { alerts: { matrix: { homeserver: 'https://m.example.org', roomId: '!a:example.org' } } } }, { env: {}, home: '/h' }).alerts.matrix.roomId, '!a:example.org');
   assert.throws(() => factoryConfig({ factory: { alerts: { matrix: { homeserver: 'm.example.org', roomId: '!a:b' } } } }, { env: {}, home: '/h' }), /homeserver must be a web address/);
   assert.throws(() => factoryConfig({ factory: { ship: { pollMs: 0 } } }, { env: {}, home: '/h' }), /factory\.ship\.pollMs must be a whole number of milliseconds above 0/);
-  assert.throws(() => factoryConfig({ factory: { ship: { pollMS: 5 } } }, { env: {}, home: '/h' }), /factory\.ship has an unknown setting "pollMS"/);
+  assert.throws(() => factoryConfig({ factory: { ship: { pollMS: 5 } } }, { env: {}, home: '/h' }), /Unknown setting "factory\.ship\.pollMS"/);
+  assert.doesNotThrow(() => factoryConfig({ factory: { alerts: {}, ship: {} } }, { env: {}, home: '/h' }), 'alerts and ship are known top-level keys');
 });
 ```
 
@@ -278,7 +282,7 @@ Expected: FAIL, modules and exports missing; `ship` is not a known command; `fac
 
 - [ ] **Step 3: Add `shipRules` and `releaseNext` to `test/helpers/shipProject.js`.** `shipRules` returns, in this order: build-machine rules like Task 6's `BUILD_RULES` for `version` (with the run folder of whichever run id the provider was given, matched by a regex), except that `sha256sum` prints `'a'.repeat(64)` for **both** files; box preflight `arch=x86_64\ndocker=yes\ncompose=yes\ndir=no\nfreekb=99999999\n`; box `sha256sum …\.part$` printing the built sum (`'a'.repeat(64)`) for both files; box `ls ` listing the four bundle files; then Task 8's `BOX_RULES` (move `BOX_RULES` into this helper and import it in Task 8's test). `releaseNext(p, version)` adds a "More work" commit, sets `approved.sha` to it (`approve`), then a `release: v<version>` commit (package.json version, changelog section) tagged `v<version>`; returns the release commit's sha.
 
-- [ ] **Step 4: Implement** the `factoryConfig` sections in `src/factory/config.js` (each section validated in its own small function next to Plan 7's and Plan 8's, unknown keys refused like theirs), then `src/factory/ship/index.js`, `src/cli/factoryShip.js`, the `args.js` cases and the two `FACTORY_COMMANDS` entries, to the rules above.
+- [ ] **Step 4: Implement** the `factoryConfig` sections in `src/factory/config.js` (each section validated in its own small function next to Plan 7's and Plan 8's; add `alerts` and `ship` to Plan 8's known top-level keys; unknown keys inside them refused with Plan 8's `Unknown setting "factory.<path>" in the config (known: …)` message), then `src/factory/ship/index.js`, `src/cli/factoryShip.js`, the `args.js` cases and the two `FACTORY_COMMANDS` entries, to the rules above.
 
 - [ ] **Step 5: Run tests to verify they pass**
 

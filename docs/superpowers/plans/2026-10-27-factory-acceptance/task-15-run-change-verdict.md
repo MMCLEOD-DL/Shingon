@@ -18,7 +18,7 @@ Spec §4.8: a client change goes through the same factory as an **update**, with
 Write these into `notes/change-mileage.md` in the project folder (they are not client data).
 
 **Interfaces:**
-- Consumes: `conductor change <slug> --notes <file>`, `conductor ship <slug> --to test-box` (as an update), `conductor deployments status` (Contract 5); `check-acceptance.mjs` (Task 11).
+- Consumes: `conductor change <slug> --notes <file>` (which, after the gate, releases and updates every deployment itself through Plan 10's `updateDeployment`; Plan 11), `conductor deployments status` (Contract 5); `check-acceptance.mjs` (Task 11).
 - Produces: the finished `RESULT.md` with the verdict.
 
 - [ ] **Step 1: Change brief, build, council, gate**
@@ -28,13 +28,14 @@ conductor change <slug> --notes ~/highland-projects/<slug>/notes/change-mileage.
 ```
 Check the change brief carries the three worked examples exactly, each with a new id (the next unused `n` for its feature; unchanged examples keep theirs, Contract 7.4). At the gate, record the council rounds, any blocking items fixed, and the cost. The council must review the **whole app** (Contract 6); check the report says so. Approve only when C2's rule holds for this report (that is C14).
 
-- [ ] **Step 2: Ship as an update**
+- [ ] **Step 2: The update (part of the same `conductor change` run)**
+
+After you approve at the gate, `conductor change` carries on by itself (Plan 11): it moves the app's main line, cuts a `minor` release with Plan 10's `releaseApp`, and updates `test-box` through `updateDeployment`. Do **not** run `conductor ship` for this: the box would already be on the new version, and `ship` would say there is nothing new. If the change run stopped part-way, carry on with `conductor change <slug> --resume`. Then:
 
 ```bash
-conductor ship <slug> --to test-box
 conductor deployments status
 ```
-Expected: the update takes a backup first (visible in its output and in `ops` on the box), the health gate passes, and `deployments/test-box.json` ends with outcome `updated` at the new version (a `minor` release cut by `releaseApp` from the change gate's approved commit, delivered through `updateDeployment`; Contract 7.6). Confirm on a phone that a mileage claim of 132 miles shows £59.40, and that the month's PDF and spreadsheet show it under "Mileage" with the totals still matching the C4 worksheet plus £59.40.
+Expected: the change's report lists `test-box: updated to <version>, with a backup taken first.`; the update took a backup first (visible in its output and in `ops` on the box), the health gate passes, and `deployments/test-box.json` ends with outcome `updated` at the new version (`1.1.0`: a `minor` release cut by `releaseApp` from the change gate's approved commit, delivered through `updateDeployment`; Contract 7.6). Confirm on a phone that a mileage claim of 132 miles shows £59.40, and that the month's PDF and spreadsheet show it under "Mileage" with the totals still matching the C4 worksheet plus £59.40.
 
 - [ ] **Step 3: Full checker run**
 

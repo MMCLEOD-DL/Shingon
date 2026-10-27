@@ -13,7 +13,7 @@ It also builds the shared dispatch of Contract 7 §7.3: `src/cli/factory.js` exp
 - Consumes: `factoryConfig` (Task 1), `validateSlug`, `createProject`, `readProject`, `listProjects` (Task 1), `currentBriefInfo`, `briefPaths`, `ukDate` (Task 4), `loadSession` (Task 6), `findConfig` (`src/cli/config.js`), `EXIT` (`src/cli/main.js`).
 - Produces:
   - the `parseCli` results listed in Shared Interfaces (Task 9). The `flags` object keeps exactly its current keys, so the existing `deepEqual`s stay untouched;
-  - `FACTORY_COMMANDS` and `runFactoryCommand(cli, ctx) -> Promise<exitCode>`, with the `FactoryContext` handed to every handler (Shared Interfaces, Task 9).
+  - `FACTORY_COMMANDS` and `runFactoryCommand(cli, ctx) -> Promise<number|null>`, with the `FactoryContext` handed to every handler (Shared Interfaces, Task 9). A handler may return `null` for "not mine" (Contract 7 §7.11), and `main()` then carries on with the ordinary path; Plan 8's `resume` handler uses this.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -91,6 +91,32 @@ import { tmp, runMain, envFor } from './helpers/factoryCli.js';
 test('FACTORY_COMMANDS holds the Plan 7 handlers', () => {
   for (const k of ['project-new', 'project-list', 'project-show', 'brief']) assert.equal(typeof FACTORY_COMMANDS[k], 'function', k);
   assert.equal(Object.hasOwn(FACTORY_COMMANDS, 'run'), false, 'ordinary runs still go through the git-repo path');
+});
+
+test('a handler that returns null falls through to the ordinary path (Contract 7 §7.11)', async () => {
+  FACTORY_COMMANDS.runs = async () => null;            // stand-in for Plan 8's resume handler
+  try {
+    const r = await runMain(['runs'], { env: envFor(tmp()) });
+    assert.equal(r.code, 64);
+    assert.match(r.out, /git repository/, 'main carried on to its usual "inside a git repository" check');
+  } finally { delete FACTORY_COMMANDS.runs; }
+});
+
+test('ctx.config is the loaded config when it has participants, else null (Contract 7 §7.11)', async () => {
+  const seen = [];
+  const orig = FACTORY_COMMANDS['project-list'];
+  FACTORY_COMMANDS['project-list'] = async (cli, ctx) => { seen.push(ctx); return orig(cli, ctx); };
+  try {
+    const cfg = path.join(tmp(), 'c.json');
+    writeFileSync(cfg, JSON.stringify({ factory: { operatorName: 'Malcolm' } }));
+    await runMain(['project', 'list', '--config', cfg], { env: envFor(tmp()) });
+    writeFileSync(cfg, JSON.stringify({ participants: [], factory: { operatorName: 'Malcolm' } }));
+    await runMain(['project', 'list', '--config', cfg], { env: envFor(tmp()) });
+  } finally { FACTORY_COMMANDS['project-list'] = orig; }
+  assert.equal(seen[0].config, null);
+  assert.deepEqual(seen[1].config.participants, []);
+  assert.equal(seen[1].factory.operatorName, 'Malcolm');
+  for (const k of ['cwd', 'env', 'stdin', 'stdout', 'isTTY', 'onSignal', 'exit', 'factory', 'config', 'deps']) assert.ok(k in seen[1], k);
 });
 
 test('project new / list / show work outside a git repository, without a config', async () => {
@@ -181,21 +207,28 @@ Expected: FAIL. `project` is parsed as a run request, and `main` answers "Run co
 - [ ] **Step 4: Implement `src/cli/main.js` dispatch**
 
 - Add `factoryDeps = {}` to `main`'s options (beside the existing `wakeDeps`).
-- Right after the `if (cli.command === 'version') …` line and **before** `const repoDir = await repoRoot(cwd);`, add: `if (Object.hasOwn(FACTORY_COMMANDS, cli.command)) return runFactoryCommand(cli, { cwd, env, stdin, stdout, isTTY, onSignal, exit, deps: factoryDeps });`
-- Import both from `./factory.js`. Nothing else in `main.js` changes, and no later plan edits it for a factory command.
+- Right after the `if (cli.command === 'version') …` line and **before** `const repoDir = await repoRoot(cwd);`, add:
+  ```js
+  if (Object.hasOwn(FACTORY_COMMANDS, cli.command)) {
+    const code = await runFactoryCommand(cli, { cwd, env, stdin, stdout, isTTY, onSignal, exit, deps: factoryDeps });
+    if (code !== null) return code;           // null = "not mine": carry on with the ordinary path (Contract 7 §7.11)
+  }
+  ```
+- Import both from `./factory.js`. Nothing else in `main.js` changes here. The only later edit to `main.js` is Plan 8 Task 15, which moves the inline team set-up into `src/cli/prepareRun.js` (`prepareTeam`, Contract 7 §7.11).
 
 - [ ] **Step 5: Implement `src/cli/factory.js` (dispatch and project commands)**
 
-- `FACTORY_COMMANDS = { 'project-new': projectNew, 'project-list': projectList, 'project-show': projectShow, brief: briefCommand }`. Each handler is `async (cli, ctx) -> exitCode`. `briefCommand` is the Task 10 placeholder for now.
-- `runFactoryCommand(cli, { cwd, env, stdin, stdout, isTTY, onSignal, exit, deps = {} })` does the work every factory command shares, then calls `FACTORY_COMMANDS[cli.command](cli, ctx)`:
+- `FACTORY_COMMANDS = { 'project-new': projectNew, 'project-list': projectList, 'project-show': projectShow, brief: briefCommand }`. Each handler is `async (cli, ctx) -> number | null` (Contract 7 §7.11); `null` means "not mine" and `runFactoryCommand` passes it back to `main()` unchanged. `briefCommand` is the Task 10 placeholder for now.
+- `runFactoryCommand(cli, { cwd, env, stdin, stdout, isTTY, onSignal, exit, deps = {} }) -> Promise<number|null>` does the work every factory command shares, then returns `await FACTORY_COMMANDS[cli.command](cli, ctx)`:
   - `print = (s) => stdout.write(\`${s}\n\`)`; `home = env.HOME || homedir()`. The injected `env`'s HOME is used everywhere, never the process's;
   - config path:
     - `--config` given → `findConfig({ flag: cli.flags.config, cwd, env, home })`. If it throws, print the message and return `EXIT.usage`;
     - not given → `try findConfig({ cwd, env, home })`, catching to `null` (project commands need no config);
-  - the factory section: with a config path, `JSON.parse(readFileSync(configPath, 'utf8'))` and keep `{ factory: parsed.factory }`; with none, `{}`. This deliberately does **not** call `loadConfig`, which requires `participants`; `factoryConfig` takes any object with a `factory` key (Task 1);
+  - the factory section: with a config path, `JSON.parse(readFileSync(configPath, 'utf8'))` and keep `{ factory: parsed.factory }`; with none, `{}`. `factoryConfig` takes any object with a `factory` key (Task 1), so project commands work with a config that has no `participants`;
   - `factory = factoryConfig(section, { env, home })`. A parse error or a throw prints `Conductor could not read its config: ${e.message}` and returns `EXIT.usage`;
+  - `config` (Contract 7 §7.11): when the parsed file has a `participants` array, `try { config = loadConfig(configPath) } catch { config = null }`; otherwise `null`. Project and brief-session commands never need it to be set. A handler that needs participants (Plan 7's `brief`, Plan 8's `build`/`resume`, Plan 11's `change`) calls `loadConfig(ctx.configPath)` itself when `ctx.config` is null, so the operator sees `loadConfig`'s own plain message (`Conductor could not read its config: …`, exit 64);
   - when the command carries a slug (`cli.slug`) and `validateSlug(cli.slug)` fails, print the problem and return `EXIT.usage`;
-  - `ctx = { cwd, env, home, stdin, stdout, isTTY, onSignal, exit, deps, print, configPath, factory }`.
+  - `ctx = { cwd, env, stdin, stdout, isTTY, onSignal, exit, factory, config, deps }` (the Contract 7 §7.11 fields) plus the extras `home`, `print` and `configPath`.
 - `factory.js` imports `EXIT` from `./main.js` while `main.js` imports `factory.js`. The cycle is safe because `EXIT` is read only inside functions, never at module load.
 - `project-new`:
   - `createProject(ctx.factory.projectsRoot, { client, slug: cli.slug ?? undefined })`;

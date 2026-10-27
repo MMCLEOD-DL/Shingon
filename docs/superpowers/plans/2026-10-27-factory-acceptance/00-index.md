@@ -8,12 +8,12 @@
 - **Two milestones in two repos.**
   - **M1 (Tasks 1–9, 9a–9c, 10)** is built in **`/root/highland-foundation`** by the operator with Claude Code in hand-steered sessions, exactly like Plan 6. It ends with the tag `v0.2.0`. Conductor is not touched in M1.
   - M1 also carries the **foundation follow-ups** Contract 7.9 assigns to v0.2.0 (Tasks 9a–9c): `scripts/release.ts` stamps `foundation.json` only for the foundation itself; `update --json`; `ops status --json`; `ops set-env`; `ops test-alert`; the smoke's `HF_SMOKE_DIR`/`HF_SMOKE_PROJECT` settings and a hard-kill step. Plans 9 and 10 stay on their v0.1.0 text parsers; switching them is a later Conductor follow-up.
-  - **M2 (Tasks 11–15)** is the acceptance run. Task 11 adds a small, zero-dependency acceptance kit to **`/root/conductor`** (`spikes/acceptance/`). Tasks 12–15 are operator-run checklists that drive Plans 7–11's commands and fill in a results file. No new product code.
+  - **M2 (Tasks 11–15)** is the acceptance run. Task 11 adds a small, zero-dependency acceptance kit to **`/root/conductor`** (`spikes/acceptance/`), and the one product change the run needs: Plan 8's `briefProblems` stops refusing a brief's `modules` when the foundation release is v0.2.0 or later [cross-plan ruling: no earlier plan lifts Plan 8's modules refusal, so Plan 12 Task 11 does it, gated on the foundation tag, leaving Plan 8's own behaviour and tests unchanged for v0.1.0]. Tasks 12–15 are operator-run checklists that drive Plans 7–11's commands and fill in a results file.
 - **Modules are libraries plus a thin server and web integration.**
   - `modules/ocr`, `modules/pdf-export` and `modules/xlsx-export` are new npm workspaces (`@hf/ocr`, `@hf/pdf-export`, `@hf/xlsx-export`). They know nothing about HTTP or the database, so their correctness tests are fast and need no Postgres.
   - The server wiring lives in `apps/server/src/modules/<name>/`; the web wiring in `apps/web/src/modules/<name>/`.
   - Money arithmetic and the report model live in `packages/shared` (`money.ts`, `report.ts`), so the screen, the PDF and the spreadsheet all show totals computed **once, in integer pence**. The two export modules only lay out what the model already computed.
-- **Opt-in through one committed file, `app-profile.json`, at the app's repo root:** `{ schema: 1, modules: [...], policy: { outbound: [...], residency } }`. Conductor writes it from the approved brief's `modules` and `policy` fields: Plan 8's `createApp` at the first build (committed with the BRAND line), and Plan 11 when a change alters them (Contract 7.5). `policy.outbound` holds ids from Conductor's `OUTBOUND_SERVICES` (Plan 7, Contract 7.4), which seeds `azure-document-intelligence`. The server reads it at start: a module's routes, queue and pages exist only when it is listed. The web build reads the same file at build time. The foundation ships it with `modules: []`, `outbound: []`, `residency: "uk"`: nothing on, nothing allowed out.
+- **Opt-in through one committed file, `app-profile.json`, at the app's repo root:** `{ schema: 1, modules: [...], policy: { outbound: [...], residency } }`. Conductor writes it from the approved brief's `modules` and `policy` fields: Plan 8's `nameApp` at the first build (in the same commit as the BRAND line, Contract 7.11), and Plan 11 when a change alters them (Contract 7.5). `policy.outbound` holds ids from Conductor's `OUTBOUND_SERVICES` (Plan 7, Contract 7.4), which seeds `azure-document-intelligence`. The server reads it at start: a module's routes, queue and pages exist only when it is listed. The web build reads the same file at build time. The foundation ships it with `modules: []`, `outbound: []`, `residency: "uk"`: nothing on, nothing allowed out.
 - **The data policy decides the OCR engine, twice locked.** A cloud engine is used only when (1) `app-profile.json` lists its outbound id in `policy.outbound`, (2) its declared region satisfies `policy.residency`, and (3) the deployment's `.env` selects it. Any mismatch stops the app at start with a plain-English reason; it never quietly sends receipts out. A failing cloud engine falls back to the local one (data stays on the box), never the other way round.
 - **Scheduled jobs are not a new module.** The ops container's scheduler (Plan 6 Task 18/19: croner, no overlap, failure alerts) gains an **app-job registry**: client features declare jobs next to their code, and ops runs them exactly once per due time, catching up a missed run once after downtime. The `scheduled-jobs` profile flag switches them on.
 
@@ -129,12 +129,11 @@ PDF text uses the PDF standard fonts (Helvetica), so no font file is shipped and
 
 ## Contract gaps (after Contract 7)
 
-Settled by Contract 7 and removed from this list: how the brief reaches the app (`app-profile.json`, written by Plan 8 and rewritten by Plan 11, §7.5); the `policy.outbound` vocabulary (`OUTBOUND_SERVICES` ids, §7.4); the foundation tag setting (`factory.foundation.tag`, §7.2); example ids (`<featureId>#<n>`, test tag `[<featureId>#<n>]`, §7.4); where the council report is saved (`builds/<runId>/council-report.json`, §7.5); and the two licence-acceptance lists (Plan 9's Legal reads the app's `licence-exceptions.json`, §7.7).
+Settled by Contract 7 and removed from this list: how the brief reaches the app (`app-profile.json`, written by Plan 8's `nameApp` and rewritten by Plan 11, §7.5, §7.11); the module names (Plan 7's brief `MODULES` is exactly `['ocr', 'pdf-export', 'xlsx-export', 'scheduled-jobs']`, the same list as `@hf/shared`'s `MODULES`; `scheduled-jobs` only switches on app jobs in the ops scheduler, Ruling 8); the first app release (`1.0.0`, from `npm run release -- major`, §7.11), and a change as a `minor` release; the `policy.outbound` vocabulary (`OUTBOUND_SERVICES` ids, §7.4); the foundation tag setting (`factory.foundation.tag`, §7.2); example ids (`<featureId>#<n>`, test tag `[<featureId>#<n>]`, §7.4); where the council report is saved (`builds/<runId>/council-report.json`, §7.5); and the two licence-acceptance lists (Plan 9's Legal reads the app's `licence-exceptions.json`, §7.7).
 
 Still open:
 1. **The cloud region is outside the council's view** (still open). `@hf/ocr`'s `OUTBOUND_DESTINATIONS` mirrors Conductor's `OUTBOUND_SERVICES['azure-document-intelligence']` (same id and hosts; Task 4). The region is chosen in the deployment's `.env`, which the council never sees, so the app's start-up check (Task 4) is the only enforcement of `residency`.
-2. **`scheduled-jobs` is not a separate module** (Ruling 8). Briefs may still list it; it only switches on app jobs in the ops scheduler. Brief `modules` values must be exactly `ocr`, `pdf-export`, `xlsx-export`, `scheduled-jobs` (the `MODULES` constant in `@hf/shared`, Task 1), which Plan 7's brief validator should share.
-3. **Restore-test and alert evidence from a deployment** (still open for v0.1.0 apps). Contract 4's `history` records updates, not restore tests or alerts. Task 9b adds `ops status --json` and `ops test-alert` in v0.2.0, but Plan 10 keeps its v0.1.0 routes (Contract 7.9), so Task 14 collects the evidence by hand over SSH with those commands.
+2. **Restore-test and alert evidence from a deployment** (still open for v0.1.0 apps). Contract 4's `history` records updates, not restore tests or alerts. Task 9b adds `ops status --json` and `ops test-alert` in v0.2.0, but Plan 10 keeps its v0.1.0 routes (Contract 7.9), so Task 14 collects the evidence by hand over SSH with those commands.
 
 ## Milestones
 
@@ -167,7 +166,7 @@ M1 paths are relative to `/root/highland-foundation`; M2 paths to `/root/conduct
 | `ops/src/{status,setEnv,testAlert}.ts`, `ops/src/{runs,init,cli,init-cli}.ts`, `ops/test/{status,set-env,test-alert,init-cli}.test.ts`, `docs/RUNBOOK.md` | `ops status --json`, `ops set-env`, `ops test-alert` | 9b |
 | `deploy/smoke/{run-smoke.sh,RESULT.md}`, `deploy/test/smoke.test.ts` | smoke settings, hard-kill step | 9c |
 | `deploy/{Dockerfile,ops.Dockerfile,.env.example}`, `ops/src/{init,setEnv}.ts`, `deploy/smoke/{ocr-modest-box.sh,OCR-RESULT.md,RESULT.md}`, `README.md`, `docs/{BUILDING-ON,RUNBOOK,LICENCES}.md`, `CHANGELOG.md` | images, smoke run, modest-box proof, docs, release | 10 |
-| `spikes/acceptance/{check-acceptance.mjs,PROCEDURE.md,RESULT-TEMPLATE.md,rehearsal-notes.md}`, `test/acceptance-check.test.js`, `test/helpers/acceptanceProject.js` | acceptance kit (Conductor repo) | 11 |
+| `spikes/acceptance/{check-acceptance.mjs,PROCEDURE.md,RESULT-TEMPLATE.md,rehearsal-notes.md}`, `test/acceptance-check.test.js`, `test/helpers/acceptanceProject.js`; `src/factory/split.js`, `src/factory/build.js` (Plan 8's: modules refusal), `test/factory-modules-lift.test.js` | acceptance kit and the modules lift (Conductor repo) | 11 |
 | `<projectsRoot>/<slug>/acceptance/RESULT.md` (operator's machine, not committed to either repo) | the filled-in results | 12–15 |
 
 ## Tasks
@@ -196,8 +195,8 @@ Order matters:
 - 7 needs 1; 8 needs 7 (and Operator question 1); 9 needs 1. 7–9 may run before or alongside 2–6.
 - 9a, 9b and 9c need only `v0.1.0` and may run in any order, alongside 1–9 (9b's set-env key test is extended by Task 10).
 - 10 needs 1–9 and 9a–9c.
-- 11 imports Plan 7's modules (`projects.js`, `brief.js`, `acceptance.js`, `fsAtomic.js`) and Plan 10's (`deployments/store.js`, `foundationLog.js`), so it needs Plans 7 and 10 merged; it needs nothing from M1.
-- 12 needs 10, 11 and Plans 7–10 merged; 13 needs 12; 14 needs 13 and Plan 10; 15 needs 14 and Plan 11.
+- 11 imports Plan 7's modules (`projects.js`, `brief.js`, `acceptance.js`, `fsAtomic.js`) and Plan 10's (`deployments/store.js`, `foundationLog.js`), and edits Plan 8's `src/factory/split.js` and `src/factory/build.js` (the modules refusal), so it needs Plans 7–11 merged (merge order 7 → 12; Plan 11 Task 4 also edits `build.js`); it needs nothing from M1.
+- 12 needs 10 and 11 (so Plans 7–11 are merged); 13 needs 12; 14 needs 13; 15 needs 14.
 
 ## Shared Interfaces (all tasks)
 
@@ -329,6 +328,10 @@ sendTestAlert(d: { cfg, channel, now, log }): Promise<{ ok, message }>
 CRITERIA; FOUNDATION_V020_ROUTES; checkAcceptance(projectDir, opts) -> { results, ok }; renderResults(project, results) -> string
 // imports: loadProject, loadBrief, currentBriefInfo, briefPaths, acceptanceIds, testTag, writeFileAtomic (Plan 7);
 //          loadDeployment, compareVersions (Plan 10)
+// Task 11 · src/factory/split.js (Plan 8's), the modules refusal lifted [cross-plan ruling]:
+MODULES_SINCE = 'v0.2.0'
+briefProblems(brief, { foundationTag = null } = {}) -> string[]   // modules refused only when foundationTag is null or older than MODULES_SINCE
+//   runBuild passes { foundationTag: project.foundation.tag ?? factory.foundation.tag }
 ```
 
 ## Hand-off to the operator

@@ -106,7 +106,7 @@ Expected: FAIL (module not found).
 
 - [ ] **Step 3: Implement `src/factory/change/upgradeMerge.js`**
 
-- `upgradeTargetProblem`: check the name form first (`^v\d+\.\d+\.\d+$`), then membership in `tags`, then `compareVersions` against `fromTag`.
+- `upgradeTargetProblem`: check the name form first (`^v\d+\.\d+\.\d+$`), then membership in `tags`, then `compareVersions(toTag.slice(1), fromTag.slice(1))` (Plan 10's `parseVersion` is strict semver with no leading `v`).
 - `prepareUpgradeMerge`:
   1. `git clone --quiet --no-hardlinks <appDir> <scratchDir>`; `checkout -q -b <branch> refs/remotes/origin/main`; record `mainAtStart`; `remote remove origin`.
   2. `git fetch --quiet --no-tags <foundationRepo> refs/tags/<toTag>:refs/foundation/<toTag>`, then resolve `refs/foundation/<toTag>^{commit}`.
@@ -116,7 +116,8 @@ Expected: FAIL (module not found).
   6. Mechanical rules: `git checkout --theirs -- foundation.json`, `git checkout --ours -- CHANGELOG.md`, `resolveVersionHunks` on `package.json` and `package-lock.json` (fully resolved files go to `autoResolved`, others stay as conflicts). `git add` the resolved ones.
   7. The remaining files are `conflicts`. `git add -A`, then commit `foundation: merge <toTag>` (or `… (N files need their conflicts resolved: a, b)`), keeping both parents (`git commit --no-edit -m`).
   8. `new Workspace(scratchDir, branch, mainAtStart).land({ repoDir: appDir, branch, sha: mergeSha })`; any failure → `stopped` with `` `Conductor could not add the foundation merge to the app: ${error}. Nothing else was changed.` ``
-  9. Remove the scratch folder and return `ready` with `tagSha` (the pipeline records it as `project.json.foundation.commit` at merge, Contract 7.5).
+  9. `git -C <appDir> fetch --quiet --no-tags <foundationRepo> +refs/tags/<toTag>:refs/foundation/<toTag>`, so the app keeps the new release under `refs/foundation/`, never as a `refs/tags/*` tag (Contract 7 §7.11; the same place Plan 8's `createApp` keeps the first one).
+  10. Remove the scratch folder and return `ready` with `tagSha` (the pipeline records it as `project.json.foundation.commit` at merge, Contract 7.5).
 - `resolveVersionHunks`: scan for `<<<<<<< …` / `=======` / `>>>>>>> …` blocks; a block whose two sides, trimmed, each match `/^"version":\s*"[^"]*",?$/` becomes the ours side; others are left as they are and counted.
 - `upgradeUnit({ fromTag, toTag, conflicts, changes })`: a Plan 8 `Unit` plus `change` and `retire`: `id` `foundation-upgrade-<toTag with dots as dashes>` (e.g. `foundation-upgrade-v0-1-1`), `title` `Upgrade the foundation to <toTag>`, `kind: 'fix'`, `covers: []`, `acceptance: []`, `dependsOn: []`, `change: 'foundation-upgrade'`, `retire: []`. The `instructions`:
   - list the foundation's changelog lines (`changes`);

@@ -57,7 +57,7 @@ Every name this plan imports from Plans 7 and 8 is listed under "Names from Plan
 1. **Ordinary repos keep v1.** `drive` and `runCouncilRound`'s behaviour with no project are unchanged, apart from the Plan 5 follow-ups (Ruling 12). Project rounds pass `project` to `runCouncilRound`, and every project-only line sits behind `if (project)`. Pinned by a regression test in Task 12. Why: roadmap Contract 6.
 2. **The hook is the only way in.** `runProjectCouncil` is passed as `hooks.council` by the `conductor build` command (Task 13). Plan 8's per-feature councils (`FEATURE_COUNCIL`) are unchanged. The full council runs only on the whole app at the build's final phase. Why: spec §4.3 "runs on the finished build"; Plan 8 Ruling 1.
 3. **Whole app = everything since the foundation commit.**
-   - The base is `project.json.foundation.commit`, falling back to `git rev-parse <tag>^{commit}`.
+   - The base is `project.json.foundation.commit`, falling back to `refs/foundation/<tag>^{commit}` in `appDir` (Plan 8's `createApp` keeps the foundation release there and deletes the inherited `refs/tags/*`, Contract 7 §7.11).
    - If neither resolves in the council workspace, the round uses the commit Plan 8's build branch started from (`git merge-base <sha> main` in `appDir`), with a locked warning: `Conductor could not find foundation release <tag>, so the council reviewed only this build's own changes`.
    Why: spec §4.3/§4.8 whole-app review.
 4. **One machine per round, for the smoke only, always released.**
@@ -194,7 +194,7 @@ If any of these changes name in the merged code, change only the import named in
 | `src/council/dataflow.js`, `src/council/licences.js` (modify) | data-flow and data-policy checks; the app's `licence-exceptions.json` | 10 |
 | `src/council/reliability.js` | `RELIABILITY` | 11 |
 | `src/council/index.js`, `report.js` (modify), `src/council/reportFile.js`, `src/council/projectCouncil.js` | project round, report sections, `writeCouncilReport`, `runProjectCouncil` (the hook) | 12 |
-| `src/cli/factory.js` (Plan 8's `build` handler), `src/cli/main.js` (doctor), `src/ui/status.js` (modify) | wire the hook into `conductor build`; council progress lines; doctor; follow-ups | 13 |
+| `src/cli/factoryBuild.js` (Plan 8's `build` handler), `src/cli/main.js` + `src/cli/prepareRun.js` (doctor), `src/ui/status.js` (modify) | wire the hook into `conductor build`; council progress lines; doctor; follow-ups | 13 |
 | `test/helpers/councilFull.js`, `test/fixtures/council-full/` | fake `run`, fake SSH and provider, fixture reports and smoke logs, a sample brief | 4, 5 (used by 6–13) |
 | `README.md`, `config.example.json`, `spikes/council-full-smoke/` | docs and the operator smoke | 14 |
 
@@ -221,7 +221,7 @@ Order:
 - 7 needs 1;
 - 8–11 need 6 and 7;
 - 12 needs 3 and 8–11; 13 needs 12; 14 needs all.
-- Plan 7 must be merged before Tasks 7, 9, 10 and 12 (they import `OUTBOUND_SERVICES`, `acceptanceIds`, `testTag` and `writeFileAtomic`). Plan 8 must be merged before Task 5 (it uses `shQuote`) and Task 13 (it edits Plan 8's `build` handler). Tasks 1–4, 6, 8 and 11 use only injectable `deps` and can be built first.
+- **Merge Plans 7 and 8 before starting this plan** (roadmap order 7 → 8 → 9). Per task: Plan 7 is imported by Tasks 7, 9, 10 and 12 (`OUTBOUND_SERVICES`, `acceptanceIds`, `testTag`, `writeFileAtomic`, `renderBrief`); Plan 8 by Task 5 (`shQuote`), Task 12 (`MEMBERS`/`membersFor` in `src/council/index.js`, and the default `getMachineProvider`/`createSsh`) and Task 13 (it edits Plan 8's `buildCommand` in `src/cli/factoryBuild.js` and the doctor paths in `src/cli/prepareRun.js`). Task 1 also edits files Plan 8 Task 5 changed (`findings.js`, `report.js`, `index.js`), so rebase on Plan 8 first. Tasks 2–4, 6, 8 and 11 use only injectable `deps`.
 
 ## Shared Interfaces (all tasks)
 
@@ -318,4 +318,4 @@ Contract 7 settles the earlier gaps 1–6, 9 and 10: the hook is the Contract 6 
 
 1. **The foundation v0.1.0 smoke hard-codes its names** (`/tmp/hf-smoke`, Compose project `hfsmoke`), so it is safe only under the `static` provider's host lock, and it **refuses to run where `highland/app` or `highland/ops` images exist**. Contract 7.8 handles the images: Plan 10's `cleanupBuild` removes the `highland/*` images it builds, and previews use `hf-preview/*` names and remove them. `HF_SMOKE_PROJECT`/`HF_SMOKE_DIR` and the hard-kill step come with foundation v0.2.0 (Plan 12 milestone 1, Contract 7.9). This plan stays on v0.1.0 as drafted, with the refusal shown as "Reliability was not proven: …"; switching to the v0.2.0 settings is a follow-up. **Still open** only in that sense.
 2. **The smoke depends on the foundation's `notes` example** (A6). Removing `notes` from client apps would make Reliability unpassable. **Still open**: no contract says client apps keep it; a v0.2.0 smoke that seeds its own table would close it.
-3. **The `checks.reports` file names** are not fixed by Contract 7 (it says only that the vitest and Playwright JSON report paths are listed). This plan finds them by base name (`vitest.json`, `playwright.json`) in one function, `reportFiles` (Task 6). **Still open** until Plan 8's revised Task 6 names them; if they differ, change only `reportFiles`.
+(The former gap 3, the `checks.reports` file names, is settled: Plan 8 Task 6 fixes them as `vitest.json`, `playwright.json`, `crossing.md`, `crossing.json` and `screenshots` in `builds/<runId>/reports/`, which is what `reportFiles` looks for.)

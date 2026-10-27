@@ -1,7 +1,7 @@
 # Task 8: Shipping the update to every deployment
 
 With a checked release, the change goes out as an **update** to every deployment of the project (spec §4.8; Contracts 4 and 7.6).
-- Every update goes through Plan 10's `updateDeployment({ projectDir, name, version, foundation, runId }) -> { outcome, message }`. It wraps Plan 10's `runLaterShip` for an existing deployment, which runs the foundation's own `updater update --to <version>` on the box: stop, backup first, switch, migrate, start, health check, and automatic undo if it fails (`docs/RUNBOOK.md` "Updating").
+- Every update goes through Plan 10's `updateDeployment({ projectDir, name, version, foundation, runId }, { factory, say, state }) -> { outcome, message }` (the second argument is Plan 10's options: Plan 11 passes its `factory`, the terminal's `say`, and the CLI's ship `state`, so Ctrl-C can call Plan 10's `interruptShip(state)`). It wraps Plan 10's `runLaterShip` for an existing deployment, which runs the foundation's own `updater update --to <version>` on the box: stop, backup first, switch, migrate, start, health check, and automatic undo if it fails (`docs/RUNBOOK.md` "Updating").
 - Plan 10 records the outcome, `currentVersion`, `foundation` and history in `deployments/<name>.json`.
 - Plan 11 never runs ssh or docker, never re-implements any of that, and never writes deployment files (index Ruling 9).
 
@@ -10,7 +10,7 @@ What Plan 11 adds is the order and the stop rules:
 - a deployment whose setup is not finished (`setup.step !== 'done'`) is skipped and reported; it does not stop the rest;
 - the others are updated **one at a time, in name order**;
 - before each one, the ship guard (`shipProblem`, Task 5) is checked again, and the deployment must currently be on an older version;
-- Plan 10's `updated` and `already-on` carry on (`CONTINUE_OUTCOMES`). `rolled-back`, `cancelled`, `busy`, `settings-error`, `urgent`, `lost-contact` and **anything unexpected** stop the rest, because a version that failed on one box is not pushed to the next;
+- Plan 10's `updated` and `already-on` carry on (`CONTINUE_OUTCOMES`). `rolled-back`, `cancelled`, `busy`, `settings-error`, `urgent`, `lost-contact`, `refused` and **anything unexpected** stop the rest (Plan 10's `OUTCOMES`/`UPDATE_OUTCOMES` are the only names, Contract 7 §7.11), because a version that failed on one box is not pushed to the next;
 - each result is saved to `change.json` as soon as it is known, so a crash never updates the same box twice;
 - on resume, a deployment that already ended `updated`/`already-on` is skipped, and one that stopped the ship is retried **only if the operator says so** (`ask`, which answers "no" without a terminal).
 
@@ -22,7 +22,7 @@ What Plan 11 adds is the order and the stop rules:
 - Consumes: `deps.listDeployments`, `deps.updateDeployment`, `deps.now` (Task 1's seams); `CONTINUE_OUTCOMES` (Task 1); `shipProblem` (Task 5); `compareVersions` (Plan 10, `foundationLog.js`); `redact` from `src/secrets.js`; `clip` from `src/text.js`; `stubDeps`, `makeProject` (Task 1).
 - Produces:
   - `projectDeployments(deps, { projectsRoot, slug }) -> { list: [{ name, deployment }], problem: string | null }`. `list` is sorted by name. `problem` is `` `The deployment record ${name} could not be read (${entry.problem}), so nothing was updated. Fix or remove it, then resume.` `` for the first unreadable entry;
-  - `shipUpdate({ projectDir, projectsRoot, slug, run, version, foundation, deps, ask, save }) -> Promise<{ status: 'done'|'stopped', reason: string | null }>`; `ask(question) -> Promise<boolean>`; `save(run)` persists `run.deployments`;
+  - `shipUpdate({ projectDir, projectsRoot, slug, run, version, foundation, deps, factory, say, state, ask, save }) -> Promise<{ status: 'done'|'stopped', reason: string | null }>`; `ask(question) -> Promise<boolean>`; `save(run)` persists `run.deployments`; `factory`, `say` and `state` go unchanged into `updateDeployment`'s second argument;
   - `shipReport(run, list) -> string`;
   - outcome sentences (exact, `<name>` and versions filled in):
     - `updated`: `` `${name}: updated to ${version}, with a backup taken first.` ``
@@ -33,6 +33,7 @@ What Plan 11 adds is the order and the stop rules:
     - `settings-error`: `` `${name}: the box's settings are not right, so the update did not start: ${message}` ``
     - `urgent`: `` `${name}: URGENT. The update failed and the automatic undo also failed. Follow "Recovering from a failed update" in the foundation runbook now. ${message}` ``
     - `lost-contact`: `` `${name}: Conductor lost contact with the box during the update, so it does not know how it ended. Check it with "conductor deployments status" before trying again. ${message}` ``
+    - `refused`: `` `${name}: Conductor did not start the update there, and nothing was changed: ${message}` ``
     - unknown (including a throw): `` `${name}: the update ended in a way Conductor does not recognise (${outcome}), so it is treated as failed.` ``
     - not attempted: `` `${name}: not updated (still on ${from}), because an earlier deployment did not update.` ``
     - not set up: `` `${name}: not set up yet, so it was not updated. Finish it with "conductor ship <slug> --to ${name}".` ``
@@ -57,7 +58,7 @@ test('updates every deployment of this project one at a time, in name order, thr
   assert.deepEqual(Object.keys(saves[0]), ['acme-cloud']);
 });
 
-for (const outcome of ['cancelled', 'rolled-back', 'busy', 'settings-error', 'lost-contact', 'urgent', 'something-new']) {
+for (const outcome of ['cancelled', 'rolled-back', 'busy', 'settings-error', 'lost-contact', 'urgent', 'refused', 'something-new']) {
   test(`a ${outcome} outcome stops the rest; later deployments are not touched`, async () => {
     const deps = stubDeps({ listDeployments: () => entries, updateDeployment: async ({ name }) => ({ outcome: name === 'acme-office' ? outcome : 'updated', message: 'm' }) });
     const r = await shipUpdate({ … });
@@ -111,7 +112,7 @@ Expected: FAIL (module not found).
     3. if it has a stopping outcome from before: `await ask(question)`. Anything but exactly `true` → return `stopped` with `` `You chose not to try ${name} again, so it and the deployments after it were not updated.` ``;
     4. `await shipProblem(run, { appDir: path.join(projectDir, 'app') })` → return `stopped` with that reason;
     5. `compareVersions(d.currentVersion, version)`: equal → record `already-on`; greater → stopped (`` `${name} is on ${d.currentVersion}, newer than ${version}, so it was left alone.` ``);
-    6. call `deps.updateDeployment({ projectDir, name, version, foundation, runId: run.runId })` in `try`; a throw becomes `{ outcome: 'error', message }`;
+    6. call `deps.updateDeployment({ projectDir, name, version, foundation, runId: run.runId }, { factory, say, state })` in `try`; a throw becomes `{ outcome: 'error', message }`;
     7. record `{ outcome, message: clip(redact(message), 1000), at: deps.now().toISOString(), from: d.currentVersion }`, then `save(run)`;
     8. stop unless the outcome is in `CONTINUE_OUTCOMES`; the reason is that deployment's outcome sentence.
 - `shipReport`: one line per deployment from the saved results. Deployments with no result get the "not attempted" sentence.

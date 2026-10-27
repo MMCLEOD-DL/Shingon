@@ -16,7 +16,7 @@ Spec §2.4: an app without automatic backups, a tested restore, health alerts an
 conductor ship <slug> --to test-box
 conductor deployments status
 ```
-Answer the plain-English questions (box address, SSH user, secrets). Expected: the app answers on the box; `deployments/test-box.json` exists with the first `history` entry; `conductor deployments status` shows it healthy. Record the version shipped: `ship` first cuts the app's first release with Plan 10's `releaseApp` (bump `first`, tag `v<version>` on `main`; Contract 7.6), and `history` starts with outcome `installed`.
+Answer the plain-English questions (box address, SSH user, secrets). Expected: the app answers on the box; `deployments/test-box.json` exists with the first `history` entry; `conductor deployments status` shows it healthy. Record the version shipped: `ship` first cuts the app's first release with Plan 10's `releaseApp` (bump `first`, which runs `npm run release -- major`: expect `v1.0.0` on `main`; Contract 7.6, 7.11), and `history` starts with outcome `installed`. The deployment records `foundation: "v0.2.0"` from `project.json`, not from the box (Contract 7.11).
 
 - [ ] **Step 2: The box's settings (C12)**
 

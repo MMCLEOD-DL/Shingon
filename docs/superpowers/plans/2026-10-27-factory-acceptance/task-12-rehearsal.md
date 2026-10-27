@@ -4,7 +4,7 @@
 
 Before spending the real client's notes, run the factory once end to end on the fictional Glenmore Joinery notes (`spikes/acceptance/rehearsal-notes.md`), as far as the preview. It shakes out problems in Plans 7–9 and in the modules cheaply. Whatever goes wrong is fixed in the factory or the foundation (Ruling 9), then this rehearsal is repeated until it passes. Nothing from it ships.
 
-**Needs:** Task 10 (`v0.2.0` tagged), Task 11 merged (which needs Plans 7 and 10 merged), Plans 7, 8 and 9 merged, `factory.foundation.tag` set to `v0.2.0` (Plan 8's setting, Contract 7.2), the `static` machine provider pointing at CT 111 (or the `proxmox` provider set up), the workers awake (Plan 4).
+**Needs:** Task 10 (`v0.2.0` tagged), Task 11 merged (which needs Plans 7–11 merged), `factory.foundation.tag` set to `v0.2.0` (Plan 8's setting, Contract 7.2), the `static` machine provider pointing at CT 111 (or the `proxmox` provider set up), the workers awake (Plan 4).
 
 **Files (operator's machine only, not committed):**
 - `<projectsRoot>/glenmore-joinery/acceptance/RESULT.md`, copied from `spikes/acceptance/RESULT-TEMPLATE.md`
@@ -18,12 +18,12 @@ Before spending the real client's notes, run the factory once end to end on the 
 In Conductor's config file, `factory.foundation.tag` must be `"v0.2.0"` (the default is `v0.1.0`, which has no modules). Check that the tag exists: `git -C /root/highland-foundation tag --list v0.2.0` prints `v0.2.0`.
 
 ```bash
-conductor project new "Glenmore Joinery (rehearsal)"
+conductor project new "Glenmore Joinery (rehearsal)" --slug glenmore-joinery
 conductor project show glenmore-joinery
 mkdir -p ~/highland-projects/glenmore-joinery/acceptance
 cp /root/conductor/spikes/acceptance/RESULT-TEMPLATE.md ~/highland-projects/glenmore-joinery/acceptance/RESULT.md
 ```
-Expected: the project folder exists with `project.json` status `briefing`. (Use the slug `project new` prints if it differs.) After the build, `project.json` must show `foundation.tag: "v0.2.0"`; if it shows `v0.1.0`, the setting was not picked up: stop and fix it before going on.
+Expected: the project folder exists with `project.json` status `briefing`. (Without `--slug`, Plan 7's `slugify` would make `glenmore-joinery-rehearsal`.) After the build, `project.json` must show `foundation.tag: "v0.2.0"`; if it shows `v0.1.0`, the setting was not picked up: stop and fix it before going on.
 
 - [ ] **Step 2: Brief**
 

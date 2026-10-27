@@ -85,7 +85,7 @@ test('passing checks: the operator sees the summary plus what happens next, and 
 });
 
 test('anything but exactly true from the operator is passed back unchanged and nothing is saved', ...)
-  // approveBuild returns { approved: false, note: 'bold totals' } → gate returns that object (Plan 8 makes it a fix unit);
+  // approveBuild returns { note: 'bold totals' } → gate returns that object (Plan 8 makes it a fix unit);
   // returns false → false; returns 'yes' → 'yes'; onApproved never called
 
 test('an overridden council is approved but the summary says so in plain words', ...)

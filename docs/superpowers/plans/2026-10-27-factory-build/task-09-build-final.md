@@ -131,7 +131,7 @@ test('secretSeen: the build branch becomes one commit with the same files before
 
 test('operator feedback becomes a fix feature and the gate is asked again; reject leaves main alone', async () => {
   const s = await setup();
-  const g = gate([{ approved: false, note: 'Make the report totals bold.' }, false]);
+  const g = gate([{ note: 'Make the report totals bold.' }, false]);
   const t = team();
   const out = await runBuild({ factory: s.factory, slug: s.slug, team: t, hooks: { ...s.hooks, ...g }, deps: { ...s.deps, runAppChecks: async () => green }, env: {} });
   assert.equal(out.status, 'rejected');
@@ -191,8 +191,8 @@ Order, each step re-entrant:
      3. `saveProject(projectDir, { ...project, status: 'ready', approved: { sha, at: now().toISOString(), runId: build.runId, briefVersion: build.briefVersion }, builtFromBrief: build.briefVersion })`.
      4. `build.phase = 'done'`; `finish('ready', null)`.
      - No tag and no release: Plan 10's `releaseApp` cuts the first release at ship time (Contract 7 §7.6).
-   - An object with a non-empty `note` → `fixUnit({ prefix: 'feedback', title: 'Operator feedback', instructions: 'The operator looked at the finished build and asked for this change:\n<clip(redact(note), 2000)>' })`; `phase = 'features'`; save; `{ next: 'features' }`.
-   - Anything else → `finish('rejected', 'You did not approve the build. The app\'s main branch is unchanged; the build is kept in <buildDir>.')`.
+   - An object `{ note }` with a non-empty `note` (the operator asked for changes; Contract 7 §7.11) → `fixUnit({ prefix: 'feedback', title: 'Operator feedback', instructions: 'The operator looked at the finished build and asked for this change:\n<clip(redact(note), 2000)>' })`; `phase = 'features'`; save; `{ next: 'features' }`.
+   - Anything else, including `false` (a refusal, from the operator or from a gate such as Plan 11's change gate) → `finish('rejected', 'You did not approve the build. The app\'s main branch is unchanged; the build is kept in <buildDir>.')`.
 
 - [ ] **Step 4: Implement `buildSummaryText`**
 

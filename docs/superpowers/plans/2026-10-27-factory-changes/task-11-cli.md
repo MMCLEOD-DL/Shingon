@@ -16,9 +16,10 @@ Rules:
   - `FACTORY_COMMANDS.change = runChangeCommand`;
   - `FACTORY_COMMANDS['foundation-upgrade'] = runUpgradeCommand`.
 
-  It does **not** touch `src/cli/main.js`. Plan 7's `main()` already runs `runFactoryCommand` before the "must be inside a git repo" check, so these commands work from any folder and find the project under `factory.projectsRoot` (`factoryConfig(config).projectsRoot`).
+  It does **not** touch `src/cli/main.js`. Plan 7's `main()` already runs `runFactoryCommand` before the "must be inside a git repo" check, so these commands work from any folder and find the project under `ctx.factory.projectsRoot`.
 - **No terminal.** `change`, `foundation-upgrade --to` and `--resume` need questions answered (brief questions, the gate, retries). Without a terminal they refuse before anything starts (`NO_TTY_CHANGE`), so no subscription is spent on work that could never be approved. `--check` and `--abandon` ask nothing and work anywhere.
-- **Team and brief seat.** They check and wake the workers and build the team exactly as Plan 8's `build` handler does, using the same helper (index "Still open" 2), including asking before the frontier covers for a local model that is down. The brief's author seat comes from Plan 7's `briefAuthorSeat`, and `term.briefIo` from Plan 7's terminal functions (`askBriefQuestion`, `approveBrief`), exactly as Plan 7's `brief --revise` handler builds them.
+- **The lock (Contract 7 §7.11).** The handler takes `lockProject(projectDir, 'change')` right after `readProject`, before any model is checked, for `change` (any mode) and `foundation-upgrade --to | --resume | --abandon`, and releases it in `finally`. `--check` reads only and takes no lock. Plan 7's busy message → printed, exit 1. Nothing the handler calls takes the lock again.
+- **Team and brief seat.** They check and wake the workers and build the team exactly as Plan 8's `build` handler does, with Plan 8's `prepareTeam` (`src/cli/prepareRun.js`, Contract 7 §7.11), including asking before the frontier covers for a local model that is down. The brief's author seat comes from Plan 7's `briefAuthorSeat`, and `term.briefIo` from Plan 7's terminal functions (`askBriefQuestion`, `approveBrief`), exactly as Plan 7's `brief --revise` handler builds them.
 - **Gate label.** The terminal's `approveBuild` gate (Plan 8) shows Plan 11's `approveLabel` in place of `approve: mark the app ready` when the argument carries one.
 - **Words.** `change`/`foundation-upgrade` are subcommands only when a change flag (`--notes`, `--resume`, `--abandon`, `--to`, `--check`) is present or exactly one positional follows. Otherwise they are part of a normal request, so `conductor change the button colour` stays an ordinary run.
 
@@ -32,14 +33,15 @@ Rules:
   - `runChange`, `runFoundationUpgrade`, `resumeChange`, `abandonChange` (Task 9);
   - `securityBehind`, `behindText` (Task 10);
   - `realDeps`, `missingSeams` (Task 1);
-  - Plan 7: `runFactoryCommand`, `FACTORY_COMMANDS`, `factoryConfig`, `readProject`, `briefAuthorSeat`;
-  - Plan 8: the team helper its `build` handler uses;
+  - Plan 7: `runFactoryCommand`, `FACTORY_COMMANDS`, `readProject`, `lockProject`, `briefAuthorSeat`; `loadConfig` (`src/config.js`);
+  - Plan 8: `prepareTeam` (`src/cli/prepareRun.js`);
+  - Plan 10: `interruptShip` (`src/factory/ship/index.js`);
   - `createTerminal`; `EXIT` (`src/cli/main.js`).
 - Produces:
   - `parseCli` results:
     - `{ command: 'change', slug, notesFile, resume, abandon, flags }`
     - `{ command: 'foundation-upgrade', slug, toTag, resume, abandon, check, flags }`
-  - `runChangeCommand(cli, ctx)` and `runUpgradeCommand(cli, ctx)` in `src/cli/change.js`, with Plan 7's handler signature: `ctx = { cwd, env, stdin, stdout, isTTY, onSignal, exit, deps }`. `ctx.deps.change` (tests only) replaces `realDeps()`. Each returns an exit code;
+  - `runChangeCommand(cli, ctx)` and `runUpgradeCommand(cli, ctx)` in `src/cli/change.js`, with Plan 7's handler signature (Contract 7 §7.11): `ctx = { cwd, env, stdin, stdout, isTTY, onSignal, exit, factory, config, deps }` (+ `home`, `print`, `configPath`). `ctx.deps.change` (tests only) replaces `realDeps()`; `ctx.deps.prepareTeam` (tests only) replaces Plan 8's. Each returns an exit code (never `null`);
   - exit codes: `done` 0, `rejected` and `stopped` 1, `failed` 2, `paused` 3, usage 64, Ctrl-C 130 (the existing `EXIT`, plus `done: 0`);
   - texts:
     - `NO_TTY_CHANGE = 'There is no terminal to ask you, so Conductor did not start. A change needs your answers and your approval: run it in a terminal.'`
@@ -86,6 +88,10 @@ test('--check works without a terminal and outside any git repository', async ()
   assert.equal(code, 0);
   assert.match(out.text(), /Newest foundation release: v0\.1\.1\./);
 });
+test('the handler takes the project lock: a running build makes change refuse plainly, before any model is checked (Contract 7 §7.11)', ...)
+  // lockProject(projectDir, 'build') held → code 1, /This project is busy: a build is running/; no deps call; nothing under builds/
+test('Ctrl-C while an update runs calls Plan 10\'s interruptShip with the shared ship state', ...)
+  // a stub updateDeployment sets state.phase = 'updating' then triggers ctx.onSignal's handler → the printed text is interruptShip's "Stopped watching…" line, then INTERRUPTED_CHANGE; exit(130)
 test('change and foundation-upgrade are FACTORY_COMMANDS handlers', () => {
   assert.equal(FACTORY_COMMANDS.change, runChangeCommand);
   assert.equal(FACTORY_COMMANDS['foundation-upgrade'], runUpgradeCommand);
@@ -115,13 +121,14 @@ Expected: the new tests FAIL.
 - **`src/cli/args.js`:** add the missing flags among `notes`, `to` (string), `resume`, `abandon` and `check` (boolean) to `OPTIONS`; add the subcommand rule and the usage lines.
 - **`src/ui/terminal.js`:** in Plan 8's `approveBuild`, the prompt's approve item is `` `[a] ${approveLabel ?? 'approve: mark the app ready'}` ``; the rest is unchanged.
 - **`src/cli/change.js`:**
-  - `factory = factoryConfig(config)` (Plan 7's config load and error text); `deps = ctx.deps?.change ?? realDeps()`; `missingSeams` → exit 2 with `MISSING_SEAMS`;
+  - `factory = ctx.factory`; `deps = ctx.deps?.change ?? realDeps()`; `missingSeams` → exit 2 with `MISSING_SEAMS`;
   - `readProject(factory.projectsRoot, slug)` → plain usage error;
+  - except for `--check`: `release = lockProject(projectDir, 'change')` (busy → print, exit 1), released in `finally`;
   - `--check` → `securityBehind` + `behindText`, exit 0 (1 when any row could not be checked);
   - `--abandon` → `abandonChange` (no team);
-  - otherwise: refuse without a terminal (`NO_TTY_CHANGE`); check the notes file (resolved against `cwd`) can be read; prepare the team (Plan 8's helper) and the brief seat (Plan 7's `briefAuthorSeat`); build `term`; call `runChange`/`runFoundationUpgrade`/`resumeChange`;
+  - otherwise: refuse without a terminal (`NO_TTY_CHANGE`); check the notes file (resolved against `cwd`) can be read; `config = ctx.config ?? loadConfig(ctx.configPath)` (participants are needed; a failure prints `Conductor could not read its config: …`, exit 64); prepare the team (`prepareTeam`) and the brief seat (Plan 7's `briefAuthorSeat(config.participants, { routing: config.routing, env })`); build `term`; `shipState = {}`; call `runChange`/`runFoundationUpgrade`/`resumeChange` with `shipState` in the context;
   - print `outcome.report` (or `outcome.reason`), and return `EXIT[outcome.status] ?? EXIT.failed`, with `done` mapped to 0;
-  - Ctrl-C during a change (through `ctx.onSignal`): `killAllChildren()`, print `INTERRUPTED_CHANGE`, `exit(130)`. Plan 7's lock is taken over later, because its process is gone.
+  - Ctrl-C during a change (through `ctx.onSignal`): `killAllChildren()`; when `shipState.phase` is set (a deployment update is under way), print Plan 10's `interruptShip(shipState)` (it records `pendingCheck` and releases the deployment lock, Contract 7 §7.11); then print `INTERRUPTED_CHANGE`, release the project lock, `exit(130)`. A lock left by a killed process is taken over later by Plan 7's stale-pid check.
 - **`src/cli/factory.js`:** the two `FACTORY_COMMANDS` entries, nothing else.
 
 - [ ] **Step 5: Run the tests to verify they pass**

@@ -9,12 +9,12 @@ Contract 7.7 makes Plan 8's `runBuild({ factory, slug, team, hooks, options })` 
 | Normal build (Plan 8) | Change mode (`options.change` set) |
 |---|---|
 | refuses `ready`/`shipped` projects | refuses anything **but** `ready`/`shipped` (`NOT_LIVE_YET`); the `ready`/`shipped` refusal is lifted only here |
-| takes `lockProject(projectDir, 'build')` | takes **no** lock: the caller (Plan 11's pipeline) holds `lockProject(projectDir, 'change')`, the project's one lock |
+| takes **no** lock: the `build`/`resume` handler holds `lockProject(projectDir, 'build')` (Contract 7 §7.11) | takes **no** lock either: Plan 11's `change`/`foundation-upgrade` handler holds `lockProject(projectDir, 'change')`, the project's one lock |
 | finds or creates the build from `latestBuild` | loads or creates `builds/<change.runId>/build.json` with `kind: 'change'` (resume = call again with the same `runId`) |
 | `createApp`, records `project.json.foundation`, sets `status: 'building'`, `nameApp` | none of these; `project.json` is never written in change mode |
 | baseline `runAppChecks` on `main` | the same |
 | checks out `build/<runId>` from `main` | checks out `build/<runId>` from `refs/heads/<change.baseRef>` |
-| — | if `change.profile` differs from `app-profile.json` at that commit: write it with `appProfileOf`'s format and commit it on the build branch, using the same commit message form `createApp` uses for `app-profile.json` |
+| — | if `change.profile` differs from `app-profile.json` at that commit: write it with `appProfileOf`'s format (`JSON.stringify(profile, null, 2) + '\n'`, as Plan 8's `nameApp` writes it) and commit only that file on the build branch, message `Update the app profile from the brief` |
 | `runSplit` | skipped: `build.units = change.units`, features from them, phase `features` |
 | features, final checks, council, fix rounds, escalations | the same. Each feature's `factoryFeature` also carries the unit's `retire` ids |
 | gate `true`: `main` moves to the build tip, `status: 'ready'` | gate `true`: `main` **not** moved, `project.json` **not** touched; the app folder is checked back out to `main` (clean); `build.status = 'approved'`, `phase = 'done'`; return `{ status: 'approved', runId, buildDir, sha, branch }` |
@@ -24,15 +24,15 @@ Contract 7.7 makes Plan 8's `runBuild({ factory, slug, team, hooks, options })` 
 - `hooks.approveBuild` is called with `{ summary, sha, branch, runId, council: build.council, checks: build.checks }`. The build command's terminal gate reads only `summary`, so its behaviour is unchanged.
 - `build.council` saves the hook result with the `sha` it reviewed (Plan 8 already does) and `overridden: true` when the operator approved past a blocked council.
 - `latestBuild(projectDir)` ignores builds with `kind: 'change'`, so `conductor build` and `conductor resume` never pick up a change run. Plan 11's `--resume` continues those.
-- `appProfileOf(brief) -> { schema: 1, modules, policy: { outbound, residency } }` is exported from `src/factory/app.js`. If Plan 8 builds that object inline in `createApp`, move it into this function with no change in output, and make `createApp` call it.
+- `appProfileOf(brief) -> { schema: 1, modules, policy: { outbound, residency } }` is already exported from Plan 8's `src/factory/app.js` (used by `nameApp`, Contract 7 §7.11). Plan 11 imports it; nothing to move.
 - The Foundation rules member (`src/council/foundationRules.js`) accepts the **removal or change** of a test whose title carries one of `factoryFeature.retire`'s tags. Dropping any other tag still blocks with its locked finding, as today.
 
 **Files:**
-- Modify: `src/factory/build.js`, `src/factory/buildFinal.js`, `src/factory/buildState.js`, `src/factory/app.js`, `src/council/foundationRules.js` (Plan 8's)
+- Modify: `src/factory/build.js`, `src/factory/buildFinal.js`, `src/factory/buildState.js`, `src/council/foundationRules.js` (Plan 8's)
 - Test: `test/factory-build-change.test.js` (new; uses Plan 8's `test/helpers/buildHarness.js`), `test/council-foundation-rules.test.js` (append one; use Plan 8's file name for that member's tests)
 
 **Interfaces:**
-- Consumes: Plan 8's `runBuild`, `runFinal`, `newBuild`, `latestBuild`, `loadBuild`, `saveBuild`, `buildDirOf`, `runAppChecks`, `featureRequest`, `acceptanceIds` (Plan 7), `RUN_ID_RE`, `MAX_INSTRUCTIONS`; `git` from `src/workspace.js`.
+- Consumes: Plan 8's `runBuild`, `runFinal`, `newBuild`, `latestBuild`, `loadBuild`, `saveBuild`, `buildDirOf`, `runAppChecks`, `featureRequest`, `appProfileOf`, `RUN_ID_RE`, `MAX_INSTRUCTIONS`; `acceptanceIds` (Plan 7); `git` from `src/workspace.js`.
 - Produces: the index's Task 4 block, and these texts:
   - `NOT_LIVE_YET = 'This project has not been built and approved yet, so there is nothing to change. Build it first with "conductor build <slug>".'`
   - `` BASE_REF_MISSING(baseRef) = `There is no branch called ${baseRef} in the app, so the change build did not start.` ``
@@ -74,8 +74,8 @@ test('the operator\'s feedback note still becomes a fix unit in change mode; fal
 test('calling runBuild again on an approved change build returns the same outcome without asking', ...)
 test('a profile that differs from app-profile.json is committed on the build branch before any feature; an equal one is not', ...)
   // first commit after baseRef changes only app-profile.json; its content equals JSON of change.profile
-test('change mode takes no project lock; a normal build still takes it', ...)
-  // with lockProject(projectDir, 'change') held by the test: change mode runs; a normal build reports Plan 7's busy text
+test('runBuild takes no project lock in change mode either (Contract 7 §7.11)', ...)
+  // with lockProject(projectDir, 'change') held by the test, as Plan 11's handler does: change mode runs to the gate; no busy text
 test('a missing baseRef, an option-like baseRef or a bad run id is refused before anything is created', ...)
   // 'nope' → BASE_REF_MISSING('nope'); '-x', 'main~1' → BASE_REF_MISSING; runId 'x' → plain refusal; builds/ unchanged
 test('units with unknown acceptance ids, duplicate ids or over-long instructions are refused', ...)   // BAD_CHANGE_UNITS
@@ -100,7 +100,7 @@ Expected: the new tests FAIL; Plan 8's tests still pass.
 - **`runBuild`** (`build.js`), when `options.change` is set:
   - Validate before anything is created: `runId` matches `RUN_ID_RE`; `baseRef` passes `git check-ref-format refs/heads/<baseRef>`, does not start with `-`, contains none of `~^:@{`, and `refs/heads/<baseRef>` exists in the app (`BASE_REF_MISSING`).
   - Validate `units`: non-empty, unique ids, every `acceptance` id in `acceptanceIds(brief)`, every `instructions` at most `MAX_INSTRUCTIONS`, and `featureRequest` within its budget for each index. Problems go to `BAD_CHANGE_UNITS`.
-  - Project status must be `ready` or `shipped` (`NOT_LIVE_YET`). Skip the lock.
+  - Project status must be `ready` or `shipped` (`NOT_LIVE_YET`). (No lock is taken in either mode; Plan 8's `runBuild` never takes one.)
   - Load `builds/<runId>/build.json` or create it with `newBuild({ …, kind: 'change' })`, `units`, and features from the units. `briefHash` is checked on resume as Plan 8 does.
   - Setup: the baseline checks as today, then `git checkout -q -b build/<runId> refs/heads/<baseRef>` in the app, then the profile commit when `change.profile` is set and differs (compare canonical JSON with the file at that commit). Then `build.baseSha` and `phase: 'features'`.
   - Each feature's `factoryFeature` gains `retire: unit.retire ?? []`.
@@ -110,7 +110,6 @@ Expected: the new tests FAIL; Plan 8's tests still pass.
   - in change mode, on exactly `true`: no `update-ref`, no `saveProject`; `git checkout -q main`; `build.status = 'approved'`, `phase = 'done'`; save; return the change outcome;
   - at the top of `runFinal` in change mode, a build already `approved` returns that outcome straight away.
 - **`buildState.js`:** `newBuild` takes `kind` (default `'build'`); `latestBuild` skips `kind: 'change'`.
-- **`app.js`:** export `appProfileOf` (see above).
 - **`foundationRules.js`:** in the dropped-tag check, a dropped tag in `factoryFeature.retire` is not a finding.
 
 - [ ] **Step 4: Run the tests to verify they pass**
@@ -121,7 +120,7 @@ Expected: PASS, whole suite, Plan 8's tests unchanged.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/factory/build.js src/factory/buildFinal.js src/factory/buildState.js src/factory/app.js src/council/foundationRules.js test/factory-build-change.test.js test/council-foundation-rules.test.js
+git add src/factory/build.js src/factory/buildFinal.js src/factory/buildState.js src/council/foundationRules.js test/factory-build-change.test.js test/council-foundation-rules.test.js
 git commit -m "feat(factory): runBuild change mode for live apps (no app creation, no split, main left to the change gate)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"

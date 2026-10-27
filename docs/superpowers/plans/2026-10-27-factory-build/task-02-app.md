@@ -4,7 +4,9 @@
 - the client's name, in the one line of `apps/web/src/brand.ts` that a client build may change (Ruling 6);
 - `app-profile.json` at the app's root, written from the approved brief (Contract 7 §7.5).
 
-Contract 7 §7.5 says "`createApp` writes `app-profile.json`". Here the write sits in `nameApp`, the step of the first build that makes the BRAND commit: `createApp` only clones onto `main`, and `main` must stay at the foundation tag until the operator approves. It is the same module, the same build step and the same commit the contract asks for.
+Contract 7 §7.11 puts the `app-profile.json` write in `nameApp`, in the same commit as the BRAND line: `createApp` only clones onto `main`, and `main` must stay at the foundation release until the operator approves.
+
+**Tags (Contract 7 §7.11).** Foundation tags are never kept as `refs/tags/*` in an app repo. `createApp` deletes every tag the clone brought in, sets the `foundation` remote to `--no-tags` (`remote.foundation.tagOpt`), and keeps the release it was made from as `refs/foundation/<tag>` (the same namespace Plan 11 fetches into). So every `v*` tag in an app repo is an app release, cut by Plan 10's `releaseApp`. `project.json.foundation.tag` stays the only record of the foundation version.
 
 **Files:**
 - Create: `src/factory/app.js`
@@ -40,6 +42,9 @@ test('clones the tag onto a new main, keeps the foundation as a remote, records 
   assert.equal(await out(r.appDir, ['rev-parse', 'HEAD']), r.commit);
   assert.equal(r.commit, await out(repo, ['rev-parse', 'v0.1.0^{commit}']));
   assert.equal(await out(r.appDir, ['remote']), 'foundation');
+  assert.equal(await out(r.appDir, ['tag', '--list']), '', 'no foundation tag is kept as refs/tags/* (Contract 7 §7.11)');
+  assert.equal(await out(r.appDir, ['config', '--get', 'remote.foundation.tagOpt']), '--no-tags');
+  assert.equal(await out(r.appDir, ['rev-parse', 'refs/foundation/v0.1.0^{commit}']), r.commit);
   assert.deepEqual(readdirSync(projectDir).filter((n) => n.startsWith('app.partial')), [], 'no half-made clone left');
 });
 
@@ -116,9 +121,9 @@ Expected: FAIL (`Cannot find module '../src/factory/app.js'`).
 
 - [ ] **Step 3: Implement `createApp` in `src/factory/app.js`**
 
-- `appDir = <projectDir>/app`. If it exists: it must be a git repo (`rev-parse --git-dir`); resolve `git rev-parse --verify --quiet refs/tags/<tag>^{commit}` inside it. With `expectCommit` set and different, throw `The foundation's tag <tag> now points at a different commit than when this app was made. Conductor will not build on it; ask the foundation's maintainer why the tag moved.` Return `{ appDir, commit, created: false }`.
+- `appDir = <projectDir>/app`. If it exists: it must be a git repo (`rev-parse --git-dir`); resolve `git rev-parse --verify --quiet refs/foundation/<tag>^{commit}` inside it (when that ref is missing, `git fetch -q --no-tags foundation +refs/tags/<tag>:refs/foundation/<tag>` once, then resolve again). With `expectCommit` set and different, throw `The foundation's tag <tag> now points at a different commit than when this app was made. Conductor will not build on it; ask the foundation's maintainer why the tag moved.` Return `{ appDir, commit, created: false }`.
 - Otherwise clone into `<projectDir>/app.partial-<6 hex>`: args `['clone', '--quiet', '--no-hardlinks', '--branch', tag, repo, partialDir]`, prefixed with `['-c', 'protocol.https.allow=always']` only when `repo` starts with `https://`, timeout 15 minutes. A failing clone throws `Conductor could not copy the foundation from <repo>: <first line of stderr, redacted>`; a clone that fails with `Remote branch <tag> not found` throws `The foundation has no release <tag>.`
-- In the partial dir: `checkout -q -b main`, `remote rename origin foundation`, read `foundation.json`. Its `commit` must equal `tag` and its `version` must equal the tag without `v`; otherwise throw `The foundation at <tag> is not a proper release: its foundation.json says <v + version>, not <tag>.`
+- In the partial dir: `checkout -q -b main`, `remote rename origin foundation`, `config remote.foundation.tagOpt --no-tags`, `update-ref refs/foundation/<tag> <commit>` (the peeled commit of the tag), then delete every tag the clone brought in (`for-each-ref --format=%(refname) refs/tags` → `update-ref -d` each). Read `foundation.json`. Its `commit` must equal `tag` and its `version` must equal the tag without `v`; otherwise throw `The foundation at <tag> is not a proper release: its foundation.json says <v + version>, not <tag>.`
 - With `expectCommit` set, compare as above. Then `renameSync(partialDir, appDir)`.
 - Any throw removes the partial dir (`rmSync(…, { recursive: true, force: true })`).
 

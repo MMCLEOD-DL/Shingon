@@ -9,21 +9,26 @@ The acceptance test (spec §8 item 9) is run by the operator over several sessio
 
 The checker never builds, deploys or calls a model. It only reads files.
 
+It also makes the one Conductor product change the acceptance run needs (Step 0) [cross-plan ruling: Plan 8's `briefProblems` refuses any brief with `modules` ("the optional modules arrive in Plan 12") and no earlier plan lifts it, yet the expenses tracker needs `ocr` and the exports. Plan 12 lifts it here, only for foundation v0.2.0 or later, so Plan 8's behaviour and tests on v0.1.0 stay as built].
+
 **Files:**
 - Create: `spikes/acceptance/check-acceptance.mjs`, `spikes/acceptance/PROCEDURE.md`, `spikes/acceptance/RESULT-TEMPLATE.md`, `spikes/acceptance/rehearsal-notes.md`
 - Create: `test/acceptance-check.test.js`, `test/helpers/acceptanceProject.js` (builds a good project folder in a temp dir with Plans 7 and 10's own writers; each failing case is one mutation of it)
 - Modify: `README.md` (one paragraph under the factory section, pointing to `spikes/acceptance/PROCEDURE.md`)
+- Modify (Step 0): `src/factory/split.js` (`briefProblems`, `MODULES_SINCE`), `src/factory/build.js` (passes the foundation tag) — Plan 8's files
+- Create (Step 0): `test/factory-modules-lift.test.js`
 
 **Interfaces:**
 - Consumes (Conductor modules, imported, never re-implemented):
   - Plan 7: `loadProject(dir)` (`src/factory/projects.js`); `loadBrief(projectDir)`, `currentBriefInfo(projectDir)`, `briefPaths`, `saveApprovedBrief` (`src/factory/brief.js`); `acceptanceIds(brief) -> [{ id, featureId, n, example }]` and `testTag(id) -> '[<id>]'` (`src/factory/acceptance.js`, Contract 7.1/7.4); `writeFileAtomic` (`src/factory/fsAtomic.js`); test helpers `validBrief`, `approvedBrief` (`test/helpers/briefFixtures.js`).
   - Plan 10: `loadDeployment(projectDir, name)`, `newDeployment`, `addHistory`, `saveDeployment` (`src/factory/deployments/store.js`, Contract 4); `compareVersions` (`src/factory/foundationLog.js`, Contract 7.1).
+  - Plan 8 (Step 0 only): `briefProblems(brief)` (`src/factory/split.js`) and its call in `runBuild` (`src/factory/build.js`, refusal step 3); `sampleBrief` (`test/helpers/factoryFixtures.js`).
 - Consumes (file shapes):
   - Contract 7.5 `project.json`: `status`, `foundation.tag`;
   - the approved brief (`loadBrief`; `brief/current.json` is a pointer, so the checker never reads it directly), and the previous version `brief/brief-v<N-1>.json` (written once, never changed) for C14;
-  - Plan 8's whole-app check evidence in the run folder: `builds/<runId>/reports/crossing.json` (`{ routes, checks, failures[] }`) and `builds/<runId>/reports/screenshots/manifest.json` (entries `{ page, path, project, width, height, file }`);
-  - Plan 8's Vitest JSON report: the entry in `builds/<runId>/build.json`'s `checks.reports` (Contract 7.7) whose JSON has a `testResults` array. A change run is looked up the same way (`build.json`, or `change.json` when that is where Plan 11 keeps the run's `checks`). `--tests <file>` overrides it, for a report the operator makes by hand;
-  - Plan 9's council report `builds/<runId>/council-report.json` (Contract 7.5): Plan 5's `CouncilReport` (`verdict`, `blocking[]`, `warnings[]`, `overridden`; items carry `member`, `tool`, `title`) plus Plan 9's `coverage`;
+  - Plan 8's whole-app check evidence in the run folder (Plan 8 Task 6 fixes the names; `checks.reports` lists them as **absolute** paths in `builds/<runId>/reports/`): `crossing.json` (`{ routes, checks, failures[] }`) and the `screenshots` folder, whose `manifest.json` has entries `{ page, path, project, width, height, file }`;
+  - Plan 8's Vitest JSON report: the `checks.reports` entry named `vitest.json` in `builds/<runId>/build.json` (Contract 7.7; Plan 8 Task 6), whose JSON has a `testResults` array. A change run is looked up the same way: Plan 11 runs Plan 8's `runBuild` in change mode with the change's run id, so its `build.json` sits in `builds/<change runId>/` beside `change.json`. `--tests <file>` overrides it, for a report the operator makes by hand;
+  - Plan 9's council report `builds/<runId>/council-report.json` (Contract 7.5): Plan 5's `CouncilReport` minus `text` (`round`, `verdict`, `blocking[]`, `warnings[]`, `overridden`; items carry `member`, `tool`, `title`) plus Plan 9's `checked`, `coverage`, `files`. An operator override at Plan 8's gate is recorded in `build.json` as `council.overridden: true`, not in the report, so C2 reads both;
   - the app repo's `app/app-profile.json` (Task 1's `AppProfileSchema`, written by Plan 8/11) and `app/licence-exceptions.json`;
   - the deployment record (Contract 4: `history[] { at, version, from, outcome, detail }`, `currentVersion`; the first ship records outcome `installed`).
 - Produces:
@@ -47,7 +52,7 @@ export function renderResults(project, results) -> string   // Markdown: the cri
 | Id | Spec | Criterion | How |
 |---|---|---|---|
 | C1 | §2.1 | The role-crossing harness ran on the finished build: the run's `crossing.json` has 0 failures and more routes than the foundation's own at v0.2.0 (`foundationRoutes`, 31), so at least one expenses route is checked. | auto |
-| C2 | §2.1, §4.3 | The build's council report (`builds/<runId>/council-report.json`) has verdict `approved` or `approved-with-warnings`, no blocking items, and was **not** overridden. | auto |
+| C2 | §2.1, §4.3 | The build's council report (`builds/<runId>/council-report.json`) has verdict `approved` or `approved-with-warnings`, no blocking items, and was **not** overridden (neither the report's `overridden` nor `build.json`'s `council.overridden`). | auto |
 | C3 | §2.2 | Every acceptance example in the current approved brief is proven by a passing test: for each id from `acceptanceIds(brief)`, a test whose title contains `testTag(id)` (`[<featureId>#<n>]`, Contract 7.4) passed in the latest run's Vitest report (the change run when given, else the build). An example with no id, a tag with no test, or a tag whose only tests failed is a FAIL naming the id. | auto |
 | C4 | §2.2 | The app's March report, downloaded from the preview as PDF and as a spreadsheet, shows exactly the totals worked out by hand from the brief's examples. | operator |
 | C5 | §2.2, §2.5 | On the 10 fictional printed receipts, photographed through the app on a real phone, no field is ever filled in confidently wrong (no "Please check" missing on a wrong value). | operator |
@@ -66,19 +71,46 @@ export function renderResults(project, results) -> string   // Markdown: the cri
 
 **Verdict:** the acceptance test **passes** only when every criterion passes. Any FAIL means fixing the factory (Ruling 9) and re-running the stage it belongs to.
 
+- [ ] **Step 0: Lift Plan 8's modules refusal for foundation v0.2.0 and later** [cross-plan ruling]
+
+`test/factory-modules-lift.test.js`:
+
+```js
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { briefProblems, MODULES_SINCE } from '../src/factory/split.js';
+import { sampleBrief } from './helpers/factoryFixtures.js';
+
+test('modules are refused before foundation v0.2.0 and accepted from it on', () => {
+  const b = sampleBrief({ modules: ['ocr', 'xlsx-export'] });
+  assert.equal(MODULES_SINCE, 'v0.2.0');
+  assert.match(briefProblems(b).join('\n'), /needs optional modules \(ocr, xlsx-export\)/);                       // no tag: Plan 8's behaviour
+  assert.match(briefProblems(b, { foundationTag: 'v0.1.0' }).join('\n'), /needs optional modules/);
+  assert.deepEqual(briefProblems(b, { foundationTag: 'v0.2.0' }), []);
+  assert.deepEqual(briefProblems(b, { foundationTag: 'v0.10.0' }), []);
+});
+```
+
+Plus one `runBuild` test in the same file, using Plan 8's `test/helpers/buildHarness.js`: with `factory.foundation.tag` `v0.2.0` (and a fake foundation repo made at `v0.2.0` by `makeFoundationRepo({ tag: 'v0.2.0', extra: { 'foundation.json': '{"name":"highland-foundation","version":"0.2.0","commit":"v0.2.0"}' } })`, so Plan 8's `createApp` accepts it), a brief with `modules: ['ocr']` is not refused and reaches the split; with `v0.1.0` it is refused with Plan 8's sentence.
+
+Implement:
+- `src/factory/split.js`: `export const MODULES_SINCE = 'v0.2.0'`; `briefProblems(brief, { foundationTag = null } = {})` keeps Plan 8's modules sentence, but adds it only when `foundationTag` is null or `compareVersions(foundationTag.slice(1), MODULES_SINCE.slice(1)) < 0` (Plan 10's `compareVersions`, `src/factory/foundationLog.js`). Every other refusal is unchanged.
+- `src/factory/build.js`: refusal step 3 calls `briefProblems(brief, { foundationTag: project.foundation?.tag ?? factory.foundation.tag })`.
+- Plan 8's existing tests (which pass no tag, or `v0.1.0`) stay unchanged and green.
+
 - [ ] **Step 1: Write the fixture builder** (`test/helpers/acceptanceProject.js`)
 
 `makeAcceptanceProject(root, { mutate } = {}) -> projectDir` builds a good project in a temp folder with the owners' own writers, so the fixture can never drift from their validators:
 - `project.json` (Contract 7.5) with status `shipped`, `foundation: { repo: '/root/highland-foundation', tag: 'v0.2.0', commit: 'a'.repeat(40) }`, `approved` and `builtFromBrief: 2`;
 - brief v1 through `saveApprovedBrief(projectDir, approvedBrief({ … }))` with 2 features and examples `expense-entry#1`, `expense-entry#2`, `monthly-report#1`, `modules: ['ocr', 'xlsx-export', 'pdf-export']`, `policy.outbound: []`, `residency: 'uk'`; then brief v2 (`revisedFrom: 1`) adding feature `mileage` with example `mileage#1`;
-- `builds/b1/`: `build.json` with `checks.reports` listing `reports/crossing.json`, `reports/screenshots/manifest.json` and `reports/vitest-results.json`; `reports/crossing.json` with 34 routes and 0 failures; `reports/screenshots/manifest.json` with 2 pages × `desktop-chromium`, `mobile-chromium`, `mobile-webkit`; `reports/vitest-results.json` (Vitest JSON) with passing tests titled `… [expense-entry#1]`, `… [expense-entry#2]`, `… [monthly-report#1]`; `council-report.json` (`verdict: 'approved-with-warnings'`, `blocking: []`, `warnings: [one correctness item]`, `overridden: false`);
+- `builds/b1/`: `build.json` with `checks.reports` listing, as absolute paths (Plan 8 Task 6's fixed names), `<b1>/reports/vitest.json`, `<b1>/reports/crossing.json` and `<b1>/reports/screenshots`, and `council: { status: 'approved-with-warnings', overridden: false }`; `reports/crossing.json` with 34 routes and 0 failures; `reports/screenshots/manifest.json` with 2 pages × `desktop-chromium`, `mobile-chromium`, `mobile-webkit`; `reports/vitest.json` (Vitest JSON) with passing tests titled `… [expense-entry#1]`, `… [expense-entry#2]`, `… [monthly-report#1]`; `council-report.json` (`round: 1`, `verdict: 'approved-with-warnings'`, `blocking: []`, `warnings: [one correctness item]`, `overridden: false`);
 - `builds/c1/`: the same shape, with the Vitest report also passing `… [mileage#1]`, and `council-report.json` `approved`;
 - `app/app-profile.json` (`{ schema: 1, modules: ['ocr','xlsx-export','pdf-export'], policy: { outbound: [], residency: 'uk' } }`) and `app/licence-exceptions.json` (`{}`);
-- `deployments/test-box.json` through `newDeployment` + `addHistory` (`installed` 0.1.0, then `updated` 0.2.0 from 0.1.0) + `saveDeployment`, `currentVersion: '0.2.0'`.
+- `deployments/test-box.json` through `newDeployment` + `addHistory` (`installed` 1.0.0, the app's first release; then `updated` 1.1.0 from 1.0.0, the change's `minor` release; Contract 7.11) + `saveDeployment`, `currentVersion: '1.1.0'`, `foundation: 'v0.2.0'`.
 
 The helper exports `MUTATIONS = { [name]: (projectDir) => void }`; each breaks exactly one thing:
 - `crossing`: one crossing failure;
-- `council-blocked`: b1's report `blocked` with 1 blocking item; `council-overridden`: `overridden: true`;
+- `council-blocked`: b1's report `blocked` with 1 blocking item; `council-overridden`: b1's `build.json` `council.overridden: true` (where Plan 8 records an override at the gate);
 - `example-failed`: the `[monthly-report#1]` test has status `failed`; `example-missing`: no test carries `[mileage#1]` in c1's report;
 - `no-vitest-report`: b1's `checks.reports` lists no Vitest JSON;
 - `no-webkit`: page `receipt-check` lacks `mobile-webkit`;
@@ -219,8 +251,8 @@ Run: `npm test` → PASS (whole Conductor suite).
 - [ ] **Step 7: Commit**
 
 ```bash
-git add spikes/acceptance test/acceptance-check.test.js test/helpers/acceptanceProject.js README.md
-git commit -m "feat: acceptance kit for the factory — criteria tied to spec §2, evidence checker, results template, rehearsal notes
+git add spikes/acceptance test/acceptance-check.test.js test/helpers/acceptanceProject.js README.md src/factory/split.js src/factory/build.js test/factory-modules-lift.test.js
+git commit -m "feat: acceptance kit for the factory — criteria tied to spec §2, evidence checker, results template, rehearsal notes; builds accept brief modules on foundation v0.2.0+
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

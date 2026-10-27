@@ -10,7 +10,7 @@ A project round runs outside `drive`, in its own throwaway workspace (index Arch
 
 It then works out the base (index Ruling 3):
 - `foundation.commit` if `git cat-file -e <commit>^{commit}` succeeds;
-- else `git rev-parse --verify --quiet <tag>^{commit}`;
+- else `git -C <appDir> rev-parse --verify --quiet refs/foundation/<tag>^{commit}` (an app repo keeps its foundation release under `refs/foundation/<tag>`, never as a `refs/tags/*` tag: Plan 8's `createApp`, Contract 7 §7.11; a plain clone does not copy that ref, so it is read in `appDir`), when that commit exists in the clone;
 - else `git merge-base <sha> main`, with `problem = 'Conductor could not find foundation release <tag>, so the council reviewed only this build\'s own changes'`;
 - if even that fails, the round cannot be based on anything, so it throws `The council could not find where this build started.`
 
@@ -49,7 +49,7 @@ async function commitFile(repo, name, body) { writeFileSync(path.join(repo, name
 async function app() {
   const repo = await makeRepo({ 'foundation.json': '{}' });
   const foundation = await head(repo);
-  await git(repo, ['tag', 'v0.1.0']);
+  await git(repo, ['update-ref', 'refs/foundation/v0.1.0', foundation]);   // where Plan 8's createApp keeps the release (Contract 7 §7.11)
   await git(repo, ['checkout', '-q', '-b', 'build/r1']);
   await commitFile(repo, 'claims.ts', 'x');
   const sha = await head(repo);
@@ -71,7 +71,7 @@ test('a guarded clone at the build commit, based on the foundation commit; appDi
   assert.equal((await git(repo, ['for-each-ref'])).stdout, before);
 });
 
-test('an unknown foundation commit falls back to the tag, then to the merge base with a plain problem', async () => {
+test('an unknown foundation commit falls back to refs/foundation/<tag>, then to the merge base with a plain problem', async () => {
   const { repo, foundation, sha } = await app();
   const byTag = await openCouncilWorkspace({ appDir: repo, sha, foundation: { tag: 'v0.1.0', commit: 'deadbeef' }, runId: 'r1', baseDir: tmp('cw-') });
   assert.equal(byTag.baseSha, foundation);

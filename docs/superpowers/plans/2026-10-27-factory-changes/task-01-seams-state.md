@@ -21,7 +21,7 @@ This task lays the ground every other task stands on:
 
 **Interfaces:**
 - Consumes:
-  - Plan 7: `writeJsonAtomic`, `createFileExclusive`, `briefPaths`, `currentBriefInfo`, `validateBrief`, `importNotes`, `newSession`, `loadSession`, `runBriefSession`;
+  - Plan 7: `writeJsonAtomic`, `createFileExclusive`, `briefPaths`, `currentBriefInfo`, `validateBrief`, `importNotes`, `newSession`, `loadSession`, `saveSession`, `runBriefSession`;
   - Plan 8: `newRunId`, `RUN_ID_RE`, `runBuild`;
   - Plan 9: `runProjectCouncil`;
   - Plan 10: `releaseApp`, `updateDeployment`, `listDeployments`;
@@ -44,7 +44,7 @@ This task lays the ground every other task stands on:
   - `brief/` with `brief-v1.json` (via `writeBriefVersion`) and Plan 7's `current.json` pointing at it;
   - `notes/` and `builds/`;
   - `deployments/<name>.json` per deployment, in Plan 10's `Deployment` shape (`setup.step: 'done'`, `currentVersion`, `foundation`);
-  - `app/`, cloned from the foundation at `tag` with `main` checked out, the remote renamed `foundation` (as in `docs/BUILDING-ON.md`), and an `app-profile.json` committed.
+  - `app/`, cloned from the foundation at `tag` with `main` checked out, the remote renamed `foundation` (as in `docs/BUILDING-ON.md`), and an `app-profile.json` committed. Like Plan 8's `createApp` (Contract 7 §7.11), the fixture deletes the tags the clone inherited, sets `remote.foundation.tagOpt` to `--no-tags`, and keeps the release as `refs/foundation/<tag>`, so every `v*` tag in the app is an app release. (Plan 10 makes a real app's first release `1.0.0`; the tests' app versions such as `0.2.0` are arbitrary, which is safe because an app repo never holds foundation tags.)
   - Returns `{ projectsRoot, projectDir, appDir, factory }`, where `factory` is a `FactoryConfig`-shaped object with `projectsRoot` and `foundation: { repo: foundation.dir, tag }`.
 - **`writeBriefVersion(projectDir, n, brief)`:** writes the brief (with `version: n` and example ids) to `briefPaths(projectDir).json(n)` with `writeJsonAtomic`, then points `briefPaths(projectDir).current` at it in the same format Plan 7's `saveApprovedBrief` writes. (`saveApprovedBrief` picks its own version number, so tests that need a given `n` write directly.) The helper asserts `currentBriefInfo(projectDir).version === n` before returning, so a format mismatch fails loudly.
 - **`stubDeps(over = {})`:** every `DEP_NAMES` entry as a recording stub, plus `calls: []` and `now: () => new Date('2026-10-27T14:32:05Z')`. Defaults:
@@ -68,7 +68,7 @@ test('findUnfinishedRun on a damaged change.json throws RUN_UNREADABLE (a run we
 test('loadBriefVersion reads brief-v<n>.json; a missing or invalid one throws NO_BRIEF_VERSION(n)', ...)
 test('currentBriefVersion returns the approved version; none approved → NO_APPROVED_BRIEF; a broken current.json → its plain text', ...)
 test('reviseBrief starts a revise session from the current version, or continues a saved one when notesFile is null', async () => {
-  // runBriefSession stub via module injection (seams exports makeReviseBrief({ importNotes, newSession, loadSession, runBriefSession }))
+  // runBriefSession stub via module injection (seams exports makeReviseBrief({ importNotes, newSession, loadSession, saveSession, runBriefSession }))
   // first call: importNotes called with notesFile; newSession called with { mode: 'revise', baseVersion: 1 }
   // second call with notesFile null and a saved revise session: loadSession used, importNotes and newSession not called
   // notesFile null and no saved session → { status: 'stopped', reason: /no unfinished brief revision/ }
@@ -102,12 +102,12 @@ Expected: FAIL (modules not found).
 `seams.js`:
 - `loadBriefVersion(projectDir, n)`: read `briefPaths(projectDir).json(n)`, `JSON.parse`, then `validateBrief(obj, { stage: 'approved' })`. Any failure throws `NO_BRIEF_VERSION(n)`.
 - `currentBriefVersion(projectDir)`: `currentBriefInfo(projectDir)`. `null` throws `NO_APPROVED_BRIEF`; `{ broken }` throws `broken`; otherwise return `version`.
-- `makeReviseBrief({ importNotes, newSession, loadSession, runBriefSession })` returns `reviseBrief({ projectDir, slug, notesFile, author, io, log, operatorName, cwd })`:
+- `makeReviseBrief({ importNotes, newSession, loadSession, saveSession, runBriefSession })` returns `reviseBrief({ projectDir, slug, notesFile, author, io, log, operatorName, cwd })`:
   1. `saved = loadSession(projectDir, slug)`; a saved session whose `mode` is not `'revise'` → `{ status: 'stopped', reason: 'An unfinished brief draft that is not a revision is waiting for this project. Finish or discard it with "conductor brief <slug>" first.' }`;
-  2. with `notesFile`: `importNotes(projectDir, notesFile)`, then `newSession({ slug, mode: 'revise', baseVersion: currentBriefVersion(projectDir), notes: [name] })` (a saved revise session is refused with the same kind of plain sentence, telling the operator to resume instead);
+  2. with `notesFile`: `importNotes(projectDir, notesFile)`, then `newSession({ slug, mode: 'revise', baseVersion: currentBriefVersion(projectDir), notes: [name] })` and `saveSession(projectDir, session)`, as Plan 7's `brief --revise` handler does (a saved revise session is refused with the same kind of plain sentence, telling the operator to resume instead);
   3. without `notesFile`: use `saved`, or return `{ status: 'stopped', reason: 'There is no unfinished brief revision to continue.' }`;
   4. return `runBriefSession({ projectDir, session, author, io, log, operatorName, cwd })` as it comes.
-- `realDeps()` returns `{ reviseBrief: makeReviseBrief({ … Plan 7's functions }), runBuild, runProjectCouncil, releaseApp, updateDeployment, listDeployments, now: () => new Date() }`.
+- `realDeps()` returns `{ reviseBrief: makeReviseBrief({ … Plan 7's functions }), runBuild, runProjectCouncil, releaseApp, updateDeployment, listDeployments, now: () => new Date() }`. `updateDeployment` is Plan 10's function as it is, so callers pass its options (`{ factory, say, state }`) as the second argument (Task 8).
 - Also export `DEP_NAMES`, `CONTINUE_OUTCOMES` and `missingSeams` (sorted names).
 
 - [ ] **Step 5: Run the tests to verify they pass**

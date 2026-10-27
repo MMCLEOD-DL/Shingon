@@ -156,7 +156,21 @@ test('lockProject: one job per project, plain busy message, a dead holder is rep
   assert.equal(existsSync(lockFile), false);
   writeFileSync(lockFile, '{garbage'); // an unreadable lock counts as dead
   lockProject(p, 'brief', { pid: 333, isAlive: () => true })();
-  assert.throws(() => lockProject(p, 'deploy'), /lockProject: kind must be brief, build or change/);
+  assert.throws(() => lockProject(p, 'deploy'), /lockProject: kind must be brief, build, change or preview/);
+});
+
+test('lockProject: a preview has its own lock file, so it runs beside a build but not beside another preview (Contract 7 §7.11)', () => {
+  const p = tmp();
+  const build = lockProject(p, 'build', { pid: 111, isAlive: () => true, now: () => NOW });
+  const preview = lockProject(p, 'preview', { pid: 222, isAlive: () => true, now: () => NOW });
+  assert.ok(existsSync(path.join(p, '.conductor.lock')));
+  assert.deepEqual(JSON.parse(readFileSync(path.join(p, '.preview.lock'), 'utf8')), { pid: 222, kind: 'preview', at: NOW.toISOString() });
+  assert.throws(() => lockProject(p, 'preview', { pid: 333, isAlive: () => true }),
+    /This project is busy: a preview is running \(pid 222, since 27 October 2026 10:00 UTC\)/);
+  preview();
+  assert.equal(existsSync(path.join(p, '.preview.lock')), false);
+  assert.ok(existsSync(path.join(p, '.conductor.lock')), 'releasing the preview leaves the build lock alone');
+  build();
 });
 ```
 
@@ -230,11 +244,14 @@ Expected: FAIL with `Cannot find module '…/src/factory/fsAtomic.js'`.
 
 - [ ] **Step 6: Implement `src/factory/projectLock.js`**
 
-One lock per project, shared by every kind of job, so a brief, a build and a change can never run on the same project at once (Contract 7 §7.1).
+One lock per project, shared by briefs, builds and changes, so those can never run on the same project at once (Contract 7 §7.1). A preview has its own lock file, so a preview can run while a build is running, but two previews of one project cannot (Contract 7 §7.11).
 
-- `LOCK_KINDS = ['brief', 'build', 'change']` (not exported). An unknown kind throws `lockProject: kind must be brief, build or change` (a programming error, not an operator message).
+**Who takes it (Contract 7 §7.11):** the shared project lock (`brief`, `build`, `change`) is taken only by CLI handlers (`conductor brief`, `build`, `resume`, `change`, `foundation-upgrade`). Library entry points (`runBriefSession`, `runBuild`, `runChange`, `runFoundationUpgrade`) never take it; they run under the lock their caller holds. The separate `preview` lock is taken by Plan 8's `startPreview`/`stopPreview`, which never touch the shared lock.
+
+- `LOCK_KINDS = ['brief', 'build', 'change', 'preview']` (not exported). An unknown kind throws `lockProject: kind must be brief, build, change or preview` (a programming error, not an operator message).
+- The lock file is `<projectDir>/.conductor.lock` for `brief`, `build` and `change`, and `<projectDir>/.preview.lock` for `preview`. Everything below applies to both files.
 - `lockProject(projectDir, kind, { pid = process.pid, isAlive = pidAlive, now = () => new Date() } = {}) -> release()`. The third argument is a test seam beyond Contract 7's `(projectDir, kind)`; callers in Plans 8 and 11 pass two arguments.
-  - The lock file is `<projectDir>/.conductor.lock`. Write it with `openSync(lock, 'wx', 0o600)`, holding `{ pid, kind, at: now().toISOString() }`.
+  - Write the lock file with `openSync(lock, 'wx', 0o600)`, holding `{ pid, kind, at: now().toISOString() }`.
   - On `EEXIST`, read the holder. An unreadable file counts as dead. If `isAlive(holder.pid)`, throw `This project is busy: a ${holder.kind} is running (pid ${holder.pid}, since ${when}). Wait for it to finish or stop it, then try again.` where `when` is `27 October 2026 10:00 UTC` (en-GB date, 24-hour `HH:MM`, UTC), or `an unknown time` when `at` does not parse. Otherwise `rmSync` it and retry once.
   - The returned `release()` deletes the lock only if the file still holds **this** pid, and never throws.
   - `pidAlive(pid)` is `try { process.kill(pid, 0); return true } catch (e) { return e.code === 'EPERM' }`.

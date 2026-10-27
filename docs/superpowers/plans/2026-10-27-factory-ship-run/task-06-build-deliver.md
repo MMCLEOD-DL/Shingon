@@ -25,7 +25,7 @@ makeShipProject(root, { slug = 'acme', version = '0.1.3', approve = true } = {})
 //   { schema: 1, slug, client: 'Acme Ltd', createdAt, status: 'ready', builtFromBrief: 1,
 //     foundation: { repo: '/f', tag: 'v0.1.0', commit: '<40 hex>' },
 //     approved: { sha, at, runId: RUN_ID, briefVersion: 1 } }        // approved null when !approve
-// app/: a real git repo on branch main shaped like a released app: the foundation commit (tag v0.1.0),
+// app/: a real git repo on branch main shaped like a released app: the foundation commit (no v0.1.0 tag: Plan 8's createApp deletes inherited tags, Contract 7 §7.11),
 //   "Name the app", "Feature work" (= approved.sha; package.json name = slug), then "release: v<version>"
 //   with annotated tag v<version>. Task 13 adds the `released: false` shape and `approve(p, sha)`.
 fakeProvider({ host = 'hf-build', user = 'hf' } = {}) -> { acquire, released: () => number, acquired: () => object[] }

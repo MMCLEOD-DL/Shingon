@@ -18,7 +18,7 @@
 - Test: `test/factory-build.test.js`
 
 **Interfaces:**
-- Consumes: `factoryConfig` (Plan 7, extended in Task 1); `readProject`, `saveProject` (`src/factory/projects.js`, Plan 7); `lockProject` (`src/factory/projectLock.js`, Plan 7); `loadBrief`, `renderBrief`, `currentBriefInfo` (`src/factory/brief.js`, Plan 7, defaults of `deps`); `createApp`, `nameApp` (Task 2); `featureRequest`, `acceptanceStep` (Task 3); `runSplit`, `briefProblems` (Task 4); `FEATURE_COUNCIL` (Task 5); `runAppChecks`, `testDatabaseProblem`, `VERIFY_COMMAND` (Task 6); everything in Task 7; `runTask`, `resume` (`src/conductor.js`); `RunLog` (`src/runlog.js`); `git` (`src/workspace.js`); `newRunId` (Task 1).
+- Consumes: `factoryConfig` (Plan 7, extended in Task 1); `readProject`, `saveProject` (`src/factory/projects.js`, Plan 7); `loadBrief`, `renderBrief`, `currentBriefInfo` (`src/factory/brief.js`, Plan 7, defaults of `deps`); `createApp`, `nameApp` (Task 2); `featureRequest`, `acceptanceStep` (Task 3); `runSplit`, `briefProblems` (Task 4); `FEATURE_COUNCIL` (Task 5); `runAppChecks`, `testDatabaseProblem`, `VERIFY_COMMAND` (Task 6); everything in Task 7; `runTask`, `resume` (`src/conductor.js`); `RunLog` (`src/runlog.js`); `git` (`src/workspace.js`); `newRunId` (Task 1).
 - Produces:
   - `runBuild({ factory, slug, team, hooks, options = {}, baseDir, warnings = [], env = process.env, deps = {} }) -> Promise<BuildOutcome>`
   - `deps` defaults: `{ runTask, resume, runAppChecks, loadBrief, renderBrief, currentBriefInfo, mergeFeature, runFinal: (bctx) => import('./buildFinal.js').then((m) => m.runFinal(bctx)), now: () => new Date() }`
@@ -50,6 +50,7 @@ import { mergeFeature as realMerge } from '../src/factory/buildState.js';
 import { git } from '../src/workspace.js';
 import { fakeParticipant, approve } from './helpers/fakes.js';
 import { makeFoundationRepo, makeProject, sampleBrief } from './helpers/factoryFixtures.js';
+import { lockProject } from '../src/factory/projectLock.js';
 
 const UNITS = [
   { id: 'expenses', title: 'Submit and list expenses', covers: ['submit-expense'], acceptance: ['submit-expense#1', 'submit-expense#2'], instructions: 'Add expenses.', dependsOn: [] },
@@ -135,6 +136,15 @@ test('refusals before anything is spent', async () => {
   assert.match(out2.reason, /optional modules \(ocr\)/);
 });
 
+test('runBuild never takes the project lock: it runs under the lock its caller holds (Contract 7 §7.11)', async () => {
+  const s = await setup();
+  const release = lockProject(s.projectDir, 'build');   // what the build command (Task 15) does around runBuild
+  try {
+    const out = await runBuild({ factory: s.factory, slug: s.slug, team: team(), hooks: s.hooks, deps: s.deps, env: {} });
+    assert.doesNotMatch(out.reason ?? '', /busy/);
+  } finally { release(); }
+});
+
 test('a red baseline stops before the split', async () => {
   const s = await setup();
   const t = team();
@@ -196,14 +206,14 @@ test('a brief changed since the build started is refused; --new starts a fresh b
 Run: `node --test test/factory-build.test.js`
 Expected: FAIL (`Cannot find module '../src/factory/build.js'`).
 
-- [ ] **Step 3: Implement refusals, the lock and build selection**
+- [ ] **Step 3: Implement refusals and build selection**
 
 In `runBuild`, before anything is spent, in this order (each returns `{ status: 'failed', runId: null, buildDir: null, reason }`):
 1. `readProject(factory.projectsRoot, slug)` (its own plain message on a missing project).
 2. `project.status` `ready` or `shipped` → `<client> is already built and approved. Changes to a finished app will go through "conductor change", which is not available yet.` (Plan 11 lifts this for `options.change` only.)
 3. `deps.loadBrief(projectDir)` (Plan 7's plain message when none is approved), then `briefProblems(brief)` joined by spaces.
 4. `testDatabaseProblem({ testCommand: factory.build.testCommand, env })`.
-5. `release = lockProject(projectDir, 'build')` (Plan 7; its own "busy: a <kind> is running (pid …, since …)" message becomes the `reason`). Everything after this runs in `try { … } finally { release() }`.
+`runBuild` does **not** take the project lock (Contract 7 §7.11): the `build` and `resume` handlers (Task 15) hold `lockProject(projectDir, 'build')` around the whole call, and Plan 11's change command holds `lockProject(projectDir, 'change')` around its pipeline. A library call never nests a lock inside its caller's.
 
 Then: `latest = latestBuild(projectDir)`. When `latest` is unfinished (`running`, `paused`, `failed`, `stopped`) and `options.newBuild` is not set: its `briefHash` must equal `hashBrief(brief)`, else refuse `The brief has changed since build <runId> started, so Conductor will not mix the two. Run "conductor build <slug> --new" to start a fresh build from the current brief.`; carry on with it (`status: 'running'`, `emit('build-start', { runId, slug, resumed: true })`). Otherwise (`newBuild`, or nothing unfinished) mark an unfinished `latest` as `stopped` with `Replaced by build <new runId>.` and create `newBuild({ runId: newRunId(deps.now()), slug, client: brief.client, briefHash: hashBrief(brief), briefVersion: deps.currentBriefInfo(projectDir)?.version ?? null, foundation, now })`. The gate copies `briefVersion` into `project.json.approved.briefVersion` and `builtFromBrief` (Task 9, Contract 7 §7.5).
 
@@ -225,7 +235,7 @@ Then: `latest = latestBuild(projectDir)`. When `latest` is unfinished (`running`
   4. Outcome: `landed` → `f.status = 'landed'`, `branch`, `landedSha` (from `readRunState(out.workspaceDir).landing.sha`), `f.notes` = that state's `notes`, its `warnings` added to `build.warnings` (no duplicates), save; `deps.mergeFeature({ appDir, buildBranch: build.branch, landedBranch, landedSha, expectedBase: f.baseSha, message })` → `f.mergedSha`, `f.status = 'merged'`; `f.transcript = archiveFeatureRun(…)`; save; `emit('build-feature-done', …)`. `paused` → `finish('paused', out.reason)`. `failed` → `finish('failed', out.reason)`. `rejected`/`stopped` → `f.status = 'stopped'`; `finish('stopped', 'Feature <k> (<title>) was not accepted: <f.gateReason ?? out.reason> Fix the cause, then run "conductor build <slug>" to try that feature again.')`.
 - **The feature gate (`approveResult`)**, fail closed (Ruling 7): keep `f.councilText = council?.text ?? null` and the run's notes; `tests?.passed !== true` → `gateReason = 'its checks (npm run verify) still fail.'`, return `false`; `council?.verdict === 'blocked' && !council.overridden` → `gateReason = 'the feature council still found problems.'`, `false`; `finalReview.decision === 'BLOCK'` → `hooks.escalate({ kind: 'feature', title: \`feature <k> of <n> (<title>)\`, options: ['approve', 'reject'], message })` where `message` reads `Conductor needs your decision on: feature <k> of <n> (<title>)\n\nWhat happened: The final review of this feature raised a concern, although its checks pass.\n\nThe concern: <finalReview.reason>\n\nApprove to add the feature to the build, or reject to stop the build here (you can carry on later).`; only `'approve'` returns `true` (else `gateReason = 'you did not accept the reviewer\'s concern.'`). Otherwise `true`.
 - **final:** `phase = 'final'`; `r = await deps.runFinal(bctx)`; `{ next: 'features' }` → back to the features phase (fix units were appended); otherwise return `r`.
-- `finish(status, reason)` sets `build.status`, `build.reason`, saves, emits `build-finish`, and returns the outcome. A throw anywhere after the lock: emit `build-error` with the detail, `finish('failed', 'Conductor hit an internal problem and stopped. The build so far is kept; run "conductor build <slug>" to carry on. Details are in <buildDir>/build-log.jsonl.')`.
+- `finish(status, reason)` sets `build.status`, `build.reason`, saves, emits `build-finish`, and returns the outcome. A throw anywhere after the refusals: emit `build-error` with the detail, `finish('failed', 'Conductor hit an internal problem and stopped. The build so far is kept; run "conductor build <slug>" to carry on. Details are in <buildDir>/build-log.jsonl.')`.
 
 - [ ] **Step 5: Run the tests**
 

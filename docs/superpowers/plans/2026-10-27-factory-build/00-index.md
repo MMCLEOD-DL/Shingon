@@ -7,7 +7,7 @@
 **Architecture:**
 - **One feature = one ordinary Conductor run.** The build orchestrator (`src/factory/build.js`) calls the existing `runTask`/`resume` once per feature, on the client's own app repo (`<project>/app`). Nothing in the run loop is forked. Each run gets a deterministic, size-checked request built from the brief, a fixed first step ("Acceptance tests"), and a small council made of a new deterministic **Foundation rules** member plus the existing Correctness member (the bounce-back loop from Plan 5 then fixes what they find). Its gate is answered by the orchestrator, not the operator: a feature is accepted only with passing checks and no unresolved blocking finding.
 - **The app repo is the factory's own.** Features land on a `build/<runId>` branch, one squashed commit per feature, so every commit on it passes `verify`. `main` moves only when the operator approves the whole build.
-- **Build state** is `builds/<runId>/build.json` (atomic writes), plus Plan 7's project lock (`lockProject(projectDir, 'build')`). Every phase is re-entrant: `conductor build <slug>` or `conductor resume` (inside the project folder) carries on from the last saved point.
+- **Build state** is `builds/<runId>/build.json` (atomic writes), plus Plan 7's project lock (`lockProject(projectDir, 'build')`), which the `build`/`resume` handlers take around `runBuild` (Contract 7 §7.11: library entry points never take it). Every phase is re-entrant: `conductor build <slug>` or `conductor resume` (inside the project folder) carries on from the last saved point.
 - **Final phase:** whole-app checks in a throwaway clone (`verify` and the browser gate, with JSON reports), then `hooks.council` (Plan 9 fills it; until then the summary says so), then the operator's gate. Extra "fix" features come from three sources:
   - red checks, capped by `factory.build.fixRounds`;
   - blocking council findings, capped by `factory.build.councilFixRounds`;
@@ -49,11 +49,11 @@ Plans 1–6 are merged. Plan 7 (brief intake) lands first. This plan consumes wh
      - no tag or release is made. Plan 10's `releaseApp` cuts the first release when the app ships.
 10. **Refusals before any spend:**
     - no approved brief;
-    - a brief with `modules` (the optional modules arrive in Plan 12);
+    - a brief with `modules` (the optional modules arrive with foundation v0.2.0; Plan 12 Task 11 lifts this refusal for a foundation tag of v0.2.0 or later);
     - a brief feature with no acceptance example, or an example with no id;
     - project status `ready` or `shipped` (changes go through Plan 11's `conductor change`, which lifts this refusal through `options.change`);
     - `TEST_DATABASE_URL` unset while the real `verify` is the test command;
-    - a build, brief or change already running for this project (Plan 7's `lockProject`).
+    - a build, brief or change already running for this project (Plan 7's `lockProject`, taken by the `build`/`resume` handler before any model is checked; Contract 7 §7.11).
 11. **Machines, fail closed.**
     - Every value placed in a remote script is validated against a strict pattern and single-quoted (`shQuote`).
     - SSH runs with `BatchMode=yes`. Static hosts need `StrictHostKeyChecking=yes` against the operator's own `known_hosts`; a fresh Proxmox container is trusted on first use into its own `known_hosts` file under `~/.conductor/machines/` (`accept-new`), deleted when the container is destroyed.
@@ -76,35 +76,28 @@ Plans 1–6 are merged. Plan 7 (brief intake) lands first. This plan consumes wh
 This plan builds none of these. It imports them, and Task 1 Step 1 checks every name before any code is written:
 - `src/factory/config.js`: `factoryConfig(config, { env, home })`. Plan 7 creates it, including `projectsRoot` and `operatorName`; **Task 1 extends it** with `foundation`, `build` and `machines` (Contract 7 §7.2). `loadConfig` keeping `factory` is Plan 7's change.
 - `src/factory/projects.js`: `projectDir(root, slug)`, `readProject(root, slug) -> { dir, project }`, `loadProject(dir)`, `saveProject(dir, project)` (atomic).
-- `src/factory/projectLock.js`: `lockProject(projectDir, kind) -> release()`. Kind `'build'` is used by `runBuild`; kind `'preview'` by previews (see "Contract 7 deviations").
-- `src/factory/acceptance.js`: `acceptanceIds(brief)` and `testTag(id) -> '[<id>]'`. This plan reads only `.id`, `.featureId` and `.example` of each `acceptanceIds` entry.
+- `src/factory/projectLock.js`: `lockProject(projectDir, kind) -> release()`. Kind `'build'` is taken by the `build`/`resume` handlers (Task 15), never by `runBuild`; kind `'preview'` (its own lock file, `.preview.lock`) by `startPreview`/`stopPreview` (Contract 7 §7.11).
+- `src/factory/acceptance.js`: `acceptanceIds(brief) -> [{ id, featureId, n, title, example: { given, when, then } }]` and `testTag(id) -> '[<id>]'`. This plan reads only `.id`, `.featureId` and `.example` of each entry.
 - `src/factory/outbound.js`: `OUTBOUND_SERVICES`, used to show `policy.outbound` ids with their labels in feature requests.
 - `src/factory/fsAtomic.js`: `writeJsonAtomic`.
 - `src/factory/brief.js`: `loadBrief`, `renderBrief`, `validateBrief`, `currentBriefInfo` (its `version` becomes `build.briefVersion`).
 - `src/plan.js`: `extractJson` (exported by Plan 7).
-- `src/cli/factory.js`: `FACTORY_COMMANDS` and `runFactoryCommand`. This plan adds the `build`, `preview`, `machines` and `resume` handlers to the table (Task 15).
+- `src/cli/factory.js`: `FACTORY_COMMANDS` and `runFactoryCommand`, with handler `(cli, ctx) -> Promise<number|null>` and `ctx = { cwd, env, stdin, stdout, isTTY, onSignal, exit, factory, config, deps }` (+ `home`, `print`, `configPath`), and `null` falling through to `main()` (Contract 7 §7.11). This plan adds the `build`, `preview`, `machines` and `resume` handlers to the table (Task 15).
 - A new `project.json` has `foundation: { repo: null, tag: null }`, `approved: null` and `builtFromBrief: null`. This plan fills `foundation` at the first build, and `approved` and `builtFromBrief` at the gate.
 
 If Plan 7 merged any of these under another name, stop and report it; do not add a local copy.
 
-## Contract 7 deviations and open points
+## Contract 7 alignment (settled by §7.11)
 
-- **[deviation from Contract 7 §7.3: `main.js` is touched once more, in Task 15.]** `conductor build` needs `main()`'s inline team preparation:
-  - worker checks, waking and `buildTeam`;
-  - the local-down question;
-  - usage memory and the Ctrl-C handler;
-  - the hooks and overrides.
-  
-  A `FACTORY_COMMANDS` handler cannot reach that code without copying it. Task 15 moves the block unchanged into `src/cli/prepareRun.js`, which both `main()` and the build handler call. It also lets a handler return `null` for "not mine here", which `conductor resume` needs inside a project folder (Contract 5). No behaviour changes, and the existing CLI tests pass unedited. The alternative is for Plan 7 to export the same `prepareRun` and the `null` fall-through from its own `main.js` change; then Task 15 only imports them.
-- **[deviation from Contract 7 §7.1: `lockProject` needs a fourth kind, `'preview'`.]** The contract lists `'brief'|'build'|'change'`.
-  - A preview must not run twice at once for one project, or a machine leaks and `preview.json` is overwritten.
-  - It also must **not** be blocked by a running build, because previewing the build in progress is its main use.
-  - So Task 14 calls `lockProject(projectDir, 'preview')`, and Plan 7 is asked to accept `'preview'` as a kind whose lock is separate from the brief/build/change lock (for example `.preview.lock`).
-  - If Plan 7 declines, Task 14 needs another small lock, which would duplicate Plan 7's stale-pid logic.
-- **Note (not a deviation):** Contract 7 §7.5 says "`createApp` writes `app-profile.json`". In this plan, `app.js`'s `nameApp` writes it, in the first build's BRAND commit (Task 2). `createApp` only clones onto `main`, which must stay at the foundation tag until approval.
-- **Still open:**
-  - Plan 7's exact `FACTORY_COMMANDS` handler signature. Task 15 assumes `handler(cli, ctx)` with `runFactoryCommand`'s `ctx`; only its four thin wrappers change if it differs.
-  - The exact entry shape of `acceptanceIds`. Task 1 Step 1 records it.
+The revision's two deviations and two open points are all settled by Contract 7 §7.11:
+- **`main.js` is touched once more, in Task 15**, to move `main()`'s inline team set-up (worker checks, waking, `buildTeam`, the local-down question, usage memory, the Ctrl-C handler, hooks and overrides) unchanged into `src/cli/prepareRun.js`, exporting `prepareTeam(...)`. Plans 8 and 11 call it. The `null` fall-through for `conductor resume` is built by Plan 7's dispatch.
+- **`lockProject(projectDir, 'preview')`** is a Plan 7 kind with its own lock file (`.preview.lock`), so a preview runs beside a build but not beside another preview. The shared brief/build/change lock is taken only by CLI handlers.
+- **`app-profile.json`** is written by `nameApp`, in the same commit as the BRAND line (Task 2).
+- **The handler signature** is `handler(cli, ctx) -> Promise<number|null>` with Plan 7's `ctx`, and the `acceptanceIds` entry shape is `{ id, featureId, n, title, example }`.
+- **Tags:** `createApp` deletes the tags the clone inherits, sets the `foundation` remote to `--no-tags`, and keeps its release as `refs/foundation/<tag>` (Task 2).
+- **Gate answers:** a refusal is `false`; `{ note }` only when the operator asks for changes (Task 9).
+
+Nothing is still open across plans.
 
 ## Global Constraints
 
@@ -115,7 +108,7 @@ If Plan 7 merged any of these under another name, stop and report it; do not add
 - **Fail closed** everywhere: only exact `true` approves, only the lock owner releases, only tagged in-range in-pool containers are destroyed, unknown config keys are errors.
 - **Plain UK English** for every operator-facing message; no stack traces, no raw JSON. Credentials never appear in prompts, state, events, terminal output or test output.
 - **Atomic writes** (temp file, fsync, rename, through Plan 7's `fsAtomic.js` and `saveProject`) for `project.json`, `build.json` and `preview.json`.
-- Existing assertions change in exactly two places: Task 5 (`MEMBER_LABEL` gains `foundation`) and Task 15 (the two `parseCli` flag `deepEqual`s gain `stop: false, newBuild: false`). Task 15's `prepareRun` extraction must pass every existing CLI test unedited.
+- Existing assertions change in exactly two places: Task 5 (`MEMBER_LABEL` gains `foundation`) and Task 15 (the two `parseCli` flag `deepEqual`s gain `stop: false, newBuild: false`). Task 15's `prepareTeam` extraction (`src/cli/prepareRun.js`) must pass every existing CLI test unedited.
 
 ## Review Focus
 
@@ -161,7 +154,7 @@ If Plan 7 merged any of these under another name, stop and report it; do not add
 | `src/factory/deploy.js` | `bringUpDemo`, `demoUpScript` (shared with Plan 9) | 14 |
 | `src/factory/preview.js` | `startPreview`, `stopPreview`, `preview.json` | 14 |
 | `src/cli/factoryBuild.js` (create), `src/cli/factory.js` (Plan 7's; register handlers), `src/cli/args.js`, `src/ui/terminal.js`, `src/ui/status.js` | `build`, `preview`, `machines`, resume routing, build gate prompt, progress lines | 15 |
-| `src/cli/prepareRun.js` (create), `src/cli/main.js` (move only) | `main()`'s team preparation, reusable by `build` (deviation, see above) | 15 |
+| `src/cli/prepareRun.js` (create), `src/cli/main.js` (move only) | `prepareTeam`: `main()`'s team preparation, reusable by `build` and Plan 11 (Contract 7 §7.11) | 15 |
 | `README.md`, `config.example.json`, `spikes/factory-build-smoke/` | docs, operator smoke, follow-ups | 16 |
 
 ## Tasks
@@ -210,17 +203,18 @@ FactoryConfig = {
 
 // Imported from Plan 7 (Contract 7 §7.1; Task 1 checks)
 projectDir(root, slug); readProject(root, slug) -> { dir, project }; loadProject(dir); saveProject(dir, project)   // projects.js
-lockProject(projectDir, kind) -> release()          // projectLock.js; kinds used here: 'build', 'preview' (see deviations)
-acceptanceIds(brief) -> [{ id, featureId, example, … }]; testTag(id) -> '[<id>]'   // acceptance.js; id = example.id, stable
+lockProject(projectDir, kind) -> release()          // projectLock.js; 'build' taken by the build/resume handlers (never runBuild), 'preview' (own file) by previews — Contract 7 §7.11
+acceptanceIds(brief) -> [{ id, featureId, n, title, example: { given, when, then } }]; testTag(id) -> '[<id>]'   // acceptance.js; id = example.id, stable
 OUTBOUND_SERVICES = { [id]: { label, hosts, carries } }                          // outbound.js
 writeJsonAtomic(file, obj)                                                       // fsAtomic.js
 loadBrief(projectDir); renderBrief(brief); validateBrief(obj, { stage }); currentBriefInfo(projectDir) -> { version, … }   // brief.js
-FACTORY_COMMANDS = { [command]: handler(cli, ctx) }; runFactoryCommand(cli, ctx)  // src/cli/factory.js
+FACTORY_COMMANDS = { [command]: handler(cli, ctx) -> Promise<number|null> }; runFactoryCommand(cli, ctx)  // src/cli/factory.js; ctx per Contract 7 §7.11
 project.json = { schema: 1, slug, client, createdAt, status, foundation: { repo, tag, commit } | { repo: null, tag: null },
                  approved: null | { sha, at, runId, briefVersion }, builtFromBrief: number | null }   // Contract 7 §7.5
 
 // Task 2 — src/factory/app.js
 createApp({ projectDir, foundation: { repo, tag }, expectCommit = null, git = gitFn }) -> Promise<{ appDir, commit, created: boolean }>
+  // no refs/tags/* kept; remote 'foundation' is --no-tags; the release is kept as refs/foundation/<tag> (Contract 7 §7.11)
 initialsOf(client) -> string
 nameApp({ appDir, brief, git = gitFn }) -> Promise<string|null>          // BRAND line + app-profile.json in one commit; null when already done
 appProfileOf(brief) -> { schema: 1, modules, policy: { outbound, residency } }   // <app>/app-profile.json (Contract 7 §7.5)
@@ -251,6 +245,8 @@ FEATURE_COUNCIL = ['foundation', 'correctness']
 // Task 6 — src/factory/checks.js
 VERIFY_COMMAND = '{ [ node_modules/.package-lock.json -nt package-lock.json ] || npm ci --no-audit --no-fund --loglevel=error; } && npm run verify'
 browsersInstalled({ env, home }) -> { ok: boolean, why: string }
+testDatabaseProblem({ testCommand, env }) -> string | null      // Plan 9 reuses it (A3)
+checksLine(checks) -> string
 verifyWithReports(reportsDir) -> VERIFY_COMMAND + ' -- -- --reporter=default --reporter=json --outputFile.json=<reportsDir>/vitest.json'
 runAppChecks({ appDir, sha, workDir, reportsDir, testCommand = null, browser, env, run = runCommand }) -> Promise<AppChecks>
 AppChecks = { verify: Check, browser: Check, reports: string[] }   // build.checks adds sha
@@ -291,7 +287,7 @@ squashBuild({ appDir, branch, sha, onto, message, git }) -> Promise<sha>     // 
 hooks.council (Plan 9, Contract 7 §7.7) -> ({ projectDir, appDir, sha, brief, policy: brief.policy, runId, slug, team, factory, onEvent, checks })
   -> Promise<{ status: 'approved'|'approved-with-warnings'|'blocked'|'paused', text: string, fix?: { title, instructions }, reason?: string, secretSeen?: boolean }>
 // at approval: main moves by CAS; project.json gets approved { sha, at, runId, briefVersion }, builtFromBrief, status 'ready'; no release
-hooks.approveBuild({ summary }) -> true | false | { approved: false, note }
+hooks.approveBuild({ summary, … }) -> true | false | { note }   // Contract 7 §7.11: a refusal is false; { note } only when the operator asks for changes (Plan 8 makes it a fix unit)
 
 // Task 10 — src/factory/remote.js, src/factory/ssh.js
 shQuote(s) -> string; assertSafe(kind, value) -> value   // kinds: slug, runId, project, path, host, user, port, client, purpose, image
@@ -329,7 +325,7 @@ previewRuns(projectsRoot) -> string[]   // run ids of every live preview (a swee
 // Task 15 — src/cli/factoryBuild.js, src/cli/prepareRun.js
 FACTORY_COMMANDS += { build: buildCommand, preview: previewCommand, machines: machinesCommand, resume: resumeBuildCommand }
 handler(cli, ctx) -> Promise<number | null>    // null (resume only): not a build here; main carries on
-prepareRun({ cli, config, term, env, baseDir, workspaceDir, wakeDeps, onSignal, exit, interruptedText }) -> { code } | { built, hooks, overrides, remember }
+prepareTeam({ cli, config, term, env, baseDir, workspaceDir, wakeDeps, onSignal, exit, interruptedText }) -> { code } | { built, hooks, overrides, remember }   // src/cli/prepareRun.js (Contract 7 §7.11)
 BUILD_EXIT = { ready: 0, rejected: 1, stopped: 1, failed: 2, paused: 3 }
 ```
 
@@ -346,7 +342,7 @@ BUILD_EXIT = { ready: 0, rejected: 1, stopped: 1, failed: 2, paused: 3 }
   - It reads the foundation repo from `factory.foundation.repo`.
   - It builds release images on a machine acquired with `purpose: 'ship'`, and its `cleanupBuild` must remove the `highland/app` and `highland/ops` images it built (Contract 7 §7.8).
 - **Plan 11 (changes)** adds `options.change = { runId, baseRef, units }` to `runBuild`. Task 8 reserves the name and keeps the phases as separate functions. That option skips setup and the split, and lifts the `ready`/`shipped` refusal for that call only. Acceptance tags use the brief's stable example ids, so a revised brief keeps the tags of unchanged examples. At merge, Plan 11 writes `approved` and `builtFromBrief` the same way this plan's gate does.
-- **Plan 12 (modules)** must lift the `modules` refusal in `briefProblems`. `appProfileOf` already copies `brief.modules` into `app-profile.json`.
+- **Plan 12 (modules)** lifts the `modules` refusal in `briefProblems` in its Task 11 (for a foundation tag of v0.2.0 or later; [cross-plan ruling in Plan 12's index]). `appProfileOf` already copies `brief.modules` into `app-profile.json`.
 - `PROTECTED_PATHS` (Task 5), `demoUpScript` (Task 14) and the reporter arguments (Task 6) follow the foundation v0.1.0 layout and scripts. A foundation release that moves those files, or changes the end of `verify` / `test:e2e`, needs them updated.
 
 ## Operator follow-ups

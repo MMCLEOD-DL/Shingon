@@ -37,7 +37,7 @@
 | `loadProject`, `saveProject` | same names, imported directly | Plan 7 `projects.js` |
 | `loadBriefVersion(dir, n)` | thin helper in `seams.js` over `briefPaths(dir).json(n)` + `validateBrief(…, { stage: 'approved' })` | Plan 7 `brief.js` |
 | `currentBriefVersion(dir)` | thin helper in `seams.js` over `currentBriefInfo(dir).version` (throws on `null` or `{ broken }`) | Plan 7 `brief.js` |
-| `reviseBrief` | wrapper in `seams.js` over Plan 7's session in `revise` mode (`importNotes`, `loadSession`/`newSession({ mode: 'revise', baseVersion })`, `runBriefSession`) | Plan 7 `briefSession.js`, `briefRun.js` |
+| `reviseBrief` | wrapper in `seams.js` over Plan 7's session in `revise` mode (`importNotes`, `loadSession`/`newSession({ mode: 'revise', baseVersion })` + `saveSession`, `runBriefSession`) | Plan 7 `briefSession.js`, `briefRun.js` |
 | `buildFeatures`, `resumeBuild` | `runBuild({ …, options: { change } })`; resuming = calling `runBuild` again with the same `change.runId` | Plan 8 `build.js` (+ Plan 11 Task 4) |
 | `projectCouncilOptions` | `hooks.council = runProjectCouncil` | Plan 9 `projectCouncil.js` |
 | `releaseApp`, `updateDeployment`, `listDeployments` | Contract 7.6 names; `listDeployments(projectsRoot)` filtered by slug | Plan 10 |
@@ -49,7 +49,7 @@
 | core `baseRef` and gate `sha` (old Task 4) | dropped: Plan 8 checks out `build/<runId>` in the app itself, so `options.change.baseRef` is enough; the gate's `sha` comes from the build branch tip | — |
 
 **Notes on Contract 7 (not deviations):**
-- **One project lock.** Plan 7's `lockProject` is one lock per project. So while Plan 11 holds `lockProject(projectDir, 'change')`, `runBuild` in change mode does not take its own `'build'` lock (Task 4), and the `reviseBrief` wrapper calls Plan 7's session functions without the `'brief'` lock.
+- **One project lock, taken by the CLI handler (Contract 7 §7.11).** Plan 7's `lockProject` is one lock per project. The `change`/`foundation-upgrade` handler (Task 11) takes `lockProject(projectDir, 'change')` and holds it around the pipeline. Library entry points never take it: `runChange`, `runFoundationUpgrade`, `resumeChange`, `abandonChange` (Task 9), Plan 8's `runBuild` (in any mode) and the `reviseBrief` wrapper over Plan 7's session functions all run under the handler's lock.
 - **Gate refusals return `false`.** Plan 8 treats an `approveBuild` answer carrying a `note` as operator feedback and builds a fix unit from it. So the change gate's own refusals return `false` and save the reason as `run.refusal`. Only the operator's own feedback goes back as a note.
 - **When `project.json.approved` is written.** The approval is saved in `change.json` the moment the operator says yes. `project.json.approved` is written straight after `main` has moved, because `approved.sha` must be the commit on `main` (the changelog commit on top of the approved build). That is what Plan 10's `conductor ship` checks for a release tag.
 
@@ -87,7 +87,7 @@
 8. **Main moves only by compare-and-swap.** Plan 11 records `main` when the run starts. After the gate it moves `main` from exactly that commit to the new one: `git merge --ff-only` when the app folder has `main` checked out and clean, `git update-ref refs/heads/main <new> <old>` otherwise. If `main` moved, nothing is shipped, and the operator is told where the approved work is (`build/<runId>`). Plan 10's `releaseApp` then moves `main` once more, by its own compare-and-swap, to the release commit.
 9. **Every deployment update goes through Plan 10's `updateDeployment`,** which runs the foundation's `updater update --to <version>` on the box. Plan 11 never runs ssh or docker itself.
    - Deployments are updated **one at a time, in name order**.
-   - Plan 10's outcomes `updated` and `already-on` carry on. Every other outcome (`rolled-back`, `cancelled`, `busy`, `settings-error`, `urgent`, `lost-contact`, or anything unknown) stops the rest: a version that failed its health check on one box is not pushed to the next.
+   - Plan 10's outcomes `updated` and `already-on` carry on. Every other outcome (`rolled-back`, `cancelled`, `busy`, `settings-error`, `urgent`, `lost-contact`, `refused`, or anything unknown) stops the rest (Plan 10's names are the only names, Contract 7 §7.11): a version that failed its health check on one box is not pushed to the next.
    - Resume retries a stopped deployment only after asking the operator. Without a terminal it does not.
    - A deployment whose setup is not finished (`setup.step !== 'done'`) is skipped and reported, not updated.
    - A deployment record that cannot be read stops the ship before any box is touched.
@@ -108,6 +108,7 @@
   - create-only branches: Plan 8's `build/<runId>` in change mode, and the upgrade branch landed by the core's `land()`;
   - the `app-profile.json` commit on the build branch (Task 4);
   - the changelog commit's objects;
+  - the foundation release fetched as `refs/foundation/<toTag>` (upgrade only; never a `refs/tags/*` tag, Contract 7 §7.11);
   - the compare-and-swap move of `main` (Ruling 8).
 
   Plan 10's `releaseApp` adds its own release commit and tag.
@@ -152,8 +153,9 @@
 
 ## Still open
 
-1. **Plan 8 internals Task 4 relies on.** Task 4 edits Plan 8's `build.js`, `buildFinal.js`, `buildState.js`, `app.js` and the Foundation rules member. If Plan 8 merged with a different internal split, Task 1 Step 0 finds the equivalent spots. The behaviour required is fixed in Task 4; only the file names may move.
-2. **The team helper for factory commands.** Task 11 reuses whatever helper Plan 8's `build` handler in `FACTORY_COMMANDS` uses to check the workers and build the team. If Plan 8 left that inline, Task 11 extracts it as `prepareTeam` in `src/cli/factory.js` and makes `build` call it, with no change in behaviour.
+1. **Plan 8 internals Task 4 relies on.** Task 4 edits Plan 8's `build.js`, `buildFinal.js`, `buildState.js` and the Foundation rules member. If Plan 8 merged with a different internal split, Task 1 Step 0 finds the equivalent spots. The behaviour required is fixed in Task 4; only the file names may move.
+
+Settled by Contract 7 §7.11 (removed from this list): the team helper is Plan 8's `prepareTeam` in `src/cli/prepareRun.js`; the handler signature is `(cli, ctx) -> Promise<number|null>` with `ctx = { cwd, env, stdin, stdout, isTTY, onSignal, exit, factory, config, deps }`; the CLI handler takes the project lock; outcomes are Plan 10's names (no `already`/`unreachable`) and Ctrl-C calls `interruptShip`; foundation tags are fetched as `refs/foundation/vX.Y.Z` (Task 6); a refusing gate returns `false`.
 
 ## File Structure
 
@@ -164,7 +166,7 @@
 | `test/helpers/changeFixtures.js` | temporary projects root, foundation repo with tags, app cloned from it, stub `deps` | 1 (used by all) |
 | `src/factory/foundationLog.js` (extend Plan 10's) | `changesBetween`, `releaseTags`, `readChangelogAt` | 2 |
 | `src/factory/change/delta.js` | `briefDelta`, `deltaProblem`, `buildUnits`, `profileChanged`, `deltaText`, changelog lines | 3 |
-| `src/factory/build.js`, `buildFinal.js`, `buildState.js`, `app.js`, `src/council/foundationRules.js` (modify Plan 8's) | `options.change` in `runBuild`; change builds kept out of `latestBuild`; `appProfileOf`; retired tags | 4 |
+| `src/factory/build.js`, `buildFinal.js`, `buildState.js`, `src/council/foundationRules.js` (modify Plan 8's) | `options.change` in `runBuild`; change builds kept out of `latestBuild`; retired tags | 4 |
 | `src/factory/change/gate.js` | council check, conflict-marker check, the change gate, approval record, `shipProblem` | 5 |
 | `src/factory/change/upgradeMerge.js` | upgrade target checks, scratch merge, mechanical rules, upgrade branch, build unit | 6 |
 | `src/factory/change/mainline.js` | `main` checks, changelog commit, compare-and-swap move, release check, next version | 7 |
@@ -214,7 +216,7 @@ Order matters:
 // Plan 8: ids.js       newRunId(now?) -> '20261027-143205-a1b2', RUN_ID_RE
 //         split.js     Unit = { id, title, covers: string[], acceptance: string[], instructions, dependsOn: string[], kind: 'feature'|'fix' }
 //                      MAX_INSTRUCTIONS = 2000
-//         app.js       appProfileOf(brief) -> { schema: 1, modules, policy: { outbound, residency } }   // Task 4 exports it if inline
+//         app.js       appProfileOf(brief) -> { schema: 1, modules, policy: { outbound, residency } }   // exported by Plan 8 (nameApp uses it)
 // Plan 10: foundationLog.js parseVersion, compareVersions, parseChangelog, securityFixesSince
 // Contract 7.5: project.json = { schema: 1, slug, client, createdAt, status, foundation: { repo, tag, commit },
 //                 approved: null | { sha, at, runId, briefVersion }, builtFromBrief: number | null }
@@ -225,19 +227,19 @@ realDeps() -> ChangeDeps
 missingSeams(deps) -> string[]                         // DEP_NAMES whose value is not a function, sorted
 loadBriefVersion(projectDir, n) -> Brief               // briefPaths(dir).json(n); throws plain English if missing or invalid
 currentBriefVersion(projectDir) -> number              // currentBriefInfo(dir).version; throws plain English on null / { broken }
-makeReviseBrief({ importNotes, newSession, loadSession, runBriefSession }) -> reviseBrief   // realDeps passes Plan 7's; tests pass stubs
+makeReviseBrief({ importNotes, newSession, loadSession, saveSession, runBriefSession }) -> reviseBrief   // realDeps passes Plan 7's; tests pass stubs
 ChangeDeps = {
   reviseBrief({ projectDir, slug, notesFile, author, io, log, operatorName, cwd })
     -> Promise<{ status: 'approved', version: number } | { status: 'stopped'|'failed'|'paused', reason: string }>
     //   Plan 7's session in 'revise' mode; continues a saved revise session when notesFile is null; takes no lock
   runBuild({ factory, slug, team, hooks, options, baseDir, warnings, env }) -> Promise<BuildOutcome>     // Plan 8 + Task 4
-  runProjectCouncil                                      // Plan 9; passed as hooks.council
+  runProjectCouncil(args, { options, deps }) -> { status, text, fix?, reason?, secretSeen? }   // Plan 9; hooks.council = (a) => runProjectCouncil(a, { options })
   releaseApp({ projectDir, bump: 'minor'|'patch', runId }) -> Promise<{ ok: true, version, sha, tag } | { ok: false, reason }>
-  updateDeployment({ projectDir, name, version, foundation, runId }) -> Promise<{ outcome, message }>
+  updateDeployment({ projectDir, name, version, foundation, runId }, { factory, say, state }) -> Promise<{ outcome, message }>   // Plan 10's options as 2nd arg; state = ctx.shipState (for interruptShip)
   listDeployments(projectsRoot) -> [{ slug, projectDir, name, deployment: Deployment | null, problem: string | null }]
   now() -> Date
 }
-CONTINUE_OUTCOMES = ['updated', 'already-on']          // Plan 10 OUTCOMES; everything else stops the ship
+CONTINUE_OUTCOMES = ['updated', 'already-on']          // Plan 10 OUTCOMES; everything else (incl. 'refused' from UPDATE_OUTCOMES) stops the ship
 
 // Task 1 — src/factory/change/run.js
 createChangeRun(projectDir, fields, { now, newId = newRunId }) -> Run    // builds/<runId>/change.json, created exclusively
@@ -305,7 +307,7 @@ releaseProblem({ appDir, from, release, expectedVersion }) -> Promise<string | n
 
 // Task 8 — src/factory/change/ship.js
 projectDeployments(deps, { projectsRoot, slug }) -> { list: [{ name, deployment }], problem: string | null }
-shipUpdate({ projectDir, projectsRoot, slug, run, version, foundation, deps, ask, save }) -> Promise<{ status: 'done'|'stopped', reason: string | null }>
+shipUpdate({ projectDir, projectsRoot, slug, run, version, foundation, deps, factory, say, state, ask, save }) -> Promise<{ status: 'done'|'stopped', reason: string | null }>
 shipReport(run, list) -> string
 
 // Task 9 — src/factory/change/pipeline.js
@@ -314,8 +316,8 @@ runFoundationUpgrade({ ...ChangeCtx, toTag }) -> Promise<ChangeOutcome>
 resumeChange(ChangeCtx) -> Promise<ChangeOutcome>
 abandonChange({ factory, slug, deps }) -> Promise<ChangeOutcome>
 askOperator(term, { title, message }) -> Promise<boolean>     // true only for exactly 'approve'
-ChangeCtx = { factory, slug, team, author, term, options, baseDir, warnings, env, deps }
-term = { say(text), onEvent?(event), escalate(esc) -> 'approve'|'reject', approveBuild(arg) -> true | false | { approved: false, note },
+ChangeCtx = { factory, slug, team, author, term, options, baseDir, warnings, env, deps, shipState }   // shipState: {} made by the CLI handler; Plan 10 keeps it current
+term = { say(text), onEvent?(event), escalate(esc) -> 'approve'|'reject', approveBuild(arg) -> true | false | { note },   // Contract 7 §7.11
          briefIo: { say, ask, approve } }                       // briefIo is Plan 7's runBriefSession io
 // the approveBuild argument Plan 11 passes on also carries approveLabel (Task 11 shows it)
 ChangeOutcome = { status: 'done'|'stopped'|'rejected'|'failed'|'paused', runId: string | null, reason: string | null, report: string }
@@ -326,6 +328,7 @@ Row = { slug, where: 'code' | <deployment name>, on: string | null, latest: stri
 behindText(rows) -> string
 
 // Task 11 — src/cli/args.js and src/cli/factory.js
+// handlers take lockProject(projectDir, 'change') (not for --check); call Plan 8's prepareTeam (src/cli/prepareRun.js); Ctrl-C → interruptShip(shipState) when a ship is under way
 parseCli: { command: 'change', slug, notesFile, resume, abandon, flags }
         | { command: 'foundation-upgrade', slug, toTag, resume, abandon, check, flags }
 FACTORY_COMMANDS.change = runChangeCommand; FACTORY_COMMANDS['foundation-upgrade'] = runUpgradeCommand   // src/cli/change.js
