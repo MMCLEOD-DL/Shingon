@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, mkdirSync, mkdtempSync } from 'node:fs';
+import { writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { FOUNDATION, isTestPath } from '../src/council/foundationRules.js';
@@ -14,16 +14,16 @@ const put = (dir, file, body) => { mkdirSync(path.dirname(path.join(dir, file)),
 const commit = async (dir, msg) => { await git(dir, ['add', '-A']); await git(dir, ['commit', '-q', '-m', msg]); };
 const TAGS = ['submit-expense#1', 'submit-expense#2'];
 
-async function scenario(steps) {
-  const dir = await makeFoundationRepo();
+async function scenario(steps, { extra = {}, over = {} } = {}) {
+  const dir = await makeFoundationRepo({ extra });
   const baseSha = (await git(dir, ['rev-parse', 'HEAD'])).stdout.trim();
-  for (const files of steps) { for (const [f, b] of Object.entries(files)) put(dir, f, b); await commit(dir, 'step'); }
+  for (const files of steps) { for (const [f, b] of Object.entries(files)) { if (b === null) rmSync(path.join(dir, f)); else put(dir, f, b); } await commit(dir, 'step'); }
   const head = (await git(dir, ['rev-parse', 'HEAD'])).stdout.trim();
   const changed = (await git(dir, ['diff', '--name-only', baseSha, head])).stdout.split('\n').filter(Boolean);
   const u0 = (await git(dir, ['diff', '--no-ext-diff', '--no-color', '-U0', '--src-prefix=a/', '--dst-prefix=b/', baseSha, head])).stdout;
   const wholeFiles = new Set((await git(dir, ['diff', '--name-only', '--diff-filter=A', baseSha, head])).stdout.split('\n').filter(Boolean));
   const input = { dir, files: changed, changed: new Set(changed), added: addedLines(u0), wholeFiles, baseSha,
-    options: { ...DEFAULT_OPTIONS, factoryFeature: { id: 'expenses', tags: TAGS } } };
+    options: { ...DEFAULT_OPTIONS, factoryFeature: { id: 'expenses', tags: TAGS } }, ...over };
   const [run] = await FOUNDATION.collect(input);
   return run.findings.map((f) => `${f.grade}${f.locked ? '!' : ''} ${f.title}`);
 }
@@ -80,4 +80,36 @@ test('member registry and option checks', () => {
   assert.doesNotThrow(() => validateCouncilOptions({ ...base, councilMembers: [...FEATURE_COUNCIL], factoryFeature: { id: 'x', tags: TAGS } }));
   assert.equal(isTestPath('apps/web/e2e/pages.ts'), false);
   assert.equal(isTestPath('apps/server/test/expenses/a.test.ts'), true);
+});
+
+test('a protected file renamed away is still caught (git diff --name-only shows only the new name)', async () => {
+  const body = 'export default [\n  { rules: { semi: "error" } },\n];\n';
+  const f = await scenario([{ 'apps/server/test/expenses/a.test.ts': TESTS }, { 'eslint.config.js': null, 'eslint.config.mjs': body }],
+    { extra: { 'eslint.config.js': body } });
+  assert.ok(f.includes('blocking! eslint.config.js belongs to the foundation and must not be changed'), f.join('\n'));
+});
+
+test('per-workspace test configs and workspace verify scripts are protected too (Ruling Q23)', async () => {
+  const webPkg = (tc) => JSON.stringify({ name: '@hf/web', scripts: { dev: 'vite', typecheck: tc } }) + '\n';
+  const f = await scenario([{ 'apps/server/test/expenses/a.test.ts': TESTS }, {
+    'apps/web/vitest.config.ts': 'export default { test: { include: [] } };\n', 'apps/web/package.json': webPkg('true'),
+  }], { extra: { 'apps/web/vitest.config.ts': 'export default {};\n', 'apps/web/package.json': webPkg('tsc -p . --noEmit') } });
+  assert.ok(f.includes('blocking! apps/web/vitest.config.ts belongs to the foundation and must not be changed'), f.join('\n'));
+  assert.ok(f.includes('blocking! The checks that npm run verify runs were changed in apps/web/package.json'), f.join('\n'));
+  assert.ok(!f.includes('blocking! The checks that npm run verify runs were changed in package.json'));
+});
+
+test('a tagged test disabled by describe.skip or skipIf blocks, locked (Ruling Q24)', async () => {
+  const a = await scenario([{ 'apps/server/test/expenses/a.test.ts': "describe.skip('expenses', () => {\n  it('[submit-expense#1] lists it', () => {});\n});\nit('[submit-expense#2] ok', () => {});\n" }]);
+  assert.ok(a.includes('blocking! The test for [submit-expense#1] is skipped or focused'), a.join('\n'));
+  const b = await scenario([{ 'apps/server/test/expenses/a.test.ts': "it('[submit-expense#1] ok', () => {});\nit.skipIf(true)('[submit-expense#2] refuses negatives', () => {});\n" }]);
+  assert.ok(b.includes('blocking! The test for [submit-expense#2] is skipped or focused'), b.join('\n'));
+  const c = await scenario([{ 'apps/server/test/expenses/a.test.ts': "it('[submit-expense#1] ok', { skip: true }, () => {});\nit('[submit-expense#2] ok', () => {});\n" }]);
+  assert.ok(c.includes('blocking! The test for [submit-expense#1] is skipped or focused'), c.join('\n'));
+});
+
+test('when its git checks fail the member blocks with a locked finding instead of throwing (Ruling Q25)', async () => {
+  const f = await scenario([{ 'apps/server/test/expenses/a.test.ts': TESTS }], { over: { baseSha: 'f'.repeat(40) } });
+  assert.equal(f.length, 1);
+  assert.match(f[0], /^blocking! Conductor could not check the foundation rules: /);
 });

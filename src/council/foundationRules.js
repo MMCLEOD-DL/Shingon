@@ -25,11 +25,23 @@ export const PROTECTED_PATHS = Object.freeze([
   'eslint.config.js',
   'vitest.config.ts',
   'tsconfig.base.json',
+  // Ruling Q23: the per-workspace test configs that decide what verify runs.
+  'apps/server/vitest.config.ts',
+  'apps/web/vitest.config.ts',
+  'ops/vitest.config.ts',
+  'deploy/vitest.config.ts',
+  'apps/web/playwright.config.ts',
 ]);
+
+// Ruling Q23: the package.json files whose verify-type scripts must not change (plus any apps/<x>/package.json).
+const PACKAGE_FILES = ['package.json', 'apps/server/package.json', 'apps/web/package.json', 'ops/package.json', 'deploy/package.json'];
+const APP_PACKAGE = /^apps\/[^/]+\/package\.json$/;
 
 const VERIFY_SCRIPTS = ['lint', 'typecheck', 'licences', 'test', 'verify'];
 const SKIP_OR_FOCUS = /\b(?:x(?:it|test|describe)\s*\(|\.(?:skip|only|todo)\s*(?:\.each\s*)?\()/;
 const ONLY = /\.only\s*\(/;
+// Ruling Q24: ways to disable a test that need not sit on the tagged line.
+const DISABLED_IN_FILE = /\bdescribe\.(?:skip|todo)\s*\(|\bx(?:describe|it|test)\s*\(|\.(?:skipIf|runIf)\s*\(|\b(?:skip|todo)\s*:\s*true\b/;
 const MAX_FILE = 1024 * 1024;
 const TOOL = 'foundation-rules';
 
@@ -54,6 +66,14 @@ const BUILDING_ON = {
 
 export const isTestPath = (p) => TEST_FILE.test(p);
 
+// A git call the member depends on failed: the checks cannot be trusted, so the member blocks (Ruling Q25).
+class CheckFailed extends Error {}
+async function mustGit(dir, args, why, ok = [0]) {
+  const r = await git(dir, args);
+  if (!ok.includes(r.code)) throw new CheckFailed(why);
+  return r;
+}
+
 const finding = (grade, title, detail, file = null) =>
   makeFinding({ member: 'foundation', tool: TOOL, grade, locked: true, title, detail, file });
 
@@ -76,35 +96,52 @@ function addedTextLines(input, file) {
   return [...nums].sort((a, b) => a - b).map((n) => lines[n - 1]).filter((l) => l !== undefined);
 }
 
-function protectedFindings(changed) {
-  return PROTECTED_PATHS.filter((p) => changed.has(p))
+// The member's own diff with renames off: a protected file renamed away shows as deleted.
+async function protectedFindings(input) {
+  if (!input.baseSha) throw new CheckFailed('the starting commit is not known');
+  const r = await mustGit(input.dir, ['diff', '--no-ext-diff', '--no-renames', '--name-only', '-z', input.baseSha, 'HEAD', '--', ...PROTECTED_PATHS],
+    'git could not compare the protected foundation files with the starting commit');
+  const touched = new Set(r.stdout.split('\0').filter(Boolean));
+  return PROTECTED_PATHS.filter((p) => touched.has(p))
     .map((p) => finding('blocking', `${p} belongs to the foundation and must not be changed`, BUILDING_ON.protected, p));
 }
 
-async function scriptsAt(dir, baseSha) {
-  const r = await git(dir, ['show', `${baseSha}:package.json`]);
-  return r.code === 0 ? r.stdout : null;
+async function fileAt(dir, sha, file) {
+  const r = await git(dir, ['cat-file', '-e', `${sha}:${file}`]);
+  if (r.code !== 0) return null;
+  return (await mustGit(dir, ['show', `${sha}:${file}`], `git could not read ${file} at the starting commit`)).stdout;
 }
 
-// Ruling Q3: package.json missing on both sides = unchanged; missing on one side = changed.
-async function verifyScriptsFinding(input) {
-  const before = input.baseSha ? await scriptsAt(input.dir, input.baseSha) : null;
-  const after = readText(input.dir, 'package.json');
-  if (before === null && after === null) return [];
-  let changed = before === null || after === null;
-  if (!changed && before !== after) {
-    try {
-      const a = JSON.parse(before)?.scripts ?? {};
-      const b = JSON.parse(after)?.scripts ?? {};
-      changed = VERIFY_SCRIPTS.some((k) => a?.[k] !== b?.[k]);
-    } catch { changed = true; } // unreadable package.json: fail closed
+// Ruling Q3: missing on both sides = unchanged; missing on one side = changed.
+async function verifyScriptsChanged(input, file) {
+  const before = await fileAt(input.dir, input.baseSha, file);
+  const after = readText(input.dir, file);
+  if (before === null && after === null) return false;
+  if (before === null || after === null) return true;
+  if (before === after) return false;
+  try {
+    const a = JSON.parse(before)?.scripts ?? {};
+    const b = JSON.parse(after)?.scripts ?? {};
+    return VERIFY_SCRIPTS.some((k) => a?.[k] !== b?.[k]);
+  } catch { return true; } // unreadable package.json: fail closed
+}
+
+async function verifyScriptsFindings(input) {
+  const base = await mustGit(input.dir, ['ls-tree', '-r', '--name-only', '-z', input.baseSha, '--', 'apps'],
+    'git could not list the starting commit');
+  const files = new Set([...PACKAGE_FILES, ...base.stdout.split('\0').filter((p) => APP_PACKAGE.test(p)),
+    ...[...input.changed].filter((p) => APP_PACKAGE.test(p))]);
+  const out = [];
+  for (const file of files) {
+    if (await verifyScriptsChanged(input, file)) {
+      out.push(finding('blocking', `The checks that npm run verify runs were changed in ${file}`, BUILDING_ON.verify, file));
+    }
   }
-  return changed ? [finding('blocking', 'The checks that npm run verify runs were changed in package.json', BUILDING_ON.verify, 'package.json')] : [];
+  return out;
 }
 
 async function treeTestFiles(dir) {
-  const r = await git(dir, ['ls-files', '-z']);
-  if (r.code !== 0) throw new Error('could not list the files in the working copy');
+  const r = await mustGit(dir, ['ls-files', '-z'], 'git could not list the files in the working copy');
   return r.stdout.split('\0').filter((p) => p && isTestPath(p))
     .map((p) => ({ file: p, text: readText(dir, p) })).filter((t) => t.text !== null);
 }
@@ -120,10 +157,15 @@ function tagFindings(tags, testFiles) {
   }
   for (const id of tags) {
     const tag = testTag(id);
-    const hit = testFiles.find((t) => t.text.split('\n').some((l) => l.includes(tag) && SKIP_OR_FOCUS.test(l)));
+    const mine = testFiles.filter((t) => t.text.includes(tag));
+    const line = mine.find((t) => t.text.split('\n').some((l) => l.includes(tag) && SKIP_OR_FOCUS.test(l)));
+    const file = line ? null : mine.find((t) => DISABLED_IN_FILE.test(t.text));
+    const hit = line ?? file;
     if (hit) {
+      const how = line ? `marks the test for ${tag} with skip, only, todo or an x prefix`
+        : `holds the test for ${tag} and also skips tests another way (describe.skip, describe.todo, xdescribe, xit, xtest, skipIf, runIf, or skip: true / todo: true), which can switch it off`;
       out.push(finding('blocking', `The test for ${tag} is skipped or focused`,
-        `${hit.file} marks the test for ${tag} with skip, only, todo or an x prefix, so it does not run on its own terms. Make it an ordinary test that runs. ${BUILDING_ON.tests}`, hit.file));
+        `${hit.file} ${how}, so it does not run on its own terms. Make it an ordinary test that runs, and do not skip other tests in that file. ${BUILDING_ON.tests}`, hit.file));
     }
   }
   return out;
@@ -138,15 +180,15 @@ function onlyFindings(input, changedTests) {
 
 async function testsFirstFinding(input, tags) {
   if (!tags.length || !input.baseSha) return [];
-  const revs = await git(input.dir, ['rev-list', '--reverse', `${input.baseSha}..HEAD`]);
-  const first = revs.code === 0 ? revs.stdout.split('\n').find(Boolean) : null;
+  const revs = await mustGit(input.dir, ['rev-list', '--reverse', `${input.baseSha}..HEAD`], 'git could not list the commits of this change');
+  const first = revs.stdout.split('\n').find(Boolean);
   if (!first) return [];
-  const tree = await git(input.dir, ['diff-tree', '--no-commit-id', '--name-only', '-r', first]);
+  const tree = await mustGit(input.dir, ['diff-tree', '--no-commit-id', '--name-only', '-r', first], 'git could not read the first commit of this change');
   const nonTest = tree.stdout.split('\n').filter(Boolean).filter((p) => !isTestPath(p));
   const missing = [];
   for (const id of tags) {
     const tag = testTag(id);
-    const g = await git(input.dir, ['grep', '-q', '-F', '-e', tag, first, '--']);
+    const g = await mustGit(input.dir, ['grep', '-q', '-F', '-e', tag, first, '--'], 'git could not search the first commit for the acceptance tests', [0, 1]);
     if (g.code !== 0) missing.push(tag);
   }
   if (!nonTest.length && !missing.length) return [];
@@ -199,17 +241,23 @@ export const FOUNDATION = {
     const changed = input.changed ?? new Set(input.files ?? []);
     const ctx = { ...input, changed };
     const changedTests = [...changed].filter(isTestPath);
-    const testFiles = await treeTestFiles(input.dir);
-    const findings = [
-      ...protectedFindings(changed),
-      ...(await verifyScriptsFinding(ctx)),
-      ...tagFindings(tags, testFiles),
-      ...onlyFindings(ctx, changedTests),
-      ...(await testsFirstFinding(ctx, tags)),
-      ...tableFindings(ctx),
-      ...routeFindings(ctx),
-      ...pageFindings(ctx),
-    ];
-    return [{ tool: TOOL, label, status: 'ran', findings, note: null }];
+    try {
+      const findings = [...(await protectedFindings(ctx)), ...(await verifyScriptsFindings(ctx))];
+      const testFiles = await treeTestFiles(input.dir);
+      findings.push(
+        ...tagFindings(tags, testFiles),
+        ...onlyFindings(ctx, changedTests),
+        ...(await testsFirstFinding(ctx, tags)),
+        ...tableFindings(ctx),
+        ...routeFindings(ctx),
+        ...pageFindings(ctx),
+      );
+      return [{ tool: TOOL, label, status: 'ran', findings, note: null }];
+    } catch (e) {
+      if (!(e instanceof CheckFailed)) throw e;
+      return [{ tool: TOOL, label, status: 'error', note: `The foundation rules could not be checked: ${e.message}.`,
+        findings: [finding('blocking', `Conductor could not check the foundation rules: ${e.message}`,
+          'Until these checks run, the change cannot be shown to follow the foundation rules. Ask the operator to look at the working copy.')] }];
+    }
   },
 };
