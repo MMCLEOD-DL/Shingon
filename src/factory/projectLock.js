@@ -1,7 +1,8 @@
 // src/factory/projectLock.js — one job per project (Contract 7 §7.1, §7.11).
 // brief, build and change share .conductor.lock; a preview has its own .preview.lock.
 // Only CLI handlers take the shared lock; library entry points run under their caller's lock.
-import { openSync, writeSync, closeSync, readFileSync, rmSync } from 'node:fs';
+import { openSync, writeSync, closeSync, readFileSync, rmSync, renameSync, linkSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 
 const LOCK_KINDS = ['brief', 'build', 'change', 'preview'];
@@ -19,11 +20,36 @@ function whenText(at) {
   return `${date} ${time} UTC`;
 }
 
-function readHolder(lock) {
+function readRaw(lock) {
+  try { return readFileSync(lock, 'utf8'); } catch { return null; }
+}
+
+function parseHolder(raw) {
   try {
-    const h = JSON.parse(readFileSync(lock, 'utf8'));
+    const h = JSON.parse(raw);
     return h && typeof h === 'object' ? h : null;
   } catch { return null; } // unreadable counts as dead
+}
+
+const readHolder = (lock) => parseHolder(readRaw(lock));
+
+const busy = (holder) => new Error(holder
+  ? `This project is busy: a ${holder.kind} is running (pid ${holder.pid}, since ${whenText(holder.at)}). Wait for it to finish or stop it, then try again.`
+  : 'This project is busy: another job is starting. Wait a moment, then try again.');
+
+// Takes a dead holder's lock out of the way. The lock is first renamed aside, so it is moved as one
+// file; if what was moved is not the dead lock that was checked (another starter took the lock over
+// in between), it is put back and that starter keeps it.
+function moveDeadLock(lock, seen, pid) {
+  const aside = `${lock}.stale-${pid}-${randomBytes(6).toString('hex')}`;
+  try { renameSync(lock, aside); } catch (err) {
+    if (err.code === 'ENOENT') return;
+    throw err;
+  }
+  if (readRaw(aside) !== seen) {
+    try { linkSync(aside, lock); } catch { /* a third starter already holds it: the retry reports them */ }
+  }
+  rmSync(aside, { force: true });
 }
 
 export function lockProject(projectDir, kind, { pid = process.pid, isAlive = pidAlive, now = () => new Date() } = {}) {
@@ -36,12 +62,12 @@ export function lockProject(projectDir, kind, { pid = process.pid, isAlive = pid
       try { writeSync(fd, body); } finally { closeSync(fd); }
       break;
     } catch (err) {
-      if (err.code !== 'EEXIST' || attempt > 0) throw err;
-      const holder = readHolder(lock);
-      if (holder && isAlive(holder.pid)) {
-        throw new Error(`This project is busy: a ${holder.kind} is running (pid ${holder.pid}, since ${whenText(holder.at)}). Wait for it to finish or stop it, then try again.`);
-      }
-      rmSync(lock, { force: true });
+      if (err.code !== 'EEXIST') throw err;
+      const seen = readRaw(lock);
+      const holder = parseHolder(seen);
+      if (holder && isAlive(holder.pid)) throw busy(holder);
+      if (attempt >= 2) throw busy(holder);
+      moveDeadLock(lock, seen, pid);
     }
   }
   return function release() {

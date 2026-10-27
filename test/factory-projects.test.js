@@ -156,3 +156,21 @@ test('lockProject: a preview has its own lock file, so it runs beside a build bu
   assert.ok(existsSync(path.join(p, '.conductor.lock')), 'releasing the preview leaves the build lock alone');
   build();
 });
+
+test('lockProject: two starters taking over the same dead lock cannot both hold it', () => {
+  const p = tmp();
+  const lockFile = path.join(p, '.conductor.lock');
+  writeFileSync(lockFile, JSON.stringify({ pid: 99, kind: 'build', at: NOW.toISOString() }));
+  let other = null;
+  // Starter 111 has read the dead lock; while it checks pid 99, starter 222 takes the lock over completely.
+  const isAlive = (pid) => {
+    if (!other) other = lockProject(p, 'build', { pid: 222, isAlive: () => false, now: () => NOW });
+    return pid === 222;
+  };
+  assert.throws(() => lockProject(p, 'brief', { pid: 111, isAlive, now: () => NOW }),
+    /This project is busy: a build is running \(pid 222, since 27 October 2026 10:00 UTC\)/);
+  assert.equal(JSON.parse(readFileSync(lockFile, 'utf8')).pid, 222, 'the second starter still holds the lock');
+  assert.deepEqual(readdirSync(p), ['.conductor.lock'], 'no set-aside files are left behind');
+  other();
+  assert.equal(existsSync(lockFile), false);
+});
