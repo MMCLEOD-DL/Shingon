@@ -44,6 +44,10 @@ export async function runBriefSession({ projectDir, session, author, io, log, op
     save();
   }
 
+  // Ruling 11: every sitting gets fresh budgets. Problems stay, so a fix-its-draft redraft keeps its context.
+  session.attempts = 0;
+  session.rounds = 0;
+
   const notes = readNotes(projectDir, session.notes);
   let base = null;
   if (session.mode === 'revise') {
@@ -69,9 +73,9 @@ export async function runBriefSession({ projectDir, session, author, io, log, op
       try {
         prompt = briefDraftPrompt({ notes, baseBrief: base, answers: session.answers, changeRequests: session.changeRequests, problems: session.problems });
       } catch (e) {
-        // Too long to send: the operator has to split the notes; retrying the same prompt cannot help.
+        // Too long to send: a refusal for this sitting (the operator splits the notes); retrying cannot help.
         save();
-        return end('failed', String(e?.message ?? e));
+        return end('stopped', String(e?.message ?? e));
       }
       if (session.problems.length) io.say(`Asking the AI to fix its draft (try ${session.attempts + 1} of ${BRIEF_LIMITS.attempts})…`);
       else if (!session.draft && !session.answers.length) io.say('Asking the AI to draft the brief…');

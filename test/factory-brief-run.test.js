@@ -228,8 +228,29 @@ test('notes too long to send: a plain refusal for this sitting, not a counted tr
   writeFileSync(path.join(p, 'notes', 'n.md'), 'x'.repeat(130_000));
   const a = author([fence(validBrief())]);
   const out = await run(p, session, a, io());
-  assert.equal(out.status, 'failed');
+  assert.equal(out.status, 'stopped');
   assert.match(out.reason, /^These notes are too long to send in one go/);
   assert.equal(a.calls.length, 0);
   assert.equal(loadSession(p, 'thistle').attempts, 0);
+});
+
+test('a rerun gets fresh budgets: all 8 rounds and all 3 tries again', async () => {
+  const { p, session } = setup();
+  await run(p, session, author([fence(asking(Q1))]), io({ answers: [{ answer: 'yes' }, { answer: 'yes' }, { stop: true }] }));
+  assert.equal(loadSession(p, 'thistle').rounds, 3);
+  const a = author([fence(asking(Q1))]);
+  const out = await run(p, loadSession(p, 'thistle'), a, io({ answers: Array.from({ length: 20 }, () => ({ answer: 'yes' })) }));
+  assert.match(out.reason, /after 8 rounds/);
+  assert.equal(a.calls.length, 8, 'a full 8 rounds in the new sitting');
+
+  const { p: q, session: s2 } = setup();
+  const gone = { ok: false, failure: 'no-participant', error: 'no AI model is available for claude' };
+  assert.equal((await run(q, s2, author(['no json', 'still none', gone]), io())).status, 'paused');
+  assert.equal(loadSession(q, 'thistle').attempts, 2);
+  const b = author(['nope', 'nope', 'nope']);
+  const t = io();
+  const r = await run(q, loadSession(q, 'thistle'), b, t);
+  assert.match(r.reason, /after 3 tries/);
+  assert.equal(b.calls.length, 3, 'a full 3 tries in the new sitting');
+  assert.ok(t.said.includes('Asking the AI to fix its draft (try 1 of 3)…'), 'the problems are kept, the count starts again');
 });
