@@ -67,12 +67,15 @@ function stream(source, to, { timeoutMs = 600000, env = process.env } = {}) {
     const ssh = findBin('ssh', { env });
     if (problem || !ssh) return resolve({ ok: false, why: problem ?? 'The ssh program is not installed on this machine.' });
     const kids = [];
-    let settled = false, fromDone = false, toDone = false, timer = null;
+    let settled = false, fromDone = false, toDone = false, timer = null, srcStream = null;
     const finish = (ok, why) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (!ok) for (const k of kids) { try { process.kill(-k.pid, 'SIGKILL'); } catch { try { k.kill('SIGKILL'); } catch {} } }
+      if (!ok) {
+        for (const k of kids) { try { process.kill(-k.pid, 'SIGKILL'); } catch { try { k.kill('SIGKILL'); } catch {} } }
+        if (source.localPath) srcStream?.destroy(); // a stalled copy would otherwise keep the local file open
+      }
       resolve({ ok, why: ok ? null : why });
     };
     const spawnSsh = (t, command, stdio) => {
@@ -83,7 +86,6 @@ function stream(source, to, { timeoutMs = 600000, env = process.env } = {}) {
     };
     const dest = spawnSsh(to.target, to.command, ['pipe', 'ignore', 'pipe']);
     dest.stdin.on('error', () => {});
-    let srcStream;
     if (source.localPath) {
       srcStream = createReadStream(source.localPath);
       srcStream.on('error', () => finish(false, `the copy from this machine stopped (could not read ${source.localPath})`));

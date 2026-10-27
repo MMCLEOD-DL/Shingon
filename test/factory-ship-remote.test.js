@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync, readlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fakeSsh } from './helpers/fakeSsh.js';
@@ -90,4 +90,58 @@ test('sendFile streams a local file', async () => {
 
 test('missingTools names tools that are not on PATH', () => {
   assert.deepEqual(missingTools(['ssh', 'definitely-not-a-tool-xyz'], { env: fakeSsh(tmp()).env() }), ['definitely-not-a-tool-xyz']);
+});
+
+// ---- Final-wave fixes (item 12): the kill and timeout paths of remotePipe and sendFile ----
+
+// A stand-in ssh that records its pid, then exits with exits[host] after half a second (so the other side has started),
+// or hangs without reading stdin.
+async function hangingSsh(d, exits = {}) {
+  const { writeStubCli } = await import('./helpers/stubCli.js');
+  const pids = path.join(d, 'pids.txt');
+  const binDir = path.join(d, 'hang-bin');
+  writeStubCli(binDir, 'ssh', `
+const fs = require('node:fs');
+const host = args[args.indexOf('--') + 1];
+fs.appendFileSync(${JSON.stringify(pids)}, process.pid + '\\n');
+const exits = ${JSON.stringify(exits)};
+if (host in exits) setTimeout(() => process.exit(exits[host]), 500);
+setInterval(() => {}, 1000);
+`);
+  return {
+    env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}` },
+    pids: () => (existsSync(pids) ? readFileSync(pids, 'utf8').split('\n').filter(Boolean).map(Number) : []),
+  };
+}
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+async function allGone(pids) {
+  for (let i = 0; i < 100 && pids.some(alive); i++) await new Promise((r) => setTimeout(r, 20));
+  return !pids.some(alive);
+}
+const openFds = (file) => readdirSync('/proc/self/fd').filter((fd) => { try { return readlinkSync(`/proc/self/fd/${fd}`) === file; } catch { return false; } });
+
+test('remotePipe kills the sending side when the receiving side fails', async () => {
+  const d = tmp();
+  const s = await hangingSsh(d, { 'acme-box': 4 });
+  const r = await remotePipe({ target: BUILD, command: 'cat /a' }, { target: BOX, command: 'cat > /x' }, { timeoutMs: 10000, env: s.env });
+  assert.deepEqual(r, { ok: false, why: 'the copy to acme-office stopped (code 4)' });
+  assert.equal(s.pids().length, 2);
+  assert.ok(await allGone(s.pids()), 'no ssh is left running');
+});
+
+test('remotePipe and sendFile give up after the time limit and kill both sides', async () => {
+  const d = tmp();
+  const s = await hangingSsh(d);
+  const r = await remotePipe({ target: BUILD, command: 'cat /a' }, { target: BOX, command: 'cat > /x' }, { timeoutMs: 300, env: s.env });
+  assert.equal(r.ok, false);
+  assert.match(r.why, /^the copy took longer than/);
+  assert.ok(await allGone(s.pids()), 'no ssh is left running');
+  // A file bigger than a pipe's buffer: the receiver never reads it, so the copy stalls with the file still open.
+  const src = path.join(d, 'images.tar'); writeFileSync(src, Buffer.alloc(4 * 1024 * 1024));
+  const r2 = await sendFile(src, { target: BOX, command: 'cat > /x' }, { timeoutMs: 300, env: s.env });
+  assert.equal(r2.ok, false);
+  assert.match(r2.why, /took longer than/);
+  assert.ok(await allGone(s.pids()), 'no ssh is left running');
+  for (let i = 0; i < 50 && openFds(src).length; i++) await new Promise((res) => setTimeout(res, 20));
+  assert.deepEqual(openFds(src), [], 'the local file is closed');
 });
