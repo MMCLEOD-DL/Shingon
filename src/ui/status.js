@@ -100,7 +100,7 @@ export class StatusModel {
         break;
       case 'council-fix':
         this.chunks.push({ title: e.title, status: 'queued' });
-        if (this.council) this.council.status = 'fixing';
+        if (this.council) { this.council.status = 'fixing'; if (typeof e.blocking === 'number') this.council.blocking = e.blocking; }
         this.final = null;
         break;
       case 'decision':

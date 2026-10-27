@@ -18,6 +18,8 @@ import { createTerminal } from '../ui/terminal.js';
 import { defaultBaseDir } from '../workspace.js';
 import { redact } from '../secrets.js';
 import { terminalText } from '../factory/brief.js';
+import { runProjectCouncil } from '../council/projectCouncil.js';
+import { councilProgressLine } from '../council/progress.js';
 
 export const NO_TTY_BUILD_START = 'conductor build needs a terminal: it asks for your decisions and for your approval of the finished app. Nothing was built or sent to any AI model. Run it in a terminal.';
 export const BUILD_EXIT = Object.freeze({ ready: 0, rejected: 1, stopped: 1, failed: 2, paused: 3 });
@@ -164,6 +166,11 @@ export async function buildCommand(cli, ctx) {
       ...p.hooks,
       approveBuild: (a) => term.approveBuild({ ...a, summary: clean(a?.summary ?? '') }),
       onProgress: (t) => term.say(clean(String(t))),
+      // Plan 9: the full council; `a` (checks and factory included) goes through unchanged (Contract 7.7).
+      council: (a) => (deps.runProjectCouncil ?? runProjectCouncil)({
+        ...a,
+        onEvent: (e) => { a.onEvent?.(e); const line = councilProgressLine(e); if (line) term.say(clean(line)); },
+      }, { options: config.options, deps: { baseDir } }),
     };
     if (typeof p.hooks.escalate === 'function') {
       hooks.escalate = (esc) => p.hooks.escalate({ ...esc, title: clean(esc?.title ?? ''), message: clean(esc?.message ?? '') });

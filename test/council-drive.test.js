@@ -251,3 +251,31 @@ test('councilMembers: a feature council of Foundation rules bounces a missing ac
   assert.deepEqual(types(events, 'council-start').map((e) => e.members), [['foundation'], ['foundation']]);
   assert.equal(types(events, 'council-fix').length, 1);
 });
+
+const stateOf = (out) => JSON.parse(readFileSync(path.join(`${out.workspaceDir}.conductor`, 'state.json'), 'utf8'));
+
+test('a council fix step written by the local model records its vendor in fixVendors', async () => {
+  const out = await runTask({ repoDir: await makeRepo(), request: 'Add a parser', team: team(), hooks: hooks(), baseDir: base(), options: opts({ keepWorkspace: true }) });
+  assert.equal(out.status, 'landed');
+  assert.deepEqual(stateOf(out).council.fixVendors, ['local']);
+});
+
+test('when the local model fails the fix step, the fallback vendor is recorded instead', async () => {
+  // The local model writes the bad file for the plan step, then fails the council fix step; codex falls back and fixes it.
+  const local = (role, task, c, opts2) => {
+    if (/Council fixes, round/.test(task)) return { ok: false, failure: 'error', error: 'local model stopped' };
+    return writeApp()(role, task, c, opts2);
+  };
+  const t = team({ local });
+  const fixer = t.reviewer;
+  const reviewScript = fixer.adapter.run.bind(fixer.adapter);
+  fixer.adapter.run = async (role, task, ctx2, o) => {
+    if (role === 'author') { writeFileSync(path.join(o.cwd, 'app.js'), SAFE); writeFileSync(path.join(o.cwd, 'app.test.js'), '// covered\n'); }
+    return reviewScript(role, task, ctx2, o);
+  };
+  const out = await runTask({ repoDir: await makeRepo(), request: 'Add a parser', team: t, hooks: hooks(), baseDir: base(), options: opts({ keepWorkspace: true }) });
+  assert.equal(out.status, 'landed', out.reason);
+  const v = stateOf(out).council.fixVendors;
+  assert.equal(v.length, 1);
+  assert.notEqual(v[0], 'local');
+});

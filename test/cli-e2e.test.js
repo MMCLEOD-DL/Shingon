@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
 import http from 'node:http';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync, symlinkSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -400,4 +400,44 @@ test('doctor lists the council checks even when the team cannot be built; a norm
     assert.equal(r.code, 2, r.out);
     assert.doesNotMatch(r.out, /Council checks/);
   } finally { await s.close(); }
+});
+
+test('doctor lists axe-core and the council test machines', async () => {
+  const s = await setup();
+  try {
+    const home = tmp();
+    const env = { ...s.env, HOME: home };
+    const off = councilConfig(s.cfg, { axe: false, semgrep: false, gitleaks: false, 'npm-audit': false, scancode: false });
+    const d = await spawnBin(['doctor', '--config', off], { cwd: s.repo, env });
+    assert.equal(d.code, 0, d.out);
+    assert.match(d.out, /✗ axe-core \(accessibility scanner\): turned off in the config/);
+    assert.match(d.out, /✗ Test machines for the council: not set up \(client builds then show reliability as not proven\)/);
+
+    const none = councilConfig(s.cfg, {});
+    const n = await spawnBin(['doctor', '--config', none], { cwd: s.repo, env });
+    assert.match(n.out, /✗ axe-core \(accessibility scanner\): not installed/);
+
+    const axeDir = path.join(home, '.local', 'share', 'conductor', 'axe-core');
+    mkdirSync(axeDir, { recursive: true });
+    writeFileSync(path.join(axeDir, 'axe.min.js'), '/*! axe v4.10.3\n * Copyright (c) 2025 Deque Systems\n * This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0 */\n');
+    const c = JSON.parse(readFileSync(none, 'utf8'));
+    c.factory = { machines: { static: { hosts: [{ id: 'hf-build', host: '192.168.1.111' }] } } };
+    writeFileSync(none, JSON.stringify(c));
+    const ok = await spawnBin(['doctor', '--config', none], { cwd: s.repo, env });
+    assert.match(ok.out, /✓ axe-core 4\.10\.3 \(accessibility scanner; MPL-2\.0, used by Conductor only\)/);
+    assert.match(ok.out, /✓ Test machines for the council: static/);
+  } finally { await s.close(); }
+});
+
+test('doctor still shows the council section when the models could not be checked', async () => {
+  const { prepareTeam } = await import('../src/cli/prepareRun.js');
+  let reads = 0;
+  const config = { participants: [], byName: new Map(), options: {}, get routing() { if (++reads > 1) throw new Error('boom'); return {}; } };
+  let text = '';
+  const term = { say: (t) => { text += `${t}\n`; }, close: () => {} };
+  const r = await prepareTeam({ cli: { command: 'doctor', flags: {} }, config, term, env: { HOME: tmp() }, baseDir: tmp(), onSignal: () => {}, exit: () => {} });
+  assert.equal(r.code, 2);
+  assert.match(text, /could not check the AI models: boom/);
+  assert.match(text, /Council checks \(used with --council\):/);
+  assert.match(text, /✗ axe-core \(accessibility scanner\): not installed/);
 });

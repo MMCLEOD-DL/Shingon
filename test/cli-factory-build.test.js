@@ -247,3 +247,34 @@ test('final-fix 10: Ctrl-C during a build frees the project lock before Conducto
   assert.equal(await FACTORY_COMMANDS.build(parseCli(['build', c.slug, '--config', c.config]), c.ctx), 130);
   assert.equal(lockAtExit, false, 'the lock was gone when exit ran');
 });
+
+test('build gives runBuild a council hook that passes the build\'s own arguments to runProjectCouncil and shows its progress', async () => {
+  const calls = [];
+  const deps = {
+    prepareTeam: async () => ({ built: { team: {}, warnings: [] }, hooks: {}, overrides: {}, remember: () => {} }),
+    runProjectCouncil: async (a, o) => {
+      calls.push({ a, o });
+      a.onEvent({ type: 'council-start', round: 1, members: ['security', 'design'] });
+      a.onEvent({ type: 'council-tool', member: 'design' });
+      return { status: 'approved', text: 'ok' };
+    },
+    runBuild: async ({ hooks }) => {
+      assert.equal(typeof hooks.council, 'function');
+      const checks = { lint: 'ok' };
+      const events = [];
+      const r = await hooks.council({ slug: 'x', checks, factory: { f: 1 }, onEvent: (e) => events.push(e.type) });
+      assert.equal(r.status, 'approved');
+      assert.deepEqual(events, ['council-start', 'council-tool'], 'the build\'s own onEvent still gets every event');
+      return { status: 'ready', runId: 'r', buildDir: '/b' };
+    },
+  };
+  const { ctx, o, slug, config } = buildCtx({ deps });
+  assert.equal(await FACTORY_COMMANDS.build(parseCli(['build', slug, '--config', config]), ctx), 0);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].a.checks, { lint: 'ok' });
+  assert.deepEqual(calls[0].a.factory, { f: 1 });
+  assert.equal(typeof calls[0].o.deps.baseDir, 'string');
+  assert.deepEqual(calls[0].o.options, {});
+  assert.match(o.text(), /Council round 1: Security, Design/);
+  assert.doesNotMatch(o.text(), /council-tool/);
+});

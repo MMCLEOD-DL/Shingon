@@ -81,3 +81,11 @@ test('no council: the final check behaves exactly as before', () => {
   assert.equal(run(BUILT)[2], '  ⟳ Final check                       waiting for your approval');
   assert.equal(run(BUILT).some((l) => l.includes('Council')), false);
 });
+
+test('the fix count comes from council-fix itself', () => {
+  const m = new StatusModel();
+  m.apply({ type: 'council-start', round: 1 });
+  m.apply({ type: 'council-verdict', round: 1, verdict: 'blocked', blocking: 3, warning: 0 });
+  m.apply({ type: 'council-fix', round: 1, title: 'Council fixes, round 1', blocking: 2 });
+  assert.match(m.lines().join('\n'), /2 problems sent back to be fixed/);
+});

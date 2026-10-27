@@ -7,6 +7,9 @@ import { LOCAL_PAUSE_SETTING_REASON } from '../chunkPhase.js';
 import { memoryFileFor, readWorkerMemory, recallWorkers, rememberWorkers, createUsageTracker } from '../workerMemory.js';
 import { workersToCheck, ensureWorkers, cachedHealth, progressText, downMessage, workerLine } from '../readiness.js';
 import { councilToolStatus } from '../council/index.js';
+import { detectAxe } from '../council/gates.js';
+import { factoryConfig } from '../factory/config.js';
+import { getMachineProvider } from '../factory/machines/index.js';
 import { DEFAULT_OPTIONS } from '../options.js';
 import { RunLog } from '../runlog.js';
 import { metaDirOf } from '../workspace.js';
@@ -33,11 +36,24 @@ function reportLines(report, statuses = [], lastUsed = new Map()) {
   return lines;
 }
 
-// The optional council tools, shown by `conductor doctor` only.
+// The optional council tools, shown by `conductor doctor` only. config may be null (the config could not be read).
 function councilLines(config, env) {
+  const options = { ...DEFAULT_OPTIONS, ...(config?.options ?? {}) };
+  const axe = detectAxe({ options, env });
+  const axeLine = axe.status === 'ok'
+    ? `  ✓ axe-core ${axe.version} (accessibility scanner; MPL-2.0, used by Conductor only)`
+    : `  ✗ axe-core (accessibility scanner): ${axe.status === 'off' ? 'turned off in the config' : axe.status === 'missing' ? 'not installed' : 'not usable (the file is not axe-core under the MPL)'}`;
+  let machines;
+  try {
+    const provider = getMachineProvider(factoryConfig(config, { env, home: env.HOME || undefined }), { env });
+    machines = `  ✓ Test machines for the council: ${provider.kind ?? provider.provider}`;
+  } catch {
+    machines = '  ✗ Test machines for the council: not set up (client builds then show reliability as not proven)';
+  }
   return ['Council checks (used with --council):',
-    ...councilToolStatus({ options: { ...DEFAULT_OPTIONS, ...config.options }, env })
-      .map((t) => `  ${t.ok ? '✓' : '✗'} ${t.label}${t.ok ? '' : `: ${t.why}`}`)].join('\n');
+    ...councilToolStatus({ options, env })
+      .map((t) => `  ${t.ok ? '✓' : '✗'} ${t.label}${t.ok ? '' : `: ${t.why}`}`),
+    axeLine, machines].join('\n');
 }
 
 // Returns { code } when the command ends here (doctor, nothing to run with, the operator stopped), otherwise
@@ -67,6 +83,7 @@ export async function prepareTeam({ cli, config, term, env, baseDir, workspaceDi
   const build = () => buildTeam(config.participants, { routing: config.routing, env, health: cachedHealth(statuses, config.participants) });
   const couldNotCheck = (e) => {
     term.say(`Conductor could not check the AI models: ${redact(String(e?.message ?? e))}`);
+    if (cli.command === 'doctor') term.say(councilLines(config, env));
     term.close();
     return { code: EXIT.failed };
   };
