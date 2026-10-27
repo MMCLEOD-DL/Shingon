@@ -179,3 +179,66 @@ test('deploymentsCommand lists without ssh, and status checks every box and exit
   assert.match(out.join(''), /Security fixes: could not tell \(The foundation repository at \/nonexistent-foundation could not be read/);
   assert.match(out.join(''), /1 of 1 deployments need attention\.$/m);
 });
+
+// ---- Final-wave fixes (Ruling S21, items 6 and 9) ----
+
+const RUN = '20261027-100000-a1b2';
+const healthyOld = [{ match: 'entrypoint node ops', stdout: version('0.1.3') }, { match: 'ops check', stdout: '✓ app\n' }, { match: 'psql', stdout: RUNS }];
+
+for (const why of ['in-progress', 'lost-contact', 'interrupted']) {
+  test(`S21: an unseen (${why}) check stays pending while the box still runs the old version and no exit file was read`, async () => {
+    const s = setup(healthyOld, { pendingCheck: { since: 't', version: '0.1.4', foundation: 'v0.1.1', why, runId: RUN } });
+    const r = await deploymentStatus(s.entry, opts(s.f));
+    assert.equal(r.ok, false);
+    const dep = loadDeployment(s.projectDir, 'acme-office');
+    assert.equal(dep.pendingCheck.why, why);
+    assert.equal(dep.currentVersion, '0.1.3');
+    assert.equal(dep.history.length, 0);
+    assert.ok(r.lines.some((l) => /an update may still be running/.test(l)), r.lines.join('\n'));
+    assert.ok(s.f.calls().some((c) => c.command.includes(`.conductor/update-${RUN}.exit`)), 'the exit file was looked for');
+  });
+
+  test(`S21: an unseen (${why}) check is cleared once the update's exit file was read`, async () => {
+    const s = setup([{ match: `update-${RUN}\\.exit`, stdout: 'exit=1\n' }, ...healthyOld],
+      { pendingCheck: { since: 't', version: '0.1.4', foundation: 'v0.1.1', why, runId: RUN } });
+    const r = await deploymentStatus(s.entry, opts(s.f));
+    const dep = loadDeployment(s.projectDir, 'acme-office');
+    assert.equal(dep.pendingCheck, null);
+    assert.equal(dep.currentVersion, '0.1.3');
+    assert.equal(dep.foundation, 'v0.1.0'); // the update did not land, so the recorded foundation stays
+    assert.equal(dep.history.at(-1).outcome, 'confirmed');
+    assert.ok(r.lines.some((l) => /Shipping to it is allowed again/.test(l)));
+  });
+}
+
+test('S21: a pending check with no run id and the old version stays pending without looking for an exit file', async () => {
+  const s = setup(healthyOld, { pendingCheck: { since: 't', version: '0.1.4', foundation: 'v0.1.1', why: 'lost-contact' } });
+  const r = await deploymentStatus(s.entry, opts(s.f));
+  assert.ok(loadDeployment(s.projectDir, 'acme-office').pendingCheck);
+  assert.ok(r.lines.some((l) => /an update may still be running/.test(l)));
+  assert.ok(!s.f.calls().some((c) => c.command.includes('.exit')));
+});
+
+test('status with no deployments says so, exits 1 and never looks up the foundation', async () => {
+  const { deploymentsCommand } = await import('../src/factory/ship/status.js');
+  const root = mkdtempSync(path.join(tmpdir(), 'st-'));
+  const out = [];
+  const ctx = { factory: { projectsRoot: root, foundation: { get repo() { throw new Error('the foundation was looked up'); } } },
+    env: process.env, stdout: { write: (t) => out.push(t) } };
+  assert.equal(await deploymentsCommand({ slug: null, status: true }, ctx), 1);
+  assert.equal(out.join(''), 'No deployments found.\n');
+  out.length = 0;
+  assert.equal(await deploymentsCommand({ slug: 'acme', status: true }, ctx), 1);
+  assert.equal(out.join(''), 'No deployments found for acme.\n');
+});
+
+test('latestFoundation runs git without secret-looking variables', async () => {
+  const envs = [];
+  const run = async ({ env }) => { envs.push(env); return { code: 1, stdout: '', stderr: '' }; };
+  const r = await latestFoundation('/f', { env: { PATH: '/usr/bin', MY_SERVICE_TOKEN: 'x', GIT_DIR: '/elsewhere' }, run });
+  assert.equal(r.ok, false);
+  assert.equal(envs.length, 1);
+  assert.equal(envs[0].MY_SERVICE_TOKEN, undefined);
+  assert.equal(envs[0].GIT_DIR, undefined);
+  assert.equal(envs[0].GIT_TERMINAL_PROMPT, '0');
+});

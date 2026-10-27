@@ -139,6 +139,17 @@ done`;
   return { warnings };
 }
 
+// Status (Ruling S21): the detached update's exit file, if it exists. { read: true, code } only when it was read;
+// anything else (no run id, no file yet, an empty file, the box not answering) is { read: false }.
+export async function readUpdateExit(t, { dir, runId, env = process.env }) {
+  if (typeof runId !== 'string' || !RUN_ID_RE.test(runId)) return { read: false, code: null };
+  const { exit } = files(runId);
+  const cmd = `cd ${shQuote(assertSafe('path', dir))} && if [ -f ${exit} ]; then echo "exit=$(cat ${exit})"; else echo exit=none; fi`;
+  const r = await remoteRun(t, cmd, { env, timeoutMs: MINUTE });
+  const m = r.code === 0 ? /^exit=(\d+)$/m.exec(String(r.stdout ?? '')) : null;
+  return m ? { read: true, code: Number(m[1]) } : { read: false, code: null };
+}
+
 // Removes old images-<v>.tar files, always keeping the new version's and the one an undo would go back to.
 export async function pruneImageFiles(t, { dir, version, from, env = process.env }) {
   if (!plainVersion(version) || !plainVersion(from)) return { ok: true, skipped: true, problem: null };
@@ -168,9 +179,9 @@ export async function runLaterShip({ dep, target, version, foundation, imagesFil
   // Ruling S19: saved before the box is touched, so a Ctrl-C or crash from here on still blocks the next ship until
   // conductor deployments status has seen how it ended. Every recorded outcome below replaces or clears it.
   const before = dep;
-  save({ ...before, pendingCheck: { since: now(), version, foundation, why: 'in-progress' } });
+  save({ ...before, pendingCheck: { since: now(), version, foundation, why: 'in-progress', runId } });
   const settled = { ...before, pendingCheck: null };
-  const pending = (why) => ({ ...settled, pendingCheck: { since: now(), version, foundation, why } });
+  const pending = (why) => ({ ...settled, pendingCheck: { since: now(), version, foundation, why, runId } });
 
   say(`Updating ${t.label} to ${version} through the box's own safe update…`);
   const started = await startDetachedUpdate(t, { dir, version, imagesFile: registry ? null : imagesFile, runId, registry, env });

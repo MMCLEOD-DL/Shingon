@@ -56,7 +56,7 @@ test('a rolled-back update keeps the old version and touches no files', async ()
 test('losing contact leaves the update running and blocks further ships until status has looked', async () => {
   const r = await go([{ match: 'setsid' }, { match: 'exit=running', code: 255, stderr: 'Connection reset\n' }], { clockStep: 20000, timeout: 60000 });
   assert.equal(r.outcome, 'lost-contact');
-  assert.deepEqual(r.dep.pendingCheck, { since: '2026-10-27T10:00:00.000Z', version: '0.1.4', foundation: 'v0.1.1', why: 'lost-contact' });
+  assert.deepEqual(r.dep.pendingCheck, { since: '2026-10-27T10:00:00.000Z', version: '0.1.4', foundation: 'v0.1.1', why: 'lost-contact', runId: '20261027-100000-a1b2' });
   assert.match(r.text, /carries on by itself on the box; Conductor will not ship to acme-office again until conductor deployments status/);
   assert.equal(r.dep.currentVersion, '0.1.3');
 });
@@ -80,7 +80,7 @@ test('an update that could not start changes nothing', async () => {
 test('an update that was launched but never wrote its log is unsure, never "nothing changed"', async () => {
   const r = await go([{ match: 'setsid', code: 1, stdout: 'launched\n' }]);
   assert.equal(r.outcome, 'lost-contact');
-  assert.deepEqual(r.dep.pendingCheck, { since: '2026-10-27T10:00:00.000Z', version: '0.1.4', foundation: 'v0.1.1', why: 'lost-contact' });
+  assert.deepEqual(r.dep.pendingCheck, { since: '2026-10-27T10:00:00.000Z', version: '0.1.4', foundation: 'v0.1.1', why: 'lost-contact', runId: '20261027-100000-a1b2' });
   assert.match(r.text, /^Conductor started the update on acme-office but could not see it begin; check the box\./);
   assert.doesNotMatch(r.text, /Nothing was changed/);
 });
@@ -92,7 +92,7 @@ test('a crash while polling leaves the in-progress pending check in place', asyn
     say: (s) => { if (s.startsWith('  box:')) throw new Error('interrupted'); }, save: (d) => { saved.push(d); return d; }, env: f.env(),
     now: () => 'now', opts: { pollMs: 1, sleep: async () => {} } }), /interrupted/);
   assert.equal(saved.length, 1);
-  assert.deepEqual(saved[0].pendingCheck, { since: 'now', version: '0.1.4', foundation: 'v0.1.1', why: 'in-progress' });
+  assert.deepEqual(saved[0].pendingCheck, { since: 'now', version: '0.1.4', foundation: 'v0.1.1', why: 'in-progress', runId: '20261027-100000-a1b2' });
 });
 
 test('every recorded outcome replaces the in-progress check', async () => {
@@ -184,4 +184,17 @@ test('bad inputs are refused before the box is touched', async () => {
   await assert.rejects(go([], { imagesFile: 'images-0.1.5.tar' }), /images file/);
   await assert.rejects(go([], { version: "0.1.4'; rm -rf /" }), /release version/);
   await assert.rejects(go([], { dep: { ...live(), pendingCheck: { since: 't', version: '0.1.4', foundation: 'v0.1.1', why: 'urgent' } } }), /deployments status/);
+});
+
+test('readUpdateExit reads the exit file only when it holds a code (Ruling S21)', async () => {
+  const { readUpdateExit } = await import('../src/factory/ship/update.js');
+  const f = fakeSsh(mkdtempSync(path.join(tmpdir(), 'ls-')), [{ match: 'update-20261027-100000-a1b2\\.exit', once: true, stdout: 'exit=3\n' },
+    { match: 'update-20261027-100000-a1b2\\.exit', once: true, stdout: 'exit=\n' }, { match: 'update-20261027-100000-a1b2\\.exit', code: 255 }]);
+  const args = { dir: '/opt/highland/acme', runId: '20261027-100000-a1b2', env: f.env() };
+  assert.deepEqual(await readUpdateExit(T, args), { read: true, code: 3 });
+  assert.deepEqual(await readUpdateExit(T, args), { read: false, code: null }); // an empty file: still being written
+  assert.deepEqual(await readUpdateExit(T, args), { read: false, code: null }); // the box did not answer
+  assert.deepEqual(await readUpdateExit(T, { ...args, runId: undefined }), { read: false, code: null });
+  assert.equal(f.calls().length, 3);
+  assert.match(f.calls()[0].command, /^cd '\/opt\/highland\/acme' && if \[ -f \.conductor\/update-20261027-100000-a1b2\.exit \]/);
 });

@@ -1,7 +1,7 @@
 // test/factory-ship.test.js
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -236,4 +236,118 @@ test('conductor ship: without a terminal the CLI prints the refusal itself, and 
   handler();
   assert.equal(exited, 130);
   assert.match(out, /Stopped\. Steps already finished on the box are recorded/);
+});
+
+// ---- Final-wave fixes (items 1, 3 and 4) ----
+
+const UPDATE_OK = [{ match: 'exit=running', stdout: 'exit=0\n[Acme Ltd] Updated from 0.1.3 to 0.1.4. A backup (1a2b3c4d) was taken first.\n' },
+  { match: 'for f in compose.yaml Caddyfile', stdout: 'same=compose.yaml\nsame=Caddyfile\n' }];
+
+test('an unexpected throw while updating saves a lost-contact pending check with the run id (updateDeployment)', async (t) => {
+  t.after(forgetRememberedSecrets);
+  const d = mkdtempSync(path.join(tmpdir(), 'ship-'));
+  const p = makeShipProject(d);
+  const f = fakeSsh(d, shipRules(d));
+  assert.equal((await ship(p, f, FIRST_ANSWERS)).exit, 0);
+  releaseNext(p, '0.1.4');
+  f.setRules([...shipRules(d, { version: '0.1.4' }), ...UPDATE_OK]);
+  const runId = '20261027-120000-c3d4';
+  const say = (s) => { if (s.startsWith('Updating ')) throw new Error('the terminal went away'); };
+  const r = await updateDeployment({ projectDir: p.projectDir, name: 'acme-office', version: '0.1.4', foundation: 'v0.1.1', runId },
+    { factory: factoryFor(p), provider: fakeProvider(), env: f.env(), sleep: async () => {}, say });
+  assert.equal(r.outcome, 'lost-contact');
+  assert.match(r.message, /^Conductor stopped unexpectedly while updating acme-office \(the terminal went away\)\. The update may carry on by itself/);
+  const dep = loadDeployment(p.projectDir, 'acme-office');
+  assert.deepEqual([dep.pendingCheck.why, dep.pendingCheck.version, dep.pendingCheck.foundation, dep.pendingCheck.runId], ['lost-contact', '0.1.4', 'v0.1.1', runId]);
+  assert.equal(dep.history.at(-1).outcome, 'lost-contact');
+  assert.equal(dep.currentVersion, '0.1.3');
+});
+
+test('an unexpected throw while updating saves a lost-contact pending check (conductor ship)', async (t) => {
+  t.after(forgetRememberedSecrets);
+  const d = mkdtempSync(path.join(tmpdir(), 'ship-'));
+  const p = makeShipProject(d);
+  const f = fakeSsh(d, shipRules(d));
+  assert.equal((await ship(p, f, FIRST_ANSWERS)).exit, 0);
+  releaseNext(p, '0.1.4');
+  f.setRules([...shipRules(d, { version: '0.1.4' }), ...UPDATE_OK]);
+  const runId = '20261027-110000-b2c3';
+  const ask = scriptedAsk([]);
+  const r = await shipProject({ factory: factoryFor(p), slug: 'acme', name: 'acme-office', env: f.env(), runId, sleep: async () => {}, state: {},
+    ask: { ...ask, say: (s) => { if (s.startsWith('Updating ')) throw new Error('the terminal went away'); }, sayOnce: () => {} },
+    deps: { provider: fakeProvider(), loadBrief: async () => TEST_BRIEF } });
+  assert.equal(r.exit, 2);
+  const pc = loadDeployment(p.projectDir, 'acme-office').pendingCheck;
+  assert.deepEqual([pc.why, pc.version, pc.foundation, pc.runId], ['lost-contact', '0.1.4', 'v0.1.0', runId]);
+});
+
+test('every pending check written while updating carries the run id (interruptShip)', () => {
+  const d = mkdtempSync(path.join(tmpdir(), 'ship-'));
+  const p = makeShipProject(d);
+  const live = { schema: 1, name: 'acme-office', project: 'acme', host: 'acme-box', ssh: { user: 'highland', port: null, keyPath: null },
+    bundleDir: '/opt/highland/acme', hosting: 'client-box', imageDelivery: 'tar', registry: null, access: 'cloudflare-tunnel',
+    origin: 'https://staff.acme.co.uk', site: ':80', alerts: { matrix: null, webhook: false, heartbeat: false },
+    setup: { step: 'done', at: 't' }, currentVersion: '0.1.3', foundation: 'v0.1.0', bundleVersion: '0.1.3', pendingCheck: null, lastStatus: null, history: [] };
+  saveDeployment(p.projectDir, live);
+  interruptShip({ phase: 'updating', projectDir: p.projectDir, lock: null, dep: live, version: '0.1.4', foundation: 'v0.1.1', runId: RUN_ID });
+  assert.equal(loadDeployment(p.projectDir, 'acme-office').pendingCheck.runId, RUN_ID);
+});
+
+test('updateDeployment refuses while a pending check is open, touching nothing', async (t) => {
+  t.after(forgetRememberedSecrets);
+  const d = mkdtempSync(path.join(tmpdir(), 'ship-'));
+  const p = makeShipProject(d);
+  const f = fakeSsh(d, shipRules(d));
+  assert.equal((await ship(p, f, FIRST_ANSWERS)).exit, 0);
+  const dep = loadDeployment(p.projectDir, 'acme-office');
+  saveDeployment(p.projectDir, { ...dep, pendingCheck: { since: 't', version: '0.1.4', foundation: 'v0.1.0', why: 'in-progress', runId: RUN_ID } });
+  releaseNext(p, '0.1.4');
+  const n = f.calls().length;
+  const provider = fakeProvider();
+  const r = await updateDeployment({ projectDir: p.projectDir, name: 'acme-office', version: '0.1.4', foundation: 'v0.1.0', runId: '20261027-120000-c3d4' },
+    { factory: factoryFor(p), provider, env: f.env(), sleep: async () => {} });
+  assert.equal(r.outcome, 'refused');
+  assert.match(r.message, /^The last update to acme-office \(0\.1\.4\) ended without Conductor seeing the result\. Run conductor deployments status first/);
+  assert.equal(f.calls().length, n);
+  assert.equal(provider.acquired().length, 0);
+  assert.equal(loadDeployment(p.projectDir, 'acme-office').history.length, dep.history.length);
+});
+
+test('a project with no foundation on record is refused before any release is cut', async () => {
+  const d = mkdtempSync(path.join(tmpdir(), 'ship-'));
+  const p = makeShipProject(d, { released: false });
+  const file = path.join(p.projectDir, 'project.json');
+  const project = JSON.parse(readFileSync(file, 'utf8'));
+  project.foundation = { repo: null, tag: null }; // as a new project leaves it, before any build
+  writeFileSync(file, JSON.stringify(project));
+  const main = execFileSync('git', ['-C', p.appDir, 'rev-parse', 'main'], { encoding: 'utf8' });
+  const f = fakeSsh(d, shipRules(d));
+  const r = await ship(p, f, FIRST_ANSWERS);
+  assert.equal(r.exit, 1);
+  assert.equal(r.text, 'The project does not record which foundation release it is built on, so it cannot be shipped. Build it first (conductor build acme).');
+  assert.equal(execFileSync('git', ['-C', p.appDir, 'tag', '--list'], { encoding: 'utf8' }), '');
+  assert.equal(execFileSync('git', ['-C', p.appDir, 'rev-parse', 'main'], { encoding: 'utf8' }), main);
+  assert.equal(f.calls().length, 0);
+  assert.equal(r.provider.acquired().length, 0);
+});
+
+test('a throw after the outcome is recorded never contradicts it (phase finishing)', async (t) => {
+  t.after(forgetRememberedSecrets);
+  const d = mkdtempSync(path.join(tmpdir(), 'ship-'));
+  const p = makeShipProject(d);
+  const f = fakeSsh(d, shipRules(d));
+  assert.equal((await ship(p, f, FIRST_ANSWERS)).exit, 0);
+  releaseNext(p, '0.1.4');
+  f.setRules([...shipRules(d, { version: '0.1.4' }), ...UPDATE_OK]);
+  // The caller's state object: the throw comes when the phase moves on after runLaterShip has recorded 'updated'.
+  const state = {};
+  let phase;
+  Object.defineProperty(state, 'phase', { enumerable: true, get: () => phase,
+    set: (v) => { if (v === 'done') throw new Error('crash after the outcome'); phase = v; } });
+  const r = await updateDeployment({ projectDir: p.projectDir, name: 'acme-office', version: '0.1.4', foundation: 'v0.1.1', runId: '20261027-120000-c3d4' },
+    { factory: factoryFor(p), provider: fakeProvider(), env: f.env(), sleep: async () => {}, state });
+  assert.equal(r.outcome, 'updated');
+  assert.match(r.message, /^The update to acme-office ended \(updated\) and is recorded, but Conductor stopped unexpectedly afterwards \(crash after the outcome\)/);
+  const dep = loadDeployment(p.projectDir, 'acme-office');
+  assert.deepEqual([dep.pendingCheck, dep.currentVersion, dep.history.at(-1).outcome], [null, '0.1.4', 'updated']);
 });

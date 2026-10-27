@@ -4,16 +4,19 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { runCommand } from '../../exec.js';
-import { childEnv, redact } from '../../secrets.js';
+import { strictChildEnv, redact } from '../../secrets.js';
 import { terminalText } from '../brief.js';
 import { parseVersion, compareVersions, securityFixesSince } from '../foundationLog.js';
 import { addHistory, saveDeployment, loadDeployment, lockDeployment, listDeployments } from '../deployments/store.js';
 import { targetOf, missingTools } from './remote.js';
 import { probeBox } from './probe.js';
+import { readUpdateExit } from './update.js';
 import { SHIP_EXIT } from './outcomes.js';
 
 const clean = (s, max = 400) => String(redact(terminalText(s))).slice(0, max);
 const GIT_TIMEOUT_MS = 5 * 60 * 1000;
+// pendingCheck reasons where Conductor never saw the update end (Ruling S21).
+const UNSEEN_END = new Set(['in-progress', 'lost-contact', 'interrupted']);
 
 const UK_TIME = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 export function ukTime(iso) {
@@ -104,10 +107,18 @@ export async function deploymentStatus(entry, { foundation, env = process.env, n
     }
     for (const n of box.notes) { lines.push(clean(n, 600)); problems.push(clean(n, 300)); }
 
-    // 5. Pending check (Ruling 6, S19): resolved only by seeing a known version AND passing checks.
+    // 5. Pending check (Ruling 6, S19, S21): resolved only by seeing a known version AND passing checks, and, when
+    // Conductor never saw the update end, only once it has provably finished (the box runs its version, or its exit
+    // file was read). Until then the box may simply not have got there yet.
     if (dep.pendingCheck) {
       const pc = dep.pendingCheck;
-      if (seen && box.checks?.ok && lock) {
+      const finished = seen && box.checks?.ok && lock
+        ? !UNSEEN_END.has(pc.why) || seen === pc.version || (await readUpdateExit(targetOf(dep), { dir: dep.bundleDir, runId: pc.runId, env })).read
+        : false;
+      if (seen && box.checks?.ok && lock && !finished) {
+        fail('an update may still be running');
+        lines.push(`The last update's result is still not clear: the box runs ${seen}, not ${clean(pc.version ?? 'the new version', 40)}, and the update's result was not found, so an update may still be running. Wait a few minutes, then run this again.`);
+      } else if (finished) {
         const from = dep.currentVersion;
         const foundationNow = seen === pc.version ? pc.foundation : dep.foundation;
         const withHistory = addHistory(dep, { version: seen, from, outcome: 'confirmed', at: now(),
@@ -184,7 +195,7 @@ function httpsPrefix(repo) { return String(repo).startsWith('https://') ? ['-c',
 /** The newest foundation release (plain x.y.z tag, never work in progress) and its CHANGELOG.md at that tag. */
 export async function latestFoundation(repo, { env = process.env, run = runCommand } = {}) {
   const unreadable = { ok: false, problem: `The foundation repository at ${clean(repo, 200)} could not be read, so Conductor cannot tell which security fixes the apps are missing. Check factory.foundation.repo in the config.` };
-  const genv = childEnv({ env });
+  const genv = strictChildEnv({ env });
   for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE']) delete genv[k];
   genv.GIT_TERMINAL_PROMPT = '0';
   const git = (args, cwd) => run({ cmd: 'git', args, cwd, env: genv, timeoutMs: GIT_TIMEOUT_MS });
@@ -217,6 +228,10 @@ export async function deploymentsCommand(cli, ctx) {
   if (!cli.status) {
     print(listText(entries));
     return entries.some((e) => e.problem) ? SHIP_EXIT.notDone : SHIP_EXIT.done;
+  }
+  if (!entries.length) {
+    print(cli.slug ? `No deployments found for ${cli.slug}.` : 'No deployments found.');
+    return SHIP_EXIT.notDone;
   }
   const missing = missingTools(['ssh', 'git'], { env: ctx.env });
   if (missing.length) { print(`Conductor needs ${missing[0]} on this machine, and it is not installed.`); return SHIP_EXIT.notDone; }

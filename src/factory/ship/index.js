@@ -16,7 +16,7 @@ import { findConfig } from '../../cli/config.js';
 import { runCommand } from '../../exec.js';
 import { childEnv, redact } from '../../secrets.js';
 import { findBin } from '../../council/tools.js';
-import { SETUP_STEPS, DeploymentError, loadDeployment, saveDeployment, newDeployment, lockDeployment } from '../deployments/store.js';
+import { SETUP_STEPS, DeploymentError, loadDeployment, saveDeployment, newDeployment, lockDeployment, addHistory } from '../deployments/store.js';
 import { missingTools, targetOf } from './remote.js';
 import { preflight } from './probe.js';
 import { buildOnMachine, deliverToBox, cleanupBuild } from './build.js';
@@ -69,6 +69,37 @@ function saver(projectDir, state) {
   };
 }
 
+// While updating, every save after the first in-progress one records an outcome (Ruling S19). From then on the phase is
+// 'finishing', so a later unexpected throw cannot contradict what is already recorded.
+function updateSaver(projectDir, state) {
+  const save = saver(projectDir, state);
+  return (d) => {
+    const out = save(d);
+    if (d.pendingCheck?.why !== 'in-progress') {
+      state.phase = 'finishing';
+      state.recorded = d.history.at(-1)?.outcome ?? null;
+    }
+    return out;
+  };
+}
+
+// An unexpected throw while updating: the record must say what the caller is told (lost contact, result unknown).
+// Best effort: if this cannot be saved, the in-progress check saved before the update started still blocks the next ship.
+function saveLostContact(state, text) {
+  try {
+    const current = loadDeployment(state.projectDir, state.name) ?? state.dep;
+    if (!current) return;
+    const at = new Date().toISOString();
+    const withHistory = addHistory(current, { at, version: state.version, from: current.currentVersion, outcome: 'lost-contact', detail: text.split('\n')[0] });
+    saveDeployment(state.projectDir, {
+      ...withHistory, pendingCheck: { since: at, version: state.version, foundation: state.foundation, why: 'lost-contact', runId: state.runId },
+    });
+  } catch { /* see above */ }
+}
+
+const stoppedWhileUpdating = (name, e) => `Conductor stopped unexpectedly while updating ${name} (${unexpected(e)}). The update may carry on by itself on the box. Run conductor deployments status to see how it ended.`;
+const stoppedAfterUpdate = (name, outcome, e) => `The update to ${name} ended (${outcome}) and is recorded, but Conductor stopped unexpectedly afterwards (${unexpected(e)})${outcome === 'updated' ? ', so the new compose.yaml and Caddyfile may not be in place' : ''}. Run conductor deployments status to check the box.`;
+
 // Build on a factory machine (Ruling S8: the provider is made here, inside a try), check the box can run it, deliver it,
 // and always clean the build machine up. Shared by the first-time setup, later ships and updateDeployment.
 async function buildAndDeliver({ factory, getProvider, projectDir, slug, dep, rel, facts, runId, say, env, state }) {
@@ -107,7 +138,7 @@ async function deliverAndUpdate({ factory, getProvider, projectDir, slug, dep, r
   state.phase = 'updating';
   const r = await runLaterShip({
     dep, target: targetOf(dep), version: rel.version, foundation, imagesFile: d.imagesFile, runId, say,
-    save: saver(projectDir, state), env,
+    save: updateSaver(projectDir, state), env,
     opts: { updateTimeoutMs: factory.ship.updateTimeoutMs, pollMs: factory.ship.pollMs, ...(sleep ? { sleep } : {}) },
   });
   state.phase = 'done';
@@ -122,7 +153,7 @@ export function interruptShip(state = {}) {
       const name = state.dep?.name ?? state.name;
       const current = loadDeployment(state.projectDir, name) ?? state.dep;
       saveDeployment(state.projectDir, {
-        ...current, pendingCheck: { since: new Date().toISOString(), version: state.version, foundation: state.foundation, why: 'interrupted' },
+        ...current, pendingCheck: { since: new Date().toISOString(), version: state.version, foundation: state.foundation, why: 'interrupted', runId: state.runId },
       });
     } catch { /* the in-progress check saved before the update started still blocks the next ship (Ruling S19) */ }
     text = 'Stopped watching. The update carries on by itself on the box. Run conductor deployments status to see how it ended.';
@@ -142,7 +173,7 @@ export async function shipProject({ factory, slug, name, ask, env = process.env,
   let projectDir, project;
   try { ({ dir: projectDir, project } = readProject(factory.projectsRoot, slug)); } catch (e) { return no(e.message); }
 
-  Object.assign(state, { phase: 'checking', projectDir, name, dep: null, lock: null, version: null, foundation: null });
+  Object.assign(state, { phase: 'checking', projectDir, name, runId, dep: null, lock: null, version: null, foundation: null, recorded: null });
   let lock;
   try { lock = lockDeployment(projectDir, name); } catch (e) { return no(clean(e.message)); }
   if (!lock) return no(busyText(name));
@@ -157,9 +188,12 @@ export async function shipProject({ factory, slug, name, ask, env = process.env,
     log(clean(r.text));
     return r;
   } catch (e) {
-    const text = state.phase === 'updating'
-      ? `Conductor stopped unexpectedly while updating ${name} (${unexpected(e)}). The update may carry on by itself on the box. Run conductor deployments status to see how it ended.`
-      : `Conductor stopped unexpectedly (${unexpected(e)}). Steps already finished on the box are recorded; run the same command to carry on.`;
+    let text;
+    if (state.phase === 'updating') {
+      text = stoppedWhileUpdating(name, e);
+      saveLostContact(state, text);
+    } else if (state.phase === 'finishing') text = stoppedAfterUpdate(name, state.recorded, e);
+    else text = `Conductor stopped unexpectedly (${unexpected(e)}). Steps already finished on the box are recorded; run the same command to carry on.`;
     log(text);
     return { exit: SHIP_EXIT.partway, text };
   } finally {
@@ -191,17 +225,18 @@ async function shipSteps({ factory, slug, name, project, projectDir, ask, say, e
   // Ruling S18: no terminal → refused before any SSH call, machine or release.
   if (firstTime && !ask.isTTY) return no(NO_TTY_FIRST);
 
+  // Contract 7 §7.5: the foundation a deployment runs comes from project.json, never from the box. Checked before
+  // approvedRelease, which may cut the app's first release: every refusal leaves the app repo untouched.
+  const foundation = project.foundation?.tag;
+  if (typeof foundation !== 'string' || !FOUNDATION_RE.test(foundation)) {
+    return no(`The project does not record which foundation release it is built on, so it cannot be shipped. Build it first (conductor build ${slug}).`);
+  }
   const rel = await approvedRelease(projectDir, { runId, env });
   if (!rel.ok) return no(rel.problem);
   if (rel.cut) say(`Made the app's first release, v${rel.version}.`);
   if (!firstTime) {
     if (rel.version === dep.currentVersion) return no(`${name} is already on ${rel.version}. There is nothing new to ship.`);
     if (dep.currentVersion && compareVersions(rel.version, dep.currentVersion) < 0) return no(olderText(rel.version, name, dep.currentVersion));
-  }
-  // Contract 7 §7.5: the foundation a deployment runs comes from project.json, never from the box.
-  const foundation = project.foundation?.tag;
-  if (typeof foundation !== 'string' || !FOUNDATION_RE.test(foundation)) {
-    return no(`The project does not record which foundation release it is built on, so it cannot be shipped. Build it first (conductor build ${slug}).`);
   }
   Object.assign(state, { version: rel.version, foundation });
   say(`Shipping ${rel.version} of ${slug} to ${name} (run ${runId}).`);
@@ -302,7 +337,7 @@ export async function updateDeployment({ projectDir, name, version, foundation, 
   let project;
   try { project = loadProject(projectDir); } catch (e) { return refused(clean(e.message)); }
 
-  Object.assign(state, { phase: 'checking', projectDir, name, dep: null, lock: null, version, foundation });
+  Object.assign(state, { phase: 'checking', projectDir, name, runId, dep: null, lock: null, version, foundation, recorded: null });
   let lock;
   try { lock = lockDeployment(projectDir, name); } catch (e) { return refused(clean(e.message)); }
   if (!lock) return { outcome: 'busy', message: busyText(name) };
@@ -317,12 +352,17 @@ export async function updateDeployment({ projectDir, name, version, foundation, 
     log(message);
     return { outcome: r.outcome, message };
   } catch (e) {
-    const updating = state.phase === 'updating';
-    const message = updating
-      ? `Conductor stopped unexpectedly while updating ${name} (${unexpected(e)}). The update may carry on by itself on the box. Run conductor deployments status to see how it ended.`
-      : `Conductor stopped unexpectedly before ${name} was changed (${unexpected(e)}).`;
+    let outcome, message;
+    if (state.phase === 'updating') {
+      [outcome, message] = ['lost-contact', stoppedWhileUpdating(name, e)];
+      saveLostContact(state, message);
+    } else if (state.phase === 'finishing') {
+      // The recorded outcome stands; the message says what did not finish.
+      outcome = UPDATE_OUTCOMES.includes(state.recorded) ? state.recorded : 'lost-contact';
+      message = stoppedAfterUpdate(name, outcome, e);
+    } else [outcome, message] = ['refused', `Conductor stopped unexpectedly before ${name} was changed (${unexpected(e)}).`];
     log(message);
-    return { outcome: updating ? 'lost-contact' : 'refused', message };
+    return { outcome, message };
   } finally {
     lock.release();
     state.lock = null;
