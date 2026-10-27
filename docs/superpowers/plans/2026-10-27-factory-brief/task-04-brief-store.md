@@ -7,14 +7,13 @@ This task completes Contract 2: `renderBrief`, the Markdown the operator reads a
 - Test: `test/factory-brief-store.test.js`
 
 **Interfaces:**
-- Consumes: `validateBrief` (Task 3); `writeFileAtomic`, `writeJsonAtomic`, `createFileExclusive` (Task 1); fixtures (Task 3).
+- Consumes: `validateBrief` (Task 3); `testTag` (Task 2); `OUTBOUND_SERVICES` (Task 2); `writeFileAtomic`, `writeJsonAtomic`, `createFileExclusive` (Task 1); fixtures (Task 3).
 - Produces: `ukDate`, `renderBrief`, `briefPaths`, `nextVersion`, `saveApprovedBrief`, `loadBrief`, `currentBriefInfo` (signatures in the index).
   - `briefPaths(projectDir)` returns:
     - `dir` = `<p>/brief`;
     - `current` = `<p>/brief/current.json`;
     - `session` = `<p>/brief/session.json`;
     - `draftMd` = `<p>/brief/draft.md`;
-    - `lock` = `<p>/brief/.lock`;
     - `logs` = `<p>/brief/logs`;
     - `json(v)` = `<p>/brief/brief-v${v}.json` and `md(v)` = `<p>/brief/brief-v${v}.md`.
   - The `current.json` pointer is `{ schema: 1, version, json: 'brief-vN.json', md: 'brief-vN.md', sha256, approvedAt, approvedBy }`, where `sha256` is the hex digest of the exact bytes written to `brief-vN.json`.
@@ -57,7 +56,7 @@ test('renderBrief: plain UK English, policy first, every section', () => {
     '## Features',
     '### 1. Upload a receipt (`upload-receipt`)',
     '- Used by: Staff',
-    '  - Given Alice is signed in as Staff, when she uploads a £12.40 receipt with £2.07 VAT dated 3 March 2026, category Travel, then her claims list shows Travel £12.40 dated 3 March 2026, status Waiting.',
+    '  - [upload-receipt#1] Given Alice is signed in as Staff, when she uploads a £12.40 receipt with £2.07 VAT dated 3 March 2026, category Travel, then her claims list shows Travel £12.40 dated 3 March 2026, status Waiting.',
     '## Reports, exports and emails',
     '- **Monthly expenses report** (spreadsheet, for Finance): Approved claims for one month, one row per claim, totals by category',
     '## Outside systems',
@@ -76,13 +75,14 @@ test('renderBrief: drafts, open questions, table-safe cells, outbound list, dete
   const d = validBrief({
     openQuestions: [{ id: 'q1', question: 'Where should backups go?', why: 'Never only on the same box' }],
     roles: [{ ...validBrief().roles[0], whatTheyDo: 'Upload | claim\nreceipts' }, ...validBrief().roles.slice(1)],
-    policy: { ...validBrief().policy, outbound: ['Xero', 'Postmark (email)'], hosting: null },
+    policy: { ...validBrief().policy, outbound: ['cloudflare-tunnel', 'azure-document-intelligence'], hosting: null },
   });
   const md = renderBrief(d);
   assert.ok(md.includes('Draft: not yet approved'));
   assert.ok(md.includes('## Open questions\n\n1. Where should backups go? (Why it matters: Never only on the same box)'));
   assert.ok(md.includes('| Upload \\| claim receipts |'));
-  assert.ok(md.includes('- **Where data may go:** only to Xero, Postmark (email)'));
+  assert.ok(md.includes("- **Where data may go:** only to Cloudflare Tunnel (carries the app's web traffic); Azure Document Intelligence (carries receipt images)"));
+  assert.ok(md.includes('  - Given Alice is signed in as Staff, when'), 'a draft has no example ids yet, so no tag');
   assert.ok(md.includes('- **Hosting:** not decided yet'));
   assert.equal(renderBrief(d), md);
 });
@@ -154,15 +154,15 @@ Expected: FAIL with `renderBrief is not a function` (or a missing export).
      - hosting: `client-box` → `on the client's own computer (a box on their network)`; `operator-server` → `on a server you run for the client`;
      - residency: `uk` → `UK only`; `uk-eu` → `UK and EU`; `any` → `anywhere`;
      - a null field → `not decided yet`;
-     - empty outbound → `nowhere outside the app`; otherwise `only to ` + the list joined with `, `;
+     - empty outbound → `nowhere outside the app`; otherwise `only to ` + each id as `${label} (carries ${carries})` from `OUTBOUND_SERVICES`, joined with `; `. An id that is not in the list (only possible in a draft) shows as `${id} (not a service Conductor knows)`;
      - backups: kind → `client-owned storage` / `storage you run` / `a cloud storage bucket`, then `: ${detail}`;
      - operator access: true → the sentence in the test;
      - retention: the text, plus ` (${days} days)` when `days` is set.
   5. `## Who uses it`: the table header `| Role | What they do | What they can see | Foundation role |` then `|---|---|---|---|`.
   6. `## What it stores`: flags in brackets, `holds files` and `personal data`, joined with `; `, and the brackets omitted when there are neither.
-  7. `## Features`: `### ${n}. ${title} (\`${id}\`)`, then the story, then `- Used by:` and `- Uses:` lines, then `- Worked examples:` with each example as `  - Given ${given}, when ${when}, then ${then}.`, without doubling a trailing full stop.
+  7. `## Features`: `### ${n}. ${title} (\`${id}\`)`, then the story, then `- Used by:` and `- Uses:` lines, then `- Worked examples:` with each example as `  - Given ${given}, when ${when}, then ${then}.`, without doubling a trailing full stop. When the example has an `id` (an approved brief, or the copy shown for approval in Task 7), the line starts `  - ${testTag(id)} Given …`, so the operator sees the same tag the tests will carry.
   8. `## Reports, exports and emails`: format words `on screen`, `PDF`, `spreadsheet`, `CSV file`, `email`.
-  9. `## Outside systems`: `None.` when empty, else `- **${name}:** ${purpose} (sends: ${dataSent})`.
+  9. `## Outside systems`: `None.` when empty, else `- **${name}:** ${purpose} (sends: ${dataSent} to ${label})`, where `label` comes from `OUTBOUND_SERVICES[service]` (the raw `service` text when unknown).
   10. `## Optional modules`: `ocr` → `Reading receipts automatically (OCR)`; `pdf-export` → `PDF reports`; `xlsx-export` → `Spreadsheet exports`; `scheduled-jobs` → `Scheduled jobs`. `None.` when empty.
   11. `## Assumptions to check`, only when non-empty.
   12. `## Open questions`, only when non-empty, numbered.
@@ -204,5 +204,5 @@ Expected: all PASS.
 
 ```bash
 git add src/factory/brief.js test/factory-brief-store.test.js
-git commit -m "feat(factory): render, versioned save and fingerprinted load of approved briefs"
+git commit -m "feat(factory): render, versioned save and fingerprinted load of approved briefs" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

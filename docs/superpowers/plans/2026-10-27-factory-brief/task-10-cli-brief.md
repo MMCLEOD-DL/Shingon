@@ -15,15 +15,17 @@ The end-to-end test runs the real `ClaudeCodeAdapter` against a stub `claude`, w
 **Interfaces:**
 - Consumes:
   - `runBriefSession`, `assertFrontierSeat` (Task 7);
-  - `importNotes`, `newSession`, `loadSession`, `saveSession`, `discardSession`, `acquireBriefLock` (Task 6);
+  - `importNotes`, `newSession`, `loadSession`, `saveSession`, `discardSession` (Task 6);
   - `currentBriefInfo`, `briefPaths`, `ukDate` (Task 4);
-  - `readProject` (Task 1);
+  - `readProject`, `lockProject` (Task 1);
+  - `FACTORY_COMMANDS`, `runFactoryCommand` and its `FactoryContext` (Task 9);
   - `askBriefQuestion`, `approveBrief`, `confirmDiscard` (Task 8);
   - `loadConfig`, `findConfig`, `checkHealth`, `HealthBoard`, `Seat`, `REASON_TEXT`, `API_KEY_BILLING_WARNING`, `isSubscriptionKind`, `isApiKind`, `killAllChildren`, `RunLog`, `redact`.
 - Produces:
   - `briefAuthorSeat(participants, { routing, env, health, board })`;
   - `NO_TTY_BRIEF_START`;
-  - `factoryDeps` keys: `buildAuthor(config, env) -> Promise<{ ok, seat, warnings } | { ok: false, error }>`, `isAlive(pid)` and `now()`. All are optional; the defaults are the real ones.
+  - `FACTORY_COMMANDS.brief` (replacing the Task 9 placeholder);
+  - `factoryDeps` keys: `buildAuthor(config, env) -> Promise<{ ok, seat, warnings } | { ok: false, error }>`, `isAlive(pid)` (passed to `lockProject`) and `now()`. All are optional; the defaults are the real ones.
 
 - [ ] **Step 1: Write the failing seat tests** in `test/factory-brief-team.test.js`
 
@@ -169,6 +171,7 @@ test('no terminal: nothing is read, imported or sent', async () => {
     assert.deepEqual(readdirSync(path.join(s.dir, 'notes')), []);
     assert.equal(existsSync(briefPaths(s.dir).session), false);
     assert.equal(existsSync(s.w.promptLog), false);
+    assert.equal(existsSync(path.join(s.dir, '.conductor.lock')), false, 'no lock taken without a terminal');
   } finally { await s.w.close(); }
 });
 
@@ -185,7 +188,7 @@ test('the whole sitting: one question, approve; notes go only to the author; the
     assert.equal(loadBrief(s.dir).approvedBy, 'Malcolm');
     assert.ok(readFileSync(s.w.promptLog, 'utf8').includes(MARKER), 'the author got the notes');
     assert.deepEqual(s.w.bodies, [], 'the local model was never contacted');
-    assert.equal(existsSync(briefPaths(s.dir).lock), false);
+    assert.equal(existsSync(path.join(s.dir, '.conductor.lock')), false);
     const [copy] = readdirSync(path.join(s.dir, 'notes'));
     assert.equal(readFileSync(path.join(s.dir, 'notes', copy), 'utf8'), `Met Jo. ${MARKER}. 45 staff.`);
   } finally { await s.w.close(); }
@@ -222,10 +225,11 @@ test('the lock, discarding, an unavailable author leaves nothing behind, Ctrl-C'
   const s = await briefSetup();
   try {
     await s.go(['--notes', s.notes], ['stop']);
-    writeFileSync(briefPaths(s.dir).lock, JSON.stringify({ pid: 424242, at: 'x' }));
+    // The project lock is shared with Plan 8's builds and Plan 11's changes (Contract 7 §7.1).
+    writeFileSync(path.join(s.dir, '.conductor.lock'), JSON.stringify({ pid: 424242, kind: 'build', at: '2026-10-27T09:00:00.000Z' }));
     const locked = await s.go([], [], { deps: { isAlive: () => true } });
     assert.equal(locked.code, 1);
-    assert.match(locked.out, /Another conductor brief is already running for this project \(process 424242\)/);
+    assert.match(locked.out, /This project is busy: a build is running \(pid 424242, since 27 October 2026 09:00 UTC\)/);
     const kept = await s.go(['--discard-draft'], ['n'], { deps: { isAlive: () => false } });
     assert.equal(kept.code, 1);
     assert.match(kept.out, /Nothing was thrown away\./);
@@ -241,7 +245,7 @@ test('the lock, discarding, an unavailable author leaves nothing behind, Ctrl-C'
     assert.match(down.out, /No AI subscription can write the brief/);
     assert.equal(readdirSync(path.join(s.dir, 'notes')).length, 1, 'only the first sitting\'s copy: nothing new imported');
     assert.equal(existsSync(briefPaths(s.dir).session), false);
-    assert.equal(existsSync(briefPaths(s.dir).lock), false);
+    assert.equal(existsSync(path.join(s.dir, '.conductor.lock')), false);
 
     let handler = null; let exitCode = null;
     const c = await s.go(['--notes', s.notes], [], {
@@ -251,7 +255,7 @@ test('the lock, discarding, an unavailable author leaves nothing behind, Ctrl-C'
     assert.equal(exitCode, 130, c.out);
     assert.match(c.out, /Stopped\. Your answers so far are saved\. To carry on, run: conductor brief thistle/);
     assert.equal(loadSession(s.dir, 'thistle').stage, 'questions');
-    assert.equal(existsSync(briefPaths(s.dir).lock), false);
+    assert.equal(existsSync(path.join(s.dir, '.conductor.lock')), false);
   } finally { await s.w.close(); }
 });
 ```
@@ -261,15 +265,17 @@ test('the lock, discarding, an unavailable author leaves nothing behind, Ctrl-C'
 Run: `node --test test/factory-cli.test.js`
 Expected: FAIL with `conductor brief is not ready yet.`
 
-- [ ] **Step 6: Implement the `brief` command in `src/cli/factory.js`**
+- [ ] **Step 6: Implement the `brief` handler in `src/cli/factory.js`**
+
+`briefCommand(cli, ctx)` is the `FACTORY_COMMANDS.brief` entry. `runFactoryCommand` has already resolved `ctx.configPath`, `ctx.factory` and checked the slug (Task 9).
 
 `NO_TTY_BRIEF_START = 'conductor brief needs a terminal: it asks you questions and needs your approval. Nothing was read or sent to any AI model. Run it in a terminal.'`
 
 Order of operations (each refusal prints its message from the tests and returns 1 unless noted):
 
-1. Settings and slug, as in Task 9. `readProject`, with its error printed, returns 1.
+1. `readProject(ctx.factory.projectsRoot, cli.slug)`, with its error printed, returns 1.
 2. `!isTTY` → print `NO_TTY_BRIEF_START` and return 1. This happens before any file or model work.
-3. Acquire the lock with `acquireBriefLock(dir, { isAlive: deps.isAlive })`. A refusal returns 1. Release it in a `finally` on every path, including the SIGINT handler.
+3. Take the project lock with `lockProject(dir, 'brief', deps.isAlive ? { isAlive: deps.isAlive } : {})`. A refusal (another brief, a build or a change running) prints its message and returns 1. Release it in a `finally` on every path, including the SIGINT handler.
 4. `session = loadSession(dir, slug)`. A corrupt session prints its message and returns 1.
 5. `--discard-draft`:
    - no session → `There is no unfinished brief for ${slug}.`, return 1;
@@ -283,7 +289,7 @@ Order of operations (each refusal prints its message from the tests and returns 
      - `info` and not `--revise` → the "already has an approved brief" refusal;
      - `--revise` and no `info` → the "no approved brief to revise" refusal.
 7. Load the participants config:
-   - `loadConfig(configPath)`. With no config, print the `findConfig` message;
+   - `loadConfig(ctx.configPath)`. With no config (`ctx.configPath` null), print the `findConfig` message (call `findConfig({ cwd, env, home })` again to get it);
    - errors print `Conductor could not read its config: …` and return `EXIT.usage`;
    - `built = await (deps.buildAuthor ?? ((c, e) => briefAuthorSeat(c.participants, { routing: c.routing, env: e })))(config, env)`;
    - `!built.ok` → print `built.error` and return `EXIT.failed` (2). Nothing has been imported yet;
@@ -297,7 +303,7 @@ Order of operations (each refusal prints its message from the tests and returns 
    - `cwdDir = mkdtempSync(path.join(tmpdir(), 'conductor-brief-'))`, removed in `finally`;
    - `log = new RunLog(briefPaths(dir).logs)`;
    - `term = createTerminal({ input: stdin, output: stdout, isTTY, bell: cli.flags.bell })`. Create it once at the top, after the TTY check, so step 5 can use it;
-   - `out = await runBriefSession({ projectDir: dir, session, author: built.seat, io: { say: term.say, ask: term.askBriefQuestion, approve: term.approveBrief }, log, operatorName: settings.operatorName, cwd: cwdDir, now: deps.now })`;
+   - `out = await runBriefSession({ projectDir: dir, session, author: built.seat, io: { say: term.say, ask: term.askBriefQuestion, approve: term.approveBrief }, log, operatorName: ctx.factory.operatorName, cwd: cwdDir, now: deps.now })`;
    - a thrown error (for example `assertFrontierSeat`) prints `Conductor could not write the brief: ${redact(message)}` and returns `EXIT.failed`.
 10. Outcome:
     - `approved` → `Approved. Brief version ${v} for ${client} is saved:` with the two indented path lines, return 0;
@@ -324,5 +330,5 @@ Expected: all PASS. The suite never reaches the network beyond 127.0.0.1, and th
 
 ```bash
 git add src/factory/briefTeam.js src/cli/factory.js test/factory-brief-team.test.js test/factory-cli.test.js test/helpers/factoryCli.js
-git commit -m "feat(cli): conductor brief: frontier-only author, fails closed, resumable, Ctrl-C safe"
+git commit -m "feat(cli): conductor brief: frontier-only author, fails closed, resumable, Ctrl-C safe" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

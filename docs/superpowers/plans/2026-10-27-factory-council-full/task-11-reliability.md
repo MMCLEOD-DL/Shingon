@@ -96,5 +96,7 @@ Expected: all PASS.
 
 ```bash
 git add src/council/reliability.js test/council-reliability.test.js
-git commit -m "feat(council): Reliability member (a failed smoke step blocks; anything unproven is a locked warning)"
+git commit -m "feat(council): Reliability member (a failed smoke step blocks; anything unproven is a locked warning)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

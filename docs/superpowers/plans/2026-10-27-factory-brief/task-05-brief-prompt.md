@@ -8,7 +8,7 @@ This task builds the single prompt the author seat receives, and the defensive p
 - Test: `test/factory-brief-prompt.test.js`
 
 **Interfaces:**
-- Consumes: `normalizeBrief` and the enum constants (Task 3); `EXAMPLE_RULES_TEXT` (Task 2); `extractJson` (`src/plan.js`).
+- Consumes: `normalizeBrief` and the enum constants (Task 3); `EXAMPLE_RULES_TEXT` and `OUTBOUND_SERVICES` (Task 2); `extractJson` (`src/plan.js`).
 - Produces:
   - `NOTES_MAX = 200_000` and `REPLY_MAX = 500_000`;
   - `BRIEF_SKELETON`;
@@ -41,8 +41,12 @@ test('the prompt fences the notes as data and states the rules', () => {
     'Worked examples ("acceptance") are checked by Conductor',
     'kind must be "web-app"',
     'admin, manager or member',
+    '- cloudflare-tunnel: Cloudflare Tunnel (carries the app\'s web traffic)',
+    '- azure-document-intelligence: Azure Document Intelligence (carries receipt images)',
+    'Do not put ids on worked examples; Conductor numbers them.',
     'End your reply with one ```json block holding the whole brief.',
   ]) assert.ok(p.includes(s), s);
+  assert.equal(BRIEF_SKELETON.integrations[0].service, 'cloudflare-tunnel | azure-document-intelligence');
   for (const k of Object.keys(BRIEF_SKELETON)) assert.ok(p.includes(`"${k}"`), k);
   assert.equal(Object.hasOwn(BRIEF_SKELETON, 'approvedAt'), false);
   assert.equal(p.includes('The operator has answered'), false, 'no empty sections');
@@ -96,7 +100,7 @@ Change `function extractJson(text)` to `export function extractJson(text)`. Noth
 
 - [ ] **Step 4: Implement `src/factory/briefPrompts.js`**
 
-- `BRIEF_SKELETON` is a frozen example object with every content key from Task 3's shape. Enum fields show their allowed values as a string, e.g. `"hosting": "client-box | operator-server | null"` and `"mapsTo": "admin | manager | member"`, so the prompt doubles as the schema. It has no meta or approval keys.
+- `BRIEF_SKELETON` is a frozen example object with every content key from Task 3's shape. Enum fields show their allowed values as a string, e.g. `"hosting": "client-box | operator-server | null"`, `"mapsTo": "admin | manager | member"` and `"service": "cloudflare-tunnel | azure-document-intelligence"` (the ids joined from `Object.keys(OUTBOUND_SERVICES)`); `policy.outbound` is `["<ids from the list above, or empty>"]`; `retention` is `{ "text": "…", "days": "number or null" }` and `backupDestination` is `{ "kind": "client-owned | operator-run | cloud-bucket | null", "detail": "…, never a password or key" }`. So the prompt doubles as the schema. It has no meta or approval keys and no example `id`.
 - `briefDraftPrompt` joins these sections with blank lines, leaving out any empty section:
   1. `You are drafting a structured brief for a web app that Highland Automations will build for a small business. The operator (the person you are talking to) met the client and wrote the notes below. He understands the business but does not read code.`
   2. The notes rules:
@@ -109,7 +113,8 @@ Change `function extractJson(text)` to `export function extractJson(text)`. Noth
      - `Every role maps to one of the foundation's fixed roles: admin, manager or member; at least one maps to admin.`;
      - feature ids are kebab-case;
      - `features[].roles` and `features[].data` name roles and records from the brief;
-     - every outside service in `integrations` must also be listed in `policy.outbound`;
+     - the outside services, built from `OUTBOUND_SERVICES` so the list never drifts: `policy.outbound and integrations[].service use only these ids:` followed by one `- ${id}: ${label} (carries ${carries})` line per service, then `Every integration's service must also be in policy.outbound. If the client needs an outside service that is not listed, do not invent an id: ask about it as an open question.`;
+     - `Do not put ids on worked examples; Conductor numbers them.`;
      - a pdf output needs `pdf-export` and an xlsx output needs `xlsx-export`;
      - never include passwords or keys.
   4. The questions rules: `Ask at most 5 questions per reply in openQuestions, most important first, in plain UK English a business owner understands: one thing per question, no jargon, and say in "why" what depends on the answer. List your other working assumptions in "assumptions" so the operator can check them.`
@@ -142,5 +147,5 @@ Expected: all PASS.
 
 ```bash
 git add src/plan.js src/factory/briefPrompts.js test/factory-brief-prompt.test.js
-git commit -m "feat(factory): brief author prompt and defensive reply parsing"
+git commit -m "feat(factory): brief author prompt and defensive reply parsing" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

@@ -1,27 +1,28 @@
 # Task 4: Gates (verify, browser gate, accessibility)
 
-This task runs the foundation's own gates in the council workspace and reads machine-readable results (index Ruling 5):
-- the `verify` steps, with vitest's JSON reporter;
-- the browser gate, Playwright on the app's own `apps/web/e2e`, with the JSON reporter: screenshots of every page at desktop and phone width, the overflow, tap-size and script-error checks, the screen registry and the user journeys;
-- an accessibility pass with axe-core when the operator has it.
+This task runs the foundation's own gates in the council workspace and reads machine-readable results (index Ruling 5). It runs **only the parts it is asked for** (`need`): Task 6 first reuses Plan 8's `checks` for the same commit and asks here only for what is missing, plus the axe pass. The parts:
+- `need.verify`: the `verify` steps, with vitest's JSON reporter;
+- `need.browser`: the browser gate, Playwright on the app's own `apps/web/e2e`, with the JSON reporter: screenshots of every page at desktop and phone width, the overflow, tap-size and script-error checks, the screen registry and the user journeys. The council config adds the axe projects to this run when axe is `ok`;
+- the **axe pass alone** (`a11y` step), when the browser gate is not needed but axe is `ok`: the web build, then only the two council accessibility projects. Plan 8's checks never run axe, so on a normal round this is the only local gate work.
 
 They run locally, needing what Plan 8's whole-app checks already need: `TEST_DATABASE_URL` and the Playwright browsers. Plan 8's `testDatabaseProblem` and `browsersInstalled` (index A3) say whether they can run.
 
-The steps, in order, each run with `sh -c` in the workspace. Output goes to `.council/out/<step>.log`, and the exit code is recorded:
+The steps, in order, each run with `sh -c` in the workspace when its part is needed. Output goes to `.council/out/<step>.log`, and the exit code is recorded. A step not needed stays `null`:
 
-| Step | Command |
-|---|---|
-| `npm-ci` | `npm ci --no-audit --no-fund --loglevel=error` (a failure stops here) |
-| `lint` | `npm run lint` |
-| `typecheck` | `npm run typecheck` |
-| `licences` | `npm run licences` |
-| `vitest` | `npx vitest run --reporter=default --reporter=json --outputFile.json=.council/out/vitest.json` |
-| `build` | `npx tsc -b packages/shared && npm -w @hf/web run build` |
-| `browser` | only when `build` passed and browsers are installed: `npx playwright test -c .council/playwright.config.ts --reporter=json`, with `PLAYWRIGHT_JSON_OUTPUT_NAME=<abs>/.council/out/playwright.json`, `HF_COUNCIL_OUT=<abs>/.council/out`, and `HF_COUNCIL_AXE=<axe path>` or empty |
+| Step | Part | Command |
+|---|---|---|
+| `npm-ci` | any | `npm ci --no-audit --no-fund --loglevel=error` (a failure stops here) |
+| `lint` | verify | `npm run lint` |
+| `typecheck` | verify | `npm run typecheck` |
+| `licences` | verify | `npm run licences` |
+| `vitest` | verify | `npx vitest run --reporter=default --reporter=json --outputFile.json=.council/out/vitest.json` |
+| `build` | browser or a11y | `npx tsc -b packages/shared && npm -w @hf/web run build` |
+| `browser` | browser | only when `build` passed and browsers are installed: `npx playwright test -c .council/playwright.config.ts --reporter=json`, with `PLAYWRIGHT_JSON_OUTPUT_NAME=<abs>/.council/out/playwright.json`, `HF_COUNCIL_OUT=<abs>/.council/out`, and `HF_COUNCIL_AXE=<axe path>` or empty |
+| `a11y` | a11y (not browser, axe `ok`) | only when `build` passed and browsers are installed: the same command and environment with `--project=council-a11y-desktop --project=council-a11y-phone` |
 
 Commands get the same environment that Plan 8's `runAppChecks` gives its commands (the child environment plus `TEST_DATABASE_URL`, `PLAYWRIGHT_BROWSERS_PATH` and `HF_E2E_MAIL_DIR` when set). The whole run shares `councilGatesTimeoutMs`. A step that runs out of time records `-1`, its log says `It took longer than the time allowed.`, and later steps are not run (`null`).
 
-Two council files are written into the workspace before the browser step, from `src/council/assets/`:
+Two council files are written into the workspace before the `browser` or `a11y` step, from `src/council/assets/`:
 - `.council/playwright.config.ts` imports the app's `../apps/web/playwright.config.ts` and spreads it. When `process.env.HF_COUNCIL_AXE` is set it appends two projects: `council-a11y-desktop` (Chromium 1280×800) and `council-a11y-phone` (Chromium 390×844, touch). Their `testDir` is `.council` and their `testMatch` is `/a11y\.spec\.ts/`. Every other setting (global set-up, web server, base URL) is the app's own;
 - `.council/a11y.spec.ts`, for each `PAGES` entry from `../apps/web/e2e/pages.js`:
   - opens a context with the project's `use` and, for signed-in pages, `authFile(p.as)` from `../apps/web/e2e/fixtures.js`;
@@ -38,13 +39,13 @@ The operator smoke (Task 14) proves both load under the real Playwright. If the 
 - Test: `test/council-gates.test.js` (new)
 
 **Interfaces:**
-- Consumes: `browsersInstalled`, `testDatabaseProblem` (`src/factory/checks.js`, index A3), imported dynamically and injectable as `deps.checks` for tests; `runCommand`; `redact`, `clip`.
+- Consumes: `browsersInstalled`, `testDatabaseProblem` (`src/factory/checks.js`, index A3), imported dynamically and injectable as `helpers` for tests; `runCommand`; `redact`, `clip`.
 - Produces (`src/council/gates.js`):
   - `detectAxe({ options, env }) -> { path, version, status, note }`;
-  - `parseSteps(text)`, `parseVitestJson(text)`, `parsePlaywrightJson(text)`, `parseA11yLines(text)`;
-  - `GATE_STEPS = ['npm-ci', 'lint', 'typecheck', 'licences', 'vitest', 'build', 'browser']`;
-  - `runGates({ dir, axe, options, env, run = runCommand, home, checks }) -> Promise<GatesResult | { problem }>`. `GatesResult` is as in the index. `steps` comes from the recorded exit codes. `logs[step]` holds the last 40 redacted lines of each failed step. `screenshots[].file` is relative to `dir` (`reports/screenshots/<file>`). `axe` is the `detectAxe` result passed in.
-- Produces (`test/helpers/councilFull.js`): `fakeGatesRun({ codes = {}, fixtures = 'gates-out', timeout = null }) -> { run, calls }`. It answers each step by matching the command and copies the fixture reports into place: `vitest.json`, `playwright.json` and `a11y.jsonl` into `.council/out/`; `crossing.json` into `apps/server/reports/`; `screenshots/` into `reports/screenshots/`.
+  - `parseVitestJson(text)`, `parsePlaywrightJson(text)`, `parseA11yLines(text)`, `parseCrossingJson(text) -> { routes, checks, failures: string[] }` (each failure's `sentence`). Task 6 uses the same parsers on Plan 8's reports;
+  - `GATE_STEPS = ['npm-ci', 'lint', 'typecheck', 'licences', 'vitest', 'build', 'browser', 'a11y']`;
+  - `runGates({ dir, axe, need = { verify: true, browser: true }, options, env, run = runCommand, home, helpers }) -> Promise<GatesResult | { problem }>`. `GatesResult` is as in the index; `verify` and `source` are left `null` here (Task 6 sets them). `steps` comes from the recorded exit codes. `logs[step]` holds the last 40 redacted lines of each failed step. `screenshots[].file` is relative to `dir` (`reports/screenshots/<file>`). `axe` is the `detectAxe` result passed in. With nothing needed (no verify, no browser, axe not `ok`) it returns an empty `GatesResult` and runs nothing.
+- Produces (`test/helpers/councilFull.js`): `fakeGatesRun({ codes = {}, fixtures = 'gates-out', timeout = null }) -> { run, calls }`, where each call is `{ step, args, env }`. It answers each step by matching the command (a Playwright command with `--project=council-a11y-` is the `a11y` step, otherwise `browser`) and copies the fixture reports into place: `vitest.json`, `playwright.json` and `a11y.jsonl` into `.council/out/`; `crossing.json` into `apps/server/reports/`; `screenshots/` into `reports/screenshots/`.
 
 - [ ] **Step 1: Write the fixtures and the failing tests**
 
@@ -73,7 +74,7 @@ import { readFileSync, mkdtempSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DEFAULT_OPTIONS } from '../src/options.js';
-import { detectAxe, parseVitestJson, parsePlaywrightJson, parseA11yLines, runGates, GATE_STEPS } from '../src/council/gates.js';
+import { detectAxe, parseVitestJson, parsePlaywrightJson, parseA11yLines, parseCrossingJson, runGates, GATE_STEPS } from '../src/council/gates.js';
 import { fakeGatesRun } from './helpers/councilFull.js';
 
 const FX = new URL('./fixtures/council-full/gates-out/', import.meta.url).pathname;
@@ -113,13 +114,15 @@ test('parsers read the real reporter shapes', () => {
   assert.match(b[0].message, /the page scrolls sideways/);
   assert.deepEqual(parseA11yLines(read('a11y.jsonl') + '\nnot json\n').map((p) => [p.page, p.violations.length]), [['notes', 1], ['people', 0]]);
   assert.throws(() => parseVitestJson('banner'), /The test report could not be read/);
+  assert.deepEqual(parseCrossingJson(read('crossing.json')), { routes: 31, checks: 7012, failures: [] });
+  assert.deepEqual(parseCrossingJson('{"routes":3,"checks":9,"failures":[{"sentence":"A member could read another team\'s claim."}]}').failures, ["A member could read another team's claim."]);
 });
 
 test('runGates: every step in order, reports read, council files written into the workspace only', async () => {
   const dir = tmp();
   const { run, calls } = fakeGatesRun({ codes: { vitest: 1, browser: 1 } });
-  const r = await runGates({ dir, axe: { status: 'off', path: null }, options: opts, env: {}, run, checks: okChecks });
-  assert.deepEqual(GATE_STEPS.map((s) => r.steps[s]), [0, 0, 0, 0, 1, 0, 1]);
+  const r = await runGates({ dir, axe: { status: 'off', path: null }, options: opts, env: {}, run, helpers: okChecks });
+  assert.deepEqual(GATE_STEPS.map((s) => r.steps[s]), [0, 0, 0, 0, 1, 0, 1, null]);
   assert.equal(r.tests.length, 4);
   assert.equal(r.crossing.routes, 31);
   assert.deepEqual(r.screenshots.map((s) => s.file).sort(), ['reports/screenshots/notes-mobile-webkit.png', 'reports/screenshots/people-mobile-chromium.png']);
@@ -131,9 +134,9 @@ test('runGates: every step in order, reports read, council files written into th
 });
 
 test('runGates: npm ci fails → nothing else runs; build fails → no browser step', async () => {
-  const a = await runGates({ dir: tmp(), axe: { status: 'off' }, options: opts, env: {}, run: fakeGatesRun({ codes: { 'npm-ci': 1 } }).run, checks: okChecks });
-  assert.deepEqual(GATE_STEPS.map((s) => a.steps[s]), [1, null, null, null, null, null, null]);
-  const b = await runGates({ dir: tmp(), axe: { status: 'off' }, options: opts, env: {}, run: fakeGatesRun({ codes: { build: 2 } }).run, checks: okChecks });
+  const a = await runGates({ dir: tmp(), axe: { status: 'off' }, options: opts, env: {}, run: fakeGatesRun({ codes: { 'npm-ci': 1 } }).run, helpers: okChecks });
+  assert.deepEqual(GATE_STEPS.map((s) => a.steps[s]), [1, null, null, null, null, null, null, null]);
+  const b = await runGates({ dir: tmp(), axe: { status: 'off' }, options: opts, env: {}, run: fakeGatesRun({ codes: { build: 2 } }).run, helpers: okChecks });
   assert.equal(b.steps.browser, null);
   assert.equal(b.browser, null);
 });
@@ -141,17 +144,31 @@ test('runGates: npm ci fails → nothing else runs; build fails → no browser s
 test('runGates: no test database → a plain problem, nothing run; no browsers → verify only, with a note', async () => {
   const { run, calls } = fakeGatesRun();
   const p = await runGates({ dir: tmp(), axe: { status: 'off' }, options: opts, env: {}, run,
-    checks: { ...okChecks, testDatabaseProblem: () => 'TEST_DATABASE_URL is not set, so the foundation\'s tests cannot reach a database.' } });
+    helpers: { ...okChecks, testDatabaseProblem: () => 'TEST_DATABASE_URL is not set, so the foundation\'s tests cannot reach a database.' } });
   assert.deepEqual(p, { problem: 'TEST_DATABASE_URL is not set, so the foundation\'s tests cannot reach a database.' });
   assert.equal(calls.length, 0);
   const n = await runGates({ dir: tmp(), axe: { status: 'off' }, options: opts, env: {}, run: fakeGatesRun().run,
-    checks: { ...okChecks, browsersInstalled: () => ({ ok: false, why: 'the Playwright browsers are not installed' }) } });
+    helpers: { ...okChecks, browsersInstalled: () => ({ ok: false, why: 'the Playwright browsers are not installed' }) } });
   assert.equal(n.steps.browser, null);
   assert.equal(n.note, 'The page check did not run: the Playwright browsers are not installed.');
 });
 
+test('runGates: only what is needed — the axe pass alone when Plan 8\'s reports cover the rest', async () => {
+  const axePath = path.join(tmp(), 'axe.min.js');
+  const { run, calls } = fakeGatesRun();
+  const r = await runGates({ dir: tmp(), axe: { status: 'ok', path: axePath, version: '4.10.3' }, need: { verify: false, browser: false }, options: opts, env: {}, run, helpers: okChecks });
+  assert.deepEqual(GATE_STEPS.map((s) => r.steps[s]), [0, null, null, null, null, 0, null, 0]);
+  const a11yCall = calls.find((c) => c.args.at(-1).includes('playwright test'));
+  assert.match(a11yCall.args.at(-1), /--project=council-a11y-desktop --project=council-a11y-phone/);
+  assert.equal(a11yCall.env.HF_COUNCIL_AXE, axePath);
+  assert.equal(r.a11y.length, 2);
+  assert.equal(r.tests, null);
+  const none = await runGates({ dir: tmp(), axe: { status: 'off' }, need: { verify: false, browser: false }, options: opts, env: {}, run: fakeGatesRun().run, helpers: okChecks });
+  assert.deepEqual(GATE_STEPS.map((s) => none.steps[s]), [null, null, null, null, null, null, null, null]);
+});
+
 test('runGates: a step that runs out of time stops the rest', async () => {
-  const r = await runGates({ dir: tmp(), axe: { status: 'off' }, options: { ...opts, councilGatesTimeoutMs: 1000 }, env: {}, run: fakeGatesRun({ timeout: 'vitest' }).run, checks: okChecks });
+  const r = await runGates({ dir: tmp(), axe: { status: 'off' }, options: { ...opts, councilGatesTimeoutMs: 1000 }, env: {}, run: fakeGatesRun({ timeout: 'vitest' }).run, helpers: okChecks });
   assert.equal(r.steps.vitest, -1);
   assert.equal(r.steps.build, null);
   assert.match(r.note, /took longer than the time allowed/);
@@ -166,8 +183,8 @@ Expected: FAIL with `Cannot find module '../src/council/gates.js'`.
 - [ ] **Step 3: Write the two assets and implement `src/council/gates.js`**
 
 - The install hint in `detectAxe`'s missing note: `Install: npm pack axe-core@4, then put package/axe.min.js at ~/.local/share/conductor/axe-core/axe.min.js (MPL-2.0; Conductor uses it as a tool and never adds it to client apps).`
-- The parsers throw `The test report could not be read` / `The browser test report could not be read` on bad JSON. `parsePlaywrightJson` walks suites recursively. A test is `ok` when its `status` is `expected` or `flaky`, and `skipped` when `skipped`. `message` = the first result's `error.message`, redacted and clipped to 1000. `parseA11yLines` skips lines that do not parse.
-- `runGates`: as described above. A missing report file leaves that field `null`.
+- The parsers throw `The test report could not be read` / `The browser test report could not be read` on bad JSON. `TestCase.file` and `BrowserCase.file` are made relative to the app root by cutting everything before the first `apps/` or `packages/` segment, so reports written in Plan 8's clone and in the council workspace read the same. `parsePlaywrightJson` walks suites recursively. A test is `ok` when its `status` is `expected` or `flaky`, and `skipped` when `skipped`. `message` = the first result's `error.message`, redacted and clipped to 1000. `parseA11yLines` skips lines that do not parse.
+- `runGates`: as described above. A missing report file leaves that field `null`. `crossing` is read from `apps/server/reports/crossing.json` only when the verify part ran.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -178,5 +195,7 @@ Expected: all PASS.
 
 ```bash
 git add src/council/gates.js src/council/assets/ test/helpers/councilFull.js test/council-gates.test.js test/fixtures/council-full/gates-out/
-git commit -m "feat(council): run the foundation's verify and browser gates with JSON reports, plus an axe accessibility pass"
+git commit -m "feat(council): run the foundation's verify and browser gates with JSON reports, plus an axe accessibility pass
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

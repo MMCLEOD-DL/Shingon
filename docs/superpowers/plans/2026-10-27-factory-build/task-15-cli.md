@@ -1,6 +1,6 @@
 # Task 15: Commands: build, preview, machines
 
-The operator-facing commands (Contract 5, plus `machines` from index Ruling 13):
+The operator-facing commands. Contract 5 names `build` and `preview`; Contract 7 §7.8 adds `machines`:
 
 ```
 conductor build <project> [--new] [--approve-plan] [--watch-diffs] [--no-bell] [--config <file>]
@@ -9,45 +9,76 @@ conductor machines [list|sweep]
 conductor resume            (inside <projectsRoot>/<project>/ or its app/: carries on that project's unfinished build)
 ```
 
-- `build`, `preview` and `machines` work from any folder (they find the project under `factory.projectsRoot`), so they skip the "run inside a git repository" check.
-- `preview` and `machines` need no AI models: they are handled straight after the config is read.
-- `build` goes through the same worker checks, waking and local-fallback consent as a normal run (Plan 4), then calls `runBuild` with the terminal's hooks plus `approveBuild` and `onProgress`.
-- Exit codes: `ready` 0 (new), `rejected`/`stopped` 1, `failed` 2, `paused` 3, usage 64, Ctrl-C 130. `preview` and `machines`: 0 on success, 2 on a machine or setup problem.
-- **Merging with Plan 7:** Plan 7 also adds subcommands to `src/cli/args.js` and `src/cli/main.js` (`project`, `brief`). Rebase on master and merge by hand; both plans only add entries and branches.
+- **Dispatch (Contract 7 §7.3).** The handlers are entries in Plan 7's `FACTORY_COMMANDS` table (`src/cli/factory.js`). Plan 7's `main()` calls `runFactoryCommand` before the "must be inside a git repository" check, so these commands work from any folder.
+- `preview` and `machines` need no AI models.
+- `build` goes through the same worker checks, waking and local-fallback consent as a normal run (Plan 4). It then calls `runBuild` with the terminal's hooks plus `approveBuild` and `onProgress`.
+- Exit codes:
+  - `build`: `ready` 0, `rejected`/`stopped` 1, `failed` 2, `paused` 3, usage 64, Ctrl-C 130;
+  - `preview` and `machines`: 0 on success, 2 on a machine or setup problem.
+- **[deviation from Contract 7 §7.3]** `build` needs the team preparation that lives inline in `main()`: worker checks, waking, `buildTeam`, the local-down question, usage memory, the Ctrl-C handler, and the hooks and overrides. Copying it would fork Plan 4's behaviour. So this task touches `main.js` **once**, and changes no behaviour:
+  1. it moves that block, unchanged, into `prepareRun` in `src/cli/prepareRun.js`, and `main()` calls it;
+  2. when Plan 7's dispatch does not already allow it, a handler that returns `null` means "not mine here", and `main()` carries on as before. Only `resume` uses this, to pick up a build when run inside a project folder (Contract 5: "`conductor resume` works for builds").
+  - The proof is that `test/cli.test.js` and every other existing CLI test pass unchanged. See the index, "Contract 7 deviations".
+- **Merging with Plan 7:** Plan 7 also adds subcommands to `src/cli/args.js`. Rebase on master and merge by hand; both plans only add entries and branches.
 
 **Files:**
-- Create: `src/cli/factory.js`
-- Modify: `src/cli/args.js`, `src/cli/main.js`, `src/ui/terminal.js` (`approveBuild`, `NO_TTY_BUILD`), `src/ui/status.js` (`reset()`; a `build-feature` event resets the step list)
-- Test: `test/cli-factory.test.js` (new), `test/cli.test.js` (two flag `deepEqual`s gain `stop: false, newBuild: false`), `test/terminal.test.js` (append), `test/status.test.js` (append)
+- Create: `src/cli/factoryBuild.js`, `src/cli/prepareRun.js`
+- Modify:
+  - `src/cli/factory.js` (Plan 7's: register `build`, `preview`, `machines` and `resume` in `FACTORY_COMMANDS`);
+  - `src/cli/args.js`;
+  - `src/cli/main.js` (the deviation above only);
+  - `src/ui/terminal.js` (`approveBuild`, `NO_TTY_BUILD`);
+  - `src/ui/status.js` (`reset()`; a `build-feature` event resets the step list).
+- Test:
+  - `test/cli-factory-build.test.js` (new);
+  - `test/cli.test.js`: two flag `deepEqual`s gain `stop: false, newBuild: false`, plus any flag Plan 7 added;
+  - `test/terminal.test.js` and `test/status.test.js` (append).
 
 **Interfaces:**
-- Consumes: `runBuild` (Task 8), `startPreview`, `stopPreview`, `previewRuns` (Task 14), `getMachineProvider`, `MachineError`, `whenText` (Task 11), `createSsh` (Task 10), `factoryConfig` (Task 1), `latestBuild` (Task 7), `readProject`, `projectDir` (Plan 7 seam), `writeStubCli`, `stubDockerPath`, `stubCurl`, `makeFoundationRepo`, `makeProject`.
+- Consumes:
+  - from this plan: `runBuild` (Task 8); `startPreview`, `stopPreview`, `previewRuns` (Task 14); `getMachineProvider`, `MachineError`, `whenText` (Task 11); `createSsh` (Task 10); `SLUG_RE` (Task 1); `latestBuild` (Task 7);
+  - from Plan 7: `factoryConfig`, `readProject`, `FACTORY_COMMANDS`, `runFactoryCommand`;
+  - from the existing code: `loadConfig` (`src/config.js`), `findConfig` (`src/cli/config.js`), `defaultBaseDir` (`src/workspace.js`), `createTerminal` (`src/ui/terminal.js`);
+  - test helpers: `writeStubCli`, `stubDockerPath`, `stubCurl`, `makeFoundationRepo`, `makeProject`.
 - Produces:
   - `parseCli` results `{ command: 'build', slug, flags }`, `{ command: 'preview', slug, flags }`, `{ command: 'machines', action: 'list'|'sweep', flags }`; `flags.stop`, `flags.newBuild`.
-  - `src/cli/factory.js`: `projectSlugFor(cwd, projectsRoot) -> slug | null`; `runPreviewCommand({ factory, slug, stop, print, deps }) -> exit code`; `runMachinesCommand({ factory, action, print, deps }) -> exit code`; `buildOutcomeText(out, { slug, client, appDir }) -> string`; `previewText(result, { slug, client }) -> string`.
+  - `src/cli/factoryBuild.js`:
+    - `buildCommand(cli, ctx)`, `previewCommand(cli, ctx)`, `machinesCommand(cli, ctx)`, `resumeBuildCommand(cli, ctx)`: the four `FACTORY_COMMANDS` handlers. `ctx` is `runFactoryCommand`'s second argument, `{ cwd, env, stdin, stdout, isTTY, onSignal, exit, deps }`. Each returns an exit code, or `null` (only `resumeBuildCommand`) for "not a build here".
+    - `projectSlugFor(cwd, projectsRoot) -> slug | null`;
+    - `runPreviewCommand({ factory, slug, stop, print, deps }) -> exit code`;
+    - `runMachinesCommand({ factory, action, print, deps }) -> exit code`;
+    - `buildOutcomeText(out, { slug, client, appDir }) -> string`; `previewText(result, { slug, client }) -> string`;
+    - `BUILD_EXIT = { ready: 0, rejected: 1, stopped: 1, failed: 2, paused: 3 }`.
+  - `src/cli/prepareRun.js`: `prepareRun({ cli, config, term, env, baseDir, workspaceDir = null, wakeDeps = {}, onSignal, exit, interruptedText }) -> Promise<{ code: number } | { built, hooks, overrides, remember }>`. This is `main()`'s existing block, moved.
   - `term.approveBuild({ summary }) -> true | false | { approved: false, note }`; `NO_TTY_BUILD`.
-  - `EXIT.ready = 0`.
+
+If Plan 7's `FACTORY_COMMANDS` handlers take a different argument shape, adapt only the four handler wrappers. The helper functions do not change.
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `test/cli-factory.test.js`:
+Create `test/cli-factory-build.test.js`:
 
 ```js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, existsSync, readFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { Writable } from 'node:stream';
+import { Writable, Readable } from 'node:stream';
 import { parseCli } from '../src/cli/args.js';
 import { main } from '../src/cli/main.js';
-import { projectSlugFor, buildOutcomeText } from '../src/cli/factory.js';
+import { FACTORY_COMMANDS } from '../src/cli/factory.js';
+import { projectSlugFor, buildOutcomeText, resumeBuildCommand } from '../src/cli/factoryBuild.js';
 import { git } from '../src/workspace.js';
 import { writeStubCli } from './helpers/stubCli.js';
 import { stubDockerPath, stubCurl } from './helpers/stubDocker.js';
 import { makeFoundationRepo, makeProject } from './helpers/factoryFixtures.js';
 
 const tmp = (p) => mkdtempSync(path.join(tmpdir(), p));
+
+test('the handlers are registered in Plan 7\'s factory command table', () => {
+  for (const c of ['build', 'preview', 'machines', 'resume']) assert.equal(typeof FACTORY_COMMANDS[c], 'function', c);
+});
 
 test('parsing the factory commands', () => {
   assert.deepEqual(parseCli(['build', 'acme-ltd']).command, 'build');
@@ -60,12 +91,18 @@ test('parsing the factory commands', () => {
   assert.match(parseCli(['x', '--stop']).error, /--stop only goes with conductor preview/);
 });
 
-test('resume inside a project folder finds the project', () => {
+test('resume inside a project folder finds the project; elsewhere it is not a build', async () => {
   const root = tmp('pr-');
   mkdirSync(path.join(root, 'acme-ltd', 'app', 'apps'), { recursive: true });
+  writeFileSync(path.join(root, 'acme-ltd', 'project.json'), '{}');
   assert.equal(projectSlugFor(path.join(root, 'acme-ltd', 'app', 'apps'), root), 'acme-ltd');
   assert.equal(projectSlugFor(root, root), null);
   assert.equal(projectSlugFor(tmp('else-'), root), null);
+  const config = path.join(tmp('cfg-'), 'conductor.json');
+  writeFileSync(config, JSON.stringify({ participants: [], factory: { projectsRoot: root } }));
+  const ctx = { cwd: tmp('else-'), env: {}, stdout: new Writable({ write(c, e, cb) { cb(); } }), isTTY: false };
+  assert.equal(await resumeBuildCommand(parseCli(['resume', '--config', config]), ctx), null, 'main carries on with an ordinary resume');
+  assert.equal(await resumeBuildCommand(parseCli(['resume', '/w/x', '--config', config]), ctx), null, 'a workspace path is never a build');
 });
 
 test('build outcome text', () => {
@@ -125,6 +162,24 @@ test('a machine problem is a plain message and exit 2', async () => {
   assert.match(o.text(), /Every factory machine is in use: hf-build is running a council for bobs-bikes/);
   assert.doesNotMatch(o.text(), /at .*\.js:\d+/, 'no stack trace');
 });
+
+test('build hands the prepared team, hooks and options to runBuild and maps the outcome to an exit code', async () => {
+  const { projectsRoot, slug } = makeProject();
+  const config = path.join(tmp('cfg-'), 'conductor.json');
+  writeFileSync(config, JSON.stringify({ participants: [], factory: { projectsRoot } }));
+  const seen = [];
+  const deps = {
+    prepareRun: async () => ({ built: { team: { author: {}, reviewer: {}, local: {} }, warnings: [] }, hooks: { escalate: async () => 'reject' }, overrides: { approvePlan: true }, remember: () => {} }),
+    runBuild: async (a) => { seen.push(a); return { status: 'paused', runId: 'r', buildDir: '/b', reason: 'Conductor paused: the local model stopped.' }; },
+  };
+  const o = out();
+  const code = await FACTORY_COMMANDS.build(parseCli(['build', slug, '--new', '--config', config]), { cwd: tmp('cwd-'), env: {}, stdin: Readable.from([]), stdout: o.stream, isTTY: false, onSignal: () => {}, exit: () => {}, deps });
+  assert.equal(code, 3);
+  assert.equal(seen[0].slug, slug);
+  assert.deepEqual([seen[0].options.approvePlan, seen[0].options.newBuild], [true, true]);
+  assert.equal(typeof seen[0].hooks.approveBuild, 'function');
+  assert.match(o.text(), /To carry on: conductor build acme-ltd/);
+});
 ```
 
 Append to `test/terminal.test.js`:
@@ -159,16 +214,16 @@ test('a new build feature starts a fresh step list', () => {
 
 - [ ] **Step 2: Run the tests to see them fail**
 
-Run: `node --test test/cli-factory.test.js test/terminal.test.js test/status.test.js test/cli.test.js`
+Run: `node --test test/cli-factory-build.test.js test/terminal.test.js test/status.test.js test/cli.test.js`
 Expected: FAIL.
 
 - [ ] **Step 3: Parse the commands in `src/cli/args.js`**
 
 - `OPTIONS` gains `stop: { type: 'boolean' }` and `new: { type: 'boolean' }`; `flags` gains `stop: v.stop === true, newBuild: v.new === true`; `SUBCOMMANDS` gains `build`, `preview`, `machines`.
-- `build`/`preview`: exactly one argument matching `SLUG_RE`; none → `build needs the project's short name, for example: conductor build acme-ltd (see "conductor project list")` (or `preview needs …`); a bad one → `"<arg>" is not a project's short name (see "conductor project list")`.
+- `build`/`preview`: exactly one argument matching `SLUG_RE` (Task 1). None → `build needs the project's short name, for example: conductor build acme-ltd (see "conductor project list")` (or `preview needs …`). A bad one → `"<arg>" is not a project's short name (see "conductor project list")`.
 - `machines`: no argument → `list`; `list` or `sweep`; anything else → `machines takes "list" or "sweep"`.
 - `--stop` with any command but `preview` → `--stop only goes with conductor preview`; `--new` with any command but `build` → `--new only goes with conductor build`.
-- `USAGE` gains, after `conductor doctor`:
+- `USAGE` gains, after Plan 7's lines:
   ```
     conductor build <project>          build a client's app from its approved brief (carries on an unfinished build)
     conductor preview <project>        run the app with demo data on a factory machine and show its address
@@ -178,41 +233,89 @@ Expected: FAIL.
   and under Options: `--new                  with build: start a fresh build instead of carrying on an unfinished one` and `--stop                 with preview: stop the running preview`.
 - Update the two flag `deepEqual`s in `test/cli.test.js` (`stop: false, newBuild: false`).
 
-- [ ] **Step 4: Implement `src/cli/factory.js`**
+- [ ] **Step 4: Extract `prepareRun` from `src/cli/main.js` (the deviation; no behaviour change)**
 
-- `projectSlugFor`: `path.relative(projectsRoot, realpath(cwd))`; the first segment when it matches `SLUG_RE`, the path does not start with `..`, and `<projectsRoot>/<slug>/project.json` exists; else `null`.
-- `runPreviewCommand`: `stop` → `stopPreview`, print `Stopped the preview of <slug>.` | `There is no preview running for <slug>.` | `The preview's machine was already gone; Conductor cleared its record.`; otherwise `startPreview` and print `previewText`: `The preview of <client>'s app is running (<the build in progress|the approved app>): <url>` / `Open it on a computer or phone on your own network.` / the seeder text / `Stop it with: conductor preview <slug> --stop` (and `The preview is already running` in place of the first line's start for `already`). Errors: a `MachineError` or any error with a plain message → print it, exit 2. Messages are `redact`ed.
-- `runMachinesCommand`: `list` → `Factory machines (<kind>):` then `  <id> <name> <host>: <purpose> for <project> since <whenText(createdAt)>` per machine, or `No factory machines are in use.`; `sweep` → `provider.sweep({ olderThanMs: factory.machines.sweepAfterMs, keep: previewRuns(factory.projectsRoot) })` → `Cleared <n> leftover machine<s>.` (`Nothing was left over.` for 0). Then `Note: …` for each `provider.notes` line. For `list`, the machine's `name` is the static host's `name` (or `CT <vmid>` for Proxmox).
-- `buildOutcomeText`: as in the test; `rejected` → the reason; `failed`/`stopped`/`paused` → the reason, then `To carry on: conductor build <slug>` unless the reason already names that command, then `Build log: <buildDir>/build-log.jsonl` when `buildDir` is set.
+1. Create `src/cli/prepareRun.js`. Move, **unchanged**, the part of `main()` that runs from `let onInterrupt = …` through the building of `overrides` and `hooks`:
+   - the Ctrl-C handler for "before the run starts";
+   - `Checking which AI models are available…`, the worker memory, `workersToCheck`, `ensureWorkers`, `buildTeam`, `couldNotCheck` and `notBuilt`;
+   - the `doctor` branch;
+   - the local-down loop and the warnings;
+   - the usage tracker and `remember`;
+   - the Ctrl-C handler for "after the run starts", with the workspace taken from the `start` event;
+   - `overrides` and `hooks`.
+2. Every early `return <code>` becomes `return { code: <code> }`. The normal end returns `{ built, hooks, overrides, remember }`.
+3. The Ctrl-C messages come from `interruptedText` when given; otherwise they are today's `INTERRUPTED` / `INTERRUPTED_BEFORE_START`, exactly as now.
+4. `main()` keeps everything else. It calls `const p = await prepareRun({ cli, config, term, env, baseDir, workspaceDir, wakeDeps, onSignal, exit }); if ('code' in p) return p.code;`, then runs `runTask`/`resume` exactly as now.
+5. If Plan 7's dispatch treats any handler result as final, change that one call so that `null` falls through to the existing flow (`const r = await runFactoryCommand(cli, ctx); if (r !== null) return r;`).
+6. Run `node --test test/cli.test.js test/cli-*.test.js test/terminal.test.js` → PASS **with no existing test edited** apart from the two flag `deepEqual`s in Step 3.
 
-- [ ] **Step 5: Wire it into `src/cli/main.js`**
+- [ ] **Step 5: Implement `src/cli/factoryBuild.js` and register it**
 
-1. `EXIT` gains `ready: 0`.
-2. Straight after `help`/`version`: for `build`, `preview`, `machines` and `resume`, read the config (same message on failure) and `factory = factoryConfig(config)` (a throw prints `Conductor could not read its config: <message>` and returns `EXIT.usage`).
-3. `resume` without a workspace argument: `slug = projectSlugFor(cwd, factory.projectsRoot)`; when that project's `latestBuild` is unfinished, treat the command as `{ command: 'build', slug, flags }`.
-4. `preview` → `return runPreviewCommand({ factory, slug, stop: cli.flags.stop, print })`; `machines` → `return runMachinesCommand({ factory, action: cli.action, print })`.
-5. The git-repository check runs only for the other commands. `build` uses `baseDir` exactly as today.
-6. After the team is ready and `hooks`/`overrides` are built: for `build`,
-   ```js
-   out = await runBuild({ factory, slug: cli.slug, team: built.team, env,
-     hooks: { ...hooks, approveBuild: term.approveBuild, onProgress: (t) => term.say(t) },
-     options: { ...config.options, ...overrides, ...(cli.flags.newBuild ? { newBuild: true } : {}) }, baseDir, warnings: built.warnings });
-   ```
-   then `remember()`, print `buildOutcomeText(out, { slug, client: project.client, appDir })` and return `EXIT[out.status] ?? EXIT.failed`. A throw prints `Conductor could not start the build: <redacted message>` and returns `EXIT.usage`. The `INTERRUPTED` text for a build is `Stopped. The build so far is kept. To carry on later, run:  conductor build <slug>`.
+- **Shared start of every handler:**
+  - `print = (s) => ctx.stdout.write(\`${s}\n\`)`.
+  - Read the config the way Plan 7's handlers do: `loadConfig(findConfig({ flag: cli.flags.config, cwd, env }))`, then `factory = factoryConfig(config, { env })`.
+  - On a failure, print `Conductor could not read its config: <message>` and return 64. `resumeBuildCommand` instead returns `null`, so `main()` reports the problem its usual way.
+- `projectSlugFor`: `path.relative(projectsRoot, realpath(cwd))`. Returns the first segment when it matches `SLUG_RE`, the path does not start with `..`, and `<projectsRoot>/<slug>/project.json` exists; otherwise `null`.
+- `previewCommand` → `runPreviewCommand({ factory, slug: cli.slug, stop: cli.flags.stop, print, deps: ctx.deps })`.
+- `runPreviewCommand`:
+  - `stop` → `stopPreview`, then print one of `Stopped the preview of <slug>.` | `There is no preview running for <slug>.` | `The preview's machine was already gone; Conductor cleared its record.`
+  - Otherwise `startPreview` and print `previewText`:
+    - `The preview of <client>'s app is running (<the build in progress|the approved app>): <url>`; for `already`, the line starts `The preview is already running` instead;
+    - `Open it on a computer or phone on your own network.`;
+    - the seeder text;
+    - `Stop it with: conductor preview <slug> --stop`.
+  - Errors: a `MachineError`, or any error with a plain message → print it and return 2.
+  - Every message is `redact`ed.
+- `machinesCommand` → `runMachinesCommand({ factory, action: cli.action, print, deps: ctx.deps })`.
+- `runMachinesCommand`:
+  - `list` → `Factory machines (<kind>):`, then `  <id> <name> <host>: <purpose> for <project> since <whenText(createdAt)>` for each machine, or `No factory machines are in use.`. `name` is the static host's `name`, or `CT <vmid>` for Proxmox.
+  - `sweep` → `provider.sweep({ olderThanMs: factory.machines.sweepAfterMs, keep: previewRuns(factory.projectsRoot) })`, then `Cleared <n> leftover machine<s>.` (`Nothing was left over.` for 0).
+  - Then one `Note: …` line for each `provider.notes` entry.
+- `buildCommand(cli, ctx)`:
+  1. `readProject(factory.projectsRoot, cli.slug)`. Its plain error → print `Conductor could not start the build: <message>`, return 64.
+  2. `term = createTerminal({ input: ctx.stdin, output: ctx.stdout, isTTY: ctx.isTTY, bell: cli.flags.bell })`; `baseDir = env.CONDUCTOR_BASE_DIR || defaultBaseDir(env)`.
+  3. `p = await (ctx.deps?.prepareRun ?? prepareRun)({ cli, config, term, env, baseDir, onSignal: ctx.onSignal, exit: ctx.exit, interruptedText: \`Stopped. The build so far is kept. To carry on later, run:  conductor build ${cli.slug}\` })`. If `'code' in p`, return `p.code`.
+  4. Call `runBuild` (or `ctx.deps.runBuild` in tests):
+     ```js
+     out = await runBuild({ factory, slug: cli.slug, team: p.built.team, env,
+       hooks: { ...p.hooks, approveBuild: term.approveBuild, onProgress: (t) => term.say(t) },
+       options: { ...config.options, ...p.overrides, ...(cli.flags.newBuild ? { newBuild: true } : {}) }, baseDir, warnings: p.built.warnings });
+     ```
+  5. A throw → `p.remember()`, print `Conductor could not start the build: <redacted message>`, return 64.
+  6. Otherwise `p.remember()`, print `buildOutcomeText(out, { slug, client: project.client, appDir: <dir>/app })`, `term.close()`, and return `BUILD_EXIT[out.status] ?? 2`.
+- `resumeBuildCommand(cli, ctx)`:
+  - Returns `null` when `cli.workspaceDir` is set, the config cannot be read, `projectSlugFor(cwd, factory.projectsRoot)` is `null`, or that project's `latestBuild` is missing or finished (`ready`/`rejected`).
+  - Otherwise it returns `buildCommand({ ...cli, command: 'build', slug }, ctx)`.
+- `buildOutcomeText`:
+  - `ready` → as in the test;
+  - `rejected` → the reason;
+  - `failed`/`stopped`/`paused` → the reason, then `To carry on: conductor build <slug>` (unless the reason already names that command), then `Build log: <buildDir>/build-log.jsonl` when `buildDir` is set.
+- In `src/cli/factory.js` (Plan 7's file), add `build: buildCommand, preview: previewCommand, machines: machinesCommand, resume: resumeBuildCommand` to `FACTORY_COMMANDS`. Change nothing else there.
 
 - [ ] **Step 6: Terminal and status view**
 
-- `src/ui/terminal.js`: `NO_TTY_BUILD = "There is no terminal to ask you, so the build was not approved and the app's main branch is unchanged. Run Conductor in a terminal to approve it."`; `approveBuild = prompt(async ({ summary }) => …)` prints `\n=== The finished app is ready for your approval ===\n<summary>\n`, then asks `[a] approve: mark the app ready · [f] send feedback to fix · [r] reject > ` (`a` → `true`; `f` → `Your feedback (one line): ` → `{ approved: false, note }`; `r` or end of input → `false`); export it from `createTerminal`'s return value.
+- `src/ui/terminal.js`:
+  - `NO_TTY_BUILD = "There is no terminal to ask you, so the build was not approved and the app's main branch is unchanged. Run Conductor in a terminal to approve it."`.
+  - `approveBuild = prompt(async ({ summary }) => …)` prints `\n=== The finished app is ready for your approval ===\n<summary>\n`, then asks `[a] approve: mark the app ready · [f] send feedback to fix · [r] reject > `:
+    - `a` → `true`;
+    - `f` → asks `Your feedback (one line): ` and returns `{ approved: false, note }`;
+    - `r` or end of input → `false`.
+  - Export it from `createTerminal`'s return value.
 - `src/ui/status.js`: move the constructor's field set-up into `reset()` (called by the constructor), and add `case 'build-feature': this.reset(); break;` to `apply`.
 
 - [ ] **Step 7: Run the tests**
 
-Run: `node --test test/cli-factory.test.js test/terminal.test.js test/status.test.js test/cli.test.js && npm test`
+Run: `node --test test/cli-factory-build.test.js test/terminal.test.js test/status.test.js test/cli.test.js && npm test`
 Expected: PASS.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add src/cli/factory.js src/cli/args.js src/cli/main.js src/ui/terminal.js src/ui/status.js test/cli-factory.test.js test/cli.test.js test/terminal.test.js test/status.test.js
-git commit -m "feat(cli): conductor build, preview and machines; resume carries on a build"
+git add src/cli/factoryBuild.js src/cli/prepareRun.js src/cli/factory.js src/cli/args.js src/cli/main.js src/ui/terminal.js src/ui/status.js test/cli-factory-build.test.js test/cli.test.js test/terminal.test.js test/status.test.js
+git commit -m "feat(cli): conductor build, preview and machines as factory commands; resume carries on a build
+
+Moves main()'s team preparation into prepareRun unchanged, so build reuses it
+(a recorded deviation from Contract 7 §7.3).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

@@ -2,13 +2,15 @@
 
 Everything Plan 10 does on a box or a build machine goes through one small module: build a safe `ssh` command line, run a remote command (optionally feeding it standard input), stream a file from one machine to another, and turn SSH failures into plain English. The tests get a scripted fake `ssh` so no test ever opens a real connection.
 
+Contract 7 §7.1: `src/factory/ship/remote.js` stays Plan 10's (client boxes need standard input, streaming and box-specific messages that Plan 8's `createSsh` does not offer), but it **imports `shQuote` and `assertSafe` from Plan 8's `src/factory/remote.js`** and has no quoting or validation function of its own.
+
 **Files:**
 - Create: `src/factory/ship/remote.js`, `test/helpers/fakeSsh.js`
 - Modify: `src/exec.js` (add `spawnTracked`)
 - Test: `test/factory-remote.test.js`, `test/exec.test.js` (append)
 
 **Interfaces:**
-- Consumes: `runCommand`, the `LIVE` set in `src/exec.js`; `strictChildEnv`, `redact`, `rememberSecret` (Task 1) from `src/secrets.js`; `findBin` from `src/council/tools.js`.
+- Consumes: `runCommand`, the `LIVE` set in `src/exec.js`; `strictChildEnv`, `redact`, `rememberSecret` (Task 1) from `src/secrets.js`; `findBin` from `src/council/tools.js`; `shQuote`, `assertSafe` from Plan 8's `src/factory/remote.js`; the `Machine` shape of Contract 7 §7.8 (for `targetOfMachine`).
 - Produces: the Task 2 block of the index's Shared Interfaces, and the test helper:
 
 ```js
@@ -29,19 +31,22 @@ Rule = { match: string /* RegExp source, tested against the remote command */, h
 **Rules for `sshArgs(t, command)`** (exact order, so tests can pin it):
 
 ```js
-['-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=15',
+['-o', 'BatchMode=yes', '-o', `StrictHostKeyChecking=${t.hostKeyPolicy ?? 'yes'}`, '-o', 'ConnectTimeout=15',
  '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=4',
+ ...(t.knownHostsFile ? ['-o', `UserKnownHostsFile=${t.knownHostsFile}`] : []),
  ...(t.port ? ['-p', String(t.port)] : []),
  ...(t.keyPath ? ['-i', t.keyPath, '-o', 'IdentitiesOnly=yes'] : []),
  '-l', t.user, '--', t.host, command]
 ```
 
-- `targetProblem` re-checks host and user with Task 1's patterns (a machine from Contract 3 is not a validated record) and returns `Conductor will not connect to "<host>": it does not look like a host name.` or similar.
+- `targetOf(dep)` = `{ host, user: ssh.user, port: ssh.port, keyPath: ssh.keyPath, knownHostsFile: null, hostKeyPolicy: 'yes', label: dep.name }`: a client box **always** uses `StrictHostKeyChecking=yes` and the operator's own `known_hosts`.
+- `targetOfMachine(machine)` = `{ host: machine.host, user: machine.ssh.user, port: null, keyPath: machine.ssh.keyPath, knownHostsFile: machine.ssh.knownHostsFile, hostKeyPolicy: machine.ssh.hostKeyPolicy, label: 'the build machine (<host>)' }`: a factory machine keeps the host-key policy Plan 8's provider gave it (`'yes'` for static hosts, `'accept-new'` with a per-run known-hosts file for fresh Proxmox containers).
+- `targetProblem(t)` runs `assertSafe('host', t.host)`, `assertSafe('user', t.user)`, `assertSafe('port', t.port)` when set and `assertSafe('path', …)` for `keyPath`/`knownHostsFile` when set, and also refuses a host starting with `-`, and a `hostKeyPolicy` other than `'yes'`/`'accept-new'` (missing counts as `'yes'`, so a plain `{ host, user, port, keyPath, label }` target is a strict one) (a machine from Contract 3 is not a validated record). It catches `assertSafe`'s throw and returns the plain message `Conductor will not connect to "<host>": it does not look like a host name.` (or `… user name`, `… port`, `… key file`).
 - `remoteRun` refuses (without spawning) when `targetProblem` is non-null, returning `{ code: -1, unreachable: true, stderr: <problem>, … }`. It spawns `findBin('ssh')` with `strictChildEnv({ env })` plus `SSH_AUTH_SOCK` copied back if present (the agent socket is not secret, and strict env would keep it anyway because its name is not secret-looking; copy explicitly so a future change to the strict filter cannot break agent auth). `unreachable` is `code === 255 || timedOut` (OpenSSH uses 255 for its own failures).
 - `remotePipe(from, to)` spawns both with `spawnTracked`, pipes `from.stdout` into `to.stdin`, ends `to.stdin` when `from` ends, and resolves `{ ok: true }` only when both exit 0. Any other result kills the other side and gives `why`: `the copy from <from.label> stopped (code N)` / `the copy to <to.label> stopped (code N)` / `the copy took longer than <minutes> minutes`.
 - `sendFile(localPath, to)` is the same with `createReadStream(localPath)` as the source.
 - `sshProblem(t, r)`: timed out → `<label> did not answer over SSH in time.`; 255 → `Could not reach <label> over SSH: <first stderr line, redacted, at most 160 characters>. Check the box is on, the SSH key is authorised and its host key is in ~/.ssh/known_hosts (see README, "Shipping client apps").`; otherwise `A command on <label> failed (code N): <first stderr line, redacted>.`
-- `shq(s)`: `'` + `s.replaceAll("'", "'\\''")` + `'`.
+- Quoting: every value put into a remote command anywhere in Plan 10 goes through Plan 8's `shQuote` (single quotes, `'` → `'\''`). Plan 10 has no `shq`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -53,11 +58,11 @@ import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fakeSsh } from './helpers/fakeSsh.js';
-import { sshArgs, shq, targetProblem, remoteRun, remotePipe, sendFile, sshProblem, missingTools } from '../src/factory/ship/remote.js';
+import { sshArgs, targetOf, targetOfMachine, targetProblem, remoteRun, remotePipe, sendFile, sshProblem, missingTools } from '../src/factory/ship/remote.js';
 
 const tmp = () => mkdtempSync(path.join(tmpdir(), 'remote-'));
-const BOX = { host: 'acme-box', user: 'highland', port: null, keyPath: null, label: 'acme-office' };
-const BUILD = { host: 'hf-build', user: 'hf', port: 2222, keyPath: '/root/.ssh/hf', label: 'the build machine' };
+const BOX = { host: 'acme-box', user: 'highland', port: null, keyPath: null, knownHostsFile: null, hostKeyPolicy: 'yes', label: 'acme-office' };
+const BUILD = { host: 'hf-build', user: 'hf', port: 2222, keyPath: '/root/.ssh/hf', knownHostsFile: null, hostKeyPolicy: 'yes', label: 'the build machine' };
 
 test('sshArgs never prompts, never trusts a new host key, and ends options before the host', () => {
   assert.deepEqual(sshArgs(BUILD, 'echo hi'), ['-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=15',
@@ -65,8 +70,13 @@ test('sshArgs never prompts, never trusts a new host key, and ends options befor
     '-l', 'hf', '--', 'hf-build', 'echo hi']);
 });
 
-test('shq quotes anything for a POSIX shell', () => {
-  assert.equal(shq("it's $HOME"), `'it'\\''s $HOME'`);
+test('a box always checks host keys strictly; a factory machine keeps its provider\'s policy', () => {
+  const dep = { name: 'acme-office', host: 'acme-box', ssh: { user: 'highland', port: 2200, keyPath: null } };
+  assert.deepEqual(targetOf(dep), { host: 'acme-box', user: 'highland', port: 2200, keyPath: null, knownHostsFile: null, hostKeyPolicy: 'yes', label: 'acme-office' });
+  const m = targetOfMachine({ id: 'm1', host: '10.0.0.9', ssh: { user: 'hf', keyPath: '/k', knownHostsFile: '/runs/kh', hostKeyPolicy: 'accept-new' } });
+  assert.deepEqual(sshArgs(m, 'true').slice(0, 4), ['-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new']);
+  assert.ok(sshArgs(m, 'true').includes('UserKnownHostsFile=/runs/kh'));
+  assert.equal(m.label, 'the build machine (10.0.0.9)');
 });
 
 test('a host that looks like an option is refused without running ssh', async () => {
@@ -155,5 +165,7 @@ Expected: PASS.
 
 ```bash
 git add src/exec.js src/factory/ship/remote.js test/helpers/fakeSsh.js test/factory-remote.test.js test/exec.test.js
-git commit -m "feat(ship): SSH runner with safe arguments, streaming copies and a scripted fake ssh"
+git commit -m "feat(ship): SSH runner with safe arguments, streaming copies and a scripted fake ssh
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

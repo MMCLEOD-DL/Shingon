@@ -14,7 +14,7 @@ This task finishes Plan 7 in two parts:
   - `spikes/brief-smoke/RESULT.md`.
 
 **Interfaces:**
-- Consumes: the `project` and `brief` commands (Tasks 9–10); `loadBrief` and `validateBrief` (Tasks 3–4).
+- Consumes: the `project` and `brief` commands (Tasks 9–10); `loadBrief` and `validateBrief` (Tasks 3–4); `acceptanceIds` and `OUTBOUND_SERVICES` (Task 2).
 - Produces: the operator command `bash spikes/brief-smoke/run-brief-smoke.sh`, and the docs.
 
 - [ ] **Step 1: Update `config.example.json`**
@@ -59,6 +59,14 @@ left to ask, you see the whole brief and choose `a` approve, `c` ask for changes
   to the frontier model writing the brief, never to the local model.
 - **Vague examples are refused.** "It works correctly" can't become a test, so Conductor sends it
   back to the AI before you ever see it.
+- **Each example gets a tag** such as `[upload-receipt#1]` when you approve. The factory's tests
+  carry the same tag, so you can see which example each test proves. A revised brief keeps the
+  tag of every example whose words did not change; a new or reworded example gets a new number,
+  and an old number is never reused.
+- **Outside services come from a fixed list.** The data policy names the services data may go
+  to by id (today `cloudflare-tunnel` and `azure-document-intelligence`). Anything else is
+  refused until it has been added to Conductor's list, so a brief can never quietly allow a
+  service nobody has checked.
 - **Nothing is lost if you stop.** Run `conductor brief <project>` later to carry on where you
   left off. `conductor brief <project> --discard-draft` throws an unfinished brief away (your
   notes are kept).
@@ -81,6 +89,9 @@ left to ask, you see the whole brief and choose `a` approve, `c` ask for changes
 Under "Settings", add the `factory` keys:
 - `projectsRoot`: where project folders go. It must start with `/` or `~`, and can be overridden by the `CONDUCTOR_PROJECTS_ROOT` environment variable;
 - `operatorName`: the name recorded on approved briefs.
+
+Later factory plans add their own keys to the same `factory` section (for example the
+foundation repo and build settings).
 
 - [ ] **Step 3: Write the fictional notes**
 
@@ -125,6 +136,8 @@ node --input-type=module -e "
   console.log('version', b.version, 'approved by', b.approvedBy, 'features', b.features.length);
   console.log('policy', JSON.stringify(b.policy));
   console.log('valid', JSON.stringify(validateBrief(b, { stage: 'approved' })));
+  const { acceptanceIds } = await import('$ROOT/src/factory/acceptance.js');
+  console.log('example ids', acceptanceIds(b).map((a) => a.id).join(' '));
 " || echo "FAIL: loadBrief"
 
 echo "== 4. revise: press Ctrl-C at the first question, then carry on =="
@@ -133,6 +146,15 @@ $C project show thistle
 $C brief thistle; echo "exit: $?"
 $C project list
 ls -l "$CONDUCTOR_PROJECTS_ROOT/thistle/brief"
+echo "== 5. example ids: unchanged examples keep their tag from v1 to v2 =="
+node --input-type=module -e "
+  import { readFileSync } from 'node:fs';
+  import { acceptanceIds } from '$ROOT/src/factory/acceptance.js';
+  for (const v of [1, 2]) {
+    const b = JSON.parse(readFileSync('$CONDUCTOR_PROJECTS_ROOT/thistle/brief/brief-v' + v + '.json', 'utf8'));
+    console.log('v' + v, acceptanceIds(b).map((a) => a.id).join(' '));
+  }
+" || echo "FAIL: example ids"
 echo "Fill in spikes/brief-smoke/RESULT.md."
 ```
 
@@ -152,6 +174,8 @@ echo "Fill in spikes/brief-smoke/RESULT.md."
 - Any vague worked example reach you? (expected: none)
 - 3. Version, policy line, `valid` output:
 - 4. Ctrl-C exit code; `project show` said "unfinished"; carry-on worked; v2 written, v1 kept?
+- 5. Example ids: did v2 keep v1's tags for unchanged examples, and give the new mileage examples new numbers?
+- `policy.outbound` in the approved brief (expected `[]`: the notes say no outside company):
 - Time for the whole sitting:
 
 ## Observations
@@ -170,5 +194,5 @@ Expected: no output from `bash -n`, and all tests PASS.
 
 ```bash
 git add README.md config.example.json spikes/brief-smoke
-git commit -m "docs(factory): projects and briefs in the README; operator-run brief smoke"
+git commit -m "docs(factory): projects and briefs in the README; operator-run brief smoke" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

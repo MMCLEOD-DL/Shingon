@@ -8,7 +8,7 @@ This task gives every deployment a small, safe record at `<projectDir>/deploymen
 - Test: `test/factory-deployments-store.test.js`, `test/secrets.test.js` (append)
 
 **Interfaces:**
-- Consumes: `secretValues` from `src/secrets.js`.
+- Consumes: `secretValues` from `src/secrets.js`; `writeJsonAtomic`, `createFileExclusive` from Plan 7's `src/factory/fsAtomic.js` (Contract 7 §7.1); `validateSlug` from Plan 7's `src/factory/projects.js`.
 - Produces: everything under "Task 1" in the index's Shared Interfaces, plus `class DeploymentError extends Error`; and in `src/secrets.js`, `rememberSecret(value)` / `forgetRememberedSecrets()` (every later task uses them).
 
 Field rules (`validateDeployment` returns every problem, in this order, in plain English):
@@ -17,7 +17,7 @@ Field rules (`validateDeployment` returns every problem, in this order, in plain
 |---|---|
 | `schema` | exactly `1` |
 | `name` | `/^[a-z0-9][a-z0-9-]{0,39}$/` |
-| `project` | `/^[a-z0-9][a-z0-9-]{0,63}$/` |
+| `project` | a valid project slug (`validateSlug` returns null) |
 | `host` | `/^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$/` (hostname, IPv4 or `~/.ssh/config` alias; never starts with `-`) |
 | `ssh.user` | `/^[a-z_][a-z0-9_-]{0,31}$/`; `ssh.port` null or integer 1–65535; `ssh.keyPath` null or absolute path |
 | `bundleDir` | `/^\/[A-Za-z0-9._\/-]+$/`, no `..` segment, not `/` |
@@ -28,6 +28,7 @@ Field rules (`validateDeployment` returns every problem, in this order, in plain
 | `site` | non-empty; must be `:80` when `access` is `cloudflare-tunnel` |
 | `setup.step` | one of `SETUP_STEPS` |
 | `currentVersion` | null or `x.y.z` |
+| `foundation` | null or `vX.Y.Z` (always with the `v`, Contract 7 §7.5) |
 | `history[].outcome` | one of `OUTCOMES` |
 
 **Secret refusal** (in `saveDeployment`, after validation): walk the object; refuse when any **key** matches `/token|password|secret|passphrase|credential|apikey|api_key/i` (so `keyPath` is allowed), or when any **string value** contains a value from `secretValues()`. The message never quotes the value: `The deployment record for acme-office was not saved because it would have held a secret (in alerts.matrix). This is a bug in Conductor; nothing was written.`
@@ -73,6 +74,8 @@ test('validation explains each bad field in plain words', () => {
   assert.ok(r.problems.some((p) => /bundle folder/.test(p)));
   assert.ok(r.problems.some((p) => /:80/.test(p)));
   assert.ok(r.problems.some((p) => /registry/.test(p)));
+  assert.ok(validateDeployment({ ...newDeployment(BASE), foundation: '0.1.0' }).problems.some((p) => /foundation/.test(p)));
+  assert.equal(validateDeployment({ ...newDeployment(BASE), foundation: 'v0.1.0' }).ok, true);
 });
 
 test('save is atomic, round-trips, and leaves no temp files', () => {
@@ -111,6 +114,7 @@ test('listDeployments walks every project and reports unreadable records instead
   writeFileSync(path.join(b, 'deployments', 'shop.json'), '[]');
   const list = listDeployments(root);
   assert.deepEqual(list.map((e) => [e.slug, e.name, e.problem === null]), [['acme', 'acme-office', true], ['bobs', 'shop', false]]);
+  assert.deepEqual(listDeployments(root, { slug: 'bobs' }).map((e) => e.name), ['shop']);
   assert.deepEqual(listDeployments(path.join(root, 'missing')), []);
 });
 
@@ -163,11 +167,11 @@ A module-level `Set`. `rememberSecret(v)` adds strings of length ≥ 4 (shorter 
 
 - [ ] **Step 4: Implement `src/factory/deployments/store.js`**
 
-- Atomic write: `writeFileSync(tmp, text, { mode: 0o644 })` where `tmp = <file>.tmp-<pid>-<random>`, `fsyncSync` on the file, `renameSync(tmp, file)`, then fsync the directory (`openSync(dir, 'r')`, ignore errors). `mkdirSync(deployments, { recursive: true })` first.
+- Atomic write: `mkdirSync(deployments, { recursive: true })`, then Plan 7's `writeJsonAtomic(file, dep, { mode: 0o644 })` (no local copy of the temp-fsync-rename logic).
 - `newDeployment(fields)` fills `schema: 1`, `setup: { step: 'new', at: null }`, `currentVersion: null`, `foundation: null`, `bundleVersion: null`, `pendingCheck: null`, `lastStatus: null`, `history: []`, and throws `DeploymentError` with the joined problems if invalid.
 - `loadDeployment` wraps parse and validation failures as `The deployment record <file> could not be read (<first problem>). Fix or remove it.`
-- `listDeployments(root)`: `readdirSync(root, { withFileTypes: true })` directories sorted, then `deployments/*.json` sorted; `problem` is the `DeploymentError` message, `deployment` null in that case. A missing `root` returns `[]`.
-- `lockDeployment`: file `<name>.lock` holding `{ pid, at }`, created with flag `wx`. On `EEXIST` read it; if `!isAlive(holder.pid)` replace it (write temp + rename) and return a lock; else `null`. `release()` unlinks only if the file still holds this lock's pid. `defaultIsAlive(pid)` is `process.kill(pid, 0)` true unless it throws `ESRCH`.
+- `listDeployments(root, { slug = null } = {})`: `readdirSync(root, { withFileTypes: true })` directories whose name is a valid slug (`validateSlug` returns null) (and equals `slug` when given), sorted, then `deployments/*.json` sorted; `problem` is the `DeploymentError` message, `deployment` null in that case. A missing `root` returns `[]`. Plan 11 lists one project's deployments with `{ slug }`.
+- `lockDeployment`: file `<name>.lock` holding `{ pid, at }`, created with Plan 7's `createFileExclusive`. On `EEXIST` read it; if `!isAlive(holder.pid)` replace it (write temp + rename) and return a lock; else `null`. `release()` unlinks only if the file still holds this lock's pid. `defaultIsAlive(pid)` is `process.kill(pid, 0)` true unless it throws `ESRCH`.
 
 - [ ] **Step 5: Run tests to verify they pass**
 
@@ -178,5 +182,7 @@ Expected: PASS.
 
 ```bash
 git add src/secrets.js src/factory/deployments/store.js test/factory-deployments-store.test.js test/secrets.test.js
-git commit -m "feat(ship): deployment records (Contract 4) with atomic, secret-refusing saves"
+git commit -m "feat(ship): deployment records (Contract 4) with atomic, secret-refusing saves
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

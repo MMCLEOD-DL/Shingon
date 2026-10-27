@@ -100,5 +100,5 @@ Expected: all PASS.
 
 ```bash
 git add src/ui/terminal.js test/terminal.test.js
-git commit -m "feat(ui): terminal prompts for brief questions, approval and discarding a draft"
+git commit -m "feat(ui): terminal prompts for brief questions, approval and discarding a draft" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

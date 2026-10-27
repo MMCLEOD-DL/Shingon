@@ -2,7 +2,7 @@
 
 `updater update --to <v>` ends with an exit code and one outcome message (printed by the updater and also sent to the alert channel). Exit code 1 alone means four different things, so this task reads the message as well. It turns both into one of Contract 4's outcomes, the backup id when there is one, any front-door warning, and a short paragraph for the operator. It also fixes `ship`'s own exit codes.
 
-The messages below are the foundation's v0.1.0 wording, copied from `/root/highland-foundation/ops/src/update.ts` and `ops/src/journal.ts`. They are test fixtures: **if a foundation release changes the wording, these tests are where it shows** (Contract gap 8).
+The messages below are the foundation's v0.1.0 wording, copied from `/root/highland-foundation/ops/src/update.ts` and `ops/src/journal.ts`. They are test fixtures: **if a foundation release changes the wording, these tests are where it shows**. Foundation v0.2.0 adds `updater update --json` (Contract 7 §7.9, built in Plan 12 milestone 1); switching to it is a follow-up once apps are on v0.2.0, so this parser stays pinned to v0.1.0.
 
 **Files:**
 - Create: `src/factory/ship/outcomes.js`
@@ -118,5 +118,7 @@ Expected: PASS.
 
 ```bash
 git add src/factory/ship/outcomes.js test/factory-outcomes.test.js
-git commit -m "feat(ship): map the foundation's update outcomes to plain English and exit codes"
+git commit -m "feat(ship): map the foundation's update outcomes to plain English and exit codes
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

@@ -6,17 +6,17 @@
 2. **Merge in a scratch clone** of the app (`builds/<runId>/merge/`), never in the app folder itself: fetch the tag's commit **from** the foundation repo (read-only), check the app shares history with the foundation, and `git merge --no-ff --no-commit`.
 3. **Settle what is mechanical** (index Ruling 5): `foundation.json` takes the foundation's, `CHANGELOG.md` keeps the app's, and `package.json`/`package-lock.json` conflict hunks that are only the `"version"` line keep the app's.
 4. **Stop on what cannot be resolved by editing text:** delete-versus-edit and binary conflicts. Nothing is changed in the app.
-5. **Commit the merge**, with conflict markers left in the remaining files, on a new branch `factory/upgrade-<tag>-<runId>` that is landed into the app create-only (the core's `land()`; the app's `main` is not touched). The build then starts from that branch (Task 4 `baseRef`).
+5. **Commit the merge**, with conflict markers left in the remaining files, on a new branch `factory/upgrade-<tag>-<runId>` that is landed into the app create-only (the core's `land()`; the app's `main` is not touched). The build then starts from that branch (`options.change.baseRef`, Task 4).
 
-It also produces the single build item for Plan 8's loop and the changelog lines.
+It also produces the single build unit for Plan 8's `runBuild` (change mode, Task 4) and the changelog lines.
 
 **Files:**
 - Create: `src/factory/change/upgradeMerge.js`
 - Test: `test/factory-upgrade-merge.test.js`
 
 **Interfaces:**
-- Consumes: `git`, `Workspace` (for `land()`) from `src/workspace.js`; `releaseTags`, `compareVersions` from Task 2; `makeFoundation`, `makeProject` from Task 1.
-- Produces: `MAX_CONFLICT_FILES`, `upgradeTargetProblem`, `resolveVersionHunks`, `prepareUpgradeMerge`, `upgradeItem`, `upgradeChangelogLines` (index), and these exact texts:
+- Consumes: `git`, `Workspace` (for `land()`) from `src/workspace.js`; `releaseTags` (Task 2) and `compareVersions` (Plan 10), both from `src/factory/foundationLog.js`; the `ChangeUnit` shape (Task 3) and `MAX_INSTRUCTIONS` (Plan 8 `split.js`); `makeFoundation`, `makeProject` from Task 1.
+- Produces: `MAX_CONFLICT_FILES`, `upgradeTargetProblem`, `resolveVersionHunks`, `prepareUpgradeMerge`, `upgradeUnit`, `upgradeChangelogLines` (index), and these exact texts:
   - `` `The foundation has no release called ${toTag}. Releases available: ${tags.join(', ')}.` ``
   - `` `${toTag} is not a foundation release name. Use the form v1.2.3.` ``
   - `` `This app is already on the foundation's ${fromTag}.` `` / `` `${toTag} is older than the foundation release this app is on (${fromTag}). Conductor does not move apps back to older foundation releases.` ``
@@ -46,9 +46,10 @@ test('resolveVersionHunks keeps the app side of a hunk that is only the version 
 
 test('a clean upgrade with only mechanical conflicts: merge committed on a new branch, no conflicts left, app main untouched', async () => {
   const before = (await git(appDir, ['rev-parse', 'main'])).stdout.trim();
-  const r = await prepareUpgradeMerge({ appDir, foundationRepo: f.dir, fromTag: 'v0.1.0', toTag: 'v0.1.1', runId: 'upgrade-20261027-143205', scratchDir });
+  const r = await prepareUpgradeMerge({ appDir, foundationRepo: f.dir, fromTag: 'v0.1.0', toTag: 'v0.1.1', runId: '20261027-143205-a1b2', scratchDir });
   assert.equal(r.status, 'ready');
-  assert.equal(r.branch, 'factory/upgrade-v0.1.1-upgrade-20261027-143205');
+  assert.equal(r.branch, 'factory/upgrade-v0.1.1-20261027-143205-a1b2');
+  assert.equal(r.tagSha, f.tagSha('v0.1.1'));
   assert.deepEqual(r.conflicts, []);
   assert.deepEqual(r.autoResolved.sort(), ['CHANGELOG.md', 'foundation.json', 'package-lock.json', 'package.json']);
   assert.equal(r.mainAtStart, before);
@@ -79,14 +80,16 @@ test('delete-versus-edit stops with a plain list and changes nothing in the app'
 test('a binary file changed on both sides stops the same way', ...)          // /both changed this file and it is not text/
 test('an app with no shared history with the foundation is refused', ...)    // NOT_FROM_FOUNDATION; app refs unchanged
 test('the foundation repo is never written', ...)                             // refsOf(f.dir) and `git status --porcelain` unchanged after a ready run
-test('upgradeItem names every conflicted file and lists what the foundation changed', () => {
-  const item = upgradeItem({ fromTag: 'v0.1.0', toTag: 'v0.1.1', conflicts: ['apps/server/src/app.ts'], changes: [{ version: '0.1.1', lines: ['**[security]** Sessions now expire after 12 hours.'] }] });
+test('upgradeUnit is a Plan 8 fix unit that names every conflicted file and lists what the foundation changed', () => {
+  const item = upgradeUnit({ fromTag: 'v0.1.0', toTag: 'v0.1.1', conflicts: ['apps/server/src/app.ts'], changes: [{ version: '0.1.1', lines: ['**[security]** Sessions now expire after 12 hours.'] }] });
   assert.equal(item.id, 'foundation-upgrade-v0-1-1');
   assert.equal(item.change, 'foundation-upgrade');
-  assert.match(item.story, /apps\/server\/src\/app\.ts/);
-  assert.match(item.story, /keep both the foundation's fix and the app's own behaviour/);
-  assert.match(item.story, /npm run verify/);
-  assert.match(item.story, /Do not edit the foundation's own files beyond resolving the conflicts/);
+  assert.deepEqual([item.kind, item.covers, item.acceptance, item.dependsOn, item.retire], ['fix', [], [], [], []]);
+  assert.ok(item.instructions.length <= MAX_INSTRUCTIONS);
+  assert.match(item.instructions, /apps\/server\/src\/app\.ts/);
+  assert.match(item.instructions, /keep both the foundation's fix and the app's own behaviour/);
+  assert.match(item.instructions, /npm run verify/);
+  assert.match(item.instructions, /Do not edit the foundation's own files beyond resolving the conflicts/);
 });
 test('upgradeChangelogLines: one upgrade line plus each security fix, marked so the app\'s own changelog records it', () => {
   assert.deepEqual(upgradeChangelogLines({ fromTag: 'v0.1.0', toTag: 'v0.1.1', security: [{ version: '0.1.1', lines: ['Sessions now expire after 12 hours.'] }] }), [
@@ -113,9 +116,14 @@ Expected: FAIL (module not found).
   6. Mechanical rules: `git checkout --theirs -- foundation.json`, `git checkout --ours -- CHANGELOG.md`, `resolveVersionHunks` on `package.json` and `package-lock.json` (fully resolved files go to `autoResolved`, others stay as conflicts). `git add` the resolved ones.
   7. The remaining files are `conflicts`. `git add -A`, then commit `foundation: merge <toTag>` (or `… (N files need their conflicts resolved: a, b)`), keeping both parents (`git commit --no-edit -m`).
   8. `new Workspace(scratchDir, branch, mainAtStart).land({ repoDir: appDir, branch, sha: mergeSha })`; any failure → `stopped` with `` `Conductor could not add the foundation merge to the app: ${error}. Nothing else was changed.` ``
-  9. Remove the scratch folder and return `ready`.
+  9. Remove the scratch folder and return `ready` with `tagSha` (the pipeline records it as `project.json.foundation.commit` at merge, Contract 7.5).
 - `resolveVersionHunks`: scan for `<<<<<<< …` / `=======` / `>>>>>>> …` blocks; a block whose two sides, trimmed, each match `/^"version":\s*"[^"]*",?$/` becomes the ours side; others are left as they are and counted.
-- `upgradeItem({ fromTag, toTag, conflicts, changes })`: `id` `foundation-upgrade-<toTag with dots as dashes, no v>`, `title` `Upgrade the foundation to <toTag>`, `change: 'foundation-upgrade'`, `roles: []`, `data: []`, `acceptance: [{ given: 'the upgraded app', when: 'npm run verify and the browser tests run', then: 'they pass, and the role-crossing report shows no failures' }]`. The story lists the foundation's changelog lines (`changes`), then either "These files contain both versions side by side: …; keep both the foundation's fix and the app's own behaviour in each" or "The merge had no conflicts: check the app still builds and passes its tests", then "Do not edit the foundation's own files beyond resolving the conflicts."
+- `upgradeUnit({ fromTag, toTag, conflicts, changes })`: a Plan 8 `Unit` plus `change` and `retire`: `id` `foundation-upgrade-<toTag with dots as dashes>` (e.g. `foundation-upgrade-v0-1-1`), `title` `Upgrade the foundation to <toTag>`, `kind: 'fix'`, `covers: []`, `acceptance: []`, `dependsOn: []`, `change: 'foundation-upgrade'`, `retire: []`. The `instructions`:
+  - list the foundation's changelog lines (`changes`);
+  - then either "These files contain both versions side by side: …; keep both the foundation's fix and the app's own behaviour in each" or "The merge had no conflicts: check the app still builds and passes its tests";
+  - then "When you are done, npm run verify and the browser tests must pass, and the role-crossing report must show no failures. Do not edit the foundation's own files beyond resolving the conflicts."
+
+  They are clipped to `MAX_INSTRUCTIONS` by shortening the changelog list first (never the file list).
 - `upgradeChangelogLines`: as in the test.
 
 - [ ] **Step 4: Run the tests to verify they pass**
@@ -127,5 +135,7 @@ Expected: PASS.
 
 ```bash
 git add src/factory/change/upgradeMerge.js test/factory-upgrade-merge.test.js
-git commit -m "feat(change): merge a foundation release into an app on its own branch, with mechanical rules"
+git commit -m "feat(change): merge a foundation release into an app on its own branch, with mechanical rules
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

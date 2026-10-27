@@ -4,7 +4,7 @@
 
 This task lays the plumbing every module needs and nothing module-specific:
 - the `modules/*` workspaces;
-- `app-profile.json`, the one committed file that says which modules are on and what the data policy allows (Rulings 7; Contract gap 1);
+- `app-profile.json`, the one committed file that says which modules are on and what the data policy allows (Ruling 7). Conductor writes it from the approved brief: Plan 8's `createApp` at the first build, Plan 11 on a change that alters `modules` or `policy` (Contract 7.5). Its shape is this task's `AppProfileSchema`;
 - the money helpers of Ruling 3, which Tasks 2, 7 and 8 build on;
 - a licence pre-flight of every package this plan will install, before any of them touch the foundation's lockfile.
 

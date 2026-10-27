@@ -4,7 +4,7 @@ The Plan 5 final review left follow-ups in `spikes/council-smoke/RESULT.md`. The
 
 1. **An added `gitleaks:allow` comment hides a key.** Today it raises only the locked "skip-this-line" warning, and the commits are not combined. Now:
    - the suppression check makes a **blocking** Security finding for `gitleaks:allow` on an added line: "This change tells the secret scanner to skip a line, so a key may be hidden there". It is not locked, so the interpreter can set it aside with a reason (for example a plainly fake key in a test fixture). The other markers keep their locked warning;
-   - the round treats it like a Gitleaks hit: the file is hidden from the diff in every later prompt, and `secretSeen` is set, so `drive` combines the commits (Plan 5 Ruling 10).
+   - the round treats it like a Gitleaks hit: the file is hidden from the diff in every later prompt, and `secretSeen` is set, so `drive` combines the commits (Plan 5 Ruling 10). On a client build the hook returns the same flag as `secretSeen` and Plan 8 squashes the build branch (Task 12, Contract 7.7).
 2. **Semgrep's short `nosem` marker** raises the same warning as `nosemgrep`.
 3. **npm 6 `audit` output** (neither `vulnerabilities` nor `advisories`) is treated as an error, not as clean. npm 6's `advisories` format also throws, with "npm audit gave the old npm 6 report, which this version cannot read. Update npm to version 7 or later.", so the check shows as "did not finish" (a warning), never as a silent pass.
 4. **An errored check is listed twice** (its warning finding and its "did not finish" note). Now the report lists it once: the error finding's title carries the reason (`Gitleaks (secret scanner) could not run (it wrote no report)`), and `toolNotes` skips ToolRuns with status `error`. The ToolRun keeps its `note`, which the events and doctor still use.
@@ -93,5 +93,7 @@ Expected: all PASS.
 
 ```bash
 git add src/council/security.js src/council/findings.js src/council/tools.js src/council/report.js src/council/index.js test/council-security.test.js test/council-tools.test.js test/council-report.test.js test/council-round.test.js test/council-drive.test.js
-git commit -m "fix(council): gitleaks:allow counts as a possible secret, nosem marker, npm 6 audit, errored checks listed once"
+git commit -m "fix(council): gitleaks:allow counts as a possible secret, nosem marker, npm 6 audit, errored checks listed once
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

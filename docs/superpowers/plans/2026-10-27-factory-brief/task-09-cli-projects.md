@@ -2,16 +2,18 @@
 
 This task puts the Plan 7 rows of Contract 5 on the command line and makes the three `project` commands work end to end. The `brief` command is parsed here and wired in Task 10. Factory commands run **outside** a git repository, so `main` dispatches them before the repository check.
 
+It also builds the shared dispatch of Contract 7 §7.3: `src/cli/factory.js` exports `FACTORY_COMMANDS` (`{ [command]: handler }`) and `runFactoryCommand(cli, ctx)`, and `main()` sends any command found in that table to it. This is the last time a factory plan touches `main.js`: Plans 8, 10 and 11 add their parser cases to `args.js` and their handlers to `FACTORY_COMMANDS`.
+
 **Files:**
 - Modify: `src/cli/args.js`, `src/cli/main.js`
 - Create: `src/cli/factory.js`
 - Test: `test/cli.test.js` (append only), `test/factory-cli.test.js` (create), `test/helpers/factoryCli.js` (create)
 
 **Interfaces:**
-- Consumes: `factorySettings` (Task 1), `createProject`, `readProject`, `listProjects` (Task 1), `currentBriefInfo`, `briefPaths`, `ukDate` (Task 4), `loadSession` (Task 6), `findConfig`, `EXIT`.
+- Consumes: `factoryConfig` (Task 1), `validateSlug`, `createProject`, `readProject`, `listProjects` (Task 1), `currentBriefInfo`, `briefPaths`, `ukDate` (Task 4), `loadSession` (Task 6), `findConfig` (`src/cli/config.js`), `EXIT` (`src/cli/main.js`).
 - Produces:
   - the `parseCli` results listed in Shared Interfaces (Task 9). The `flags` object keeps exactly its current keys, so the existing `deepEqual`s stay untouched;
-  - `runFactoryCommand(cli, io) -> Promise<exitCode>`.
+  - `FACTORY_COMMANDS` and `runFactoryCommand(cli, ctx) -> Promise<exitCode>`, with the `FactoryContext` handed to every handler (Shared Interfaces, Task 9).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -79,10 +81,17 @@ import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { saveApprovedBrief } from '../src/factory/brief.js';
+import { FACTORY_COMMANDS } from '../src/cli/factory.js';
 import { newSession, saveSession } from '../src/factory/briefSession.js';
 import { approvedBrief } from './helpers/briefFixtures.js';
 
 import { tmp, runMain, envFor } from './helpers/factoryCli.js';
+
+// Plans 8, 10 and 11 add entries, so this checks Plan 7's four by name, never the whole table.
+test('FACTORY_COMMANDS holds the Plan 7 handlers', () => {
+  for (const k of ['project-new', 'project-list', 'project-show', 'brief']) assert.equal(typeof FACTORY_COMMANDS[k], 'function', k);
+  assert.equal(Object.hasOwn(FACTORY_COMMANDS, 'run'), false, 'ordinary runs still go through the git-repo path');
+});
 
 test('project new / list / show work outside a git repository, without a config', async () => {
   const root = path.join(tmp(), 'projects');
@@ -112,7 +121,7 @@ test('project new / list / show work outside a git repository, without a config'
   const show = await runMain(['project', 'show', 'thistle'], { env });
   assert.equal(show.code, 0);
   for (const re of [/^Thistle Joinery Ltd \(thistle\)$/m, /^Folder: .*projects\/thistle$/m, /^Status: briefing$/m, /^Created: \d{1,2} [A-Z][a-z]+ \d{4}$/m,
-    /^Foundation: not chosen yet \(set when the app is first built\)$/m, /^Brief: version 1, approved by Malcolm on 27 October 2026$/m,
+    /^Foundation: not chosen yet \(set when the app is first built\)$/m, /^Approved build: none yet$/m, /^Brief: version 1, approved by Malcolm on 27 October 2026$/m,
     /^ {2}Read it: .*brief-v1\.md$/m, /^Unfinished brief: waiting at the first draft\. Carry on with: conductor brief thistle$/m]) assert.match(show.out, re);
   const missing = await runMain(['project', 'show', 'nope'], { env });
   assert.equal(missing.code, 1);
@@ -171,21 +180,25 @@ Expected: FAIL. `project` is parsed as a run request, and `main` answers "Run co
 
 - [ ] **Step 4: Implement `src/cli/main.js` dispatch**
 
-- Add `factoryDeps = {}` to `main`'s options.
-- Right after the `version` line and **before** `repoRoot`, add: `if (cli.command.startsWith('project-') || cli.command === 'brief') return runFactoryCommand(cli, { cwd, env, stdin, stdout, isTTY, onSignal, exit, deps: factoryDeps });`
-- Import it from `./factory.js`.
+- Add `factoryDeps = {}` to `main`'s options (beside the existing `wakeDeps`).
+- Right after the `if (cli.command === 'version') …` line and **before** `const repoDir = await repoRoot(cwd);`, add: `if (Object.hasOwn(FACTORY_COMMANDS, cli.command)) return runFactoryCommand(cli, { cwd, env, stdin, stdout, isTTY, onSignal, exit, deps: factoryDeps });`
+- Import both from `./factory.js`. Nothing else in `main.js` changes, and no later plan edits it for a factory command.
 
-- [ ] **Step 5: Implement `src/cli/factory.js` (project commands)**
+- [ ] **Step 5: Implement `src/cli/factory.js` (dispatch and project commands)**
 
-- `runFactoryCommand(cli, { cwd, env, stdin, stdout, isTTY, onSignal, exit, deps })`:
-  - `print = (s) => stdout.write(\`${s}\n\`)`;
+- `FACTORY_COMMANDS = { 'project-new': projectNew, 'project-list': projectList, 'project-show': projectShow, brief: briefCommand }`. Each handler is `async (cli, ctx) -> exitCode`. `briefCommand` is the Task 10 placeholder for now.
+- `runFactoryCommand(cli, { cwd, env, stdin, stdout, isTTY, onSignal, exit, deps = {} })` does the work every factory command shares, then calls `FACTORY_COMMANDS[cli.command](cli, ctx)`:
+  - `print = (s) => stdout.write(\`${s}\n\`)`; `home = env.HOME || homedir()`. The injected `env`'s HOME is used everywhere, never the process's;
   - config path:
-    - `--config` given → `findConfig({ flag })`. If it throws, print the message and return `EXIT.usage`;
-    - not given → `try findConfig({ cwd, env, home: env.HOME || homedir() })`, catching to `null`;
-  - `settings = factorySettings({ configPath, env, home: env.HOME || homedir() })`. The injected `env`'s HOME is used everywhere, never the process's. If it throws, print `Conductor could not read its config: ${e.message}` and return `EXIT.usage`;
-  - when the command carries a slug and `validateSlug(slug)` fails, print the problem and return `EXIT.usage`.
+    - `--config` given → `findConfig({ flag: cli.flags.config, cwd, env, home })`. If it throws, print the message and return `EXIT.usage`;
+    - not given → `try findConfig({ cwd, env, home })`, catching to `null` (project commands need no config);
+  - the factory section: with a config path, `JSON.parse(readFileSync(configPath, 'utf8'))` and keep `{ factory: parsed.factory }`; with none, `{}`. This deliberately does **not** call `loadConfig`, which requires `participants`; `factoryConfig` takes any object with a `factory` key (Task 1);
+  - `factory = factoryConfig(section, { env, home })`. A parse error or a throw prints `Conductor could not read its config: ${e.message}` and returns `EXIT.usage`;
+  - when the command carries a slug (`cli.slug`) and `validateSlug(cli.slug)` fails, print the problem and return `EXIT.usage`;
+  - `ctx = { cwd, env, home, stdin, stdout, isTTY, onSignal, exit, deps, print, configPath, factory }`.
+- `factory.js` imports `EXIT` from `./main.js` while `main.js` imports `factory.js`. The cycle is safe because `EXIT` is read only inside functions, never at module load.
 - `project-new`:
-  - `createProject(settings.projectsRoot, { client, slug: cli.slug ?? undefined })`;
+  - `createProject(ctx.factory.projectsRoot, { client, slug: cli.slug ?? undefined })`;
   - success prints the two lines in the test and returns 0;
   - a plain error prints its message and returns `EXIT.stopped` (1).
 - `project-list`:
@@ -200,6 +213,7 @@ Expected: FAIL. `project` is parsed as a run request, and `main` answers "Run co
   - the name line;
   - `Folder:`, `Status:`, `Created:`;
   - `Foundation:`, which is `${repo} at ${tag}` once set;
+  - `Approved build:`, which is `none yet` while `project.approved` is null (Plan 7 never sets it), else `${approved.sha.slice(0, 12)} on ${ukDate(approved.at)}, built from brief v${approved.briefVersion}` (Contract 7 §7.5; written by Plan 8's or Plan 11's gate);
   - `Brief:`, which is `none yet. Make one with: conductor brief ${slug} --notes <file>`, or the version line plus `  Read it:` with the md path, or `damaged: …`;
   - when a session exists, `Unfinished brief: ${stageText}. Carry on with: conductor brief ${slug}`, where `stageText` is:
     - stage draft with no draft yet → `waiting at the first draft`;
@@ -218,5 +232,5 @@ Expected: all PASS, with the existing `cli.test.js` and `cli-e2e.test.js` assert
 
 ```bash
 git add src/cli/args.js src/cli/main.js src/cli/factory.js test/cli.test.js test/factory-cli.test.js test/helpers/factoryCli.js
-git commit -m "feat(cli): conductor project new/list/show and brief argument parsing"
+git commit -m "feat(cli): factory command dispatch, conductor project new/list/show and brief argument parsing" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

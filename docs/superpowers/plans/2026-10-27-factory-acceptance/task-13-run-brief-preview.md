@@ -21,7 +21,7 @@ conductor project new "<client name>"
 mkdir -p ~/highland-projects/<slug>/acceptance
 cp /root/conductor/spikes/acceptance/RESULT-TEMPLATE.md ~/highland-projects/<slug>/acceptance/RESULT.md
 ```
-Fill in the header: date, Conductor commit (`git -C /root/conductor rev-parse --short HEAD`), foundation tag `v0.2.0`.
+Fill in the header: date, Conductor commit (`git -C /root/conductor rev-parse --short HEAD`), foundation tag `v0.2.0` (check `factory.foundation.tag` in Conductor's config still says so).
 
 - [ ] **Step 2: Brief**
 
@@ -31,7 +31,7 @@ conductor brief <slug> --notes <path to the real notes>
 Answer the questions from what the client said; if the notes don't say, write "ask the client" and stop until you have asked (an `openQuestions` entry blocks approval, by design). Before approving, check:
 - [ ] every role the client named is mapped to `admin`, `manager` or `member`, with who approves whose claims;
 - [ ] every report the client wants is under `outputs`, with its format (PDF and/or spreadsheet);
-- [ ] at least **three** worked examples with exact pounds and pence, including one report total across several receipts and one VAT figure; work each out by hand now and write them in the C4 worksheet;
+- [ ] at least **three** worked examples with exact pounds and pence, each with its id (`<featureId>#<n>`), including one report total across several receipts and one VAT figure; work each out by hand now and write them in the C4 worksheet;
 - [ ] `modules` lists `ocr` and the export formats;
 - [ ] the data policy matches what the client agreed (hosting, outbound — expected `[]`, residency, retention, backup destination, operator access).
 Approve. Record questions asked, time and cost (C16).
@@ -46,11 +46,10 @@ At the gate, record the council rounds, blocking items fixed, warnings left and 
 - [ ] **Step 4: Automated evidence**
 
 ```bash
-cd ~/highland-projects/<slug>/app && npx vitest run --reporter=json --outputFile=reports/test-results.json
 node /root/conductor/spikes/acceptance/check-acceptance.mjs ~/highland-projects/<slug> --build <runId> \
   --out ~/highland-projects/<slug>/acceptance/checker-build.md
 ```
-Expected: C1, C2, C3, C6, C12, C13 pass. Paste the table into `RESULT.md`.
+Expected: C1, C2, C3 (every example id traced to a passing test), C6, C12, C13 pass. Paste the table into `RESULT.md`.
 
 - [ ] **Step 5: Preview — the operator's own eyes**
 

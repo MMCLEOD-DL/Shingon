@@ -1,16 +1,21 @@
-# Task 2: Foundation changelog reader
+# Task 2: Foundation changelog reader additions
 
-Conductor needs to read the foundation's `CHANGELOG.md` in two places: to say which `[security]` fixes a project is missing (Task 10), and to tell the operator what a foundation upgrade brings in (Task 6). The foundation's own reader (`scripts/changelog.ts`) is TypeScript and uses `semver`, which zero-dependency Conductor cannot load (index Ruling 12). This task ports it to plain JS, **with the foundation's own messages**, and adds two git helpers that read the foundation repo without writing to it.
+Conductor reads the foundation's `CHANGELOG.md` in two places: to say which `[security]` fixes a project is missing (Task 10), and to tell the operator what a foundation upgrade brings in (Task 6).
 
-The port must fail closed exactly like the original: a heading it does not understand **throws**, because a misread heading could hide a security fix.
+`src/factory/foundationLog.js` is **owned by Plan 10** (Contract 7.1). It holds the zero-dependency port of the foundation's `parseChangelog` and `securityFixesSince`, with `parseVersion` and `compareVersions`, pinned by Plan 10's parity tests. This task **extends** that file with three functions Plan 11 needs, and never redefines Plan 10's:
+- `changesBetween(text, from, to)`: the sections a foundation upgrade brings in;
+- `releaseTags(repoDir)`: the foundation's release tags, in version order, read without writing to the repo;
+- `readChangelogAt(repoDir, tag)`: the foundation's changelog at a tag, read without writing to the repo.
+
+They fail closed like Plan 10's reader: a heading `parseChangelog` does not understand **throws**, because a misread heading could hide a security fix.
 
 **Files:**
-- Create: `src/factory/foundationLog.js`
-- Test: `test/factory-foundation-log.test.js`
+- Modify: `src/factory/foundationLog.js` (add three exports; Plan 10's exports unchanged)
+- Test: `test/factory-foundation-log-change.test.js` (new file; Plan 10's `foundationLog` tests stay as they are)
 
 **Interfaces:**
-- Consumes: `git` from `src/workspace.js`; `makeFoundation` from Task 1's fixtures.
-- Produces: `parseVersion`, `compareVersions`, `parseChangelog`, `securityFixesSince`, `changesBetween`, `releaseTags`, `readChangelogAt` (signatures in the index).
+- Consumes: `parseChangelog`, `compareVersions`, `parseVersion` (Plan 10, same file); `git` from `src/workspace.js`; `makeFoundation` and `refsOf` from Task 1's fixtures and `test/helpers/gitRepo.js`.
+- Produces: `changesBetween`, `releaseTags`, `readChangelogAt` (signatures in the index).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -25,35 +30,21 @@ const LOG = `# Changelog
 
 ## [0.1.1] - 2026-11-02
 - **[security]** Sessions now expire after 12 hours.
-- * **[ Security ]** Password reset links can be used once.
 - Tidier audit page.
 
 ## [0.1.0] - 2026-10-26
 - First foundation release.
 `;
 
-test('securityFixesSince matches the foundation: newer released versions with a [security] line, newest first, marker removed', () => {
-  assert.deepEqual(securityFixesSince(LOG, '0.1.0'), [
-    { version: '0.1.1', lines: ['Sessions now expire after 12 hours.', 'Password reset links can be used once.'] },
-  ]);
-  assert.deepEqual(securityFixesSince(LOG, '0.1.1'), []);
+test('changesBetween returns the sections after from, up to and including to, oldest first, never Unreleased', () => {
+  assert.deepEqual(changesBetween(LOG, '0.1.0', '0.2.0').map((s) => s.version), ['0.1.1', '0.2.0']);
+  assert.deepEqual(changesBetween(LOG, '0.1.1', '0.1.1'), []);
+  assert.deepEqual(changesBetween(LOG, '0.0.1', '0.1.0').map((s) => s.version), ['0.1.0']);
 });
-test('Unreleased is never counted as a fix the project is missing', ...)   // securityFixesSince(LOG, '0.0.1') has no 'Unreleased'
-test('a heading that is not understood throws the foundation\'s message', () => {
-  assert.throws(() => parseChangelog('## [0.1.1] - 2026-1-2\n- x\n'),
-    { message: 'CHANGELOG.md has a heading that is not in the expected form: "## [0.1.1] - 2026-1-2". Use "## [1.2.3] - 2026-01-31" (a two-digit month and day) or "## [Unreleased]".' });
-  assert.throws(() => parseChangelog('## [banana]\n'), /a version that is not a version number: "## \[banana\]"/);
+test('changesBetween throws Plan 10\'s message on a heading that is not understood', () => {
+  assert.throws(() => changesBetween('## [0.1.1] - 2026-1-2\n- x\n', '0.1.0', '0.1.1'), /not in the expected form/);
 });
-test('securityFixesSince refuses a version that is not a version number', ...)   // '"v0.1.0" is not a version number such as 1.2.3.'
-test('compareVersions follows semver precedence, including pre-releases', () => {
-  assert.equal(compareVersions('0.1.10', '0.1.9'), 1);
-  assert.equal(compareVersions('1.0.0-rc.1', '1.0.0'), -1);
-  assert.equal(compareVersions('1.0.0-alpha.2', '1.0.0-alpha.10'), -1);
-  assert.equal(compareVersions('1.0.0-alpha', '1.0.0-alpha.1'), -1);
-  assert.throws(() => compareVersions('1.0', '1.0.0'));
-});
-test('changesBetween returns the sections after from, up to and including to, oldest first', ...)
-  // changesBetween(LOG, '0.1.0', '0.2.0').map(s => s.version) deepEqual ['0.1.1', '0.2.0']
+test('changesBetween refuses a version that is not a version number', ...)   // 'v0.1.0' → /is not a version number/
 test('releaseTags lists only vX.Y.Z tags in version order; readChangelogAt reads the file at a tag without touching the repo', async () => {
   const f = await makeFoundation({ versions: ['0.1.0', '0.1.1', '0.1.10'] });
   await git(f.dir, ['tag', 'v0.2.0-rc.1']); await git(f.dir, ['tag', 'nightly']);
@@ -64,31 +55,34 @@ test('releaseTags lists only vX.Y.Z tags in version order; readChangelogAt reads
 });
 test('releaseTags on a folder that is not a git repo throws a plain sentence naming the folder', ...)
   // /The foundation repository at .* could not be read/
+test('readChangelogAt refuses a tag that is not a release name before running git', ...)
+  // 'main', '-x', 'v0.1.1~1' → rejects /could not be read/ (the tag check runs first, so even a missing repo gives this message)
 ```
-
-Copy the three foundation messages verbatim from `/root/highland-foundation/scripts/changelog.ts` (heading form, version heading, invalid version).
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `node --test test/factory-foundation-log.test.js`
-Expected: FAIL (module not found).
+Run: `node --test test/factory-foundation-log-change.test.js`
+Expected: FAIL (the three exports do not exist yet).
 
-- [ ] **Step 3: Implement `src/factory/foundationLog.js`**
+- [ ] **Step 3: Implement the three functions in `src/factory/foundationLog.js`**
 
-- `parseVersion`: `/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z.-]+)?$/`; numeric pre-release identifiers become numbers.
-- `compareVersions`: major, minor, patch; a version without pre-release is higher than one with; identifiers compared left to right (numbers numerically and below strings; strings by code point); a shorter list is lower when all earlier ones are equal.
-- `parseChangelog`, `securityFixesSince`: the same heading regex, the same `[security]` regex (`/^\s*[-*+]\s*\*\*\[\s*security\s*\]\*\*\s*/i`) and the same splitting as the TypeScript; "valid version" means `parseVersion` is not null.
-- `releaseTags(repoDir)`: `git tag --list 'v*'`, keep `^v\d+\.\d+\.\d+$`, sort with `compareVersions`. A git failure throws `` `The foundation repository at ${repoDir} could not be read, so Conductor cannot tell which foundation releases exist.` ``
-- `readChangelogAt(repoDir, tag)`: `git show <tag>:CHANGELOG.md`; refuse a tag not matching `^v\d+\.\d+\.\d+$` before running git; failure throws `` `The foundation's CHANGELOG.md at ${tag} could not be read.` ``
+- `changesBetween(text, from, to)`:
+  - both versions must pass `parseVersion`, else throw `` `"${v}" is not a version number such as 1.2.3.` `` (Plan 10's wording, if Plan 10 exports the message, use it);
+  - `parseChangelog(text)` (throws on a bad heading), drop `Unreleased`;
+  - keep sections with `compareVersions(v, from) > 0 && compareVersions(v, to) <= 0`, sorted oldest first.
+- `releaseTags(repoDir)`: `git tag --list 'v*'`, keep `^v\d+\.\d+\.\d+$`, sort with `compareVersions` on the version without the `v`. A git failure throws `` `The foundation repository at ${repoDir} could not be read, so Conductor cannot tell which foundation releases exist.` ``
+- `readChangelogAt(repoDir, tag)`: refuse a tag not matching `^v\d+\.\d+\.\d+$` before running git; then `git show <tag>:CHANGELOG.md`. Any failure throws `` `The foundation's CHANGELOG.md at ${tag} could not be read.` ``
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test test/factory-foundation-log.test.js`
-Expected: PASS.
+Run: `node --test test/factory-foundation-log-change.test.js && npm test`
+Expected: PASS, Plan 10's tests included.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/factory/foundationLog.js test/factory-foundation-log.test.js
-git commit -m "feat(change): read the foundation's changelog and release tags (port of securityFixesSince)"
+git add src/factory/foundationLog.js test/factory-foundation-log-change.test.js
+git commit -m "feat(change): foundation changes between versions, release tags and changelog at a tag
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

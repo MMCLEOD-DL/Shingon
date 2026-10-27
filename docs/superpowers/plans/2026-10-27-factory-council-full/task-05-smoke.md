@@ -9,6 +9,8 @@ Reliability's evidence is the foundation's own full-bundle smoke test, `deploy/s
 
 Conductor does **not** copy or rewrite it. It pushes the reviewed commit to the machine and runs the app's own copy.
 
+It stays on the foundation **v0.1.0** smoke (Contract 7.9): fixed names (`hfsmoke`, `/tmp/hf-smoke`), no `HF_SMOKE_PROJECT`/`HF_SMOKE_DIR`, no hard-kill step. Those arrive in foundation v0.2.0 (Plan 12 milestone 1); switching to them is a follow-up. The smoke refuses where `highland/app` or `highland/ops` images exist. Under Contract 7.8 that should not happen on the build machine (Plan 10's `cleanupBuild` removes the `highland/*` images it builds; previews use `hf-preview/*` names and remove them), but the refusal is still parsed and shown as "not proven" (Task 11).
+
 All remote work goes through Plan 8's SSH helper (index A2): `exec(machine, script)` sends a bash script to `bash -s`, and `upload` copies a file with `scp`. Both resolve `{ code, stdout, stderr }`, where code 255 means SSH itself failed. Values placed in scripts are quoted with Plan 8's `shQuote`.
 
 - **`pushCommit`:** `git archive --format=tar -o <tmp>/app.tar <sha>` in `dir`; `upload` it to `<remoteDir>.tar`; then `exec`: `mkdir -p <remoteDir> && tar -x -C <remoteDir> -f <remoteDir>.tar && rm -f <remoteDir>.tar`. The local temp folder is removed in `finally`.
@@ -140,5 +142,7 @@ Expected: all PASS.
 
 ```bash
 git add src/council/smoke.js src/council/assets/smoke.sh src/council/assets/smoke-clean.sh test/helpers/councilFull.js test/council-smoke.test.js test/fixtures/council-full/smoke-*.log
-git commit -m "feat(council): run the app's own foundation smoke (deploy, backup, restore, alerts, rollback) on a test machine"
+git commit -m "feat(council): run the app's own foundation smoke (deploy, backup, restore, alerts, rollback) on a test machine
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

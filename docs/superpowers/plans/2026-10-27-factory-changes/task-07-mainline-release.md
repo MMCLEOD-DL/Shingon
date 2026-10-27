@@ -1,17 +1,17 @@
 # Task 7: Main line, changelog and release check
 
-After the gate, the approved work is on its own branch in the app (the core's `land()` only ever creates a new branch). Shipping it needs three things, each checked so nothing unapproved slips in:
+After the gate, the approved work is on its own branch in the app, `build/<runId>` (Plan 8's change mode never moves `main`, Task 4). Shipping it needs three things, each checked so nothing unapproved slips in:
 
 1. **The changelog lines** the operator saw at the gate are added in one commit on top of the approved commit, touching only `CHANGELOG.md`. The foundation's release script refuses to release with an empty `Unreleased` section, so this is required, and doing it in code (not by a model) keeps it exactly as shown.
-2. **The app's `main` moves forward** from exactly the commit recorded when the run started to the changelog commit (index Ruling 8). If `main` moved, nothing moves.
-3. **After Plan 10's release**, check that `main` now points at the release commit, that its tag `v<version>` points there too, that the version is the one shown at the gate, and that the release commit changed only release files.
+2. **The app's `main` moves forward** from exactly the commit recorded when the run started to the changelog commit (index Ruling 8). If `main` moved, nothing moves. (The pipeline then records `project.json.approved` with this commit, Task 9.)
+3. **After Plan 10's `releaseApp`** (which runs the app's own `npm run release -- <bump>` in a scratch clone, moves `main` by its own compare-and-swap and tags `v<version>`, Contract 7.6), check that `main` now points at the release commit, that its tag `v<version>` points there too, that the version is the one shown at the gate, and that the release commit changed only release files.
 
 **Files:**
 - Create: `src/factory/change/mainline.js`
 - Test: `test/factory-change-mainline.test.js`
 
 **Interfaces:**
-- Consumes: `git`, `Workspace` from `src/workspace.js`; `parseVersion` from Task 2; `makeProject`, `makeFoundation` from Task 1.
+- Consumes: `git` from `src/workspace.js`; `parseVersion` (Plan 10, `src/factory/foundationLog.js`); `makeProject`, `makeFoundation` from Task 1.
 - Produces: `RELEASE_FILES`, `nextVersion`, `appMain`, `appCheckoutProblem`, `appVersionAt`, `addChangelogLines`, `commitChangelog`, `advanceMain`, `releaseProblem` (index), and these exact texts:
   - `MAIN_MOVED = 'The app changed while this change was being built (its main line is no longer where it was when the run started), so the change was not added. The approved work is safe on its own branch in the app; start the change again to build it on top of the newer app.'`
   - `APP_FOLDER_EDITED = 'The app folder has edits that were never committed, so Conductor did not touch it. Commit or remove them, then resume.'`
@@ -58,13 +58,13 @@ test('appCheckoutProblem: uncommitted edits on main → APP_FOLDER_EDITED; no ma
 test('advanceMain is safe to repeat: main already at the target is ok', ...)   // from: mainAtStart, to: sha, when main === sha → { ok: true }
 test('releaseProblem accepts a release commit that changed only release files, tagged, on main, with the expected version', async () => {
   // simulate the foundation's release: raise package.json, package-lock.json, foundation.json to 0.3.0, move Unreleased, commit, tag v0.3.0, main → it
-  assert.equal(await releaseProblem({ appDir, from: changelogSha, release: { version: '0.3.0', sha: rel }, expectedVersion: '0.3.0' }), null);
+  assert.equal(await releaseProblem({ appDir, from: changelogSha, release: { version: '0.3.0', sha: rel, tag: 'v0.3.0' }, expectedVersion: '0.3.0' }), null);
 });
 test('releaseProblem refuses: code changed, other version, not on main, tag missing or elsewhere', ...)
   // a release commit also touching apps/server/src/app.ts → RELEASE_TOUCHED_CODE(['apps/server/src/app.ts'])
   // version '0.3.1' vs expected '0.3.0' → RELEASE_VERSION_DIFFERS('0.3.0', '0.3.1')
   // main not at release.sha → RELEASE_NOT_ON_MAIN
-  // tag v0.3.0 missing or pointing elsewhere → /the release tag v0\.3\.0 is not on the release/
+  // tag v0.3.0 missing or pointing elsewhere, or release.tag not 'v' + version → /The release tag v0\.3\.0 is not on the release/
   // release.sha not a descendant of from → RELEASE_NOT_ON_MAIN
 ```
 
@@ -87,7 +87,7 @@ Expected: FAIL (module not found).
   3. `merge-base --is-ancestor <from> <to>` must hold, else `MAIN_MOVED`;
   4. `appCheckoutProblem` → return it;
   5. if `main` is checked out: `git merge --ff-only --quiet <to>`; otherwise `git update-ref refs/heads/main <to> <from>`; on failure return `MAIN_MOVED`.
-- `releaseProblem({ appDir, from, release, expectedVersion })`: `appMain === release.sha` and `merge-base --is-ancestor from release.sha`, else `RELEASE_NOT_ON_MAIN`; `release.version === expectedVersion`; `appVersionAt(release.sha) === release.version`; `rev-parse refs/tags/v<version>^{commit}` equals `release.sha` (`` `the release tag v${version} is not on the release, so nothing was shipped.` `` capitalised as a sentence); `diff --name-only from release.sha` minus `RELEASE_FILES` must be empty, else `RELEASE_TOUCHED_CODE`.
+- `releaseProblem({ appDir, from, release, expectedVersion })`: `appMain === release.sha` and `merge-base --is-ancestor from release.sha`, else `RELEASE_NOT_ON_MAIN`; `release.version === expectedVersion`; `appVersionAt(release.sha) === release.version`; `release.tag === 'v' + release.version` and `rev-parse refs/tags/<release.tag>^{commit}` equals `release.sha` (else `` `The release tag v${version} is not on the release, so nothing was shipped.` ``); `diff --name-only from release.sha` minus `RELEASE_FILES` must be empty, else `RELEASE_TOUCHED_CODE`.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -98,5 +98,7 @@ Expected: PASS.
 
 ```bash
 git add src/factory/change/mainline.js test/factory-change-mainline.test.js
-git commit -m "feat(change): changelog commit, compare-and-swap move of main, release check"
+git commit -m "feat(change): changelog commit, compare-and-swap move of main, release check
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

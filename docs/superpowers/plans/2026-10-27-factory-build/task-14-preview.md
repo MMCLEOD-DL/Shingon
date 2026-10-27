@@ -13,7 +13,7 @@
 - Test: `test/factory-preview.test.js`
 
 **Interfaces:**
-- Consumes: Machine/Provider (Tasks 11, 13), `getMachineProvider`, `MachineError`, `runImages` (Task 11), `createSsh`, `unreachable` (Task 10), `assertSafe`, `shQuote`, `parseMarker` (Task 10), `newRunId` (Task 1), `latestBuild`, `lockProject` (Task 7), `projectDir`, `readProject` (Plan 7 seam), `writeJsonAtomic` (`src/factory/fsAtomic.js`), `git`, `makeFoundationRepo`, `makeProject`, `stubDockerPath` (Tasks 1, 10).
+- Consumes: Machine/Provider (Tasks 11, 13), `getMachineProvider`, `MachineError`, `runImages` (Task 11), `createSsh`, `unreachable` (Task 10), `assertSafe`, `shQuote`, `parseMarker` (Task 10), `newRunId`, `RUN_ID_RE` (Task 1), `latestBuild` (Task 7), `readProject` (`src/factory/projects.js`, Plan 7), `lockProject` (`src/factory/projectLock.js`, Plan 7; kind `'preview'`, see index "Contract 7 deviations"), `writeJsonAtomic` (`src/factory/fsAtomic.js`, Plan 7), `git`, `makeFoundationRepo`, `makeProject`, `stubDockerPath` (Tasks 1, 10).
 - Produces:
   - `demoUpScript({ root, project, slug, runId, client, origin, bindHost, port, version, commit }) -> string` → ends `HF-DEMO-UP` then the seeder's text; prints `HF-STEP <building|starting|seeding>` as it goes.
   - `bringUpDemo({ machine, appDir, sha, slug, runId, client, ssh, git = gitFn, tmpDir = os.tmpdir() }) -> Promise<{ url, seedText }>`
@@ -181,13 +181,13 @@ As listed under Files. The `.env` the stub writes holds `CLIENT_LABEL=<client>`,
 - [ ] **Step 6: Implement `src/factory/preview.js`**
 
 - `startPreview`:
-  1. `readProject(factory.projectsRoot, slug)`; `<dir>/app` must exist (else the message in the test); `lockProject(projectDir, 'preview')` for the rest.
+  1. `readProject(factory.projectsRoot, slug)`; `<dir>/app` must exist (else the message in the test); `release = lockProject(projectDir, 'preview')` for the rest (`try … finally release()`). The preview lock never conflicts with a running build: previewing the build in progress is the point.
   2. Commit: the latest build whose status is `running`, `paused`, `failed` or `stopped` and whose branch exists → its tip, `from: 'build'`; otherwise `main`'s tip, `from: 'main'`.
-  3. An existing `preview.json`: same sha and its machine still in `provider.list()` (matched by `labels.run`) → `{ status: 'already', … }` from the record; same sha but no machine → drop the record; different sha → `stopPreview` first.
+  3. An existing `preview.json`: same sha and its machine still in `provider.list()` (matched by `labels.run`) → `{ status: 'already', … }` from the record; same sha but no machine → drop the record; different sha → stop it first, through the unlocked inner `stopRecorded(projectDir, record)` that `stopPreview` also uses (the lock is already held).
   4. `runId = newRunId(now())`; `provider.sweep({ olderThanMs: factory.machines.sweepAfterMs, keep: previewRuns(factory.projectsRoot) })`, ignoring its failure (one line in `provider.notes`).
   5. `machine = await provider.acquire({ purpose: 'preview', projectSlug: slug, runId })`; `bringUpDemo(…)`; on any failure `await machine.release()` (its own failure is added to the error) and rethrow.
   6. `writeJsonAtomic(<projectDir>/preview.json, { schema: 1, runId, machineId: machine.id, provider: provider.kind, host: machine.host, url, sha, from, startedAt })`; return `{ status: 'started', url, seedText, sha, from }`.
-- `stopPreview`: no record → `{ status: 'none' }`; find the machine in `provider.list()` by `labels.run`; found → `release()` (a throw keeps the record and is rethrown), then remove the record → `stopped`; not found → remove the record → `gone`.
+- `stopPreview` (takes the same `'preview'` lock, then calls `stopRecorded`): no record → `{ status: 'none' }`; find the machine in `provider.list()` by `labels.run`; found → `release()` (a throw keeps the record and is rethrown), then remove the record → `stopped`; not found → remove the record → `gone`.
 - `previewRuns`: read `<projectsRoot>/*/preview.json`, return each `runId` that matches `RUN_ID_RE`.
 
 - [ ] **Step 7: Run the tests**
@@ -199,5 +199,7 @@ Expected: PASS.
 
 ```bash
 git add src/factory/deploy.js src/factory/preview.js test/helpers/stubDocker.js test/factory-preview.test.js
-git commit -m "feat(factory): demo deploy on a factory machine and conductor preview"
+git commit -m "feat(factory): demo deploy on a factory machine and conductor preview
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

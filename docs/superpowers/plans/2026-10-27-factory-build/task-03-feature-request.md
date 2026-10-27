@@ -10,8 +10,8 @@ The run loop gains one additive option, `firstChunk`: a step decided in advance 
 - Test: `test/factory-request.test.js` (new), `test/planPhase.test.js` (append)
 
 **Interfaces:**
-- Consumes: `sampleBrief` (Task 1); `clip` (`src/text.js`).
-- Produces: `REQUEST_BUDGET = 7000`, `BUILDING_ON_RULES`, `featureRequest({ brief, units, index }) -> string` (throws an `Error` with `code: 'too-long'` over budget), `acceptanceStep({ brief, unit }) -> { title: 'Acceptance tests', instructions } | null`, `tagOf(id) -> '[<id>]'`, `briefFeatureOf(brief, id)`; option `firstChunk`; `validateFirstChunk(options)` (throws plain English).
+- Consumes: `sampleBrief` (Task 1); `clip` (`src/text.js`); `testTag` (`src/factory/acceptance.js`, Plan 7, Contract 7 §7.1); `OUTBOUND_SERVICES` (`src/factory/outbound.js`, Plan 7, Contract 7 §7.4).
+- Produces: `REQUEST_BUDGET = 7000`, `BUILDING_ON_RULES`, `featureRequest({ brief, units, index }) -> string` (throws an `Error` with `code: 'too-long'` over budget), `acceptanceStep({ brief, unit }) -> { title: 'Acceptance tests', instructions } | null`, `briefFeatureOf(brief, id)`, `exampleById(brief, id) -> { feature, example } | null`; option `firstChunk`; `validateFirstChunk(options)` (throws plain English).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -36,6 +36,8 @@ test('the request carries the slice of the brief, the tagged examples, the polic
   assert.doesNotMatch(r, /submit-expense#1\]/, 'only this feature\'s examples');
   assert.match(r, /Already built \(read the code, do not rebuild\): expenses/);
   assert.match(r, /Data policy: .*nowhere outside the app/);
+  const tunnel = sampleBrief({ policy: { ...sampleBrief().policy, outbound: ['cloudflare-tunnel'] } });
+  assert.match(featureRequest({ brief: tunnel, units, index: 1 }), /data may go only to [^;]*\(cloudflare-tunnel\)/, 'outbound ids are shown with their label');
   assert.ok(r.includes(BUILDING_ON_RULES));
   assert.ok(r.length <= REQUEST_BUDGET);
 });
@@ -56,6 +58,13 @@ test('the fixed first step writes only the tagged tests and tells the reviewer t
   assert.match(s.instructions, /expected to FAIL now/);
   assert.match(s.instructions, /Reviewer: do not block because these tests fail/);
   assert.equal(acceptanceStep({ brief: sampleBrief(), unit: { ...units[0], acceptance: [], kind: 'fix' } }), null);
+});
+
+test('examples are found by their stable id, not their position', () => {
+  const brief = sampleBrief();
+  brief.features[0].acceptance = [brief.features[0].acceptance[1]];          // #1 was removed in a revision; #2 keeps its id
+  const s = acceptanceStep({ brief, unit: { ...units[0], acceptance: ['submit-expense#2'] } });
+  assert.match(s.instructions, /\[submit-expense#2\] Given a member, when they submit a negative amount/);
 });
 ```
 
@@ -116,9 +125,9 @@ Foundation rules. This app is built on the Highland foundation: read docs/BUILDI
 3. `People who use it (each maps to a foundation role):` then `- <name> → <mapsTo>: <clip(whatTheyDo, 160)>` per role
 4. `What to build in this step:\n<instructions>`
 5. Only when `covers` is non-empty: `From the client's brief:` then per covered feature `- <title> (<id>): <clip(story, 700)>` and `  Used by: <roles>. Records: <data>.`
-6. Only when `acceptance` is non-empty: `Worked examples (each must become a test whose name contains its tag; step 1 writes them):` then `- [<id>] Given <given>, when <when>, then <then>` (each part clipped to 300)
+6. Only when `acceptance` is non-empty: `Worked examples (each must become a test whose name contains its tag; step 1 writes them):` then `- <testTag(id)> Given <given>, when <when>, then <then>` (each part clipped to 300). Each example is found with `exampleById(brief, id)`, which matches `example.id` (Contract 7 §7.4), never a position.
 7. `Already built (read the code, do not rebuild): <ids of units before i, comma-separated, or "nothing yet">` and `Coming later (do not build now): <ids after i, or "nothing">`
-8. `Data policy: hosting on <client's own box|a server the operator runs>; data may go only to <outbound joined by ", "> | nowhere outside the app (no outside services); data stays in <the UK|the UK or EU|any country>.`
+8. `Data policy: hosting on <client's own box|a server the operator runs>; data may go only to <each outbound id as "<OUTBOUND_SERVICES[id].label> (<id>)", joined by ", "> | nowhere outside the app (no outside services); data stays in <the UK|the UK or EU|any country>.`
 9. `BUILDING_ON_RULES`
 
 Over `REQUEST_BUDGET`: throw `Object.assign(new Error(\`the request for "<id>" is <length> characters (the limit is 7000); make its instructions shorter or split it\`), { code: 'too-long' })`.
@@ -126,7 +135,7 @@ Over `REQUEST_BUDGET`: throw `Object.assign(new Error(\`the request for "<id>" i
 `acceptanceStep` returns `null` when `unit.acceptance` is empty; otherwise title `Acceptance tests` and instructions:
 
 ```
-Write the acceptance tests for "<title>" and nothing else: one test per worked example below, with its tag in square brackets in the test's name, for example it('[<first id>] …'). Server behaviour goes in apps/server/test/<unit id>/ as integration tests against the API, like apps/server/test/notes.test.ts; pure calculations may be unit tests beside them. Use the exact values from the examples (money in whole pence). Do not write any feature code. Do not skip, focus or mark any test as todo. These tests are expected to FAIL now, because the feature does not exist yet; the later steps make them pass.
+Write the acceptance tests for "<title>" and nothing else: one test per worked example below, with its tag in square brackets in the test's name, for example it('<testTag(first id)> …'). Server behaviour goes in apps/server/test/<unit id>/ as integration tests against the API, like apps/server/test/notes.test.ts; pure calculations may be unit tests beside them. Use the exact values from the examples (money in whole pence). Do not write any feature code. Do not skip, focus or mark any test as todo. These tests are expected to FAIL now, because the feature does not exist yet; the later steps make them pass.
 Reviewer: do not block because these tests fail. Block if an example is missing or encoded wrongly, if a tag is missing, or if anything other than tests was changed.
 Examples:
 - [<id>] Given …, when …, then …
@@ -148,5 +157,7 @@ Expected: PASS; the existing suite is unchanged.
 
 ```bash
 git add src/factory/featureRequest.js src/options.js src/planPhase.js src/prompts.js src/conductor.js test/factory-request.test.js test/planPhase.test.js
-git commit -m "feat(factory): size-checked feature requests and a fixed first step"
+git commit -m "feat(factory): size-checked feature requests and a fixed first step
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

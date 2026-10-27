@@ -23,17 +23,17 @@ Plan 5's `FOCUS` gains `design` and `reliability`. `legal` and `correctness` get
 - Test: `test/prompts.test.js` (append), `test/council-interpret.test.js` (append)
 
 **Interfaces:**
-- Consumes: Plan 5's `councilMember`, `interpretMember`, `callAgent`; `git`.
+- Consumes: Plan 5's `councilMember`, `interpretMember`, `callAgent`; `git`; `OUTBOUND_SERVICES` (`src/factory/outbound.js`, Plan 7, index A5).
 - Produces:
   - `prompts.councilMember({ member, label, request, plan, diff, base, tests, items, notes, briefText = null, policy = null, context = [], attachments = [] }) -> string`;
   - `interpretMember(ctx, { member, label, findings, notes, input, context = [], attach = [] })` passes `attachments = orderShots(attach)`: at most 40 paths, those containing `mobile` first, then by name;
   - `orderShots(paths) -> string[]` (exported from `src/council/interpret.js`).
   - `CouncilInput.briefText` (string | null) and `CouncilInput.policy` are read by `interpretMember` (Task 12 fills them).
-  - `POLICY_LINES(policy) -> string` in `src/prompts.js`: `Hosting: the client's own box` / `a server the operator runs`; `Outside services allowed: none` or the list; `Data may be kept: in the UK` / `in the UK or EU` / `anywhere`; `Retention: <text>`; `Backups go to: <backupDestination>`; `Operator remote access: agreed`.
+  - `POLICY_LINES(policy) -> string` in `src/prompts.js`, reading Contract 7.4's shapes: `Hosting: the client's own box` / `a server the operator runs`; `Outside services allowed: none` or, for each id in `policy.outbound`, `<label> (<hosts joined by ", ">; carries <carries>)` from `OUTBOUND_SERVICES` (an id it does not know is shown as itself); `Data may be kept: in the UK` / `in the UK or EU` / `anywhere`; `Retention: <retention.text>` plus ` (<days> days)` when `days` is a number; `Backups go to: <backupDestination.kind> (<backupDestination.detail>)`; `Operator remote access: agreed`.
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `test/prompts.test.js`:
+Append to `test/prompts.test.js` (and add `POLICY_LINES` to its import from `../src/prompts.js`):
 
 ```js
 test('councilMember with no brief is exactly the Plan 5 prompt', () => {
@@ -44,10 +44,11 @@ test('councilMember with no brief is exactly the Plan 5 prompt', () => {
 
 test('councilMember on a project: brief, policy, measurements and screenshots', () => {
   const p = councilMember({ member: 'design', label: 'Design', request: 'Build the Acme app', plan: null, diff: 'd', base: 'abc', tests: null, items: [], notes: [],
-    briefText: '# Acme Ltd\n\nMileage claims…', policy: { hosting: 'client-box', outbound: [], residency: 'uk', retention: { text: 'six years', days: 2190 }, backupDestination: 'client-nas', operatorAccess: true },
+    briefText: '# Acme Ltd\n\nMileage claims…', policy: { hosting: 'client-box', outbound: [], residency: 'uk', retention: { text: 'six years', days: 2190 }, backupDestination: { kind: 'client-nas', detail: 'the office NAS' }, operatorAccess: true },
     context: ['Pages checked: 13 at desktop and phone width.'], attachments: ['reports/screenshots/notes-mobile-chromium.png'] });
   assert.match(p, /The client's approved brief:\n# Acme Ltd/);
-  assert.match(p, /The client's data policy:\nHosting: the client's own box\nOutside services allowed: none\nData may be kept: in the UK\nRetention: six years\nBackups go to: client-nas\nOperator remote access: agreed/);
+  assert.match(p, /The client's data policy:\nHosting: the client's own box\nOutside services allowed: none\nData may be kept: in the UK\nRetention: six years \(2190 days\)\nBackups go to: client-nas \(the office NAS\)\nOperator remote access: agreed/);
+  assert.match(POLICY_LINES({ outbound: ['cloudflare-tunnel'] }), /Outside services allowed: .*\*\.cloudflare\.com, \*\.argotunnel\.com; carries /);
   assert.match(p, /What the checks measured:\n- Pages checked: 13 at desktop and phone width\./);
   assert.match(p, /Screenshots you can open \(read them, do not change them\):\n- reports\/screenshots\/notes-mobile-chromium\.png/);
   assert.match(p, /PageHeader, ResponsiveList, FormCard, EmptyState, ConfirmAction, FileDropzone, ErrorNotice/);
@@ -90,5 +91,7 @@ Expected: all PASS, including every existing prompt and interpreter test unchang
 
 ```bash
 git add src/prompts.js src/council/interpret.js test/prompts.test.js test/council-interpret.test.js
-git commit -m "feat(council): brief, data policy, measurements and screenshots in the interpreter prompt for client apps"
+git commit -m "feat(council): brief, data policy, measurements and screenshots in the interpreter prompt for client apps
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

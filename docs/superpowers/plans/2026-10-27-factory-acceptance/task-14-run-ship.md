@@ -16,7 +16,7 @@ Spec §2.4: an app without automatic backups, a tested restore, health alerts an
 conductor ship <slug> --to test-box
 conductor deployments status
 ```
-Answer the plain-English questions (box address, SSH user, secrets). Expected: the app answers on the box; `deployments/test-box.json` exists with the first `history` entry; `conductor deployments status` shows it healthy. Record the version shipped.
+Answer the plain-English questions (box address, SSH user, secrets). Expected: the app answers on the box; `deployments/test-box.json` exists with the first `history` entry; `conductor deployments status` shows it healthy. Record the version shipped: `ship` first cuts the app's first release with Plan 10's `releaseApp` (bump `first`, tag `v<version>` on `main`; Contract 7.6), and `history` starts with outcome `installed`.
 
 - [ ] **Step 2: The box's settings (C12)**
 
@@ -34,7 +34,7 @@ On the box (runbook sections "Backups" and "Restoring"):
 docker compose run --rm ops backup
 docker compose run --rm ops restore-test
 ```
-Expected: both report success in plain English. Then the drill:
+Expected: both report success in plain English. Then `docker compose exec -T ops node ops/dist/cli.js status --json` (Task 9b) shows both runs as the latest `backup` and `restoreTest`, `ok: true`; paste it (it holds no secrets). Then the drill:
 1. Note a count you can check: the number of confirmed readings shown in the app (or `select count(*) from receipt_readings where status='confirmed'` through the runbook's database command).
 2. Confirm one more receipt (the count goes up by one).
 3. Restore the backup from step 1 by its id, following the runbook's "Restoring the live database" steps.
@@ -42,6 +42,8 @@ Expected: both report success in plain English. Then the drill:
 Paste each command's output into `RESULT.md`. Anything that needs a step not in the runbook is a FAIL for the foundation's docs.
 
 - [ ] **Step 5: Alerts (C9)**
+
+First `docker compose run --rm ops test-alert` (Task 9b): the test alert must arrive in the Matrix room. Then:
 
 ```bash
 docker compose stop app

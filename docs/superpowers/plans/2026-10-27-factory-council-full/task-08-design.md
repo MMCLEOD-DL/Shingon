@@ -1,6 +1,6 @@
 # Task 8: Design member
 
-Design checks spec §2 item 3 ("it must look professional"). Its tools are the foundation's browser gate, run by the council's gates in Task 4, plus axe-core and a house-style check. The LLM judges the screenshots against the house visual system (prompt in Task 7). Design blocks **only** for broken or unusable layouts proven by the page gate (index Ruling 6).
+Design checks spec §2 item 3 ("it must look professional"). Its tools are the foundation's browser gate (from Plan 8's whole-app checks when their Playwright report is there, otherwise the council's own run; Task 6), plus axe-core (always the council's own pass, Task 4) and a house-style check. Design reads only `input.evidence.gates`, so it does not care where the evidence came from. The LLM judges the screenshots against the house visual system (prompt in Task 7). Design blocks **only** for broken or unusable layouts proven by the page gate (index Ruling 6).
 
 Its four ToolRuns, in order:
 
@@ -127,5 +127,7 @@ Expected: all PASS.
 
 ```bash
 git add src/council/design.js test/council-design.test.js
-git commit -m "feat(council): Design member (page gate blocks, axe and house style warn, screenshots for the reviewer)"
+git commit -m "feat(council): Design member (page gate blocks, axe and house style warn, screenshots for the reviewer)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

@@ -1,10 +1,11 @@
-# Task 6: Session store, notes intake, lock
+# Task 6: Session store and notes intake
 
-A brief takes a conversation, and a conversation can be interrupted. This task gives the brief loop (Task 7) three things:
+A brief takes a conversation, and a conversation can be interrupted. This task gives the brief loop (Task 7) two things:
 
 - **durable state:** `brief/session.json`, saved atomically after every step;
-- **verbatim notes:** the operator's notes file, copied into `notes/` and checked first;
-- **a per-project lock:** two `conductor brief` processes can never write the same session.
+- **verbatim notes:** the operator's notes file, copied into `notes/` and checked first.
+
+The per-project lock that stops two `conductor brief` processes writing the same session is not here: it is the shared `lockProject(dir, 'brief')` from Task 1 (Contract 7 §7.1), which also keeps a brief from running while Plan 8 builds or Plan 11 changes the same project. Task 10 takes it.
 
 **Files:**
 - Create: `src/factory/briefSession.js`
@@ -28,7 +29,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { importNotes, readNotes, newSession, loadSession, saveSession, discardSession, acquireBriefLock, NOTES_FILE_MAX } from '../src/factory/briefSession.js';
+import { importNotes, readNotes, newSession, loadSession, saveSession, discardSession, NOTES_FILE_MAX } from '../src/factory/briefSession.js';
 import { briefPaths } from '../src/factory/brief.js';
 import { validBrief } from './helpers/briefFixtures.js';
 
@@ -85,18 +86,6 @@ test('sessions save atomically with a readable draft, load back, and refuse corr
   assert.equal(loadSession(p, 'thistle'), null);
   assert.equal(existsSync(briefPaths(p).draftMd), false);
 });
-
-test('the lock: one sitting per project; a dead holder is replaced; release is idempotent', () => {
-  const p = project();
-  const release = acquireBriefLock(p, { pid: 111, isAlive: () => true });
-  assert.throws(() => acquireBriefLock(p, { pid: 222, isAlive: (pid) => pid === 111 }), /Another conductor brief is already running for this project \(process 111\)\. Finish or stop that one first\./);
-  const r2 = acquireBriefLock(p, { pid: 222, isAlive: () => false }); // 111 died without releasing
-  release(); // the old holder's release must not remove 222's lock
-  assert.ok(existsSync(briefPaths(p).lock));
-  r2();
-  r2();
-  assert.equal(existsSync(briefPaths(p).lock), false);
-});
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -137,11 +126,6 @@ Expected: FAIL with `Cannot find module`.
   - `writeJsonAtomic(briefPaths(p).session, session)`;
   - when `session.draft` is set, `writeFileAtomic(draftMd, renderBrief(session.draft))`.
 - `discardSession(projectDir)` removes `session.json` and `draft.md` with `rmSync(…, { force: true })`. Notes and logs stay.
-- `acquireBriefLock(projectDir, { pid, isAlive = pidAlive })`:
-  - `openSync(lock, 'wx', 0o600)` and write `{"pid":…,"at":…}`;
-  - on `EEXIST`, read the holder's pid. An unreadable lock file counts as dead. If the holder is alive, throw the message in the test. Otherwise `rmSync` it and retry once;
-  - the returned `release()` deletes the lock only if the file still holds **this** pid, and never throws;
-  - `pidAlive(pid)` is `try { process.kill(pid, 0); return true } catch (e) { return e.code === 'EPERM' }`.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -152,5 +136,5 @@ Expected: all PASS.
 
 ```bash
 git add src/factory/briefSession.js test/factory-brief-session.test.js
-git commit -m "feat(factory): resumable brief sessions, verbatim notes intake and a per-project lock"
+git commit -m "feat(factory): resumable brief sessions and verbatim notes intake" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

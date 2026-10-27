@@ -1,8 +1,8 @@
-# Task 7: Build state, lock and squash-merge
+# Task 7: Build state and squash-merge
 
 The pieces that make a build crash-safe (index Review Focus 1):
 - `build.json` in `builds/<runId>/`, written atomically after every step that matters, plus `build-log.jsonl` (the build's own events, redacted);
-- a project-level lock file, so two builds (or two previews) of one project never run at once;
+- the project-level lock is **not** here: it is Plan 7's `lockProject(projectDir, 'build')` (`src/factory/projectLock.js`, Contract 7 §7.1), used by Task 8;
 - `mergeFeature`: puts a landed feature onto the build branch as **one** commit (index Ruling 4), and is safe to call again after a crash;
 - `archiveFeatureRun`: keeps a feature run's transcript in the build folder and removes its workspace.
 
@@ -14,11 +14,11 @@ The pieces that make a build crash-safe (index Review Focus 1):
 - Consumes: `writeJsonAtomic` (`src/factory/fsAtomic.js`, Plan 7), `git`, `metaDirOf` (`src/workspace.js`), `redact` (`src/secrets.js`), `makeFoundationRepo` (Task 1).
 - Produces:
   - `buildDirOf(projectDir, runId) -> <projectDir>/builds/<runId>`
-  - `newBuild({ runId, slug, client, briefHash, foundation, now = new Date() }) -> Build` (index shape; `phase: 'setup'`, `status: 'running'`, `branch: 'build/<runId>'`, `baseSha: null`, empty lists, `fixRounds: 0`, zeroed `usage`)
+  - `newBuild({ runId, slug, client, briefHash, briefVersion, foundation, now = new Date() }) -> Build`. Index shape: `kind: 'build'`, `phase: 'setup'`, `status: 'running'`, `branch: 'build/<runId>'`, `baseSha: null`, empty lists, `fixRounds: 0`, `councilFixRounds: 0`, `secretSeen: false`, `squashedSha: null`, zeroed `usage`.
+    - `kind` is `'build'` here. Plan 11's change runs use the same run-id format and keep their record in `change.json` (Contract 7 §7.1, §7.5).
   - `saveBuild(buildDir, build)`, `loadBuild(buildDir) -> Build|null`, `latestBuild(projectDir) -> Build|null`
   - `appendBuildLog(buildDir, type, data)`
   - `hashBrief(brief) -> string` (sha256 of the brief's JSON with keys sorted at every level)
-  - `lockProject(projectDir, kind = 'build') -> () => void`
   - `mergeFeature({ appDir, buildBranch, landedBranch, landedSha, expectedBase, message, git = gitFn }) -> Promise<sha>`
   - `readRunState(workspaceDir) -> object|null`
   - `archiveFeatureRun({ workspaceDir, buildDir, index, id }) -> string|null`
@@ -31,9 +31,9 @@ Create `test/factory-build-state.test.js`:
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync } from 'node:fs';
-import { tmpdir, hostname } from 'node:os';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { buildDirOf, newBuild, saveBuild, loadBuild, latestBuild, hashBrief, lockProject, mergeFeature, archiveFeatureRun, readRunState } from '../src/factory/buildState.js';
+import { buildDirOf, newBuild, saveBuild, loadBuild, latestBuild, hashBrief, mergeFeature, archiveFeatureRun, readRunState } from '../src/factory/buildState.js';
 import { git, metaDirOf } from '../src/workspace.js';
 import { makeFoundationRepo, sampleBrief } from './helpers/factoryFixtures.js';
 
@@ -42,7 +42,8 @@ const out = async (d, a) => (await git(d, a)).stdout.trim();
 
 test('build.json round-trips atomically; the newest build is found; a corrupt file is a plain error', () => {
   const projectDir = tmp('proj-');
-  const a = newBuild({ runId: '20261027-100000-aaaa', slug: 'acme-ltd', client: 'Acme Ltd', briefHash: 'h', foundation: { repo: 'r', tag: 'v0.1.0', commit: 'c' } });
+  const a = newBuild({ runId: '20261027-100000-aaaa', slug: 'acme-ltd', client: 'Acme Ltd', briefHash: 'h', briefVersion: 1, foundation: { repo: 'r', tag: 'v0.1.0', commit: 'c' } });
+  assert.deepEqual([a.kind, a.briefVersion, a.fixRounds, a.councilFixRounds, a.secretSeen, a.squashedSha], ['build', 1, 0, 0, false, null]);
   const b = { ...a, runId: '20261027-110000-bbbb' };
   saveBuild(buildDirOf(projectDir, a.runId), a);
   saveBuild(buildDirOf(projectDir, b.runId), b);
@@ -60,20 +61,6 @@ test('the brief hash ignores key order and changes with content', () => {
   const reordered = Object.fromEntries(Object.entries(b).reverse());
   assert.equal(hashBrief(b), hashBrief(reordered));
   assert.notEqual(hashBrief(b), hashBrief({ ...b, purpose: 'different' }));
-});
-
-test('one build per project at a time; a dead holder\'s lock is taken over; release removes only our own lock', () => {
-  const projectDir = tmp('proj-');
-  const release = lockProject(projectDir);
-  assert.throws(() => lockProject(projectDir), /A build is already running for this project/);
-  release();
-  writeFileSync(path.join(projectDir, '.build.lock'), JSON.stringify({ pid: 2 ** 22 + 7, host: hostname(), at: '2026-10-27T10:00:00Z' }));
-  const again = lockProject(projectDir);
-  again();
-  assert.equal(existsSync(path.join(projectDir, '.build.lock')), false);
-  const p = lockProject(projectDir, 'preview');
-  assert.doesNotThrow(() => lockProject(projectDir, 'build')(), 'build and preview locks are separate');
-  p();
 });
 
 async function appWithBuildBranch() {
@@ -134,7 +121,6 @@ Expected: FAIL (`Cannot find module '../src/factory/buildState.js'`).
 - `saveBuild` writes `redact(build)` with `writeJsonAtomic` to `<buildDir>/build.json` (creating the folder). `loadBuild` returns `null` when the file is missing; unparsable or `schema !== 1` throws `The saved state of build <runId from the folder name> cannot be read (<reason>). It is kept in <file>; start a new build with "conductor build <slug> --new".` (The `--new` flag is added in Task 15.)
 - `latestBuild` reads every `builds/*/build.json` it can parse and returns the one with the greatest `runId` (run ids sort by time).
 - `appendBuildLog` appends `JSON.stringify(redact({ at: new Date().toISOString(), type, ...data }))` and a newline to `<buildDir>/build-log.jsonl`.
-- `lockProject(projectDir, kind)`: file `<projectDir>/.<kind>.lock`, created with `openSync(file, 'wx')` holding `{ pid: process.pid, host: hostname(), at }`. On `EEXIST`, read it: same host and `process.kill(pid, 0)` succeeds → throw `A <kind === 'build' ? 'build' : 'preview'> is already running for this project (process <pid>, started <HH:MM d Mon>). Wait for it to finish, or stop it with Ctrl-C in its terminal.`; otherwise (dead or unreadable) remove it and try once more. The returned function removes the file only while it still holds this process's pid.
 - `mergeFeature` (the order matters for crash safety):
   1. `head = rev-parse refs/heads/<buildBranch>`.
   2. If `head !== expectedBase`: when `rev-parse head^ === expectedBase` and `head^{tree} === landedSha^{tree}`, the merge already happened: delete the landed branch if it still exists and return `head`. Otherwise throw `The build branch <buildBranch> is not where Conductor left it, so it stopped rather than guess. Nothing was changed.`
@@ -155,5 +141,7 @@ Expected: PASS.
 
 ```bash
 git add src/factory/buildState.js test/factory-build-state.test.js
-git commit -m "feat(factory): build state, project lock and crash-safe feature merge"
+git commit -m "feat(factory): build state and crash-safe feature merge
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

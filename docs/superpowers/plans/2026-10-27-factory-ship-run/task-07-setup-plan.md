@@ -9,7 +9,7 @@ Secrets are asked with a hidden prompt (nothing echoed), registered with `rememb
 - Test: `test/ask.test.js`, `test/factory-setup-plan.test.js`
 
 **Interfaces:**
-- Consumes: `rememberSecret` (Task 1); `targetProblem` (Task 2); `newDeployment`/`validateDeployment` patterns (Task 1).
+- Consumes: `rememberSecret` (Task 1); `targetProblem` (Task 2); `newDeployment`/`validateDeployment` patterns (Task 1); `OUTBOUND_SERVICES` from Plan 7's `src/factory/outbound.js` (Contract 7 §7.4); the brief's `policy` shapes from Plan 7 (`outbound: string[]` of ids, `residency: 'uk'|'uk-eu'|'any'`, `backupDestination: { kind: 'client-owned'|'operator-run'|'cloud-bucket', detail }`).
 - Produces: `createAsk`, `Ask` (index, Task 7); `policyProblems`, `askDeploymentBasics`, `askSettings`, `backupProblem`, `backupShown`, `initArgs`, and:
 
 ```js
@@ -49,12 +49,12 @@ Then `policyProblems(policy, { hosting: policy.hosting, access })`; any problem 
 - no policy → `The approved brief has no data policy, so Conductor cannot decide how to set up the box. Revise the brief.`
 - `operatorAccess !== true` → `The client has not agreed to your remote access (the brief's data policy). Shipping needs it, so that you can fix things in flight.`
 - hosting mismatch → `The brief says the app runs on the client's own box, but this deployment is a server you run.` (and the reverse)
-- tunnel without `/cloudflare/i` in `outbound` → `The data policy does not allow Cloudflare, and the Cloudflare tunnel lets Cloudflare see the app's traffic. Choose Tailscale instead (set up by hand: RUNBOOK.md, "Tailscale instead of Cloudflare"), or revise the brief to allow Cloudflare.`
+- tunnel while `policy.outbound` does not include the id `'cloudflare-tunnel'` (an exact id match, never free text; Contract 7 §7.4) → `The data policy does not allow <OUTBOUND_SERVICES['cloudflare-tunnel'].label>, and the Cloudflare tunnel lets Cloudflare see the app's traffic. Choose Tailscale instead (set up by hand: RUNBOOK.md, "Tailscale instead of Cloudflare"), or revise the brief to allow it.`
 
 **`askSettings`** (returns `null` when the operator declines; every answer below is `secret: true` unless marked *visible*):
 1. `Mail server address for invitations and password resets (for example smtp://user:password@smtp.example.co.uk:587)` → `SMTP_URL`; check `^smtps?://`.
 2. *visible* `Sender address for those emails?` → `EMAIL_FROM`; check contains `@`.
-3. `Backup destination (for example sftp:backup@host:/path, rest:https://host:8000/repo, s3:… or b2:…)` → `BACKUP_REPOSITORY`; check `backupProblem`. Then `confirm('The client's data policy says backups go to <policy.backupDestination>, with data kept <residency text>. This box will send its encrypted backups to <backupShown(repo)>. Is that right?')` where residency text is `in the UK` / `in the UK or EU` / `anywhere`. No → say `Nothing has been changed on the box.` and return `null`.
+3. `Backup destination (for example sftp:backup@host:/path, rest:https://host:8000/repo, s3:… or b2:…)` → `BACKUP_REPOSITORY`; check `backupProblem`. Then `confirm('The client's data policy says backups go to <destination text>, with data kept <residency text>. This box will send its encrypted backups to <backupShown(repo)>. Is that right?')` where destination text is `storage the client owns` / `storage you run` / `a cloud bucket` for `backupDestination.kind` `client-owned` / `operator-run` / `cloud-bucket`, followed by ` (<detail>)` (Plan 7 already refuses a `detail` that looks like a credential), and residency text is `in the UK` / `in the UK or EU` / `anywhere` for `uk` / `uk-eu` / `any`. No → say `Nothing has been changed on the box.` and return `null`.
 4. Sign-in for the destination, by scheme: `s3:` → `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, *visible optional* `AWS_DEFAULT_REGION`; `b2:` → `B2_ACCOUNT_ID`, `B2_ACCOUNT_KEY`; `rest:` → optional `RESTIC_REST_USERNAME`, optional `RESTIC_REST_PASSWORD`; `sftp:` → none, and say `For sftp, the box's own SSH key must be allowed on the backup server.`
 5. `choose('Where should alerts go?', m Matrix (your usual alerts room), w a webhook only)` [Matrix is listed first]. Matrix → *visible* homeserver [`defaults.matrix.homeserver`], *visible* room id [`defaults.matrix.roomId`] (check `^!.+:.+$`), then the bot's access token → `MATRIX_ACCESS_TOKEN`. Then optional `Also send alerts to a webhook? Paste its address, or press Enter for none.` → `ALERT_WEBHOOK_URL` (required when `w`).
 6. `Uptime Kuma push address for this box (or type skip)` → `HEARTBEAT_URL`; check `^https?://` or `skip`. `skip` → `confirm('Without an outside watcher, nobody notices if the whole box goes off. Ship without one?')`; no → ask again.
@@ -130,7 +130,9 @@ const DEFAULTS = { matrix: { homeserver: 'https://matrix.example.org', roomId: '
 test('policy problems fail closed', () => {
   assert.deepEqual(policyProblems(P, { hosting: 'client-box', access: 'cloudflare-tunnel' }), []);
   assert.match(policyProblems({ ...P, operatorAccess: false }, { hosting: 'client-box', access: 'ssh' })[0], /has not agreed to your remote access/);
-  assert.match(policyProblems({ ...P, outbound: [] }, { hosting: 'client-box', access: 'cloudflare-tunnel' })[0], /does not allow Cloudflare/);
+  assert.match(policyProblems({ ...P, outbound: [] }, { hosting: 'client-box', access: 'cloudflare-tunnel' })[0], /does not allow .*the Cloudflare tunnel lets Cloudflare see/);
+  assert.equal(policyProblems({ ...P, outbound: ['Cloudflare'] }, { hosting: 'client-box', access: 'cloudflare-tunnel' }).length, 1); // free text is not an id
+  assert.deepEqual(policyProblems({ ...P, outbound: [] }, { hosting: 'client-box', access: 'tailscale' }), []);
   assert.match(policyProblems(P, { hosting: 'operator-server', access: 'ssh' })[0], /client's own box, but this deployment is a server you run/);
   assert.match(policyProblems(null, { hosting: 'client-box', access: 'ssh' })[0], /no data policy/);
 });
@@ -168,7 +170,7 @@ test('settings: secrets flagged, policy confirmation asked, alerts recorded', as
   assert.equal(byKey.TUNNEL_TOKEN.value, 'cf-tunnel-token-value');
   assert.equal('ALERT_WEBHOOK_URL' in byKey, false);
   assert.deepEqual(r.alerts, { matrix: { homeserver: 'https://matrix.example.org', roomId: '!alerts:example.org' }, webhook: false, heartbeat: true });
-  assert.ok(ask.asked.some((q) => /data policy says backups go to client-owned storage, with data kept in the UK\. This box will send its encrypted backups to an SFTP server at backup\.acme\.co\.uk\./.test(q)));
+  assert.ok(ask.asked.some((q) => /data policy says backups go to storage the client owns \(A NAS in the client's office\), with data kept in the UK\. This box will send its encrypted backups to an SFTP server at backup\.acme\.co\.uk\./.test(q)));
 });
 
 test('declining the backup destination stops before anything is changed', async () => {
@@ -214,5 +216,7 @@ Expected: PASS.
 
 ```bash
 git add src/ui/ask.js src/factory/ship/setupPlan.js test/helpers/scriptedAsk.js test/ask.test.js test/factory-setup-plan.test.js
-git commit -m "feat(ship): plain-English setup questions, hidden secret prompts and data-policy checks"
+git commit -m "feat(ship): plain-English setup questions, hidden secret prompts and data-policy checks
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

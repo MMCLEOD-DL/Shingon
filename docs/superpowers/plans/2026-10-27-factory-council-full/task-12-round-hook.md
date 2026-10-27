@@ -11,15 +11,15 @@ This task connects the pieces.
 `files` and `diff` come from the caller. The hook passes the whole-app range. `ws.baseSha` is already the foundation commit (Task 3), so the `-U0` diff, `addedFiles` and the lockfile delta all measure from the foundation.
 
 **Report text** changes, used only when `report.checked` is set:
-- after the heading lines: `What was checked:`, then one line per member, `  - <Label>: <labels of its ToolRuns that ran, joined by ", ">`, or `  - <Label>: nothing could run`;
+- after the heading lines: `What was checked:`, then one line per member, `  - <Label>: <labels of its ToolRuns that ran, joined by ", ">`, or `  - <Label>: nothing could run`. A ToolRun whose evidence came from Plan 8's checks adds ` (from the build's checks)` to its label (Correctness's `verify` and `coverage`, Design's `page-gate`, `registry`, Correctness's `journeys` and Security's `crossing`, per `evidence.gates.source`);
 - `  Worked examples proven: <p> of <t>` when `coverage` is set;
 - the warnings list puts the "not proven / not checked" locked warnings first (titles starting `Reliability was not proven`, `Brief coverage was not proven` or `The pages were not checked`);
 - last: `  Full report: <md>` and, when `files.screenshots` is set, `  Screenshots: <dir>`.
 
-`report.files` is set before the text is rendered, so the text names the file. `council-report.json` is the report minus `text`, redacted. Both files are written with `writeAtomic` (temp file in the same folder, `fsync`, `rename`).
+`report.files` is set before the text is rendered, so the text names the file. The files are `<projectDir>/builds/<runId>/council-report.md` and `council-report.json` (Contract 7.5; Plans 11 and 12 read the council result there). `council-report.json` is Plan 5's `CouncilReport` minus `text`, plus this plan's `checked`, `coverage` and `files`, redacted. Both files are written with Plan 7's `writeFileAtomic` (`src/factory/fsAtomic.js`, Contract 7.1: temp file in the same folder, `fsync`, `rename`). There is no local atomic writer.
 
-**`runProjectCouncil(args, { options = {}, deps = {} } = {})`** is the `hooks.council` implementation (index A1):
-1. `project = await projectContext(args, deps)` (Task 1). Add `factory: args.factory ?? {}` and `deps`.
+**`runProjectCouncil(args, { options = {}, deps = {} } = {})`** is the `hooks.council` implementation (index A1, Contract 7.7). `args` includes `checks`, Plan 8's `AppChecks` for the same `sha` (or `null`):
+1. `project = await projectContext(args, deps)` (Task 1; it carries `checks`). Add `factory: args.factory ?? {}` and `deps`.
 2. `{ log, state } = openCouncilLog(project.buildDir, { onEvent: args.onEvent })` (Task 3). `state.request ??= `Build the client app for ${project.client} described in the approved brief.``.
 3. `opened = await openCouncilWorkspace({ appDir, sha, foundation, runId, baseDir: deps.baseDir })`. `project.problem = opened.problem`.
 4. `ctx = { ws: opened.ws, log, state, team: args.team, options: { ...DEFAULT_OPTIONS, ...options, council: true } }`. `validateCouncilOptions(ctx.options)`.
@@ -27,8 +27,9 @@ This task connects the pieces.
 6. `files = await ws.filesRange(ws.baseSha, sha)` and `diff = await ws.diffRange(ws.baseSha, sha)`.
 7. `r = await runCouncilRound(ctx, { files, tests: null, diff, members: membersFor(PROJECT_COUNCIL), project })`.
 8. Result:
-   - `paused` → `{ status: 'paused', reason }`;
-   - otherwise `{ status: report.verdict, text: report.text }`, plus, when blocked, `fix: { title, instructions }` from `fixChunk(report, state.council.round)`.
+   - `paused` → `{ status: 'paused', reason }`, plus `secretSeen: true` when already set;
+   - otherwise `{ status: report.verdict, text: report.text, secretSeen: state.council.secretSeen }`, plus, when blocked, `fix: { title, instructions }` from `fixChunk(report, state.council.round)`.
+   - `secretSeen` is sticky for the build: once any round of this `runId` saw a possible secret (a Gitleaks hit or an added `gitleaks:allow`, Task 2), every later result says so, and Plan 8 squashes the whole `build/<runId>` branch to one commit before the gate (Contract 7.7, Plan 5 Ruling 10). The fix-round cap is Plan 8's `factory.build.councilFixRounds`; this hook never counts fix rounds.
 9. `finally`: `opened.remove()`.
 10. Any unexpected error → `{ status: 'paused', reason: 'The council hit a problem it could not get past (<plain message>), so the build paused. Run "conductor build <slug>" to try again.' }`. The hook never throws (Plan 8 would treat a throw as a crash).
 
@@ -40,8 +41,8 @@ This task connects the pieces.
 - Test: `test/council-round.test.js` (append), `test/council-report.test.js` (append), `test/council-hook.test.js` (new)
 
 **Interfaces:**
-- Consumes: Tasks 1, 3, 6–11; Plan 5's round, `fixChunk`, `buildReport`; Plan 8's `MEMBERS` and `membersFor` (index A4).
-- Produces: as in the index (`PROJECT_COUNCIL`, `runCouncilRound(… project)`, `CouncilReport.checked`/`coverage`/`files`, `writeCouncilReport`, `writeAtomic`, `runProjectCouncil`, event `council-report-saved`).
+- Consumes: Tasks 1, 3, 6–11; `writeFileAtomic` (`src/factory/fsAtomic.js`, Plan 7); Plan 5's round, `fixChunk`, `buildReport`; Plan 8's `MEMBERS` and `membersFor` (index A4); Plan 7's `renderBrief` (index A5).
+- Produces: as in the index (`PROJECT_COUNCIL`, `runCouncilRound(… project)`, `CouncilReport.checked`/`coverage`/`files`, `writeCouncilReport`, `runProjectCouncil` returning `secretSeen`, event `council-report-saved`).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -76,7 +77,7 @@ Create `test/council-hook.test.js`, the hook end to end, everything stubbed:
   - `loadProject` returns `foundation: { repo: '/f', tag: 'v0.1.0', commit: <first sha> }`;
   - `renderBrief` returns `'# Acme Ltd'`;
   - `run: fakeGatesRun({ codes: { vitest: 1, browser: 1 } }).run`;
-  - `checks: okChecks`;
+  - `helpers: okChecks`;
   - `getMachineProvider` returns `fakeProvider({ machine })`;
   - `createSsh` returns `fakeSsh` answering `run-smoke.sh` with `smoke-failed-step5.log`;
   - `baseDir` is a temp folder.
@@ -86,7 +87,7 @@ Create `test/council-hook.test.js`, the hook end to end, everything stubbed:
 ```js
 test('the hook: whole app, five members, blocked with a fix, report saved, appDir untouched', async () => {
   const before = (await git(appDir, ['for-each-ref'])).stdout;
-  const r = await runProjectCouncil({ projectDir, appDir, sha: buildSha, brief: BRIEF, policy: BRIEF.policy, runId: 'r1', slug: 'acme', team, factory: {}, onEvent: (e) => seen.push(e) },
+  const r = await runProjectCouncil({ projectDir, appDir, sha: buildSha, brief: BRIEF, policy: BRIEF.policy, runId: 'r1', slug: 'acme', team, factory: {}, onEvent: (e) => seen.push(e), checks: null },
     { options, deps });
   assert.equal(r.status, 'blocked');
   assert.deepEqual(seen.find((e) => e.type === 'council-start').members, ['security', 'legal', 'correctness', 'design', 'reliability']);
@@ -102,6 +103,19 @@ test('the hook: whole app, five members, blocked with a fix, report saved, appDi
   assert.equal((await git(appDir, ['for-each-ref'])).stdout, before);
   assert.equal(prompts.filter((p) => p.includes('reports/screenshots/')).length, 1);          // Design only
   assert.ok(prompts.some((p) => p.includes("The client's approved brief:\n# Acme Ltd")));
+  assert.equal(r.secretSeen, false);
+  assert.deepEqual(Object.keys(JSON.parse(readFileSync(path.join(projectDir, 'builds', 'r1', 'council-report.json'), 'utf8'))).includes('text'), false);
+});
+
+test('the hook reuses Plan 8\'s checks for the same commit: no own verify or browser run', async () => {
+  // args.checks = buildChecks(projectDir, 'r1') (as in Task 6: reports in builds/r1/reports/); the fake run records no
+  // lint/typecheck/licences/vitest/browser step; the report still blocks on 'The tests fail' and
+  // 'The notes page scrolls sideways on a phone (Safari)', and says '(from the build's checks)' in "What was checked"
+});
+
+test('the hook says secretSeen when an added line carries gitleaks:allow', async () => {
+  // a build commit adds `const k = 'x'; // gitleaks:allow` → r.secretSeen === true; a second call on a later commit
+  // without it still returns secretSeen: true (sticky for the build)
 });
 
 test('the hook again on a fixed commit: round 2, fresh evidence, "Fixed during the review"', async () => {
@@ -121,7 +135,7 @@ test('the hook never throws: an unexpected error pauses the build with a plain r
 });
 ```
 
-Fill in the sketched pause test in the same style (`team` gives `failure: 'no-participant'` once).
+Fill in the three sketched tests in the same style (for the pause test, `team` gives `failure: 'no-participant'` once).
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -139,5 +153,7 @@ Expected: all PASS, including every existing council round, report and drive tes
 
 ```bash
 git add src/council/index.js src/council/report.js src/council/reportFile.js src/council/projectCouncil.js test/council-round.test.js test/council-report.test.js test/council-hook.test.js
-git commit -m "feat(council): the full council hook for client builds (whole app, five members, report saved in the build folder)"
+git commit -m "feat(council): the full council hook for client builds (whole app, five members, report saved in the build folder)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

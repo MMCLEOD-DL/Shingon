@@ -143,5 +143,7 @@ Expected: PASS.
 
 ```bash
 git add src/factory/machines/index.js src/factory/machines/static.js test/factory-static.test.js
-git commit -m "feat(factory): static machine provider with host locks, teardown and sweep"
+git commit -m "feat(factory): static machine provider with host locks, teardown and sweep
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

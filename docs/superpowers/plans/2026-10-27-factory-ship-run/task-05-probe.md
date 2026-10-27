@@ -10,15 +10,15 @@ Two read-only looks at a box over SSH:
 - Test: `test/factory-probe.test.js`
 
 **Interfaces:**
-- Consumes: `remoteRun`, `shq`, `sshProblem` (Task 2); `redact`.
+- Consumes: `remoteRun`, `sshProblem` (Task 2); `shQuote` (Plan 8's `src/factory/remote.js`); `redact`.
 - Produces: `composeCmd`, `preflight`, `probeBox`, `BoxStatus`, `VERSION_PROBE`, `RUNS_SQL` (index, Task 5), and `probeVersion(t, dep, { env }) -> Promise<{ unreachable, version: { app, foundation, commit } | null, problem: string|null }>` (just the version probe; `probeBox` uses it, Task 8 polls it).
 
-**`composeCmd(dep, args)`** = `cd <shq(bundleDir)> && docker compose <args>`, with `DOCKER_CONFIG="$PWD/.docker" ` before `docker` when `dep.imageDelivery === 'registry'` (runbook: host-side commands that may fetch registry images need it). The tunnel profile comes from `COMPOSE_PROFILES=tunnel` in `.env` (Task 7), so no `--profile` flag is needed anywhere.
+**`composeCmd(dep, args)`** = `cd <shQuote(bundleDir)> && docker compose <args>`, with `DOCKER_CONFIG="$PWD/.docker" ` before `docker` when `dep.imageDelivery === 'registry'` (runbook: host-side commands that may fetch registry images need it). The tunnel profile comes from `COMPOSE_PROFILES=tunnel` in `.env` (Task 7), so no `--profile` flag is needed anywhere.
 
 **Preflight script** (one `remoteRun`; it prints `key=value` lines; Conductor parses them, unknown lines ignored):
 
 ```sh
-d=<shq(bundleDir)>
+d=<shQuote(bundleDir)>
 echo "arch=$(uname -m)"
 if docker version --format '{{.Server.Version}}' >/dev/null 2>&1; then echo docker=yes; else echo docker=no; fi
 if docker compose version >/dev/null 2>&1; then echo compose=yes; else echo compose=no; fi
@@ -45,7 +45,7 @@ console.log(JSON.stringify({ version: await get('/api/version'), ready: await ge
 
 The token is read inside the ops container from its own environment, so it is never in any command line, never on Conductor's side, never printed: the script prints only the two responses (`/api/version` returns `{ app, foundation, commit }` to a token holder; `/readyz` returns `{ status, checks }`).
 
-**Backup and restore-test runs** (`composeCmd(dep, 'exec -T db psql -U app -d app -At -c ' + shq(RUNS_SQL))`):
+**Backup and restore-test runs** (`composeCmd(dep, 'exec -T db psql -U app -d app -At -c ' + shQuote(RUNS_SQL))`):
 
 ```js
 export const RUNS_SQL = `select json_build_object(
@@ -55,11 +55,13 @@ export const RUNS_SQL = `select json_build_object(
  'restoreOk', (select at from ops_runs where kind = 'restore-test' and ok order by at desc, id desc limit 1))`;
 ```
 
-(`ops_runs(kind, ok, busy, at, detail)` is the foundation's ops log, the same table its `/readyz` reads. Read-only. Contract gap 8.)
+(`ops_runs(kind, ok, busy, at, detail)` is the foundation's ops log, the same table its `/readyz` reads. Read-only. Foundation v0.2.0 adds `ops status --json` (Contract 7 §7.9, Plan 12 milestone 1); this query stays, pinned by these fixtures, until apps are on v0.2.0.)
 
 **`probeBox` order:** version probe, then `composeCmd(dep, 'run --rm -T ops check')`, then the runs query. If the first call is `unreachable`, stop and return `{ reachable: false, problem: sshProblem(...) }`. Each later part fails on its own into a `notes` line and leaves its field `null`:
 - version probe non-zero or no JSON line → `The app's version could not be read on the box (the ops container did not run: <first stderr line, redacted>).`
-- `version` present but no `foundation` field → keep `app`, set `foundation: null`, note `The box did not give its foundation version, so Conductor cannot tell which security fixes it has. HEALTH_TOKEN may be missing for ops (see RUNBOOK.md, "The app reports a problem, but ops cannot see which").`
+- `version` present but no `foundation` field → keep `app`, set `foundation: null`, note `The box did not give its full version details, so HEALTH_TOKEN may be missing for ops (see RUNBOOK.md, "The app reports a problem, but ops cannot see which").`
+
+**The box's `foundation` field is shown, never trusted for security fixes.** With foundation v0.1.0, an app's own `npm run release` rewrites `foundation.json`'s version to the app's version (the bug Contract 7 §7.9 item 1 fixes in v0.2.0), so `/api/version` can claim a foundation the app is not built on. Which foundation a deployment runs is recorded by Conductor at each install or update (`dep.foundation`, from the release's `project.json.foundation.tag`, Tasks 8–10), and Task 11 reads that.
 - `ops check` exit 0/1 → `{ ok: code === 0, failing: lines starting '✗ ' with the mark removed }`; any other code → note `The box's own checks could not run (code N).`
 - runs query fails → note `The backup records could not be read (the database may be down).`
 
@@ -135,11 +137,11 @@ test('a broken box is reported part by part, never thrown', async () => {
   assert.ok(s.notes.some((n) => /backup records could not be read/.test(n)));
 });
 
-test('no foundation version (health token missing) is a note, not "up to date"', async () => {
+test('no foundation version (health token missing) is a note', async () => {
   const f = fakeSsh(tmp(), [{ match: 'entrypoint node ops', stdout: JSON.stringify({ version: { app: '0.1.3' }, ready: { status: 'degraded' } }) }, { match: 'ops check', stdout: '✓ app\n' }, { match: 'psql', stdout: RUNS_OK }]);
   const s = await probeBox(T, DEP, { env: f.env() });
   assert.deepEqual(s.version, { app: '0.1.3', foundation: null, commit: null });
-  assert.ok(s.notes.some((n) => /did not give its foundation version/.test(n)));
+  assert.ok(s.notes.some((n) => /did not give its full version details/.test(n)));
 });
 
 test('an unreachable box stops after the first call', async () => {
@@ -167,5 +169,7 @@ Expected: PASS.
 
 ```bash
 git add src/factory/ship/probe.js test/factory-probe.test.js
-git commit -m "feat(ship): box preflight and a status probe that keeps the health token on the box"
+git commit -m "feat(ship): box preflight and a status probe that keeps the health token on the box
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

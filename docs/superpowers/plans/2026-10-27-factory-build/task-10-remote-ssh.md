@@ -52,6 +52,7 @@ async function sh(script, env = {}) {
 test('quoting and the safety patterns', () => {
   assert.equal(shQuote("Acme'; rm -rf /"), "'Acme'\\''; rm -rf /'");
   assert.equal(assertSafe('slug', 'acme-ltd'), 'acme-ltd');
+  for (const p of ['preview', 'council', 'smoke', 'ship']) assert.equal(assertSafe('purpose', p), p);
   for (const [k, v] of [['slug', 'acme ltd'], ['runId', '$(id)'], ['path', '/srv/../etc'], ['path', 'relative'], ['host', 'a;b'], ['user', 'Root'], ['port', 70000], ['client', 'a\nb'], ['purpose', 'mining'], ['project', 'hf-x']]) {
     assert.throws(() => assertSafe(k, v), /unsafe .* for a remote command/, `${k} ${v}`);
   }
@@ -136,7 +137,7 @@ Expected: FAIL (`Cannot find module '../src/factory/remote.js'`).
 - [ ] **Step 4: Implement `src/factory/remote.js`**
 
 - `shQuote(s)`: `'` + `String(s).replaceAll("'", "'\\''")` + `'`.
-- `assertSafe` patterns: `slug` `SLUG_RE`; `runId` `RUN_ID_RE`; `project` `COMPOSE_PROJECT_RE`; `path` `^/[A-Za-z0-9/_.-]+$` with no `..` segment; `host` `^[A-Za-z0-9.-]{1,253}$`; `user` `^[a-z_][a-z0-9_-]{0,31}$`; `port` an integer 1–65535; `client` a string of 1–80 characters with no control characters; `purpose` one of `preview`, `council`, `smoke`; `image` `^[a-z0-9][a-z0-9._/-]*:[A-Za-z0-9._-]+$`. Failure: `throw new Error(\`unsafe ${kind} for a remote command: ${JSON.stringify(value)}\`)`.
+- `assertSafe` patterns: `slug` `SLUG_RE`; `runId` `RUN_ID_RE`; `project` `COMPOSE_PROJECT_RE`; `path` `^/[A-Za-z0-9/_.-]+$` with no `..` segment; `host` `^[A-Za-z0-9.-]{1,253}$`; `user` `^[a-z_][a-z0-9_-]{0,31}$`; `port` an integer 1–65535; `client` a string of 1–80 characters with no control characters; `purpose` one of `preview`, `council`, `smoke`, `ship` (Contract 7 §7.8; Plan 10 builds release images under `ship`); `image` `^[a-z0-9][a-z0-9._/-]*:[A-Za-z0-9._-]+$`. Failure: `throw new Error(\`unsafe ${kind} for a remote command: ${JSON.stringify(value)}\`)`.
 - Every script starts `set -euo pipefail` and `ROOT=<shQuote(root)>`, and every interpolated value goes through `assertSafe` then `shQuote`.
   - `lockScript`: `mkdir -p "$ROOT/runs"`; `if mkdir "$ROOT/lock" 2>/dev/null; then printf %s <quoted base64 of owner> | base64 -d > "$ROOT/lock/owner.json"; echo HF-LOCKED; else echo HF-BUSY; cat "$ROOT/lock/owner.json" 2>/dev/null || true; fi`. (`mkdir` is atomic, so two Conductors racing cannot both win.)
   - `unlockScript`: removes `$ROOT/lock` only when `owner.json` contains `"run":"<runId>"` (`grep -qF`).
@@ -172,5 +173,7 @@ Expected: PASS.
 
 ```bash
 git add src/factory/remote.js src/factory/ssh.js test/helpers/stubDocker.js test/factory-remote.test.js
-git commit -m "feat(factory): safe remote scripts for locks, teardown and sweep, and an ssh wrapper"
+git commit -m "feat(factory): safe remote scripts for locks, teardown and sweep, and an ssh wrapper
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

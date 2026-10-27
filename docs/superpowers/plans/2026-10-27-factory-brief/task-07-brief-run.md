@@ -12,7 +12,8 @@ This is the heart of Plan 7: `runBriefSession`, the state machine that drafts, a
   - `normalizeBrief`, `validateBrief`, `renderBrief`, `briefPaths`, `nextVersion`, `saveApprovedBrief`, `loadBrief`, `currentBriefInfo` (Tasks 3–4);
   - `briefDraftPrompt`, `parseBriefReply` (Task 5);
   - `readNotes`, `saveSession`, `discardSession` (Task 6);
-  - `cleanText` (Task 3).
+  - `cleanText` (Task 3);
+  - `assignExampleIds`, `acceptanceIds` (Task 2).
 - Produces: `BRIEF_LIMITS`, `assertFrontierSeat(seat)` and `runBriefSession(...)` (signatures and the `io` contract are in the index).
 
 **State machine** (the session is saved after every arrow):
@@ -20,7 +21,7 @@ This is the heart of Plan 7: `runBriefSession`, the state machine that drafts, a
 ```
 draft ──author reply valid (draft stage)──▶ questions (if openQuestions) ──all asked──▶ draft
   │  └─reply unusable → problems, attempts+1 (≤3) ──▶ draft                        └─all skipped → STOP (questions kept)
-  └──valid, no questions──▶ approve ──a──▶ save vN, discard session → APPROVED
+  └──valid, no questions──▶ approve ──a──▶ stamp example ids, save vN, discard session → APPROVED
                                ├─c (note)──▶ draft (changeRequests += note)
                                └─s / EOF──▶ STOP (stage approve kept)
 ```
@@ -36,6 +37,7 @@ import path from 'node:path';
 import { runBriefSession, assertFrontierSeat, BRIEF_LIMITS } from '../src/factory/briefRun.js';
 import { newSession, loadSession, saveSession } from '../src/factory/briefSession.js';
 import { briefPaths, loadBrief, saveApprovedBrief, nextVersion } from '../src/factory/brief.js';
+import { acceptanceIds } from '../src/factory/acceptance.js';
 import { RunLog } from '../src/runlog.js';
 import { Seat } from '../src/router.js';
 import { fakeParticipant } from './helpers/fakes.js';
@@ -81,10 +83,13 @@ test('draft → questions one at a time → redraft → approve writes v1 and cl
   assert.equal(a.calls[0].opts.write, false);
   assert.ok(a.calls[1].task.includes('Q: Where should backups go?\nA: A USB disk in their safe\n'), 'answers are cleaned and passed on');
   assert.match(t.shown[0].markdown, /Draft: not yet approved \(will become version 1\)/);
+  assert.ok(t.shown[0].markdown.includes('  - [upload-receipt#1] Given Alice'), 'the operator approves the example ids the tests will carry');
   assert.equal(t.shown[0].draftPath, briefPaths(p).draftMd);
   const b = loadBrief(p);
   assert.deepEqual({ slug: b.slug, version: b.version, approvedBy: b.approvedBy, approvedAt: b.approvedAt, createdAt: b.createdAt, revisedFrom: b.revisedFrom },
     { slug: 'thistle', version: 1, approvedBy: 'Malcolm', approvedAt: NOW.toISOString(), createdAt: '2026-10-27T10:00:00.000Z', revisedFrom: null });
+  assert.deepEqual(acceptanceIds(b).map((x) => x.id), ['upload-receipt#1', 'monthly-report#1']);
+  assert.deepEqual(b.exampleSeq, { 'upload-receipt': 1, 'monthly-report': 1 });
   assert.equal(loadSession(p, 'thistle'), null);
   assert.ok(existsSync(path.join(briefPaths(p).logs, 'transcript.jsonl')), 'the session log stays in the project folder');
 });
@@ -179,6 +184,7 @@ test('revise: the author sees the approved brief; the result is v2 revised from 
   assert.equal(out.version, 2);
   assert.ok(a.calls[0].task.includes('This is a revision of the approved brief version 1'));
   assert.equal(loadBrief(p).revisedFrom, 1);
+  assert.deepEqual(acceptanceIds(loadBrief(p)).map((x) => x.id), ['upload-receipt#1', 'monthly-report#1'], 'unchanged examples keep their ids');
 
   const { p: q, session: s2 } = setup({ mode: 'revise', baseVersion: 1 });
   saveApprovedBrief(q, approvedBrief());
@@ -186,6 +192,20 @@ test('revise: the author sees the approved brief; the result is v2 revised from 
   const r = await run(q, s2, author([fence(validBrief())]), io());
   assert.equal(r.status, 'failed');
   assert.match(r.reason, /The approved brief changed while this revision was open \(it is now version 2\)\. Run conductor brief thistle --discard-draft, then start the revision again\./);
+});
+
+test('revise carries example ids: unchanged kept, new and reworded take the next unused number', async () => {
+  const { p, session } = setup({ mode: 'revise', baseVersion: 1 });
+  saveApprovedBrief(p, approvedBrief());
+  const [up, report] = validBrief().features;
+  const extra = { given: 'Alice is signed in as Staff', when: 'she uploads a receipt with no amount', then: 'she sees "Please enter the amount"' };
+  const reworded = { ...report.acceptance[0], then: 'the Travel row shows net £10.33, VAT £2.07, gross £12.40, category Travel' };
+  const draft = validBrief({ features: [{ ...up, acceptance: [extra, up.acceptance[0]] }, { ...report, acceptance: [reworded] }] });
+  const out = await run(p, session, author([fence(draft)]), io({ approvals: [{ decision: 'approve' }] }));
+  assert.equal(out.version, 2);
+  const v2 = loadBrief(p);
+  assert.deepEqual(acceptanceIds(v2).map((x) => x.id), ['upload-receipt#2', 'upload-receipt#1', 'monthly-report#2']);
+  assert.deepEqual(v2.exampleSeq, { 'upload-receipt': 2, 'monthly-report': 2 });
 });
 
 test('a crash after saving the approved brief never makes a second version', async () => {
@@ -277,13 +297,14 @@ Otherwise clear `approving` and carry on.
 
 **Stage `approve`:**
 1. `v = nextVersion(projectDir)`.
-2. `markdown = renderBrief({ ...draft, version: v })`.
-3. Save, so `draft.md` is fresh.
-4. `res = await io.approve({ markdown, draftPath: briefPaths(p).draftMd })`.
-5. Act on the answer:
+2. `stamped = assignExampleIds({ ...draft, version: v }, base)`, where `base` is the approved brief being revised (`null` in `new` mode). Unchanged examples keep their ids from `base`; new or reworded ones take the next unused `n` (Ruling 15). The session keeps the unstamped `draft`, so a later `change` redraft is stamped afresh.
+3. `markdown = renderBrief(stamped)`, so the operator sees the `[featureId#n]` tags he is approving.
+4. Save, so `draft.md` is fresh.
+5. `res = await io.approve({ markdown, draftPath: briefPaths(p).draftMd })`.
+6. Act on the answer:
    - `approve`:
      1. set `approving = { version: v }` and save;
-     2. build `{ ...draft, schema: 1, slug, version: v, createdAt: session.startedAt, revisedFrom: session.baseVersion, approvedAt: now().toISOString(), approvedBy: operatorName }`;
+     2. build `{ ...stamped, schema: 1, slug, version: v, createdAt: session.startedAt, revisedFrom: session.baseVersion, approvedAt: now().toISOString(), approvedBy: operatorName }`;
      3. `saveApprovedBrief`, then `discardSession`;
      4. return `approved`.
    - `change` → push `cleanText(note, 2000)` to `changeRequests`, stage `draft`, save.
@@ -300,5 +321,5 @@ Expected: all PASS.
 
 ```bash
 git add src/factory/briefRun.js test/factory-brief-run.test.js
-git commit -m "feat(factory): the brief loop: draft, one-at-a-time questions, approval, resume"
+git commit -m "feat(factory): the brief loop: draft, one-at-a-time questions, approval, resume" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

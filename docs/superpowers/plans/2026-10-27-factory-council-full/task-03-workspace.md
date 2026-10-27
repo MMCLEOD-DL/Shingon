@@ -113,5 +113,7 @@ Expected: all PASS.
 
 ```bash
 git add src/council/councilWorkspace.js test/council-workspace.test.js
-git commit -m "feat(council): a guarded throwaway workspace at the build commit, and a council log that persists across rounds"
+git commit -m "feat(council): a guarded throwaway workspace at the build commit, and a council log that persists across rounds
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

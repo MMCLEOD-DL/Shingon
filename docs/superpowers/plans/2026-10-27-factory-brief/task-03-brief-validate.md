@@ -7,10 +7,10 @@ This task builds roadmap Contract 2's `validateBrief`, plus `normalizeBrief`, th
 - Test: `test/factory-brief-validate.test.js`
 
 **Interfaces:**
-- Consumes: `exampleProblems` (Task 2); `secretValues` from `src/secrets.js`.
+- Consumes: `exampleProblems`, `EXAMPLE_ID_RE` (Task 2); `OUTBOUND_SERVICES`, `outboundProblems` (Task 2, `src/factory/outbound.js`); `validateSlug` (Task 1); `secretValues` from `src/secrets.js`.
 - Produces: the Task 3 exports in Shared Interfaces, plus these test fixtures:
   - `validBrief(over = {}) -> object` (content only, `ready`-valid);
-  - `approvedBrief(over = {}) -> object` (adds `slug: 'thistle'`, `version: 1`, `createdAt: '2026-10-27T09:00:00.000Z'`, `revisedFrom: null`, `approvedAt: '2026-10-27T10:00:00.000Z'`, `approvedBy: 'Malcolm'`).
+  - `approvedBrief(over = {}) -> object` (adds example ids `upload-receipt#1` and `monthly-report#1`, `exampleSeq`, `slug: 'thistle'`, `version: 1`, `createdAt: '2026-10-27T09:00:00.000Z'`, `revisedFrom: null`, `approvedAt: '2026-10-27T10:00:00.000Z'`, `approvedBy: 'Malcolm'`).
 
 **Brief shape (schema 1).** Content keys come from the model through `normalizeBrief`. The meta keys are stamped by Conductor only.
 
@@ -18,10 +18,11 @@ This task builds roadmap Contract 2's `validateBrief`, plus `normalizeBrief`, th
 content: client, purpose, kind,
   roles[{ name, whatTheyDo, sees, mapsTo }], records[{ name, description, holdsFiles, personalData }],
   features[{ id, title, story, roles[], data[], acceptance[{ given, when, then }] }],
-  outputs[{ name, format, roles[], description }], integrations[{ name, purpose, dataSent }], modules[],
-  policy{ hosting, outbound[], residency, retention{ text, days }, backupDestination{ kind, detail }, operatorAccess },
+  outputs[{ name, format, roles[], description }], integrations[{ name, purpose, dataSent, service }], modules[],
+  policy{ hosting, outbound[] /* OUTBOUND_SERVICES ids */, residency, retention{ text, days }, backupDestination{ kind, detail }, operatorAccess },
   assumptions[], openQuestions[{ id, question, why }]
-meta:    schema (always 1), slug, version, createdAt, revisedFrom, approvedAt, approvedBy
+meta:    schema (always 1), slug, version, createdAt, revisedFrom, approvedAt, approvedBy,
+         features[].acceptance[].id ('<featureId>#<n>'), exampleSeq { [featureId]: highest n ever used }
 ```
 
 - [ ] **Step 1: Write `test/helpers/briefFixtures.js`**
@@ -61,9 +62,14 @@ export function validBrief(over = {}) {
   };
 }
 
+// What Conductor writes at approval: example ids (Task 2's assignExampleIds output for a first version) plus the meta fields.
 export function approvedBrief(over = {}) {
-  return validBrief({ slug: 'thistle', version: 1, createdAt: '2026-10-27T09:00:00.000Z', revisedFrom: null,
-    approvedAt: '2026-10-27T10:00:00.000Z', approvedBy: 'Malcolm', ...over });
+  const b = validBrief();
+  return { ...b,
+    features: b.features.map((f) => ({ ...f, acceptance: f.acceptance.map((ex, i) => ({ id: `${f.id}#${i + 1}`, ...ex })) })),
+    exampleSeq: { 'upload-receipt': 1, 'monthly-report': 1 },
+    slug: 'thistle', version: 1, createdAt: '2026-10-27T09:00:00.000Z', revisedFrom: null,
+    approvedAt: '2026-10-27T10:00:00.000Z', approvedBy: 'Malcolm', ...over };
 }
 ```
 
@@ -111,6 +117,9 @@ test('normalizeBrief keeps known keys only, drops approval and meta, caps lists,
   for (const bad of [null, 'text', 42, [], undefined]) assert.equal(typeof normalizeBrief(bad), 'object');
   const kept = normalizeBrief(validBrief());
   assert.deepEqual(kept, validBrief(), 'a clean brief survives normalisation unchanged');
+  const fromApproved = normalizeBrief(approvedBrief());
+  assert.equal(fromApproved.features[0].acceptance[0].id, undefined, 'example ids are Conductor\'s, never the model\'s');
+  assert.equal(Object.hasOwn(fromApproved, 'exampleSeq'), false);
   assert.equal(normalizeBrief({ policy: { operatorAccess: 'yes' } }).policy.operatorAccess, undefined, 'only a real boolean is kept');
 });
 
@@ -147,8 +156,11 @@ test('outputs, modules and integrations must agree with the policy', () => {
   has({ ...b, modules: ['ocr'] }, /Output "Monthly expenses report" is a spreadsheet, so the modules must include xlsx-export/);
   has({ ...b, outputs: [{ ...b.outputs[0], format: 'fax' }] }, /Output "Monthly expenses report": the format must be screen, pdf, xlsx, csv or email, not "fax"/);
   has({ ...b, modules: ['ocr', 'xlsx-export', 'payments'] }, /"payments" is not an optional module the foundation has \(ocr, pdf-export, xlsx-export, scheduled-jobs\)/);
-  has({ ...b, integrations: [{ name: 'Xero', purpose: 'Send approved claims', dataSent: 'Claim totals' }] }, /The brief connects to "Xero", but the data policy does not allow any outside service by that name/);
-  assert.deepEqual(problems({ ...b, integrations: [{ name: 'Xero', purpose: 'Send approved claims', dataSent: 'Claim totals' }], policy: { ...b.policy, outbound: ['xero'] } }), []);
+  const reader = { name: 'Receipt reading', purpose: 'Read the amount and VAT from receipt photos', dataSent: 'Receipt images', service: 'azure-document-intelligence' };
+  has({ ...b, integrations: [reader] }, /Integration "Receipt reading" sends data to Azure Document Intelligence, but the data policy does not allow it: add "azure-document-intelligence" to the policy's outside services, or drop the integration/);
+  assert.deepEqual(problems({ ...b, integrations: [reader], policy: { ...b.policy, outbound: ['azure-document-intelligence'] } }), []);
+  has({ ...b, integrations: [{ ...reader, service: 'xero' }] }, /Integration "Receipt reading": "service" must be one of the outside services Conductor knows \(cloudflare-tunnel, azure-document-intelligence\), not "xero"/);
+  has({ ...b, integrations: [{ ...reader, service: undefined }] }, /Integration "Receipt reading": "service" must be one of the outside services Conductor knows \(cloudflare-tunnel, azure-document-intelligence\); the brief does not say/);
 });
 
 test('the data policy profile (spec §6)', () => {
@@ -156,6 +168,8 @@ test('the data policy profile (spec §6)', () => {
   has(withPolicy({ hosting: 'aws' }), /Hosting must be client-box \(the client's own computer\) or operator-server \(a server you run\), not "aws"/);
   has(withPolicy({ residency: 'us' }), /Data residency must be uk, uk-eu or any, not "us"/);
   has(withPolicy({ outbound: 'none' }), /"outbound" must be a list of the outside services data may go to \(an empty list means none\)/);
+  has(withPolicy({ outbound: ['Cloudflare'] }), /"Cloudflare" is not an outside service Conductor knows \(known: cloudflare-tunnel, azure-document-intelligence\)/);
+  assert.deepEqual(problems(withPolicy({ outbound: ['cloudflare-tunnel'] })), []);
   has(withPolicy({ retention: { text: '', days: null } }), /does not say how long records are kept/);
   has(withPolicy({ retention: { text: 'six years', days: 0 } }), /retention days must be a whole number from 1 to 36500, or null when not known/);
   has(withPolicy({ backupDestination: { kind: 'usb', detail: 'x' } }), /backup destination must be client-owned, operator-run or cloud-bucket, not "usb"/);
@@ -176,6 +190,12 @@ test('stages: draft tolerates unknowns only while questions are open', () => {
   has({ ...validBrief({ features: [{ ...validBrief().features[0], acceptance: [{ given: 'x', when: 'y', then: 'z' }] }] }), openQuestions: q }, /example 1/, 'draft');
   has(approvedBrief({ approvedAt: 'yesterday' }), /has not been approved/, 'approved');
   has(approvedBrief({ version: 0 }), /version number/, 'approved');
+  has(approvedBrief({ features: validBrief().features }), /Feature "upload-receipt", example 1 has no valid id \(Conductor numbers examples when the brief is approved\)/, 'approved');
+  has(approvedBrief({ exampleSeq: { 'upload-receipt': 1 } }), /Feature "monthly-report", example 1 has no valid id/, 'approved'); // n above the counter
+  const twice = approvedBrief();
+  twice.features[1] = { ...twice.features[1], acceptance: [...twice.features[1].acceptance, { ...twice.features[1].acceptance[0] }] };
+  has({ ...twice, exampleSeq: { 'upload-receipt': 1, 'monthly-report': 2 } }, /Two worked examples have the id "monthly-report#1"/, 'approved');
+  assert.deepEqual(problems(approvedBrief({ features: validBrief().features })), [], 'ids are only required at the approved stage');
   assert.throws(() => validateBrief(validBrief(), { stage: 'final' }), /stage must be draft, ready or approved/);
 });
 ```
@@ -207,6 +227,8 @@ Expected: FAIL with `Cannot find module '…/src/factory/brief.js'`.
   - Arrays keep only plain-object (or string, for string lists) entries, capped at `LIMITS.list`, `LIMITS.features` for features, `LIMITS.examples` per feature and `LIMITS.questions` for `openQuestions`.
   - A value of the wrong type is **omitted** (not coerced), so the validator reports it missing. A key absent from the input stays absent: nothing is invented, which is why the clean fixture round-trips unchanged.
   - Booleans (`holdsFiles`, `personalData`, `operatorAccess`) are kept only when `typeof === 'boolean'`.
+  - Worked examples keep `given`, `when` and `then` only: an `id` from the model is dropped, and so is `exampleSeq`. Ids are stamped by Task 2's `assignExampleIds` at approval (Task 7), never taken from a model.
+  - `integrations[].service` is a short field (an `OUTBOUND_SERVICES` id); `policy.outbound` keeps string entries only.
   - `retention.days` is kept only when it is a number or `null`.
   - Policy enum fields keep a string or `null`.
   - Build every object as a fresh literal with only the listed keys, so `__proto__` and unknown keys can never be copied.
@@ -220,8 +242,8 @@ Collect every problem in this order:
 3. records;
 4. features (with `exampleProblems(ex, \`Feature "${id}", example ${n}\`)`);
 5. outputs and modules;
-6. integrations;
-7. policy;
+6. integrations (each `service` known and allowed by `policy.outbound`);
+7. policy (`outboundProblems(policy.outbound)` from Task 2 for the outside services);
 8. credentials;
 9. assumptions and open questions;
 10. the `approved` stage checks.
@@ -235,6 +257,8 @@ The message wording must match the tests. The others:
 - **Features:** `The brief has no features.`
 - **Feature examples:** `Feature "${id}" has no worked examples: add at least one given / when / then with real figures.`
 - **Missing policy:** `The brief has no data policy: hosting, where data may go, residency, retention, backups and operator access.`
+
+Integrations: `Integration "${name}": "service" must be one of the outside services Conductor knows (${ids joined with ', '}), not "${service}".` (or `; the brief does not say.` when missing); a known service not in `policy.outbound` → `Integration "${name}" sends data to ${OUTBOUND_SERVICES[service].label}, but the data policy does not allow it: add "${service}" to the policy's outside services, or drop the integration.` Integrations are matched on the id only, never on the name (Contract 7 §7.4).
 
 Enum fields that are missing or `null` use the same sentence as a wrong value, ending `; the brief does not say.` instead of `, not "…".`. For example: `Hosting must be client-box (the client's own computer) or operator-server (a server you run); the brief does not say.` The retention message is `The data policy does not say how long records are kept (retention).`
 
@@ -258,6 +282,7 @@ Open questions:
 - at `ready` or `approved`, any open question is a problem. Use the exact singular/plural wording in the test.
 
 The `approved` stage also needs:
+- **example ids**: `exampleSeq` a plain object of integers ≥ 1; every example's `id` matches `EXAMPLE_ID_RE` with the feature part equal to its feature's `id` and `n ≤ exampleSeq[featureId]`, else `Feature "${id}", example ${k} has no valid id (Conductor numbers examples when the brief is approved).`; no id appears twice, else `Two worked examples have the id "${id}".`;
 - `slug` passing `validateSlug`;
 - `version` an integer ≥ 1 (`The brief has no valid version number.`);
 - `approvedAt` a string where `Date.parse` is finite and `new Date(x).toISOString() === x`;
@@ -274,5 +299,5 @@ Expected: all PASS.
 
 ```bash
 git add src/factory/brief.js test/helpers/briefFixtures.js test/factory-brief-validate.test.js
-git commit -m "feat(factory): brief schema, defensive normalisation and plain-English validator (Contract 2)"
+git commit -m "feat(factory): brief schema, defensive normalisation and plain-English validator (Contract 2)" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

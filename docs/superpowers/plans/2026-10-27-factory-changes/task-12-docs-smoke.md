@@ -7,9 +7,9 @@ This task finishes Plan 11:
 **The implementer writes the files and checks syntax only. The implementer does NOT run the smoke**, and does not ssh anywhere. Malcolm runs it from a real terminal, because it needs both subscriptions, the local model, CT 111, a human at the brief questions and the gate, and a deployment made by Plan 10's smoke.
 
 **Files:**
-- Modify: `README.md`, `config.example.json` (only if Plans 7–10 did not already add the `factory` block)
+- Modify: `README.md` (the `factory` config block is already in `config.example.json` from Plans 7, 8 and 10; Plan 11 adds no config keys)
 - Create: `spikes/change-smoke/run-change-smoke.sh`, `spikes/change-smoke/notes-change.md`, `spikes/change-smoke/RESULT.md`
-- Test: `test/config.test.js` (one assertion, only if `config.example.json` changed)
+- Test: none beyond `bash -n` and the existing suite
 
 **Interfaces:**
 - Consumes: the commands (Task 11); Plan 10's smoke project and deployment (`spikes/ship-smoke/`, or whatever Plan 10 named it: read its `RESULT.md` for the project slug and deployment name).
@@ -34,7 +34,7 @@ Cover, in plain UK English, in this order:
 1. `conductor doctor` and `conductor deployments status` (Plan 10): record the deployment's current version.
 2. `conductor change <slug> --notes spikes/change-smoke/notes-change.md`. The operator answers the brief questions and checks the gate text names the new version and the deployment, then approves.
 3. On CT 111 over ssh, in the deployment's bundle folder: `docker compose run --rm updater update --status`, expecting the newest line to be "Updated from <old> to <new>. A backup (…) was taken first."; and `curl` the app's `/api/version` with the health token, expecting the new version.
-4. Make a scratch copy of the foundation (`git clone /root/highland-foundation /tmp/hf-smoke-foundation`; never touch `/root/highland-foundation`). In the copy, add a dated section `## [0.1.1] - <today>` holding `- **[security]** Smoke: no real change.`, raise `version` in `package.json`, `package-lock.json` and `foundation.json` (with `commit: "v0.1.1"`), commit `release: v0.1.1` and make the annotated tag `v0.1.1` (what the foundation's own release does, without needing its packages installed). Point the smoke project's `project.json` `foundation.repo` at the copy (print the old value and put it back at the end, in a `trap`).
+4. Make a scratch copy of the foundation (`git clone /root/highland-foundation /tmp/hf-smoke-foundation`; never touch `/root/highland-foundation`). Read the smoke project's recorded tag from `project.json` (`v0.1.0`, or `v0.2.0` after Plan 12) and compute the next patch version `<next>`. In the copy, add a dated section `## [<next>] - <today>` holding `- **[security]** Smoke: no real change.`, raise `version` in `package.json`, `package-lock.json` and `foundation.json` (with `commit: "v<next>"`), commit `release: v<next>` and make the annotated tag `v<next>` (what the foundation's own release does, without needing its packages installed). Point the smoke project's `project.json` `foundation.repo` at the copy (print the old value and put it back at the end, in a `trap`).
 5. `conductor foundation-upgrade --check`: expect the code and the deployment to be listed as missing 1 security fix.
 6. `conductor foundation-upgrade <slug> --to v<new foundation version>`: approve at the gate; then repeat step 3's checks, and `--check` again, expecting "up to date".
 7. Deliberately break one update to see the stop rule: skip unless the operator passes `--break`, which makes the next change add a start-up failure on purpose (a notes file asking for it), so the box rolls back; expect the report line "the new version failed its health check, so the box undid the update by itself", and the deployment still on the previous version.
@@ -49,8 +49,10 @@ Expected: no output from `bash -n`; the suite passes.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add README.md spikes/change-smoke/ config.example.json test/config.test.js
-git commit -m "docs(change): changing a live app, foundation upgrades, and an operator change smoke"
+git add README.md spikes/change-smoke/
+git commit -m "docs(change): changing a live app, foundation upgrades, and an operator change smoke
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 - [ ] **Step 5: Hand over to the operator**

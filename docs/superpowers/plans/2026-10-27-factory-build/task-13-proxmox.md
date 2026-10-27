@@ -184,5 +184,7 @@ Expected: PASS.
 
 ```bash
 git add src/factory/machines/proxmox.js src/factory/machines/index.js test/factory-proxmox.test.js
-git commit -m "feat(factory): Proxmox machine provider confined to its pool, range, cap and label"
+git commit -m "feat(factory): Proxmox machine provider confined to its pool, range, cap and label
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

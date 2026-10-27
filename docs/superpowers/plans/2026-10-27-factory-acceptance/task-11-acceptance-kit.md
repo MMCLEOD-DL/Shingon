@@ -11,27 +11,34 @@ The checker never builds, deploys or calls a model. It only reads files.
 
 **Files:**
 - Create: `spikes/acceptance/check-acceptance.mjs`, `spikes/acceptance/PROCEDURE.md`, `spikes/acceptance/RESULT-TEMPLATE.md`, `spikes/acceptance/rehearsal-notes.md`
-- Create: `test/acceptance-check.test.js`, `test/fixtures/acceptance/` (two small project folders, `pass/` and `fail/`, built by hand from the shapes below)
+- Create: `test/acceptance-check.test.js`, `test/helpers/acceptanceProject.js` (builds a good project folder in a temp dir with Plans 7 and 10's own writers; each failing case is one mutation of it)
 - Modify: `README.md` (one paragraph under the factory section, pointing to `spikes/acceptance/PROCEDURE.md`)
 
 **Interfaces:**
-- Consumes (file shapes only):
-  - Contract 1 project folder: `project.json`, `brief/current.json`, `app/`, `builds/<runId>/`, `deployments/<name>.json`;
-  - Contract 2 brief fields: `features[].acceptance[]`, `modules`, `policy`;
-  - Contract 4 deployment JSON (`history[].outcome`, `currentVersion`, `foundation`);
-  - the foundation's reports: `app/apps/server/reports/crossing.json` (`{ routes, checks, failures[] }`), `app/reports/screenshots/manifest.json` (entries `{ page, path, project, width, height, file }`), `app/app-profile.json` (Task 1);
-  - Plan 5's `CouncilReport` (`verdict`, `blocking[]`, `overridden`), at `builds/<runId>/council-report.json` or `--council <file>` (Contract gap 7);
-  - a Vitest JSON report at `app/reports/test-results.json`, made by the operator with `npx vitest run --reporter=json --outputFile=reports/test-results.json` in `app/`.
+- Consumes (Conductor modules, imported, never re-implemented):
+  - Plan 7: `loadProject(dir)` (`src/factory/projects.js`); `loadBrief(projectDir)`, `currentBriefInfo(projectDir)`, `briefPaths`, `saveApprovedBrief` (`src/factory/brief.js`); `acceptanceIds(brief) -> [{ id, featureId, n, example }]` and `testTag(id) -> '[<id>]'` (`src/factory/acceptance.js`, Contract 7.1/7.4); `writeFileAtomic` (`src/factory/fsAtomic.js`); test helpers `validBrief`, `approvedBrief` (`test/helpers/briefFixtures.js`).
+  - Plan 10: `loadDeployment(projectDir, name)`, `newDeployment`, `addHistory`, `saveDeployment` (`src/factory/deployments/store.js`, Contract 4); `compareVersions` (`src/factory/foundationLog.js`, Contract 7.1).
+- Consumes (file shapes):
+  - Contract 7.5 `project.json`: `status`, `foundation.tag`;
+  - the approved brief (`loadBrief`; `brief/current.json` is a pointer, so the checker never reads it directly), and the previous version `brief/brief-v<N-1>.json` (written once, never changed) for C14;
+  - Plan 8's whole-app check evidence in the run folder: `builds/<runId>/reports/crossing.json` (`{ routes, checks, failures[] }`) and `builds/<runId>/reports/screenshots/manifest.json` (entries `{ page, path, project, width, height, file }`);
+  - Plan 8's Vitest JSON report: the entry in `builds/<runId>/build.json`'s `checks.reports` (Contract 7.7) whose JSON has a `testResults` array. A change run is looked up the same way (`build.json`, or `change.json` when that is where Plan 11 keeps the run's `checks`). `--tests <file>` overrides it, for a report the operator makes by hand;
+  - Plan 9's council report `builds/<runId>/council-report.json` (Contract 7.5): Plan 5's `CouncilReport` (`verdict`, `blocking[]`, `warnings[]`, `overridden`; items carry `member`, `tool`, `title`) plus Plan 9's `coverage`;
+  - the app repo's `app/app-profile.json` (Task 1's `AppProfileSchema`, written by Plan 8/11) and `app/licence-exceptions.json`;
+  - the deployment record (Contract 4: `history[] { at, version, from, outcome, detail }`, `currentVersion`; the first ship records outcome `installed`).
 - Produces:
 
 ```js
 // spikes/acceptance/check-acceptance.mjs
 export const CRITERIA          // [{ id: 'C1', spec: '§2.1', title, how: 'auto' | 'operator' }]
+export const FOUNDATION_V020_ROUTES = 31   // v0.1.0's 28 + Task 5's 3; Task 10's hand-off confirms the figure
 export async function checkAcceptance(projectDir, opts) -> { results: [{ id, status: 'pass' | 'fail' | 'operator', evidence: string }], ok: boolean }
-//   opts = { build: runId, change?: runId, deployment?: name, council?: file, changeCouncil?: file, foundationTag?: 'v0.2.0' }
+//   opts = { build: runId, change?: runId, deployment?: name, tests?: file, changeTests?: file,
+//            foundationTag = 'v0.2.0', foundationRoutes = FOUNDATION_V020_ROUTES,
+//            deps? = { loadBrief } }   // tests only: Plan 7's validator cannot save a brief whose example lacks an id
 export function renderResults(project, results) -> string   // Markdown: the criteria table with status and evidence
 // CLI: node spikes/acceptance/check-acceptance.mjs <projectDir> --build <runId> [--change <runId>] [--deployment <name>]
-//        [--council <file>] [--change-council <file>] [--out <file>]
+//        [--tests <file>] [--change-tests <file>] [--foundation-tag <vX.Y.Z>] [--foundation-routes <n>] [--out <file>]
 //      exit 0 when every automated criterion passes, 1 otherwise, 2 for bad arguments (plain-English usage)
 ```
 
@@ -39,57 +46,63 @@ export function renderResults(project, results) -> string   // Markdown: the cri
 
 | Id | Spec | Criterion | How |
 |---|---|---|---|
-| C1 | §2.1 | The role-crossing harness ran on the finished build: `crossing.json` has 0 failures and at least 29 routes (the foundation's 28 plus at least one expenses route). | auto |
-| C2 | §2.1, §4.3 | The final council report for the build has verdict `approved` or `approved-with-warnings`, no blocking items, and was **not** overridden. | auto |
-| C3 | §2.2 | Every acceptance example in the approved brief is proven by a passing test. With example ids (Contract gap 6), each `[ex:<id>]` appears in a passing test's name in `test-results.json`. Without ids: the number of passing tests tagged `[ex:` is at least the number of examples, and the result says "counted, not traced". | auto |
+| C1 | §2.1 | The role-crossing harness ran on the finished build: the run's `crossing.json` has 0 failures and more routes than the foundation's own at v0.2.0 (`foundationRoutes`, 31), so at least one expenses route is checked. | auto |
+| C2 | §2.1, §4.3 | The build's council report (`builds/<runId>/council-report.json`) has verdict `approved` or `approved-with-warnings`, no blocking items, and was **not** overridden. | auto |
+| C3 | §2.2 | Every acceptance example in the current approved brief is proven by a passing test: for each id from `acceptanceIds(brief)`, a test whose title contains `testTag(id)` (`[<featureId>#<n>]`, Contract 7.4) passed in the latest run's Vitest report (the change run when given, else the build). An example with no id, a tag with no test, or a tag whose only tests failed is a FAIL naming the id. | auto |
 | C4 | §2.2 | The app's March report, downloaded from the preview as PDF and as a spreadsheet, shows exactly the totals worked out by hand from the brief's examples. | operator |
 | C5 | §2.2, §2.5 | On the 10 fictional printed receipts, photographed through the app on a real phone, no field is ever filled in confidently wrong (no "Please check" missing on a wrong value). | operator |
 | C6 | §2.3 | Every page has a screenshot at desktop width and phone width in Chromium and WebKit (`manifest.json`: every page has `desktop-chromium`, `mobile-chromium` and `mobile-webkit`). | auto |
 | C7 | §2.3, §2.5 | On a real iPhone (Safari) and a real Android phone (Chrome): **Take a photo** opens the camera and uploads; **Choose a file** uploads a photo from the library and a PDF; the reading appears; correcting a field and confirming works; nothing scrolls sideways. | operator |
 | C8 | §2.4 | On the test box: a manual backup, then `restore-test`, pass; then a real restore drill from the runbook returns a record count known beforehand. | operator |
 | C9 | §2.4 | Stopping the app container sends a Matrix alert within 5 minutes, and starting it sends the recovery message. | operator |
-| C10 | §2.4, §4.8 | The change request went out as an **update**: the deployment's `history` ends with outcome `updated` at a newer `currentVersion`, after the first ship. | auto |
+| C10 | §2.4, §4.8 | The change request went out as an **update**: the deployment's `history` starts with outcome `installed` and ends with outcome `updated` at a `currentVersion` newer than the installed one (`compareVersions`). | auto |
 | C11 | §2.5 | A member gets from "open the app" to a confirmed receipt in under 60 seconds on a phone, with no step that needs help. | operator |
-| C12 | §3, §6 | The app's `app-profile.json` matches the approved brief: `policy.outbound` and `residency` are equal, and `modules` contains every module the brief lists (here `ocr`). (Task 14 also checks `OCR_ENGINE=local` on the box by hand.) | auto |
-| C13 | §5a | The final council report has no blocking or warning Legal item about a licence, and every entry in the app's `licence-exceptions.json` has a reason. | auto |
-| C14 | §4.8 | The change request's own council report meets C2, and its new acceptance examples meet C3. | auto |
+| C12 | §3, §6 | The app's `app-profile.json` matches the approved brief: `policy.outbound` holds the same `OUTBOUND_SERVICES` ids (Contract 7.4), `residency` is equal, and `modules` contains every module the brief lists (here `ocr`). (Task 14 also checks `OCR_ENGINE=local` on the box by hand.) | auto |
+| C13 | §5a | The latest council report has no blocking or warning item with `member: 'legal'` from the `licences` or `scancode` tool, and every entry in the app's `licence-exceptions.json` has a reason (Plan 9's Legal accepts those entries, Contract 7.7). | auto |
+| C14 | §4.8 | The change run's own council report meets C2's rule, and every example id that is new in the current brief version (absent from `brief-v<N-1>.json`) is proven by a passing test in the change run's report. | auto |
 | C15 | §1 | The operator never edited the app's code by hand (Ruling 9). Any hand edit is recorded with its reason, and counts as a FAIL for the factory. | operator |
 | C16 | §3 | No paid-API spend unless opted in; frontier cost recorded per stage. | operator |
-| C17 | Contract 1 | `project.json` records `foundation.tag` equal to the expected tag (`v0.2.0` by default) and status `shipped` at the end. | auto |
+| C17 | Contract 7.5 | `project.json` records `foundation.tag` equal to the expected tag (`foundationTag`, `v0.2.0`, the value of `factory.foundation.tag` for this run) and status `shipped` at the end. | auto |
 
 **Verdict:** the acceptance test **passes** only when every criterion passes. Any FAIL means fixing the factory (Ruling 9) and re-running the stage it belongs to.
 
-- [ ] **Step 1: Write the fixtures**
+- [ ] **Step 1: Write the fixture builder** (`test/helpers/acceptanceProject.js`)
 
-`test/fixtures/acceptance/pass/` is a minimal project:
-- `project.json` with status `shipped` and foundation tag `v0.2.0`;
-- `brief/current.json` with 2 features, 3 acceptance examples with ids `expense-entry#1`, `expense-entry#2`, `monthly-report#1`, `modules: ["ocr","xlsx-export","pdf-export"]` and `policy.outbound: []`;
-- `app/apps/server/reports/crossing.json` with 31 routes and 0 failures;
-- `app/reports/screenshots/manifest.json` with 2 pages × 3 projects;
-- `app/reports/test-results.json`, Vitest JSON with three passing tests whose names contain the three `[ex:…]` tags;
-- `app/app-profile.json` (`modules: ["ocr","xlsx-export","pdf-export"]`, `outbound: []`, `residency: "uk"`) and `app/licence-exceptions.json` (`{}`);
-- `builds/b1/council-report.json` (`approved-with-warnings`, `blocking: []`, `overridden: false`) and `builds/c1/council-report.json` (`approved`);
-- `deployments/test-box.json` with history `[{ outcome: 'updated', version: '0.1.0' }, { outcome: 'updated', version: '0.1.1' }]` and `currentVersion: '0.1.1'`.
+`makeAcceptanceProject(root, { mutate } = {}) -> projectDir` builds a good project in a temp folder with the owners' own writers, so the fixture can never drift from their validators:
+- `project.json` (Contract 7.5) with status `shipped`, `foundation: { repo: '/root/highland-foundation', tag: 'v0.2.0', commit: 'a'.repeat(40) }`, `approved` and `builtFromBrief: 2`;
+- brief v1 through `saveApprovedBrief(projectDir, approvedBrief({ … }))` with 2 features and examples `expense-entry#1`, `expense-entry#2`, `monthly-report#1`, `modules: ['ocr', 'xlsx-export', 'pdf-export']`, `policy.outbound: []`, `residency: 'uk'`; then brief v2 (`revisedFrom: 1`) adding feature `mileage` with example `mileage#1`;
+- `builds/b1/`: `build.json` with `checks.reports` listing `reports/crossing.json`, `reports/screenshots/manifest.json` and `reports/vitest-results.json`; `reports/crossing.json` with 34 routes and 0 failures; `reports/screenshots/manifest.json` with 2 pages × `desktop-chromium`, `mobile-chromium`, `mobile-webkit`; `reports/vitest-results.json` (Vitest JSON) with passing tests titled `… [expense-entry#1]`, `… [expense-entry#2]`, `… [monthly-report#1]`; `council-report.json` (`verdict: 'approved-with-warnings'`, `blocking: []`, `warnings: [one correctness item]`, `overridden: false`);
+- `builds/c1/`: the same shape, with the Vitest report also passing `… [mileage#1]`, and `council-report.json` `approved`;
+- `app/app-profile.json` (`{ schema: 1, modules: ['ocr','xlsx-export','pdf-export'], policy: { outbound: [], residency: 'uk' } }`) and `app/licence-exceptions.json` (`{}`);
+- `deployments/test-box.json` through `newDeployment` + `addHistory` (`installed` 0.1.0, then `updated` 0.2.0 from 0.1.0) + `saveDeployment`, `currentVersion: '0.2.0'`.
 
-`fail/` copies `pass/`, then breaks one thing per criterion:
-- a crossing failure;
-- a council report that is `blocked` and another that is `overridden: true`;
-- one example tag whose test failed;
-- a page missing `mobile-webkit`;
-- `outbound: ["azure-document-intelligence"]` while the brief says `[]`;
-- a deployment whose last outcome is `rolled-back`.
-
-Each broken case is its own small folder under `fail/`, so each test breaks exactly one thing.
+The helper exports `MUTATIONS = { [name]: (projectDir) => void }`; each breaks exactly one thing:
+- `crossing`: one crossing failure;
+- `council-blocked`: b1's report `blocked` with 1 blocking item; `council-overridden`: `overridden: true`;
+- `example-failed`: the `[monthly-report#1]` test has status `failed`; `example-missing`: no test carries `[mileage#1]` in c1's report;
+- `no-vitest-report`: b1's `checks.reports` lists no Vitest JSON;
+- `no-webkit`: page `receipt-check` lacks `mobile-webkit`;
+- `outbound`: `app-profile.json` allows `azure-document-intelligence` while the brief allows `[]`;
+- `licence`: b1's report has a `legal`/`licences` warning;
+- `rolled-back`: the deployment's last outcome is `rolled-back`;
+- `wrong-tag`: `project.json` foundation tag `v0.1.0`.
 
 - [ ] **Step 2: Write the failing tests** (`test/acceptance-check.test.js`)
 
 ```js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { checkAcceptance, renderResults, CRITERIA } from '../spikes/acceptance/check-acceptance.mjs';
+import { makeAcceptanceProject, MUTATIONS } from './helpers/acceptanceProject.js';
+import { approvedBrief } from './helpers/briefFixtures.js';
 
-const fx = (p) => new URL(`./fixtures/acceptance/${p}`, import.meta.url).pathname;
+const fx = (name) => makeAcceptanceProject(mkdtempSync(path.join(tmpdir(), 'acc-')), { mutate: name ? MUTATIONS[name] : undefined });
 const byId = (r) => Object.fromEntries(r.results.map((x) => [x.id, x]));
+const OPTS = { build: 'b1', change: 'c1', deployment: 'test-box' };
 
 test('every criterion is listed once, C1 to C17, with its spec reference', () => {
   assert.deepEqual(CRITERIA.map((c) => c.id), Array.from({ length: 17 }, (_, i) => `C${i + 1}`));
@@ -97,44 +110,65 @@ test('every criterion is listed once, C1 to C17, with its spec reference', () =>
 });
 
 test('a good project passes every automated criterion and leaves the rest to the operator', async () => {
-  const r = await checkAcceptance(fx('pass'), { build: 'b1', change: 'c1', deployment: 'test-box' });
+  const r = await checkAcceptance(fx(), OPTS);
   const s = byId(r);
   for (const id of ['C1', 'C2', 'C3', 'C6', 'C10', 'C12', 'C13', 'C14', 'C17']) assert.equal(s[id].status, 'pass', `${id}: ${s[id].evidence}`);
   for (const id of ['C4', 'C5', 'C7', 'C8', 'C9', 'C11', 'C15', 'C16']) assert.equal(s[id].status, 'operator');
   assert.equal(r.ok, true);
-  assert.match(s.C1.evidence, /31 routes, 0 problems/);
-  assert.match(s.C3.evidence, /3 of 3 examples proven by passing tests/);
+  assert.match(s.C1.evidence, /34 routes \(foundation 31\), 0 problems/);
+  assert.match(s.C3.evidence, /4 of 4 examples proven by passing tests: expense-entry#1, expense-entry#2, monthly-report#1, mileage#1/);
+  assert.match(s.C14.evidence, /1 new example \(mileage#1\) proven/);
 });
 
 test('each broken thing fails its own criterion, with a plain sentence', async () => {
   const cases = [
-    ['fail/crossing', 'C1', /1 problem: /],
-    ['fail/council-blocked', 'C2', /blocked, with 1 blocking item/],
-    ['fail/council-overridden', 'C2', /the operator overrode the council/],
-    ['fail/example-failed', 'C3', /monthly-report#1 .* failed/],
-    ['fail/no-webkit', 'C6', /"receipt-check" has no phone screenshot in WebKit/],
-    ['fail/outbound', 'C12', /allows azure-document-intelligence, but the brief allows nothing/],
-    ['fail/rolled-back', 'C10', /last update was rolled back/],
+    ['crossing', 'C1', /1 problem: /],
+    ['council-blocked', 'C2', /blocked, with 1 blocking item/],
+    ['council-overridden', 'C2', /the operator overrode the council/],
+    ['example-failed', 'C3', /monthly-report#1: its test failed/],
+    ['example-missing', 'C14', /mileage#1: no test carries \[mileage#1\]/],
+    ['no-webkit', 'C6', /"receipt-check" has no phone screenshot in WebKit/],
+    ['outbound', 'C12', /allows azure-document-intelligence, but the brief allows nothing/],
+    ['licence', 'C13', /Legal warning about a licence/],
+    ['rolled-back', 'C10', /last update was rolled back/],
+    ['wrong-tag', 'C17', /built on v0\.1\.0, but this run expects v0\.2\.0/],
   ];
-  for (const [dir, id, why] of cases) {
-    const r = await checkAcceptance(fx(dir), { build: 'b1', change: 'c1', deployment: 'test-box' });
-    assert.equal(byId(r)[id].status, 'fail', dir);
-    assert.match(byId(r)[id].evidence, why, dir);
+  for (const [name, id, why] of cases) {
+    const r = await checkAcceptance(fx(name), OPTS);
+    assert.equal(byId(r)[id].status, 'fail', name);
+    assert.match(byId(r)[id].evidence, why, name);
     assert.equal(r.ok, false);
   }
 });
 
-test('examples without ids are counted, not traced, and say so', async () => { /* brief examples without id -> C3 pass with "counted, not traced" */ });
-test('a missing report is a fail that says which file and how to make it', async () => {
-  /* no test-results.json -> C3 fail: "app/reports/test-results.json is missing. In app/, run: npx vitest run --reporter=json --outputFile=reports/test-results.json" */
+test('an example without an id is a fail, never a count', async () => {
+  const brief = approvedBrief(); brief.features[0].acceptance[0] = { ...brief.features[0].acceptance[0], id: undefined };
+  const r = await checkAcceptance(fx(), { ...OPTS, deps: { loadBrief: () => brief } });
+  assert.equal(byId(r).C3.status, 'fail');
+  assert.match(byId(r).C3.evidence, /has no id, so no test can be traced to it/);
+});
+test('a missing test report is a fail that says which run and how to supply one', async () => {
+  // build.json checks.reports without a Vitest JSON entry
+  const r = await checkAcceptance(fx('no-vitest-report'), { build: 'b1' });
+  assert.match(byId(r).C3.evidence, /builds\/b1 has no Vitest report in its checks\. Re-run the build's checks, or pass --tests <file> made with: npx vitest run --reporter=json --outputFile=<file>/);
 });
 test('renderResults gives the operator a table with every criterion', async () => {
-  const r = await checkAcceptance(fx('pass'), { build: 'b1', change: 'c1', deployment: 'test-box' });
+  const r = await checkAcceptance(fx(), OPTS);
   const md = renderResults({ slug: 'acme-expenses' }, r.results);
   assert.match(md, /\| C7 \| §2\.3, §2\.5 \|.*\| for the operator \|/);
   assert.equal((md.match(/^\| C\d+ /gm) ?? []).length, 17);
 });
-test('the CLI exits 2 with usage for bad arguments, 1 on a fail, 0 on a pass', async () => { /* spawn node with execFile */ });
+test('the CLI exits 2 with usage for bad arguments, 1 on a fail, 0 on a pass', () => {
+  const cli = new URL('../spikes/acceptance/check-acceptance.mjs', import.meta.url).pathname;
+  const run = (...args) => spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8' });
+  const bad = run(fx());                                   // no --build
+  assert.equal(bad.status, 2);
+  assert.match(bad.stderr, /Usage: node spikes\/acceptance\/check-acceptance\.mjs <projectDir> --build <runId>/);
+  assert.equal(run(fx('crossing'), '--build', 'b1', '--change', 'c1', '--deployment', 'test-box').status, 1);
+  const good = fx(); const out = path.join(good, 'acceptance', 'checker.md');
+  assert.equal(run(good, '--build', 'b1', '--change', 'c1', '--deployment', 'test-box', '--out', out).status, 0);
+  assert.match(readFileSync(out, 'utf8'), /^\| C17 /m);
+});
 ```
 
 - [ ] **Step 3: Run them to verify they fail**
@@ -144,7 +178,13 @@ Expected: FAIL (module not found).
 
 - [ ] **Step 4: Implement `check-acceptance.mjs`**
 
-Plain Node (`node:fs/promises`, `node:path`, `node:util` `parseArgs`). One small function per automated criterion, each returning `{ status, evidence }`; a missing input file is a `fail` whose evidence names the file and the command that makes it. JSON is read defensively: a bad file is a `fail`, never a crash. `--out` writes `renderResults` to the file atomically (temp file, then rename, as Contract 1 asks).
+Plain Node (`node:fs/promises`, `node:path`, `node:util` `parseArgs`) plus the Conductor modules listed under Interfaces, imported by relative path (`../../src/factory/…`). One small function per automated criterion, each returning `{ status, evidence }`:
+- the project comes from `loadProject`, the brief from `loadBrief` (or `opts.deps.loadBrief`), the previous brief from `briefPaths(projectDir).json(version - 1)` with `version` from `currentBriefInfo`, the deployment from `loadDeployment`; any of these throwing becomes a `fail` with its plain message;
+- example ids come only from `acceptanceIds`, and test tags only from `testTag`, so a change to the tag format in Plan 7 reaches the checker without an edit here;
+- a test counts as proving an id when its `fullName` or `title` contains `testTag(id)` and its status is `passed`; if another test with the same tag failed, the example is a FAIL (not reliably proven);
+- a missing input file is a `fail` whose evidence names the file and how to make it. JSON is read defensively: a bad file is a `fail`, never a crash.
+
+`--out` writes `renderResults` with `writeFileAtomic` (Plan 7), creating the parent folder first (`mkdir -p`).
 
 - [ ] **Step 5: Write `PROCEDURE.md`, `RESULT-TEMPLATE.md` and `rehearsal-notes.md`**
 
@@ -179,7 +219,7 @@ Run: `npm test` → PASS (whole Conductor suite).
 - [ ] **Step 7: Commit**
 
 ```bash
-git add spikes/acceptance test/acceptance-check.test.js test/fixtures/acceptance README.md
+git add spikes/acceptance test/acceptance-check.test.js test/helpers/acceptanceProject.js README.md
 git commit -m "feat: acceptance kit for the factory — criteria tied to spec §2, evidence checker, results template, rehearsal notes
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"

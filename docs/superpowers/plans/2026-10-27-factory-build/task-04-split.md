@@ -4,12 +4,11 @@ A whole app is too big for one plan (spec §4.2). The author (frontier seat) rea
 
 **Files:**
 - Create: `src/factory/split.js`
-- Modify: `src/plan.js` (export `extractJson`, unless Plan 7 Task 5 already did; no behaviour change)
 - Test: `test/factory-split.test.js`
 
 **Interfaces:**
-- Consumes: `reviewLoop` (`src/review.js`), `callRole` (`src/runlog.js`), `askUser` (`src/askUser.js`), `extractJson` (`src/plan.js`), `featureRequest` and `REQUEST_BUDGET` (Task 3), `renderBrief` (Plan 7, passed in), `sampleBrief` (Task 1), `fakeParticipant`, `approve`, `block` (`test/helpers/fakes.js`).
-- Produces: `acceptanceIds(brief)`, `parseSplit(text)`, `validateSplit(units, brief)`, `runSplit(sctx, brief)`, `MAX_UNITS = 30`, `MAX_EXAMPLES_PER_UNIT = 6`, `MAX_INSTRUCTIONS = 2000`, `briefProblems(brief) -> string[]` (the build-time refusals of Ruling 10 that depend on the brief).
+- Consumes: `reviewLoop` (`src/review.js`), `callRole` (`src/runlog.js`), `askUser` (`src/askUser.js`), `extractJson` (`src/plan.js`, exported by Plan 7), `acceptanceIds` (`src/factory/acceptance.js`, Plan 7, Contract 7 §7.1), `featureRequest` and `REQUEST_BUDGET` (Task 3), `renderBrief` (Plan 7, passed in), `sampleBrief` (Task 1), `fakeParticipant`, `approve`, `block` (`test/helpers/fakes.js`).
+- Produces: `parseSplit(text)`, `validateSplit(units, brief)`, `runSplit(sctx, brief)`, `MAX_UNITS = 30`, `MAX_EXAMPLES_PER_UNIT = 6`, `MAX_INSTRUCTIONS = 2000`, `briefProblems(brief) -> string[]` (the build-time refusals of Ruling 10 that depend on the brief).
   - `sctx = { team, hooks, log, cwd, options, usage, renderBrief }`. `log` is a `RunLog`; `usage` is the build's `{ costUsd, apiCostUsd, apiCalls }`, added to in place; `options.planRounds` and `options.agentTimeoutMs` apply.
 
 - [ ] **Step 1: Write the failing tests**
@@ -22,7 +21,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { acceptanceIds, parseSplit, validateSplit, runSplit, briefProblems } from '../src/factory/split.js';
+import { parseSplit, validateSplit, runSplit, briefProblems } from '../src/factory/split.js';
 import { RunLog } from '../src/runlog.js';
 import { DEFAULT_OPTIONS } from '../src/options.js';
 import { fakeParticipant, approve, block } from './helpers/fakes.js';
@@ -34,8 +33,11 @@ const GOOD = [
 ];
 const reply = (units) => ({ text: 'Here it is.\n```json\n' + JSON.stringify({ units }) + '\n```' });
 
-test('acceptance ids are <feature>#<position>', () => {
-  assert.deepEqual(acceptanceIds(sampleBrief()).map((a) => a.id), ['submit-expense#1', 'submit-expense#2', 'monthly-report#1']);
+test('the split uses the brief\'s stable example ids: after a revision, #2 can exist without #1', () => {
+  const brief = sampleBrief();
+  brief.features[0].acceptance = [brief.features[0].acceptance[1]];          // #1 removed in a revision; #2 keeps its id
+  assert.equal(validateSplit([{ ...GOOD[0], acceptance: ['submit-expense#2'] }, GOOD[1]], brief).ok, true);
+  assert.match(validateSplit(GOOD, brief).problems.join('\n'), /"submit-expense#1" is not a worked example in the brief/);
 });
 
 test('a good split passes and every unit is marked as a feature', () => {
@@ -65,8 +67,10 @@ test('more than 6 examples in one feature is refused', () => {
   assert.match(validateSplit([{ ...GOOD[0], acceptance: ids }, GOOD[1]], brief).problems.join('\n'), /expenses has 7 worked examples \(at most 6\); split it/);
 });
 
-test('briefProblems: modules, a feature with no examples, a non-web kind', () => {
+test('briefProblems: modules, a feature with no examples, an example without an id', () => {
   assert.deepEqual(briefProblems(sampleBrief()), []);
+  const noId = sampleBrief(); delete noId.features[0].acceptance[0].id;
+  assert.match(briefProblems(noId).join('\n'), /worked example 1 of "Submit an expense" has no id/);
   assert.match(briefProblems(sampleBrief({ modules: ['ocr'] })).join('\n'), /needs optional modules \(ocr\) that the foundation does not have yet/);
   const b = sampleBrief(); b.features[1].acceptance = [];
   assert.match(briefProblems(b).join('\n'), /"Monthly report" has no worked examples/);
@@ -113,16 +117,12 @@ test('runSplit: no usable list at all fails in plain words', async () => {
 Run: `node --test test/factory-split.test.js`
 Expected: FAIL (`Cannot find module '../src/factory/split.js'`).
 
-- [ ] **Step 3: Export `extractJson` from `src/plan.js`**
+- [ ] **Step 3: Implement `src/factory/split.js`**
 
-Skip when Plan 7 already exports it; otherwise add `export` to the existing function. Run: `node --test test/plan.test.js` → PASS.
-
-- [ ] **Step 4: Implement `src/factory/split.js`**
-
-- `acceptanceIds(brief)`: for each feature in order, each example at position `n` (1-based): `{ id: \`${feature.id}#${n}\`, featureId, n, example }`.
-- `briefProblems(brief)`: `kind !== 'web-app'` → `This brief is for "<kind>", and the factory only builds web apps.`; non-empty `modules` → `The brief needs optional modules (<list>) that the foundation does not have yet, so building it now would leave them out.`; each feature with no examples → `The feature "<title>" has no worked examples. Add at least one to the brief, so it can be tested.`
+- Acceptance ids come from Plan 7's `acceptanceIds(brief)`, which reads each example's stable `id` (Contract 7 §7.4). This file never numbers examples itself. Only `.id`, `.featureId` and `.example` of each entry are used.
+- `briefProblems(brief)`: `kind !== 'web-app'` → `This brief is for "<kind>", and the factory only builds web apps.`; non-empty `modules` → `The brief needs optional modules (<list>) that the foundation does not have yet, so building it now would leave them out.`; each feature with no examples → `The feature "<title>" has no worked examples. Add at least one to the brief, so it can be tested.`; an example without a string `id` → `The worked example <n> of "<title>" has no id, so its test could not be traced. Approve the brief again with this version of Conductor (conductor brief <project> --revise).` (Plan 7 assigns ids at approval; this only catches an old brief).
 - `parseSplit(text)`: `extractJson`, `JSON.parse`, must be an object with a `units` array; each unit's `covers`, `acceptance`, `dependsOn` default to `[]`; strings trimmed. Errors are short reasons (`no \`\`\`json block found in the reply`, `the JSON has no "units" list`, `not valid JSON (…)`).
-- `validateSplit(units, brief)` collects **all** problems (messages as in the tests): count 1–`MAX_UNITS`; id matches `^[a-z][a-z0-9-]{1,39}$`, unique, not `brand`; title 1–80 characters; instructions 1–`MAX_INSTRUCTIONS`; `covers` non-empty and known; `acceptance` 1–`MAX_EXAMPLES_PER_UNIT`, each known, each belonging to a feature the unit covers (`<unit> has <id>, but does not cover <featureId>`), each in exactly one unit, and every acceptance id placed; every brief feature covered by some unit; `dependsOn` only earlier ids. When no problem so far, it calls `featureRequest({ brief, units, index })` for every unit and turns a `too-long` error into a problem. On success returns `{ ok: true, units: units.map((u) => ({ ...u, kind: 'feature' })) }`.
+- `validateSplit(units, brief)` collects **all** problems (messages as in the tests): count 1–`MAX_UNITS`; id matches `^[a-z][a-z0-9-]{1,39}$`, unique, not `brand`; title 1–80 characters; instructions 1–`MAX_INSTRUCTIONS`; `covers` non-empty and known; `acceptance` 1–`MAX_EXAMPLES_PER_UNIT`, each known (else `"<id>" is not a worked example in the brief`), each belonging to a feature the unit covers (`<unit> has <id>, but does not cover <featureId>`), each in exactly one unit, and every acceptance id placed; every brief feature covered by some unit; `dependsOn` only earlier ids. When no problem so far, it calls `featureRequest({ brief, units, index })` for every unit and turns a `too-long` error into a problem. On success returns `{ ok: true, units: units.map((u) => ({ ...u, kind: 'feature' })) }`.
 - Prompts (in this file; plain constants plus the brief):
   - **author:** the rendered brief (`sctx.renderBrief(brief)`, clipped to 30 000 characters after `redact`), the list of acceptance ids with their examples, then the rules: "Split this approved brief into an ordered list of build features. Each feature is built in one run by a modest local coding model and checked by reviewers, so keep each one small: at most one new database table, at most 6 worked examples, instructions under 2000 characters, and no more than about 10 steps of work. Put what others depend on first. Every worked example id must appear in exactly one feature; every brief feature must be covered. The app's name is already set; do not include it. The foundation already provides sign-in, roles, teams, files, email, the activity log, backups and the page shell: never rebuild them." Then the JSON shape `{"units": [{"id": "kebab-case", "title": "...", "covers": ["brief feature id"], "acceptance": ["feature-id#1"], "instructions": "...", "dependsOn": ["earlier id"]}]}`. Feedback is added as in `planAuthor` (blocked → "A reviewer blocked your previous list: …"; failed → "Your previous list could not be used: …").
   - **reviewer:** the rendered brief, the proposed list, and "Review this list of build features. Check: is anything in the brief missing, is any feature too big for one run of a modest model, is the order right, would any feature rebuild something the foundation already provides?" plus the same `BLOCK_RULES` sentence the plan reviewer gets (copy the constant's text; `prompts.js` does not export it).
@@ -133,14 +133,16 @@ Skip when Plan 7 already exports it; otherwise add `export` to the existing func
   - no valid list → `{ status: 'failed', reason: 'Conductor could not get a usable list of features from the AI author, so nothing was built. The details are in the build log; run the same command again to retry.' }`.
   - Events: `log.event('split-agreed', { units: ids, rounds })` on success.
 
-- [ ] **Step 5: Run the tests**
+- [ ] **Step 4: Run the tests**
 
 Run: `node --test test/factory-split.test.js`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add src/factory/split.js src/plan.js test/factory-split.test.js
-git commit -m "feat(factory): the author splits an approved brief into small checked features"
+git add src/factory/split.js test/factory-split.test.js
+git commit -m "feat(factory): the author splits an approved brief into small checked features
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

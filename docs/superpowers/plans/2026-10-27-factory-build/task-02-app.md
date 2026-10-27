@@ -1,14 +1,19 @@
 # Task 2: The app from the foundation tag
 
-`createApp` makes `<project>/app`, the client's own git repo, by cloning the foundation **at its release tag** (index Ruling 9, BUILDING-ON "Starting a client app"). `nameApp` writes the client's name into the one line of `apps/web/src/brand.ts` that a client build may change (Ruling 6).
+`createApp` makes `<project>/app`, the client's own git repo, by cloning the foundation **at its release tag** (index Ruling 9, BUILDING-ON "Starting a client app"). `nameApp` makes the build branch's first commit. That commit holds two things:
+- the client's name, in the one line of `apps/web/src/brand.ts` that a client build may change (Ruling 6);
+- `app-profile.json` at the app's root, written from the approved brief (Contract 7 §7.5).
+
+Contract 7 §7.5 says "`createApp` writes `app-profile.json`". Here the write sits in `nameApp`, the step of the first build that makes the BRAND commit: `createApp` only clones onto `main`, and `main` must stay at the foundation tag until the operator approves. It is the same module, the same build step and the same commit the contract asks for.
 
 **Files:**
 - Create: `src/factory/app.js`
 - Test: `test/factory-app.test.js`
 
 **Interfaces:**
-- Consumes: `git` (`src/workspace.js`; its fixed flags allow only the `file` protocol, so an https clone adds `-c protocol.https.allow=always` for that one command); `makeFoundationRepo`, `makeProject` (Task 1).
-- Produces: `createApp({ projectDir, foundation: { repo, tag }, expectCommit = null, git }) -> Promise<{ appDir, commit, created }>`, `nameApp({ appDir, client, git }) -> Promise<string|null>`, `initialsOf(client) -> string`, `FOUNDATION_REMOTE = 'foundation'`.
+- Consumes: `git` (`src/workspace.js`; its fixed flags allow only the `file` protocol, so an https clone adds `-c protocol.https.allow=always` for that one command); `makeFoundationRepo`, `makeProject`, `sampleBrief` (Task 1).
+- Produces: `createApp({ projectDir, foundation: { repo, tag }, expectCommit = null, git }) -> Promise<{ appDir, commit, created }>`, `nameApp({ appDir, brief, git }) -> Promise<string|null>`, `appProfileOf(brief) -> AppProfile`, `initialsOf(client) -> string`, `FOUNDATION_REMOTE = 'foundation'`, `APP_PROFILE_FILE = 'app-profile.json'`.
+  - `AppProfile = { schema: 1, modules: string[], policy: { outbound: string[], residency } }` (Contract 7 §7.5, the shape Plan 12's `AppProfileSchema` checks).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -19,9 +24,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
-import { createApp, nameApp, initialsOf } from '../src/factory/app.js';
+import { createApp, nameApp, initialsOf, appProfileOf } from '../src/factory/app.js';
 import { git } from '../src/workspace.js';
-import { makeFoundationRepo, makeProject } from './helpers/factoryFixtures.js';
+import { makeFoundationRepo, makeProject, sampleBrief } from './helpers/factoryFixtures.js';
 
 const out = async (dir, args) => (await git(dir, args)).stdout.trim();
 
@@ -68,23 +73,31 @@ test('an https foundation is cloned with https allowed for that command only; ss
   assert.equal(calls.flat().some((a) => /protocol\.ssh/.test(a)), false);
 });
 
-test('nameApp rewrites the BRAND line once and commits it', async () => {
+test('nameApp rewrites the BRAND line and writes app-profile.json in one commit, once', async () => {
   const repo = await makeFoundationRepo();
   const { projectDir } = makeProject();
   const { appDir } = await createApp({ projectDir, foundation: { repo, tag: 'v0.1.0' } });
-  const sha = await nameApp({ appDir, client: 'Acme "Office" Ltd' });
+  const brief = sampleBrief({ client: 'Acme "Office" Ltd', policy: { ...sampleBrief().policy, outbound: ['cloudflare-tunnel'] } });
+  const sha = await nameApp({ appDir, brief });
   assert.match(sha, /^[0-9a-f]{40}$/);
   assert.equal(readFileSync(path.join(appDir, 'apps/web/src/brand.ts'), 'utf8').split('\n')[1],
     'export const BRAND = { appName: "Acme \\"Office\\" Ltd", shortName: "AO" } as const;');
+  assert.deepEqual(JSON.parse(readFileSync(path.join(appDir, 'app-profile.json'), 'utf8')),
+    { schema: 1, modules: [], policy: { outbound: ['cloudflare-tunnel'], residency: 'uk' } });
   assert.equal(await out(appDir, ['log', '-1', '--format=%s']), 'Name the app: Acme "Office" Ltd');
-  assert.equal(await nameApp({ appDir, client: 'Acme "Office" Ltd' }), null);
+  assert.deepEqual((await out(appDir, ['show', '--name-only', '--format=', 'HEAD'])).split('\n').sort(), ['app-profile.json', 'apps/web/src/brand.ts']);
+  assert.equal(await nameApp({ appDir, brief }), null);
+});
+
+test('appProfileOf copies only modules, outbound ids and residency from the brief', () => {
+  assert.deepEqual(appProfileOf(sampleBrief()), { schema: 1, modules: [], policy: { outbound: [], residency: 'uk' } });
 });
 
 test('nameApp refuses a brand.ts without the expected line', async () => {
   const repo = await makeFoundationRepo({ extra: { 'apps/web/src/brand.ts': 'export default {};\n' } });
   const { projectDir } = makeProject();
   const { appDir } = await createApp({ projectDir, foundation: { repo, tag: 'v0.1.0' } });
-  await assert.rejects(nameApp({ appDir, client: 'Acme Ltd' }), /does not have the expected BRAND line/);
+  await assert.rejects(nameApp({ appDir, brief: sampleBrief() }), /does not have the expected BRAND line/);
   assert.equal(await out(appDir, ['status', '--porcelain']), '');
 });
 
@@ -109,10 +122,19 @@ Expected: FAIL (`Cannot find module '../src/factory/app.js'`).
 - With `expectCommit` set, compare as above. Then `renameSync(partialDir, appDir)`.
 - Any throw removes the partial dir (`rmSync(…, { recursive: true, force: true })`).
 
-- [ ] **Step 4: Implement `nameApp` and `initialsOf`**
+- [ ] **Step 4: Implement `nameApp`, `appProfileOf` and `initialsOf`**
 
 - `initialsOf`: split on non-letters, drop `ltd`, `limited`, `plc`, `llp`, `llc`, `inc`, `co` (case-insensitive), take the first letter of up to 3 words, upper-case; empty → `'App'`.
-- `nameApp`: the tree must be clean (`status --porcelain` empty), else throw `The app folder has changes Conductor did not make, so it stopped. Nothing was changed.` Find `/^export const BRAND = \{.*\} as const;$/m` in `apps/web/src/brand.ts`; missing → throw `The foundation's apps/web/src/brand.ts does not have the expected BRAND line, so Conductor cannot name the app. Nothing was changed.` Replace it with `export const BRAND = { appName: ${JSON.stringify(client)}, shortName: ${JSON.stringify(initialsOf(client))} } as const;`. Unchanged → return `null`. Otherwise `add` that one file, `commit -q -m "Name the app: <client>"`, return `rev-parse HEAD`.
+- `appProfileOf(brief)`: `{ schema: 1, modules: [...brief.modules], policy: { outbound: [...brief.policy.outbound], residency: brief.policy.residency } }`.
+  - `modules` is always `[]` while `briefProblems` (Task 4) refuses briefs with modules. Plan 12 lifts that refusal, and the modules then flow through unchanged.
+  - Plan 11 rewrites this file when a change brief alters `modules` or `policy`.
+- `nameApp({ appDir, brief })`:
+  1. The tree must be clean (`status --porcelain` empty), else throw `The app folder has changes Conductor did not make, so it stopped. Nothing was changed.`
+  2. Find `/^export const BRAND = \{.*\} as const;$/m` in `apps/web/src/brand.ts`. Missing → throw `The foundation's apps/web/src/brand.ts does not have the expected BRAND line, so Conductor cannot name the app. Nothing was changed.`
+  3. Replace that line with `export const BRAND = { appName: ${JSON.stringify(brief.client)}, shortName: ${JSON.stringify(initialsOf(brief.client))} } as const;`.
+  4. Write `app-profile.json` as `JSON.stringify(appProfileOf(brief), null, 2) + '\n'`.
+  5. Neither file changed → return `null`.
+  6. Otherwise `add` exactly those two files, `commit -q -m "Name the app: <client>"`, and return `rev-parse HEAD`.
 
 - [ ] **Step 5: Run the tests**
 
@@ -123,5 +145,7 @@ Expected: PASS.
 
 ```bash
 git add src/factory/app.js test/factory-app.test.js
-git commit -m "feat(factory): create the client app from the foundation tag and name it"
+git commit -m "feat(factory): create the client app from the foundation tag, name it and write its app profile
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

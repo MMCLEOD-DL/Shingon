@@ -112,5 +112,7 @@ Expected: PASS.
 
 ```bash
 git add src/factory/machines/pveApi.js test/helpers/pveStub.js test/factory-pve-api.test.js
-git commit -m "feat(factory): zero-dependency Proxmox API client and an in-memory test stub"
+git commit -m "feat(factory): zero-dependency Proxmox API client and an in-memory test stub
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

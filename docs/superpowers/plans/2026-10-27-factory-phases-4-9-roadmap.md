@@ -264,6 +264,34 @@ Plans 9 and 10 stay as drafted against v0.1.0, with text parsers pinned by fixtu
 - **Efficiency council member** (spec §4.3, advisory): not in Plans 7–12. It never blocks, and the spec's acceptance (§8 item 9) doesn't need it. It is a follow-up after Plan 12.
 - **Remote client previews, deployment subsets, automatic patching:** out of scope, as Plan 11 rules.
 
+### 7.11 Amendments after the revisions (2026-10-27)
+
+- **Locks.**
+  - `lockProject(projectDir, kind)`: the kinds `brief`, `build` and `change` share one project lock. `preview` uses its own lock file, so a preview can run while a build is running.
+  - **The CLI handler takes the project lock.** Library entry points (`runBriefSession`, `runBuild`, `runChange`, `runFoundationUpgrade`) never take it. They run under the lock their caller holds.
+- **CLI.**
+  - Plan 8 Task 15 edits `main.js` once more. It moves the inline team set-up (worker checks, waking, the local-down question) unchanged into `src/cli/prepareRun.js`, exporting `prepareTeam(...)`.
+  - Plans 8 and 11 call `prepareTeam`.
+  - A `FACTORY_COMMANDS` handler `(cli, ctx)` may return `null` to mean "not mine". `conductor resume` then falls through to the ordinary run.
+- **`app-profile.json`.** Plan 8 writes it in `nameApp`, in the same commit as the BRAND line.
+- **Approval record.** `project.json.approved` is written straight after `main` moves by compare-and-swap, so its `sha` is the commit actually on `main`.
+- **Gates.** A gate that refuses returns `false`. A gate returns `{ note }` only when the operator asks for changes, because Plan 8 turns a note into a fix unit.
+- **Handler signature.** `handler(cli, ctx) -> Promise<number|null>`. The fields of `ctx`:
+  - `{ cwd, env, stdin, stdout, isTTY, onSignal, exit }`;
+  - `factory`, the result of `factoryConfig`;
+  - `config`, the full loaded config, or `null` when it has no participants;
+  - `deps`, for tests.
+  A handler that needs participants calls `loadConfig` itself, and fails in plain English if they are missing.
+- **First release.** `releaseApp` with bump `first` runs `npm run release -- major` and gives `1.0.0`. The foundation refuses `release -- first` in a clone made at a release tag.
+- **Tags in the app repo.** Foundation tags are never kept as `refs/tags/*` in an app repo.
+  - Plan 8's `createApp` deletes the tags it inherits from the clone, and sets the `foundation` remote to `--no-tags`.
+  - Plan 11 fetches the tag it needs as `refs/foundation/vX.Y.Z`.
+  - So every `v*` tag in an app repo is an app release.
+  - `project.json.foundation.tag` is the only record of the foundation version. Plan 10 records each deployment's `foundation` from it, never from the box's `/api/version`, which is wrong on apps released under v0.1.0.
+- **Update outcomes.** Plan 10's `OUTCOMES` are the only names. Plan 11 uses `updated`, `already-on`, `cancelled`, `rolled-back`, `urgent`, `lost-contact` and `refused`, and drops `already` and `unreachable`. On Ctrl-C, Plan 11 calls Plan 10's `interruptShip`.
+- **Safe values.** Plan 8's `assertSafe('purpose', …)` accepts `'ship'`.
+- **Security report.** It reads each deployment's recorded `foundation` through `listDeployments`. It never probes boxes over ssh.
+
 ## Cross-cutting rules (all plans)
 
 - **Conductor stays as it is:** Node ESM, zero dependencies, `npm test`.

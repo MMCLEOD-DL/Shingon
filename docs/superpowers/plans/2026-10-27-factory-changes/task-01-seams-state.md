@@ -1,52 +1,83 @@
-# Task 1: Seams, change-run state and project lock
+# Task 1: Seams and change-run state
 
 This task lays the ground every other task stands on:
-- **`seams.js`** is the only file that imports from Plans 7–10. It exports `realDeps()` with the names in the index's `ChangeDeps`, and `missingSeams(deps)` so the CLI can refuse plainly if a name is not there.
-- **`run.js`** saves and loads the change run (`<project>/builds/<runId>/change.json`), makes run ids, finds the unfinished run, and holds the project lock.
-- **`test/helpers/changeFixtures.js`** builds what every later test needs: a temporary projects root, a foundation repo with release tags, a project whose `app/` was cloned from it, and a stub `deps`.
+- **`seams.js`** is the only file that imports the `deps` functions from Plans 7–10 (`DEP_NAMES` in the index). It exports:
+  - `realDeps()`;
+  - `missingSeams(deps)`, so the CLI can refuse plainly if a function is missing;
+  - two thin brief helpers Plan 7 does not export under these names (`loadBriefVersion`, `currentBriefVersion`);
+  - the `reviseBrief` wrapper over Plan 7's session in `revise` mode.
+- **`run.js`** saves and loads the change run (`<project>/builds/<runId>/change.json`, Contract 7.5) and finds the unfinished run. Run ids are Plan 8's `newRunId()`. Atomic writes are Plan 7's `writeJsonAtomic` and `createFileExclusive`. The project lock is Plan 7's `lockProject(projectDir, 'change')`; Plan 11 builds no lock of its own.
+- **`test/helpers/changeFixtures.js`** builds what every later test needs: a temporary projects root, a foundation repo with release tags, a project whose `app/` was cloned from it, and stub `deps`.
 
-**Step 0 (before writing code): reconcile the seams with what merged.** Read the merged Plans 7–10 (`src/factory/…`). For each name in `SEAM_NAMES`, find the real export that does that job and map it in `realDeps()` (a thin wrapper is fine when the argument shape differs). If a capability is genuinely missing (for example Plan 8's loop cannot start from a named branch, or Plan 10 has no "update an existing deployment" function), **stop and raise it with the operator**: do not build it inside Plan 11. Write down every mapping as a comment in `seams.js`.
+**Step 0 (before writing code): check the Contract 7 names exist as merged.** Read the merged Plans 7–10 under `src/factory/` and `src/council/`.
+- Confirm each import in the index's "Imported directly" block and each `DEP_NAMES` entry by exact name: `fsAtomic.js`, `projects.js`, `projectLock.js`, `brief.js`, `briefSession.js` (`importNotes`, `newSession`, `loadSession`, `saveSession`), `briefRun.js` (`runBriefSession`), `acceptance.js`, `ids.js`, `split.js`, `build.js` (`runBuild`), `council/projectCouncil.js` (`runProjectCouncil`), `ship/release.js` (`releaseApp`), Plan 10's `updateDeployment`, `deployments/store.js` (`listDeployments`), and `foundationLog.js`.
+- Confirm that `runBriefSession` does **not** take `lockProject` itself. If it does, stop and raise it with the operator: Plan 11 holds the project's one lock for the whole change run, so a nested lock would always report "busy".
+- If a name is missing or has a different signature, stop and raise it with the operator. Do not build it inside Plan 11.
+- Record the mapping as a comment at the top of `seams.js` (the index's "Contract 7 mapping" table).
 
 **Files:**
 - Create: `src/factory/change/seams.js`, `src/factory/change/run.js`, `test/helpers/changeFixtures.js`
 - Test: `test/factory-change-run.test.js`
 
 **Interfaces:**
-- Consumes: Plans 7–10's modules (in `seams.js` only); `slugify` is not needed.
+- Consumes:
+  - Plan 7: `writeJsonAtomic`, `createFileExclusive`, `briefPaths`, `currentBriefInfo`, `validateBrief`, `importNotes`, `newSession`, `loadSession`, `runBriefSession`;
+  - Plan 8: `newRunId`, `RUN_ID_RE`, `runBuild`;
+  - Plan 9: `runProjectCouncil`;
+  - Plan 10: `releaseApp`, `updateDeployment`, `listDeployments`;
+  - `makeRepo` (`test/helpers/gitRepo.js`).
 - Produces: everything listed under Task 1 in the index's Shared Interfaces, plus:
-  - `PROJECT_BUSY({ command, host, pid, lockFile })` returns `` `Another Conductor command (${command}, started on ${host}, process ${pid}) is working on this project. Wait for it to finish. If it crashed, remove ${lockFile} and try again.` ``;
   - `RUN_UNREADABLE = (runId) => \`The record of change ${runId} could not be read, so Conductor stopped rather than guess where it was. Nothing was changed.\``;
-  - fixtures: `makeFoundation({ versions })`, `makeProject({ foundation, tag, status, deployments })`, `stubDeps(over)`.
+  - `NO_BRIEF_VERSION = (n) => \`Brief version ${n} could not be read, so Conductor cannot tell what the app was built from. Nothing was changed.\``;
+  - `NO_APPROVED_BRIEF = 'This project has no approved brief, so there is nothing to change. Approve a brief first with "conductor brief <slug>".'`;
+  - fixtures: `makeFoundation({ versions })`, `makeProject({ foundation, tag, status, deployments, builtFromBrief })`, `stubDeps(over)`, `writeBriefVersion(projectDir, n, brief)`.
 
 - [ ] **Step 1: Write the fixtures**
 
 `test/helpers/changeFixtures.js`:
-- `makeFoundation({ versions = ['0.1.0', '0.1.1'] })`: a git repo (use `makeRepo` then commits) with `foundation.json`, `package.json`, `package-lock.json` and `CHANGELOG.md`; for each version a commit that sets the three version fields and adds a dated changelog section, tagged `v<version>` (annotated). `0.1.1`'s section holds `- **[security]** Sessions now expire after 12 hours.` and `- Tidier audit page.`. Returns `{ dir, tagSha(tag) }`.
-- `makeProject({ foundation, tag = 'v0.1.0', status = 'shipped', deployments = [] })`: a projects root in `tmpdir()` with `<slug>/project.json` (`{ schema: 1, slug: 'acme', client: 'Acme Ltd', createdAt, foundation: { repo: foundation.dir, tag }, status, builtFromBrief: 1 }`), `brief/`, `notes/`, `builds/`, `deployments/<name>.json` per deployment (Contract 4 shape), and `app/` cloned from the foundation at `tag` with `main` checked out and the remote renamed `foundation` (as `docs/BUILDING-ON.md`). Returns `{ projectsRoot, projectDir, appDir }`.
-- `stubDeps(over = {})`: every `SEAM_NAMES` entry as a recording stub with safe defaults (`loadProject` reads the real `project.json`; `saveProject` writes it atomically; `listDeployments` reads `deployments/*.json`; `releaseApp`/`updateDeployment` return failures unless overridden), plus `calls: []` and `now: () => new Date('2026-10-27T14:32:05Z')`.
+- **`makeFoundation({ versions = ['0.1.0', '0.1.1'] })`:** a git repo (use `makeRepo`, then commits) with `foundation.json`, `package.json` (`name: 'highland-foundation'`), `package-lock.json` and `CHANGELOG.md`.
+  - For each version, a commit that sets the three version fields and adds a dated changelog section, tagged `v<version>` (annotated).
+  - `0.1.1`'s section holds `- **[security]** Sessions now expire after 12 hours.` and `- Tidier audit page.`.
+  - Returns `{ dir, tagSha(tag) }`.
+- **`makeProject({ foundation, tag = 'v0.1.0', status = 'shipped', deployments = [], builtFromBrief = 1 })`:** a projects root in `tmpdir()` holding:
+  - `acme/project.json` in the Contract 7.5 shape: `{ schema: 1, slug: 'acme', client: 'Acme Ltd', createdAt, status, foundation: { repo: foundation.dir, tag, commit: foundation.tagSha(tag) }, approved: { sha: <app main>, at, runId: '20261020-090000-0a0b', briefVersion: builtFromBrief }, builtFromBrief }`;
+  - `brief/` with `brief-v1.json` (via `writeBriefVersion`) and Plan 7's `current.json` pointing at it;
+  - `notes/` and `builds/`;
+  - `deployments/<name>.json` per deployment, in Plan 10's `Deployment` shape (`setup.step: 'done'`, `currentVersion`, `foundation`);
+  - `app/`, cloned from the foundation at `tag` with `main` checked out, the remote renamed `foundation` (as in `docs/BUILDING-ON.md`), and an `app-profile.json` committed.
+  - Returns `{ projectsRoot, projectDir, appDir, factory }`, where `factory` is a `FactoryConfig`-shaped object with `projectsRoot` and `foundation: { repo: foundation.dir, tag }`.
+- **`writeBriefVersion(projectDir, n, brief)`:** writes the brief (with `version: n` and example ids) to `briefPaths(projectDir).json(n)` with `writeJsonAtomic`, then points `briefPaths(projectDir).current` at it in the same format Plan 7's `saveApprovedBrief` writes. (`saveApprovedBrief` picks its own version number, so tests that need a given `n` write directly.) The helper asserts `currentBriefInfo(projectDir).version === n` before returning, so a format mismatch fails loudly.
+- **`stubDeps(over = {})`:** every `DEP_NAMES` entry as a recording stub, plus `calls: []` and `now: () => new Date('2026-10-27T14:32:05Z')`. Defaults:
+  - `listDeployments` reads the real `deployments/*.json` and returns Plan 10's entry shape;
+  - `reviseBrief`, `runBuild`, `releaseApp` and `updateDeployment` return failures (`{ status: 'failed', reason: 'stub' }` / `{ ok: false, reason: 'stub' }` / `{ outcome: 'stub', message: 'stub' }`) unless overridden.
 
 - [ ] **Step 2: Write the failing tests**
 
 `test/factory-change-run.test.js`:
 
 ```js
-test('createChangeRun writes builds/<runId>/change.json atomically and loadChangeRun reads it back', ...)
-  // assert file exists, JSON has schema 1, stage 'brief' (change) or 'prepare' (upgrade), status 'running';
-  // assert no '*.tmp' file is left in the folder
-test('newRunId: change-YYYYMMDD-HHMMSS in UTC, and -2 when that folder already exists', ...)
-  // 'change-20261027-143205', then 'change-20261027-143205-2'
-test('findUnfinishedRun returns the newest running/paused/failed run and ignores done and stopped', ...)
+test('createChangeRun writes builds/<runId>/change.json and loadChangeRun reads it back', ...)
+  // runId matches RUN_ID_RE (Plan 8's newRunId); JSON has schema 1, kind, stage 'brief' (change) or 'prepare' (upgrade), status 'running'
+test('createChangeRun never overwrites: a taken run id gets a fresh one', ...)
+  // newId stub returns the same id twice, then another → the second run gets the third id; the first change.json is unchanged
+test('findUnfinishedRun returns the newest running/paused/failed run and ignores done, stopped and Plan 8 build folders', ...)
+  // a builds/<id>/ holding only build.json is skipped
 test('loadChangeRun on a damaged change.json throws RUN_UNREADABLE, plain English, no JSON parser text', ...)
   // assert.doesNotMatch(e.message, /Unexpected token|JSON/)
-test('acquireProjectLock: a second acquire throws PROJECT_BUSY; release() lets it be taken again', ...)
-test('acquireProjectLock takes over a lock left by a dead process on the same host, and never one from another host', ...)
-  // lock file { pid: 999999 (not running), host: os.hostname() } → taken over;
-  // { pid: 999999, host: 'other-box' } → PROJECT_BUSY
-test('missingSeams names every seam that is not a function', () => {
-  assert.deepEqual(missingSeams({ ...stubDeps(), releaseApp: undefined, buildFeatures: 1 }), ['buildFeatures', 'releaseApp']);
+test('findUnfinishedRun on a damaged change.json throws RUN_UNREADABLE (a run we cannot read might be unfinished)', ...)
+test('loadBriefVersion reads brief-v<n>.json; a missing or invalid one throws NO_BRIEF_VERSION(n)', ...)
+test('currentBriefVersion returns the approved version; none approved → NO_APPROVED_BRIEF; a broken current.json → its plain text', ...)
+test('reviseBrief starts a revise session from the current version, or continues a saved one when notesFile is null', async () => {
+  // runBriefSession stub via module injection (seams exports makeReviseBrief({ importNotes, newSession, loadSession, runBriefSession }))
+  // first call: importNotes called with notesFile; newSession called with { mode: 'revise', baseVersion: 1 }
+  // second call with notesFile null and a saved revise session: loadSession used, importNotes and newSession not called
+  // notesFile null and no saved session → { status: 'stopped', reason: /no unfinished brief revision/ }
+});
+test('missingSeams names every dep that is not a function', () => {
+  assert.deepEqual(missingSeams({ ...stubDeps(), releaseApp: undefined, runBuild: 1 }), ['releaseApp', 'runBuild']);
   assert.deepEqual(missingSeams(stubDeps()), []);
 });
-test('realDeps provides every seam (Plans 7–10 are merged)', () => {
+test('realDeps provides every dep (Plans 7–10 are merged)', () => {
   assert.deepEqual(missingSeams(realDeps()), []);
 });
 ```
@@ -58,13 +89,26 @@ Expected: FAIL (modules not found).
 
 - [ ] **Step 4: Implement `run.js` and `seams.js`**
 
-- `writeJsonAtomic(file, obj)`: `mkdirSync(dirname, { recursive: true })`, write `${file}.<random>.tmp` with `openSync`/`writeSync`/`fsyncSync`/`closeSync`, then `renameSync`; on any error remove the temp file and rethrow.
-- `newRunId`: kind prefix `change` or `upgrade`, then `YYYYMMDD-HHMMSS` from `now` in UTC; add `-2` … `-9` while `builds/<id>` exists; throw plain-English after `-9`.
-- `createChangeRun(projectDir, fields)` requires `kind`, `runId`, `slug`, `mainAtStart`, `baseRef`; sets `schema: 1`, `stage` (`'brief'` for `change`, `'prepare'` for `foundation-upgrade` unless given), `status: 'running'`, timestamps.
-- `loadChangeRun` wraps read/parse errors and a wrong `schema` in `RUN_UNREADABLE(runId)`.
-- `findUnfinishedRun` reads every `builds/*/change.json` (skipping folders without one — those belong to Plan 8 builds), keeps `status` in `running|paused|failed`, newest `createdAt` first. A damaged `change.json` throws `RUN_UNREADABLE` (fail closed: a run we cannot read might be unfinished).
-- `acquireProjectLock`: create `<projectDir>/.conductor-lock` with `openSync(…, 'wx')` holding `{ pid, host, startedAt, command }`. On `EEXIST` read it: same host and `process.kill(pid, 0)` throws `ESRCH` → remove and retry once; otherwise throw `PROJECT_BUSY`. The returned `release()` removes the file only if it still holds this pid.
-- `seams.js`: import the merged Plan 7–10 exports, build the object, export `SEAM_NAMES`, `UPDATE_OUTCOMES`, `realDeps`, `missingSeams` (sorted names).
+`run.js`:
+- `createChangeRun(projectDir, fields, { now = new Date(), newId = newRunId } = {})`:
+  - requires `kind`, `slug`, `mainAtStart` and `baseRef`;
+  - sets `schema: 1`, `runId`, `stage` (`'brief'` for `change`, `'prepare'` for `foundation-upgrade`), `status: 'running'` and the timestamps;
+  - `mkdirSync(builds/<runId>)`, then `createFileExclusive(change.json, …)`;
+  - on `EEXIST`, takes a new id, at most 5 tries, then throws plain English.
+- `loadChangeRun` wraps read/parse errors and a wrong `schema` in `RUN_UNREADABLE(runId)`, and checks `runId` against `RUN_ID_RE` before building any path.
+- `saveChangeRun` uses `writeJsonAtomic` and sets `updatedAt`.
+- `findUnfinishedRun` reads every `builds/*/change.json`. It skips folders without one (those are Plan 8 builds), keeps `status` in `running|paused|failed`, and returns the newest `createdAt` first. A damaged `change.json` throws `RUN_UNREADABLE`.
+
+`seams.js`:
+- `loadBriefVersion(projectDir, n)`: read `briefPaths(projectDir).json(n)`, `JSON.parse`, then `validateBrief(obj, { stage: 'approved' })`. Any failure throws `NO_BRIEF_VERSION(n)`.
+- `currentBriefVersion(projectDir)`: `currentBriefInfo(projectDir)`. `null` throws `NO_APPROVED_BRIEF`; `{ broken }` throws `broken`; otherwise return `version`.
+- `makeReviseBrief({ importNotes, newSession, loadSession, runBriefSession })` returns `reviseBrief({ projectDir, slug, notesFile, author, io, log, operatorName, cwd })`:
+  1. `saved = loadSession(projectDir, slug)`; a saved session whose `mode` is not `'revise'` → `{ status: 'stopped', reason: 'An unfinished brief draft that is not a revision is waiting for this project. Finish or discard it with "conductor brief <slug>" first.' }`;
+  2. with `notesFile`: `importNotes(projectDir, notesFile)`, then `newSession({ slug, mode: 'revise', baseVersion: currentBriefVersion(projectDir), notes: [name] })` (a saved revise session is refused with the same kind of plain sentence, telling the operator to resume instead);
+  3. without `notesFile`: use `saved`, or return `{ status: 'stopped', reason: 'There is no unfinished brief revision to continue.' }`;
+  4. return `runBriefSession({ projectDir, session, author, io, log, operatorName, cwd })` as it comes.
+- `realDeps()` returns `{ reviseBrief: makeReviseBrief({ … Plan 7's functions }), runBuild, runProjectCouncil, releaseApp, updateDeployment, listDeployments, now: () => new Date() }`.
+- Also export `DEP_NAMES`, `CONTINUE_OUTCOMES` and `missingSeams` (sorted names).
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
@@ -75,5 +119,7 @@ Expected: PASS, and the existing suite stays green.
 
 ```bash
 git add src/factory/change/seams.js src/factory/change/run.js test/helpers/changeFixtures.js test/factory-change-run.test.js
-git commit -m "feat(change): seams to Plans 7–10, change-run state and project lock"
+git commit -m "feat(change): seams to Plans 7–10 and change-run state
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

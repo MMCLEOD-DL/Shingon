@@ -7,12 +7,13 @@ The first ship to a deployment follows the runbook's "Setting up a new deploymen
 - Test: `test/factory-env-file.test.js`, `test/factory-first-ship.test.js`
 
 **Interfaces:**
-- Consumes: `remoteRun`, `shq`, `sshProblem` (Task 2); `composeCmd`, `probeVersion`, `probeBox` (Task 5); `imageNames` (Task 6); `baseSettings`, `initArgs` (Task 7); `withStep`, `addHistory`, `SETUP_STEPS` (Task 1); `rememberSecret`, `redact`.
+- Consumes: `remoteRun`, `sshProblem` (Task 2); `shQuote` (Plan 8's `src/factory/remote.js`); `composeCmd`, `probeVersion`, `probeBox` (Task 5); `imageNames` (Task 6); `baseSettings`, `initArgs` (Task 7); `withStep`, `addHistory`, `SETUP_STEPS` (Task 1); `rememberSecret`, `redact`.
 - Produces: `SETTABLE`, `dotenvLine`, `setEnvCommand`, `setEnv`, `readBackupPassword` (index, Task 8) and:
 
 ```js
 runFirstSetup({
   dep, brief, target, ask, version,
+  foundation,        // 'vX.Y.Z': the foundation this release is built on (project.json.foundation.tag, Task 10)
   images,            // imageNames(...) for this version
   imagesFile,        // 'images-<v>.tar' | null (from deliverToBox)
   facts,             // preflight facts from before delivery: { hasEnv, hasCompose }
@@ -36,7 +37,7 @@ runFirstSetup({
 
 ```sh
 set -eu
-cd <shq(bundleDir)>
+cd <shQuote(bundleDir)>
 [ -f .env ] || { echo "There is no .env in this folder." >&2; exit 3; }
 umask 077
 tmp=$(mktemp .env.conductor.XXXXXX)
@@ -51,9 +52,9 @@ mv "$tmp" .env
 trap - EXIT
 ```
 
-It replaces the first `KEY=…` or commented `# KEY=…` line for each key (the layout `ops init` writes) and appends keys it did not find. `setEnv(t, dir, settings)` builds the stdin as `settings.map((s) => dotenvLine(s.key, s.value)).join('\n') + '\n'`, returns `{ ok: true }` at once for an empty list (an empty stdin would make `awk` treat `.env` as the first file), and on failure `{ ok: false, problem: 'The settings could not be written into .env on acme-office (<first stderr line, redacted>).' }`.
+It replaces the first `KEY=…` or commented `# KEY=…` line for each key (the layout `ops init` writes) and appends keys it did not find. Foundation v0.1.0 has no command for this; v0.2.0 adds `ops set-env` (Contract 7 §7.9 item 4, Plan 12 milestone 1). Switching `setEnv` to it is a follow-up once apps are on v0.2.0, so this snippet stays, pinned by the test below. `setEnv(t, dir, settings)` builds the stdin as `settings.map((s) => dotenvLine(s.key, s.value)).join('\n') + '\n'`, returns `{ ok: true }` at once for an empty list (an empty stdin would make `awk` treat `.env` as the first file), and on failure `{ ok: false, problem: 'The settings could not be written into .env on acme-office (<first stderr line, redacted>).' }`.
 
-**`readBackupPassword(t, dir)`**: `sed -n 's/^BACKUP_PASSWORD=//p' <shq(dir)>/.env`; the trimmed value (unquoted if `ops init` quoted it) is passed to `rememberSecret` **before** it is returned; empty → `null`.
+**`readBackupPassword(t, dir)`**: `sed -n 's/^BACKUP_PASSWORD=//p' <shQuote(dir)>/.env`; the trimmed value (unquoted if `ops init` quoted it) is passed to `rememberSecret` **before** it is returned; empty → `null`.
 
 **`runFirstSetup` steps.** `at(step)` means `SETUP_STEPS.indexOf(dep.setup.step) < SETUP_STEPS.indexOf(step)`; each block runs only when its step is not yet reached, and ends with `dep = save(withStep(dep, step, now()))`. A failure returns `{ outcome: 'partway', text: <reason> + '\nRun the same command again to carry on from here: conductor ship <project> --to <name>', dep }` with the last finished step saved.
 
@@ -65,7 +66,7 @@ It replaces the first `KEY=…` or commented `# KEY=…` line for each key (the 
    - `dep.bundleVersion = version`.
 2. **`initialised`**
    - `cd <dir> && [ ! -e .env ]` must succeed, else `stopped` with the same "did not set up" text (Ruling 7: `ops init` is never run over an existing `.env`).
-   - `cd <dir> && [DOCKER_CONFIG="$PWD/.docker" ]docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/out" <opsRef> <initArgs(dep, brief) each through shq>`. Non-zero → partway `ops init did not work on the box: <first stderr line, redacted>.` (its checklist on stderr is not printed: Conductor does each item itself).
+   - `cd <dir> && [DOCKER_CONFIG="$PWD/.docker" ]docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/out" <opsRef> <initArgs(dep, brief) each through shQuote>`. Non-zero → partway `ops init did not work on the box: <first stderr line, redacted>.` (its checklist on stderr is not printed: Conductor does each item itself).
 3. **`password-saved`** — `!ask.isTTY` → partway `The backup password has to be shown to you once, and there is no terminal. Run the ship in a terminal.`. Otherwise `readBackupPassword`; `null` → partway `The new settings on the box have no BACKUP_PASSWORD.` Then:
 
    ```
@@ -85,11 +86,11 @@ It replaces the first `KEY=…` or commented `# KEY=…` line for each key (the 
    - `composeCmd(dep, 'run --rm -T ops backup')` (60 minutes) must exit 0, else partway `The first backup did not work: <last line, redacted>. RUNBOOK.md on the box, "Backups", lists the reasons.`
    - `composeCmd(dep, 'run --rm -T ops restore-test')` (60 minutes), same rule with `The first restore test did not work: …`.
    - `probeBox`: `checks.ok` must be true, else partway `The box's checks do not all pass yet:\n- <failing…>`.
-   - `dep.currentVersion = version`; `dep.foundation = status.version.foundation ? 'v' + status.version.foundation : null`.
+   - `dep.currentVersion = version`; `dep.foundation = foundation` (the `'vX.Y.Z'` passed in, never the box's `/api/version` field: Task 5 explains why).
 7. **`done`**
    - `ask.confirm('Create the first admin account now?')`; yes → `text('Their email address?')` (contains `@`), `text('Their full name?')`, then `composeCmd(dep, 'run --rm -T app node apps/server/dist/auth/bootstrap-admin.js --email <q> --name <q>')`. The first `https?://\S+` in its output is passed to `rememberSecret`, then shown once: `Send this link to <name> yourself (it works for 7 days): <link>`. A failure here is a note, not a partway: `The first admin could not be created (<line>). Do it later on the box: see RUNBOOK.md, "Create the first admin".`
    - `dep = addHistory(dep, { version, outcome: 'installed', at: now() })`, step `done`, saved.
-   - Text: `acme-office is running 0.1.3 on foundation 0.1.0. The first backup and a test restore both worked, and every check passes.` then `Alerts go to Matrix (<roomId>)` or `Alerts go to the webhook`, and `The outside watcher (Uptime Kuma) is set.` or `There is no outside watcher: nobody will notice if the whole box goes off.`
+   - Text: `acme-office is running 0.1.3 on foundation v0.1.0. The first backup and a test restore both worked, and every check passes.` then `Alerts go to Matrix (<roomId>)` or `Alerts go to the webhook`, and `The outside watcher (Uptime Kuma) is set.` or `There is no outside watcher: nobody will notice if the whole box goes off.`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -143,7 +144,8 @@ const T = { host: 'acme-box', user: 'highland', port: null, keyPath: null, label
 const PW = 'Zq3-backup-password-from-ops-init_xyz';
 const SETTINGS = { settings: [{ key: 'SMTP_URL', value: 'smtp://u:mailpass@h:587', secret: true }, { key: 'MATRIX_ACCESS_TOKEN', value: 'syt_matrix_token_1', secret: true }],
   alerts: { matrix: { homeserver: 'https://m.example.org', roomId: '!a:example.org' }, webhook: false, heartbeat: true } };
-const VERSION = JSON.stringify({ version: { app: '0.1.3', foundation: '0.1.0', commit: 'abc' }, ready: { status: 'ok', checks: [] } });
+// The box claims foundation 0.1.3 (foundation v0.1.0's release script stamps the app version into foundation.json): Conductor must not believe it.
+const VERSION = JSON.stringify({ version: { app: '0.1.3', foundation: '0.1.3', commit: 'abc' }, ready: { status: 'ok', checks: [] } });
 const BOX_RULES = [
   { match: "\\[ ! -e \\.env \\]" },
   { match: 'docker run --rm -u', stderr: 'Setting up Acme Ltd. Do these before you start the box:\n' },
@@ -163,7 +165,7 @@ function run(f, dep, answers, extra = {}) {
   ask.say = (t) => said.push(t);
   ask.sayOnce = (t) => said.push(t);
   const saved = [];
-  return runFirstSetup({ dep, brief: TEST_BRIEF, target: T, ask, version: '0.1.3',
+  return runFirstSetup({ dep, brief: TEST_BRIEF, target: T, ask, version: '0.1.3', foundation: 'v0.1.0',
     images: { app: 'highland/app', ops: 'highland/ops', appRef: 'highland/app:0.1.3', opsRef: 'highland/ops:0.1.3' },
     imagesFile: 'images-0.1.3.tar', facts: { hasEnv: false, hasCompose: false }, settings: SETTINGS,
     save: (d) => { saved.push(d); return d; }, env: f.env(), now: () => '2026-10-27T10:00:00.000Z',
@@ -257,7 +259,7 @@ Expected: FAIL, modules not found.
 
 - [ ] **Step 3: Implement `src/factory/ship/envFile.js`.**
 
-- [ ] **Step 4: Implement `src/factory/ship/firstShip.js`** to the step list above. Every interpolated value in a remote command goes through `shq`. All operator-facing text goes through `ask.say`, **except** the backup-password block and the first-admin link, which go through `ask.sayOnce` (Task 10 logs and redacts `say`, never `sayOnce`).
+- [ ] **Step 4: Implement `src/factory/ship/firstShip.js`** to the step list above. Every interpolated value in a remote command goes through `shQuote`. All operator-facing text goes through `ask.say`, **except** the backup-password block and the first-admin link, which go through `ask.sayOnce` (Task 10 logs and redacts `say`, never `sayOnce`).
 
 - [ ] **Step 5: Run tests to verify they pass**
 
@@ -268,5 +270,7 @@ Expected: PASS.
 
 ```bash
 git add src/factory/ship/envFile.js src/factory/ship/firstShip.js test/factory-env-file.test.js test/factory-first-ship.test.js
-git commit -m "feat(ship): resumable first-time setup through the foundation's own tools, secrets on stdin only"
+git commit -m "feat(ship): resumable first-time setup through the foundation's own tools, secrets on stdin only
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

@@ -6,13 +6,14 @@
 
 **Architecture:**
 - **Two milestones in two repos.**
-  - **M1 (Tasks 1–10)** is built in **`/root/highland-foundation`** by the operator with Claude Code in hand-steered sessions, exactly like Plan 6. It ends with the tag `v0.2.0`. Conductor is not touched in M1.
+  - **M1 (Tasks 1–9, 9a–9c, 10)** is built in **`/root/highland-foundation`** by the operator with Claude Code in hand-steered sessions, exactly like Plan 6. It ends with the tag `v0.2.0`. Conductor is not touched in M1.
+  - M1 also carries the **foundation follow-ups** Contract 7.9 assigns to v0.2.0 (Tasks 9a–9c): `scripts/release.ts` stamps `foundation.json` only for the foundation itself; `update --json`; `ops status --json`; `ops set-env`; `ops test-alert`; the smoke's `HF_SMOKE_DIR`/`HF_SMOKE_PROJECT` settings and a hard-kill step. Plans 9 and 10 stay on their v0.1.0 text parsers; switching them is a later Conductor follow-up.
   - **M2 (Tasks 11–15)** is the acceptance run. Task 11 adds a small, zero-dependency acceptance kit to **`/root/conductor`** (`spikes/acceptance/`). Tasks 12–15 are operator-run checklists that drive Plans 7–11's commands and fill in a results file. No new product code.
 - **Modules are libraries plus a thin server and web integration.**
   - `modules/ocr`, `modules/pdf-export` and `modules/xlsx-export` are new npm workspaces (`@hf/ocr`, `@hf/pdf-export`, `@hf/xlsx-export`). They know nothing about HTTP or the database, so their correctness tests are fast and need no Postgres.
   - The server wiring lives in `apps/server/src/modules/<name>/`; the web wiring in `apps/web/src/modules/<name>/`.
   - Money arithmetic and the report model live in `packages/shared` (`money.ts`, `report.ts`), so the screen, the PDF and the spreadsheet all show totals computed **once, in integer pence**. The two export modules only lay out what the model already computed.
-- **Opt-in through one committed file, `app-profile.json`, at the app's repo root:** `{ schema: 1, modules: [...], policy: { outbound: [...], residency } }`. The factory writes it from the approved brief's `modules` and `policy` fields (see Contract gaps). The server reads it at start: a module's routes, queue and pages exist only when it is listed. The web build reads the same file at build time. The foundation ships it with `modules: []`, `outbound: []`, `residency: "uk"`: nothing on, nothing allowed out.
+- **Opt-in through one committed file, `app-profile.json`, at the app's repo root:** `{ schema: 1, modules: [...], policy: { outbound: [...], residency } }`. Conductor writes it from the approved brief's `modules` and `policy` fields: Plan 8's `createApp` at the first build (committed with the BRAND line), and Plan 11 when a change alters them (Contract 7.5). `policy.outbound` holds ids from Conductor's `OUTBOUND_SERVICES` (Plan 7, Contract 7.4), which seeds `azure-document-intelligence`. The server reads it at start: a module's routes, queue and pages exist only when it is listed. The web build reads the same file at build time. The foundation ships it with `modules: []`, `outbound: []`, `residency: "uk"`: nothing on, nothing allowed out.
 - **The data policy decides the OCR engine, twice locked.** A cloud engine is used only when (1) `app-profile.json` lists its outbound id in `policy.outbound`, (2) its declared region satisfies `policy.residency`, and (3) the deployment's `.env` selects it. Any mismatch stops the app at start with a plain-English reason; it never quietly sends receipts out. A failing cloud engine falls back to the local one (data stays on the box), never the other way round.
 - **Scheduled jobs are not a new module.** The ops container's scheduler (Plan 6 Task 18/19: croner, no overlap, failure alerts) gains an **app-job registry**: client features declare jobs next to their code, and ops runs them exactly once per due time, catching up a missed run once after downtime. The `scheduled-jobs` profile flag switches them on.
 
@@ -25,9 +26,9 @@
 - §5: optional modules; local OCR on a modest CPU-only box; staff confirm every reading.
 - §5a: permissive licences only. §6: the data policy profile drives local versus cloud OCR. §7: client data never goes to the factory's models.
 
-**Roadmap:** `/root/conductor/docs/superpowers/plans/2026-10-27-factory-phases-4-9-roadmap.md` (Contracts 1–6 and the cross-cutting rules are binding). Plans 7–11 are written in parallel; M2 consumes their commands (Contract 5) and must not assume anything beyond the contracts, except where listed under Contract gaps.
+**Roadmap:** `/root/conductor/docs/superpowers/plans/2026-10-27-factory-phases-4-9-roadmap.md` (Contracts 1–7 and the cross-cutting rules are binding; Contract 7, the library seams, wins over anything here). M2 consumes Plans 7–11's commands (Contract 5) and the modules Contract 7.1 names, and assumes nothing beyond the contracts, except the items still open under Contract gaps.
 
-**Foundation inputs:** `/root/highland-foundation` at `v0.1.0`: `README.md`, `docs/BUILDING-ON.md`, `docs/LICENCES.md`, `scripts/check-licences.ts`, the notes and files example, `ops/src/scheduler.ts` and `ops/src/daemon.ts`; Plan 6's index and `DECISIONS.md` (`../2026-10-25-highland-foundation/`).
+**Foundation inputs:** `/root/highland-foundation` at `v0.1.0`: `README.md`, `docs/BUILDING-ON.md`, `docs/LICENCES.md`, `scripts/check-licences.ts`, the notes and files example, `ops/src/scheduler.ts` and `ops/src/daemon.ts`; for Tasks 9a–9c, `scripts/release.ts`, `ops/src/{cli,init-cli,init,update,checks,runs,alerts,durable}.ts` and `deploy/smoke/run-smoke.sh`; Plan 6's index and `DECISIONS.md` (`../2026-10-25-highland-foundation/`).
 
 ## Engine and library choices (spec §10 leaves these to the builder)
 
@@ -106,6 +107,7 @@ PDF text uses the PDF standard fonts (Helvetica), so no font file is shipped and
 3. **The policy forbids outbound, but the box's `.env` asks for the cloud engine** (or the region is outside the residency). The app refuses to start with one plain sentence; no request ever leaves the box. Pinned in Task 4 (a 127.0.0.1 stub counts zero requests; start-up refusal text).
 4. **Awkward text in exports:** a merchant called `=HYPERLINK("http://x","click")`, "Łódź Café 🍕", a 200-character merchant name, a refund of −£5.00. The spreadsheet stores formulas-looking text as plain text; the PDF prints `?` for unsupported characters and wraps long names; negative amounts read "−£5.00" and totals stay exact. Pinned in Tasks 7 and 8.
 5. **The box was off when a monthly job was due, or ops restarts mid-job.** On start, a missed run happens once, not once per missed slot; a run already recorded for that due time never runs again. Pinned in Task 9 (`job_runs` primary key and `dueSince`).
+6. **A box's settings written by a script.** `ops set-env` given an unknown key, a generated secret (`DB_PASSWORD`), a repeated key or a value with a carriage return must refuse and write nothing; on success it keeps every other line, the file's mode and owner, and never prints a value. `update --json` and `status --json` must print exactly one line on standard output with no secret in it. An app's own release must leave `foundation.json` byte for byte. Pinned in Tasks 9a and 9b.
 
 ## Operator questions (open; the plan's defaults let work start without them)
 
@@ -114,9 +116,9 @@ PDF text uses the PDF standard fonts (Helvetica), so no font file is shipped and
    { "png-js@2.0.0": "MIT: the LICENSE file in the published package is the MIT licence; only the package.json field is missing. Approved by the operator on <date>." }
    ```
    **Needed before Task 8; Tasks 1–7 don't depend on it.** If the answer is no, Task 8 takes its "If the exception is refused" path: a small PDF writer of our own (`modules/pdf-export/src/writer.ts`, standard fonts only, no dependencies). The tests are identical either way. (`licence-exceptions.json` is keyed `name@version` by the installed folder name, per `scripts/check-licences.ts`.)
-   The Conductor council's Legal member will raise the same package as "licence missing" on every client build, unless the project accepts it too (see Contract gaps, item 9).
+   Plan 9's Legal member treats the app's own `licence-exceptions.json` entries as accepted licences, showing their reasons (Contract 7.7), so the approved entry also clears the council on every client build built from v0.2.0.
 2. **Should `Zlib` join the allowed licence list?** It is OSI-approved and permissive, like MIT. Allowing it would make `pdf-lib`, `jsPDF`, `jimp` and `exceljs`'s `pako` acceptable. **Default:** no change; this plan needs none of them.
-3. **A cloud OCR account.** Is an Azure Document Intelligence resource in UK South wanted for any client? **Default:** no account; the adapter stays stub-tested only, and the expenses tracker's acceptance run uses the local engine (policy `outbound: []`).
+3. **A cloud OCR account.** Is an Azure Document Intelligence resource in UK South wanted for any client? **Default:** no account; the adapter stays stub-tested only, and the expenses tracker's acceptance run uses the local engine (policy `outbound: []`). The `azure-document-intelligence` id is already in Conductor's `OUTBOUND_SERVICES` (Plan 7), so a brief can allow it later without any Conductor change.
 
 ## Operator follow-ups (outside the code)
 
@@ -125,18 +127,14 @@ PDF text uses the PDF standard fonts (Helvetica), so no font file is shipped and
 - **Real meeting notes** for the expenses tracker (Task 13); a solicitor's check of §5a terms before the first contract (Plan 6 follow-up).
 - **Two real phones** for M2: one iPhone (Safari) and one Android (Chrome), on the operator's LAN.
 
-## Contract gaps found while writing this plan (reported, not edited into the roadmap)
+## Contract gaps (after Contract 7)
 
-1. **How the brief reaches the running app.** Contract 2 has `modules` and `policy`, but nothing says how they reach the client app's code. This plan introduces `app-profile.json` (shape in Shared Interfaces) at the app repo root. **Plan 8** must write it from the approved brief when it creates the app, and **Plan 11** must rewrite it from a change brief.
-2. **`policy.outbound` has no vocabulary.** It is free `string[]`. To be machine-checkable it needs ids that modules declare (this plan: `azure-document-intelligence`). Plan 7's validator should accept only known ids, or keep free text plus a mapping the operator approves.
-3. **Plan 9's Legal data-flow check needs each module's destinations.** `@hf/ocr` exports `OUTBOUND_DESTINATIONS` (id, hosts, what it carries). The cloud region is chosen in the deployment's `.env`, which the council never sees; the app's start-up check is the only enforcement there.
-4. **Which foundation tag new apps start from.** Contract 1 records `foundation: { repo, tag }`, but no config names the current tag. Plan 8 needs a setting (for example `factory.foundationTag`), set to `v0.2.0` for the acceptance run.
-5. **`scheduled-jobs` is not a separate module** (Ruling 8). Briefs may still list it; it only switches on app jobs in the ops scheduler.
-6. **Acceptance examples have no ids.** Contract 2's `{ given, when, then }` has no id, so nothing can trace an example to the test that proves it. The acceptance check (Task 11) needs one. Proposal: Plan 7 adds `id` to each example (`<featureId>#<n>`), and Plan 8 puts `[ex:<featureId>#<n>]` in the test's name. Until then, Task 11's check can only count examples, not trace them.
-7. **Where the council report is saved.** Contract 1 says `builds/<runId>/` holds council reports, but not the file name or shape. Task 11 assumes `builds/<runId>/council-report.json` with Plan 5's `CouncilReport` shape (`verdict`, `blocking`, `overridden`), and also takes `--council <file>`.
-8. **Restore-test evidence from a deployment.** Contract 4's `history` records updates, but not restore tests or alerts. Task 14 collects them by hand over SSH (`ops` output) unless Plan 10 exposes them (for example in `conductor deployments status`).
-9. **Two licence-acceptance lists.** The foundation's `licence-exceptions.json` and Conductor's `councilAcceptLicences` are separate. An exception approved in the foundation (Operator question 1) would still block every client build in the council. Plan 9 should read the app's `licence-exceptions.json` (with its reasons) as accepted, or Plan 8 should copy it into the project's council settings.
-10. **Brief `modules` values** must be exactly `ocr`, `pdf-export`, `xlsx-export`, `scheduled-jobs` (the `MODULES` constant in `@hf/shared`, Task 1).
+Settled by Contract 7 and removed from this list: how the brief reaches the app (`app-profile.json`, written by Plan 8 and rewritten by Plan 11, §7.5); the `policy.outbound` vocabulary (`OUTBOUND_SERVICES` ids, §7.4); the foundation tag setting (`factory.foundation.tag`, §7.2); example ids (`<featureId>#<n>`, test tag `[<featureId>#<n>]`, §7.4); where the council report is saved (`builds/<runId>/council-report.json`, §7.5); and the two licence-acceptance lists (Plan 9's Legal reads the app's `licence-exceptions.json`, §7.7).
+
+Still open:
+1. **The cloud region is outside the council's view** (still open). `@hf/ocr`'s `OUTBOUND_DESTINATIONS` mirrors Conductor's `OUTBOUND_SERVICES['azure-document-intelligence']` (same id and hosts; Task 4). The region is chosen in the deployment's `.env`, which the council never sees, so the app's start-up check (Task 4) is the only enforcement of `residency`.
+2. **`scheduled-jobs` is not a separate module** (Ruling 8). Briefs may still list it; it only switches on app jobs in the ops scheduler. Brief `modules` values must be exactly `ocr`, `pdf-export`, `xlsx-export`, `scheduled-jobs` (the `MODULES` constant in `@hf/shared`, Task 1), which Plan 7's brief validator should share.
+3. **Restore-test and alert evidence from a deployment** (still open for v0.1.0 apps). Contract 4's `history` records updates, not restore tests or alerts. Task 9b adds `ops status --json` and `ops test-alert` in v0.2.0, but Plan 10 keeps its v0.1.0 routes (Contract 7.9), so Task 14 collects the evidence by hand over SSH with those commands.
 
 ## Milestones
 
@@ -145,7 +143,8 @@ PDF text uses the PDF standard fonts (Helvetica), so no font file is shipped and
 | M1a Profile and money | 1 | Module workspaces, `app-profile.json`, money helpers, licence pre-flight |
 | M1b OCR | 2–6 | Receipt photos read on the box (or by an allowed cloud engine), proposed fields with confidences, staff confirm or correct on a phone |
 | M1c Exports and jobs | 7–9 | Exact money reports as spreadsheet and PDF; scheduled app jobs in ops |
-| M1d Release | 10 | Images, modest-box proof, docs, `v0.2.0` |
+| M1c′ Foundation follow-ups | 9a–9c | App releases keep `foundation.json`; machine-readable `update`/`status`; `set-env`; `test-alert`; smoke settings and hard kill (Contract 7.9) |
+| M1d Release | 10 | Images, smoke with hard kill, modest-box proof, docs, `v0.2.0` |
 | M2a Kit | 11 | Acceptance criteria, evidence checker with tests, results template |
 | M2b Runs | 12–15 | Dress rehearsal; the real expenses tracker built, shipped to a test box and changed once; signed results |
 
@@ -164,8 +163,11 @@ M1 paths are relative to `/root/highland-foundation`; M2 paths to `/root/conduct
 | `packages/shared/src/report.ts`, `modules/xlsx-export/src/xlsx.ts`, `apps/server/src/modules/exports/reply.ts`, `test/worked-examples.ts` | report model, spreadsheet, download helper | 7 |
 | `modules/pdf-export/src/{pdf,winAnsi}.ts` (and `writer.ts` only if Operator question 1 is refused) | PDF | 8 |
 | `apps/server/src/jobs/{registry,index}.ts`, `apps/server/src/db/schema/jobRuns.ts`, `ops/src/appJobs.ts`, `ops/src/daemon.ts` | app jobs in the ops scheduler | 9 |
-| `deploy/{Dockerfile,ops.Dockerfile,.env.example}`, `ops/src/init.ts`, `deploy/smoke/{ocr-modest-box.sh,OCR-RESULT.md}`, `README.md`, `docs/{BUILDING-ON,RUNBOOK,LICENCES}.md`, `CHANGELOG.md` | images, modest-box proof, docs, release | 10 |
-| `spikes/acceptance/{check-acceptance.mjs,PROCEDURE.md,RESULT-TEMPLATE.md,rehearsal-notes.md}`, `test/acceptance-check.test.js`, `test/fixtures/acceptance/**` | acceptance kit (Conductor repo) | 11 |
+| `scripts/{release,release.test}.ts`, `ops/src/{update,cli,init-cli}.ts`, `ops/test/update.test.ts` | app releases keep `foundation.json`; `update --json` | 9a |
+| `ops/src/{status,setEnv,testAlert}.ts`, `ops/src/{runs,init,cli,init-cli}.ts`, `ops/test/{status,set-env,test-alert,init-cli}.test.ts`, `docs/RUNBOOK.md` | `ops status --json`, `ops set-env`, `ops test-alert` | 9b |
+| `deploy/smoke/{run-smoke.sh,RESULT.md}`, `deploy/test/smoke.test.ts` | smoke settings, hard-kill step | 9c |
+| `deploy/{Dockerfile,ops.Dockerfile,.env.example}`, `ops/src/{init,setEnv}.ts`, `deploy/smoke/{ocr-modest-box.sh,OCR-RESULT.md,RESULT.md}`, `README.md`, `docs/{BUILDING-ON,RUNBOOK,LICENCES}.md`, `CHANGELOG.md` | images, smoke run, modest-box proof, docs, release | 10 |
+| `spikes/acceptance/{check-acceptance.mjs,PROCEDURE.md,RESULT-TEMPLATE.md,rehearsal-notes.md}`, `test/acceptance-check.test.js`, `test/helpers/acceptanceProject.js` | acceptance kit (Conductor repo) | 11 |
 | `<projectsRoot>/<slug>/acceptance/RESULT.md` (operator's machine, not committed to either repo) | the filled-in results | 12–15 |
 
 ## Tasks
@@ -179,6 +181,9 @@ M1 paths are relative to `/root/highland-foundation`; M2 paths to `/root/conduct
 7. [Money reports and spreadsheet export](task-07-report-xlsx.md)
 8. [PDF export](task-08-pdf.md)
 9. [Scheduled app jobs](task-09-app-jobs.md)
+9a. [Foundation follow-ups 1: release stamp and `update --json`](task-09a-release-stamp-update-json.md)
+9b. [Foundation follow-ups 2: `ops status --json`, `ops set-env`, `ops test-alert`](task-09b-ops-status-set-env-test-alert.md)
+9c. [Foundation follow-ups 3: smoke settings and a hard-kill step](task-09c-smoke-settings-hard-kill.md)
 10. [Images, modest-box check, docs and v0.2.0](task-10-release.md)
 11. [Acceptance kit (Conductor)](task-11-acceptance-kit.md)
 12. [Dress rehearsal on fictional notes](task-12-rehearsal.md)
@@ -189,9 +194,10 @@ M1 paths are relative to `/root/highland-foundation`; M2 paths to `/root/conduct
 Order matters:
 - 2 needs 1; 3 needs 2; 4 needs 3; 5 needs 4; 6 needs 5.
 - 7 needs 1; 8 needs 7 (and Operator question 1); 9 needs 1. 7–9 may run before or alongside 2–6.
-- 10 needs 1–9.
-- 11 needs only this plan (it reads the contracts' file shapes) and may be built any time.
-- 12 needs 10, 11 and Plans 7–9 merged; 13 needs 12; 14 needs 13 and Plan 10; 15 needs 14 and Plan 11.
+- 9a, 9b and 9c need only `v0.1.0` and may run in any order, alongside 1–9 (9b's set-env key test is extended by Task 10).
+- 10 needs 1–9 and 9a–9c.
+- 11 imports Plan 7's modules (`projects.js`, `brief.js`, `acceptance.js`, `fsAtomic.js`) and Plan 10's (`deployments/store.js`, `foundationLog.js`), so it needs Plans 7 and 10 merged; it needs nothing from M1.
+- 12 needs 10, 11 and Plans 7–10 merged; 13 needs 12; 14 needs 13 and Plan 10; 15 needs 14 and Plan 11.
 
 ## Shared Interfaces (all tasks)
 
@@ -249,7 +255,7 @@ writeAccuracyReport(r: BenchReport, file: string): Promise<void>
 benchCorpus(engine: OcrEngine, dir: string, today: string): Promise<BenchReport>         // BenchReport = { cases, perField: Record<ReceiptField,{ right, wrongFlagged, confidentlyWrong, missing }>, msMedian, msMax }
 
 // ── Task 4 · modules/ocr/src
-OUTBOUND_DESTINATIONS: readonly { id: 'azure-document-intelligence'; hosts: readonly string[]; carries: string }[]
+OUTBOUND_DESTINATIONS: readonly { id: 'azure-document-intelligence'; hosts: readonly string[]; carries: string }[]   // mirrors Conductor's OUTBOUND_SERVICES entry (Contract 7.4)
 RESIDENCY_REGIONS: Record<Residency, readonly string[] | 'any'>
 createAzureReceiptEngine(cfg: { endpoint: string; key: string; region: string; allowHttpLoopback?: boolean; fetchImpl?: typeof fetch; pollMs?: number; timeoutMs?: number }): OcrEngine
 chooseEngine(profile: AppProfile, ocr: Config['ocr'], make: { local(): Promise<OcrEngine>; azure(c: NonNullable<Config['ocr']['azure']>): OcrEngine }): Promise<OcrEngine>   // throws OcrPolicyError(problems: string[])
@@ -298,10 +304,35 @@ dueSince(cron: string, after: Date, now: Date): Date | null      // latest due t
 claimRun(db: Db, job: string, dueAt: Date): Promise<boolean>     // insert into job_runs; false if that due time already ran
 runAppJob(deps: OpsDeps, job: AppJob, dueAt: Date): Promise<'ran' | 'already-ran'>
 catchUpAppJobs(deps: OpsDeps, jobs: readonly AppJob[]): Promise<string[]>   // names caught up
+
+// ── Task 9a · scripts/release.ts, ops/src/update.ts (Contract 7.9 items 1–2)
+FOUNDATION_PACKAGE = 'highland-foundation'      // foundation.json is checked and stamped only when package.json.name equals it
+UPDATE_EXIT = { updated: 0, cancelled: 1, 'rolled-back': 1, 'rollback-failed': 3 }
+updateExitCode(o: UpdateOutcome): 0 | 1 | 3
+updateOutcomeJson(o: UpdateOutcome | { refused: string; exitCode: 2 }, to: string | null): string
+//   -> {"schema":1,"outcome":"updated|cancelled|rolled-back|rollback-failed|refused","to","message","urgent","exitCode"}
+// cli: updater update --to <v> [--image-file <f>] --json   (progress on stderr, one JSON line on stdout)
+
+// ── Task 9b · ops/src (Contract 7.9 items 3–5)
+collectStatus(d: { cfg; db; now; checks }): Promise<OpsStatus>; statusLines(s): string[]
+OpsStatus = { schema: 1, client, at, ok, checks: { name, ok, critical, detail }[],
+              runs: { backup, backupOk, restoreTest, restoreTestOk, update: { at, ok, detail } | null } | null,
+              outstandingUpdate: { at, snapshotId } | null, problems: string[] }
+SETTABLE_ENV_KEYS; GENERATED_ENV_KEYS; parseSettings(input); applySettings(envText, settings); setEnvFile(file, input, fs?)
+sendTestAlert(d: { cfg, channel, now, log }): Promise<{ ok, message }>
+// cli: ops status [--json] · updater set-env < KEY=value lines · ops test-alert
+
+// ── Task 9c · deploy/smoke/run-smoke.sh (Contract 7.9 item 6)
+// env HF_SMOKE_DIR (default /tmp/hf-smoke), HF_SMOKE_PROJECT (default hfsmoke, never "highland"); step 7a: SIGKILL db, app, ops
+
+// ── Task 11 · spikes/acceptance/check-acceptance.mjs (Conductor)
+CRITERIA; FOUNDATION_V020_ROUTES; checkAcceptance(projectDir, opts) -> { results, ok }; renderResults(project, results) -> string
+// imports: loadProject, loadBrief, currentBriefInfo, briefPaths, acceptanceIds, testTag, writeFileAtomic (Plan 7);
+//          loadDeployment, compareVersions (Plan 10)
 ```
 
 ## Hand-off to the operator
 
-- **After Task 10:** tell the operator that `v0.2.0` is tagged (local, not pushed), with the modest-box result from `deploy/smoke/OCR-RESULT.md`, and that Plan 8's foundation tag setting should point at it (Contract gap 4).
+- **After Task 10:** tell the operator that `v0.2.0` is tagged (local, not pushed), with the smoke result (including the hard-kill step) and the modest-box result from `deploy/smoke/OCR-RESULT.md`, the crossing route count at v0.2.0, and that `factory.foundation.tag` must be set to `v0.2.0` in Conductor's config for the acceptance run (Plan 8's setting, Contract 7.2).
 - **After Task 11:** the operator merges `plan12-acceptance` in `/root/conductor`.
 - **Tasks 12–15 are run by the operator.** An implementer prepares nothing for them beyond Task 11, and never runs them.

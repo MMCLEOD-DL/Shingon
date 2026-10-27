@@ -22,7 +22,7 @@ A new deterministic council member, **Foundation rules**, checks the parts of BU
 - Test: `test/council-foundation.test.js` (new), `test/council-findings.test.js` (the `MEMBER_LABEL` `deepEqual` gains `foundation: 'Foundation rules'`)
 
 **Interfaces:**
-- Consumes: `makeFinding` (`src/council/findings.js`), `TEST_FILE` (`src/council/correctness.js`), `addedLines` (`src/council/security.js`), `git` (`src/workspace.js`), CouncilInput (Plan 5: `{ dir, files, changed, added, wholeFiles, baseSha, options, … }`), `makeFoundationRepo` (Task 1), `fakeParticipant`, `approve` (`test/helpers/fakes.js`).
+- Consumes: `testTag` (`src/factory/acceptance.js`, Plan 7), `makeFinding` (`src/council/findings.js`), `TEST_FILE` (`src/council/correctness.js`), `addedLines` (`src/council/security.js`), `git` (`src/workspace.js`), CouncilInput (Plan 5: `{ dir, files, changed, added, wholeFiles, baseSha, options, … }`), `makeFoundationRepo` (Task 1), `fakeParticipant`, `approve` (`test/helpers/fakes.js`).
 - Produces: `FOUNDATION`, `PROTECTED_PATHS`, `isTestPath(p)`; `MEMBERS`, `membersFor(names) -> Member[]`, `FEATURE_COUNCIL = ['foundation', 'correctness']`; options `councilMembers`, `factoryFeature: { id, tags: string[] }`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -145,7 +145,7 @@ Expected: FAIL (module missing; the drive test sees the default members).
 
 - `isTestPath = (p) => TEST_FILE.test(p)`.
 - `collect(input)`: without `input.options?.factoryFeature`, return `[{ tool: 'foundation-rules', label, status: 'skipped', findings: [], note: 'Foundation rules are checked only on factory builds.' }]`. Otherwise run the checks in the table above, in that order, and return one `ToolRun` with `status: 'ran'`. Every finding is `makeFinding({ member: 'foundation', tool: 'foundation-rules', grade, locked: true, title, detail, file })`.
-  - **Test files of the finished tree:** `git ls-files -z` in `input.dir`, filtered by `isTestPath`, read as UTF-8 (skip files over 1 MB). A tag is present when a test file contains the literal `[<id>]`.
+  - **Test files of the finished tree:** `git ls-files -z` in `input.dir`, filtered by `isTestPath`, read as UTF-8 (skip files over 1 MB). A tag is present when a test file contains the literal `testTag(id)` (`[<id>]`, Plan 7's `src/factory/acceptance.js`, Contract 7 §7.1/§7.4; `id` is the example's stable id).
   - **Skipped or focused:** a line containing `[<id>]` and matching `/\b(?:x(?:it|test|describe)\s*\(|\.(?:skip|only|todo)\s*(?:\.each\s*)?\()/`.
   - **Added `.only(`:** for each test file in `input.added` (a `Map<file, Set<line>>`), read those lines; when `input.added` is `null`, check every line of changed test files.
   - **package.json scripts:** `git show <baseSha>:package.json` and the working file; compare the five script names with `!==` (a missing file on either side counts as changed).
@@ -171,5 +171,7 @@ Expected: PASS.
 
 ```bash
 git add src/council/foundationRules.js src/council/findings.js src/council/tools.js src/council/index.js src/prompts.js src/options.js src/conductor.js test/council-foundation.test.js test/council-drive.test.js test/council-findings.test.js
-git commit -m "feat(council): Foundation rules member and a per-run choice of council members"
+git commit -m "feat(council): Foundation rules member and a per-run choice of council members
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

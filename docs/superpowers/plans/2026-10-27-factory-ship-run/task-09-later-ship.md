@@ -14,18 +14,18 @@ Once a deployment's first-time setup is `done`, every ship is the foundation's s
 - Test: `test/factory-later-ship.test.js`
 
 **Interfaces:**
-- Consumes: `remoteRun`, `shq`, `sshProblem` (Task 2); `interpretUpdate` (Task 3); `composeCmd`, `probeVersion` (Task 5); `addHistory` (Task 1); `redact`.
+- Consumes: `remoteRun`, `sshProblem` (Task 2); `parseVersion` (Task 4); `shQuote` (Plan 8's `src/factory/remote.js`); `RUN_ID_RE` (Plan 8's `src/factory/ids.js`); `interpretUpdate` (Task 3); `composeCmd` (Task 5); `addHistory` (Task 1); `redact`.
 - Produces: `startDetachedUpdate`, `pollUpdate`, `refreshBundleFiles`, `pruneImageFiles` (index, Task 9) and
 
 ```js
-runLaterShip({ dep, target, version, imagesFile, runId, say, save, env, now = () => new Date().toISOString(),
+runLaterShip({ dep, target, version, foundation /* 'vX.Y.Z' the release is built on */, imagesFile, runId, say, save, env, now = () => new Date().toISOString(),
                opts: { updateTimeoutMs, pollMs, sleep, clock = Date.now } }) -> Promise<{ outcome, text, dep }>
 ```
 
-`runId` must match `/^[a-z0-9-]{1,40}$/` (it names files on the box). `log = .conductor/update-<runId>.log`, `exit = .conductor/update-<runId>.exit`, both relative to the bundle folder.
+`runId` must match Plan 8's `RUN_ID_RE` (it names files on the box; Contract 7 §7.1: one run-id format for every factory run), else throw. `log = .conductor/update-<runId>.log`, `exit = .conductor/update-<runId>.exit`, both relative to the bundle folder.
 
 **Remote commands:**
-- start: `cd <dir> && mkdir -p .conductor && rm -f <exit> && setsid nohup sh -c <shq(inner)> >/dev/null 2>&1 </dev/null & sleep 1; [ -f <log> ]` where `inner` = `[DOCKER_CONFIG="$PWD/.docker" ]docker compose run --rm -T updater update --to <shq(v)>[ --image-file <shq(imagesFile)>] > <log> 2>&1; echo $? > <exit>`. Non-zero → `{ ok: false, problem: 'The update could not be started on acme-office (<first stderr line, redacted>).' }`.
+- start: `cd <dir> && mkdir -p .conductor && rm -f <exit> && setsid nohup sh -c <shQuote(inner)> >/dev/null 2>&1 </dev/null & sleep 1; [ -f <log> ]` where `inner` = `[DOCKER_CONFIG="$PWD/.docker" ]docker compose run --rm -T updater update --to <shQuote(v)>[ --image-file <shQuote(imagesFile)>] > <log> 2>&1; echo $? > <exit>`. Non-zero → `{ ok: false, problem: 'The update could not be started on acme-office (<first stderr line, redacted>).' }`.
 - poll: `cd <dir> && if [ -f <exit> ]; then echo "exit=$(cat <exit>)"; else echo exit=running; fi; cat <log> 2>/dev/null`. Each poll says (through `say`, redacted, prefixed `  box: `) only the log lines not said before. `exit=<n>` ends polling with `{ code: n, output: <log>, lostContact: false }`. SSH failures do not end polling; they are retried until `clock() - start >= updateTimeoutMs`, which ends with `{ code: null, output: <log so far>, lostContact: true }`.
 - refresh (after `updated` only; `prev = dep.bundleVersion`):
 
@@ -41,17 +41,17 @@ runLaterShip({ dep, target, version, imagesFile, runId, say, save, env, now = ()
   ```
 
   Any `replaced=` → `composeCmd(dep, 'pull db proxy' + (access === 'cloudflare-tunnel' ? ' tunnel' : ''))` then `composeCmd(dep, 'up -d')`; a failure of either is a warning `The new <files> are in place, but the box could not restart with them (<line>). On the box run: docker compose up -d`. Each `hand=` is a warning `<f> on the box was changed by hand, so Conductor left it alone. The new one is at <dir>/.conductor/bundle-<v>/<f>: merge it by hand (RUNBOOK.md, "Keeping a deployment patched").` `dep.bundleVersion = v` afterwards.
-- prune (after `updated` only): `cd <dir> && for f in images-*.tar; do case "$f" in images-<shq'd new>.tar|images-<shq'd from>.tar) ;; *) rm -f -- "$f" ;; esac; done`.
+- prune (after `updated` only): `cd <dir> && for f in images-*.tar; do case "$f" in images-<new>.tar|images-<from>.tar) ;; *) rm -f -- "$f" ;; esac; done`. Both versions are checked as plain `x.y.z` with Task 4's `parseVersion` (no pre-release part) before use, so they need no quoting inside the `case` pattern.
 
 **Recording** (`from = dep.currentVersion`; every outcome adds one `history` entry `{ at, version: v, from, outcome, detail: <first line of text> }` and saves):
 
 | Outcome | Record changes |
 |---|---|
-| `updated` | `currentVersion = v`; `foundation` from `probeVersion` (`'v' + foundation`, unchanged when unreadable); refresh + prune; their warnings appended to the text as `Note: …` lines |
-| `already-on` | `currentVersion = v` (the record was behind the box) |
+| `updated` | `currentVersion = v`; `foundation` = the `foundation` argument (Conductor's record, not the box's claim: Task 5); refresh + prune; their warnings appended to the text as `Note: …` lines |
+| `already-on` | `currentVersion = v`, `foundation` = the argument (the record was behind the box) |
 | `rolled-back`, `cancelled`, `busy`, `settings-error` | none |
-| `urgent` | `pendingCheck = { since: now(), version: v, why: 'urgent' }` |
-| `lost-contact` | `pendingCheck = { since: now(), version: v, why: 'lost-contact' }`; text from Task 3 plus `The update carries on by itself on the box; Conductor will not ship to acme-office again until conductor deployments status has seen how it ended.` |
+| `urgent` | `pendingCheck = { since: now(), version: v, foundation, why: 'urgent' }` |
+| `lost-contact` | `pendingCheck = { since: now(), version: v, foundation, why: 'lost-contact' }`; text from Task 3 plus `The update carries on by itself on the box; Conductor will not ship to acme-office again until conductor deployments status has seen how it ended.` |
 | start failed | outcome `cancelled`, text `<problem> Nothing was changed.` |
 
 - [ ] **Step 1: Write the failing tests**
@@ -78,7 +78,7 @@ const live = () => ({ ...withStep(newDeployment({ name: 'acme-office', project: 
 function go(rules, { clockStep = 0, timeout = 60000 } = {}) {
   const f = fakeSsh(mkdtempSync(path.join(tmpdir(), 'ls-')), rules);
   let t0 = 0; const said = []; const saved = [];
-  return runLaterShip({ dep: live(), target: T, version: '0.1.4', imagesFile: 'images-0.1.4.tar', runId: 'ship-20261027-1000',
+  return runLaterShip({ dep: live(), target: T, version: '0.1.4', foundation: 'v0.1.1', imagesFile: 'images-0.1.4.tar', runId: '20261027-100000-a1b2',
     say: (s) => said.push(s), save: (d) => { saved.push(d); return d; }, env: f.env(), now: () => '2026-10-27T10:00:00.000Z',
     opts: { updateTimeoutMs: timeout, pollMs: 1, sleep: async () => {}, clock: () => (t0 += clockStep) } })
     .then((r) => ({ ...r, f, said: said.join('\n'), saved }));
@@ -90,12 +90,11 @@ test('a good update runs detached, passes progress on, refreshes the bundle file
     { match: 'exit=running', once: true, stdout: 'exit=running\nStopping the app and the monitor.\n' },
     { match: 'exit=running', stdout: `exit=0\nStopping the app and the monitor.\n${UPDATED}\n` },
     { match: 'for f in compose.yaml Caddyfile', stdout: 'replaced=compose.yaml\nsame=Caddyfile\n' },
-    { match: 'entrypoint node ops', stdout: JSON.stringify({ version: { app: '0.1.4', foundation: '0.1.1', commit: 'x' }, ready: {} }) },
   ]);
   assert.equal(r.outcome, 'updated', r.text);
   const cmds = r.f.calls().map((c) => c.command);
   const start = cmds.find((c) => c.includes('setsid nohup sh -c'));
-  assert.ok(start.includes('updater update --to') && start.includes('images-0.1.4.tar') && start.includes('.conductor/update-ship-20261027-1000.exit'));
+  assert.ok(start.includes('updater update --to') && start.includes('images-0.1.4.tar') && start.includes('.conductor/update-20261027-100000-a1b2.exit'));
   assert.equal(r.said.split('box: Stopping the app and the monitor.').length - 1, 1); // each line said once
   assert.ok(cmds.some((c) => c.endsWith("docker compose pull db proxy tunnel")));
   assert.ok(cmds.some((c) => c.includes('for f in images-*.tar')));
@@ -116,7 +115,7 @@ test('a rolled-back update keeps the old version and touches no files', async ()
 test('losing contact leaves the update running and blocks further ships until status has looked', async () => {
   const r = await go([{ match: 'setsid' }, { match: 'exit=running', code: 255, stderr: 'Connection reset\n' }], { clockStep: 20000, timeout: 60000 });
   assert.equal(r.outcome, 'lost-contact');
-  assert.deepEqual(r.dep.pendingCheck, { since: '2026-10-27T10:00:00.000Z', version: '0.1.4', why: 'lost-contact' });
+  assert.deepEqual(r.dep.pendingCheck, { since: '2026-10-27T10:00:00.000Z', version: '0.1.4', foundation: 'v0.1.1', why: 'lost-contact' });
   assert.match(r.text, /carries on by itself on the box; Conductor will not ship to acme-office again until conductor deployments status/);
   assert.equal(r.dep.currentVersion, '0.1.3');
 });
@@ -158,5 +157,7 @@ Expected: PASS.
 
 ```bash
 git add src/factory/ship/update.js src/factory/ship/probe.js test/factory-later-ship.test.js
-git commit -m "feat(ship): later ships run the foundation's safe update detached, with plain outcomes and bundle refresh"
+git commit -m "feat(ship): later ships run the foundation's safe update detached, with plain outcomes and bundle refresh
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```

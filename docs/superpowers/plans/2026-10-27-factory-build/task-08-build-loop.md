@@ -2,7 +2,13 @@
 
 `runBuild` drives one build of one project: refusals before any spend (index Ruling 10), then the phases `setup` → `split` → `features` → `final`, saving `build.json` after every step that matters. `conductor build <slug>` (and `conductor resume` inside the project folder, Task 15) calls it; when an unfinished build exists, it carries on from where it stopped.
 
-- **setup:** `createApp` (pinned commit); record `project.json.foundation = { repo, tag, commit }` when missing and set `status: 'building'`; a **baseline** `runAppChecks` on `main` (browser off), which must pass before anything is spent; check out `build/<runId>` from `main`; `nameApp`; `build.baseSha` = the build branch head.
+- **setup:**
+  1. `createApp` (pinned commit).
+  2. Record `project.json.foundation = { repo, tag, commit }` when missing (Contract 7 §7.5), and set `status: 'building'`.
+  3. Run a **baseline** `runAppChecks` on `main` (browser off). It must pass before anything is spent.
+  4. Check out `build/<runId>` from `main`.
+  5. `nameApp`: the BRAND line and `app-profile.json`, in one commit.
+  6. `build.baseSha` = the build branch head.
 - **split:** `runSplit`; the units are saved; with `options.approvePlan` the operator confirms the list (`hooks.approvePlan`).
 - **features:** one Conductor run per unit (index Rulings 1, 7, 8), resumed when its workspace is unfinished, restarted when it was stopped or rejected, merged as one commit when landed.
 - **final:** `deps.runFinal(bctx)` (Task 9). It returns either an outcome or `{ next: 'features' }` after appending fix units.
@@ -12,11 +18,18 @@
 - Test: `test/factory-build.test.js`
 
 **Interfaces:**
-- Consumes: `factoryConfig` (Task 1); `projectDir`, `readProject`, `saveProject` (Plan 7 seam, Task 1); `loadBrief`, `renderBrief` (Plan 7, defaults of `deps`); `createApp`, `nameApp` (Task 2); `featureRequest`, `acceptanceStep` (Task 3); `runSplit`, `briefProblems` (Task 4); `FEATURE_COUNCIL` (Task 5); `runAppChecks`, `testDatabaseProblem`, `VERIFY_COMMAND` (Task 6); everything in Task 7; `runTask`, `resume` (`src/conductor.js`); `RunLog` (`src/runlog.js`); `git` (`src/workspace.js`); `newRunId` (Task 1).
+- Consumes: `factoryConfig` (Plan 7, extended in Task 1); `readProject`, `saveProject` (`src/factory/projects.js`, Plan 7); `lockProject` (`src/factory/projectLock.js`, Plan 7); `loadBrief`, `renderBrief`, `currentBriefInfo` (`src/factory/brief.js`, Plan 7, defaults of `deps`); `createApp`, `nameApp` (Task 2); `featureRequest`, `acceptanceStep` (Task 3); `runSplit`, `briefProblems` (Task 4); `FEATURE_COUNCIL` (Task 5); `runAppChecks`, `testDatabaseProblem`, `VERIFY_COMMAND` (Task 6); everything in Task 7; `runTask`, `resume` (`src/conductor.js`); `RunLog` (`src/runlog.js`); `git` (`src/workspace.js`); `newRunId` (Task 1).
 - Produces:
   - `runBuild({ factory, slug, team, hooks, options = {}, baseDir, warnings = [], env = process.env, deps = {} }) -> Promise<BuildOutcome>`
-  - `deps` defaults: `{ runTask, resume, runAppChecks, loadBrief, renderBrief, mergeFeature, runFinal: (bctx) => import('./buildFinal.js').then((m) => m.runFinal(bctx)), now: () => new Date() }`
+  - `deps` defaults: `{ runTask, resume, runAppChecks, loadBrief, renderBrief, currentBriefInfo, mergeFeature, runFinal: (bctx) => import('./buildFinal.js').then((m) => m.runFinal(bctx)), now: () => new Date() }`
   - `options.newBuild: true` (from `--new`, Task 15) abandons an unfinished build (marked `stopped`, reason `Replaced by build <new runId>.`) and starts a new one. It is a `runBuild` argument, not a `DEFAULT_OPTIONS` key: strip it before passing options to `runTask`.
+  - **Seam for Plan 11 (not built here):** Contract 7 §7.7 reserves `options.change = { runId, baseRef, units }`. Plan 11 adds it, and with it:
+    - the setup phase skips app creation and naming;
+    - the split phase is skipped, and `units` is used as given;
+    - the `ready`/`shipped` refusal is lifted for that call only.
+    - To keep that change small, the phases are separate inner functions (`setupPhase`, `splitPhase`, `featuresPhase`, `finalPhase`) called in turn. The option is stripped with `newBuild` before `runTask`.
+    - This plan neither reads nor validates `options.change`.
+  - `options.councilFixRounds` is Plan 5's per-run option: the council bounce-back inside one feature run. The whole-app council's cap is `factory.build.councilFixRounds` (Task 9).
   - **`bctx`** (handed to `runFinal`): `{ factory, slug, projectDir, appDir, buildDir, project, brief, build, team, hooks, options, baseDir, warnings, env, deps, save(), emit(type, data), progress(text), runFeatures() }`. `save()` writes `build.json`; `emit` writes `build-log.jsonl` and calls `hooks.onEvent`; `progress` calls `hooks.onProgress?.(text)`.
   - Feature run options: `{ ...options, testCommand: factory.build.testCommand ?? VERIFY_COMMAND, keepWorkspace: true, council: true, councilMembers: [...FEATURE_COUNCIL], factoryFeature: { id: unit.id, tags: unit.acceptance }, firstChunk: acceptanceStep({ brief, unit }) }`.
   - Commit message on the build branch: `Feature <k>/<n>: <title> (<id>)`; fix units: `Fix <k>/<n>: <title>`.
@@ -70,7 +83,7 @@ async function setup({ status = 'briefing', testCommand = 'node -e "process.exit
   const checks = [];
   const finals = [];
   const deps = {
-    loadBrief: () => sampleBrief(), renderBrief: (b) => `# ${b.client}`,
+    loadBrief: () => sampleBrief(), renderBrief: (b) => `# ${b.client}`, currentBriefInfo: () => ({ version: 1, approvedAt: '2026-10-27T10:00:00Z', approvedBy: 'operator' }),
     runAppChecks: async (o) => { checks.push(o); return { verify: { status: 'passed', summary: 'ok', output: '' }, browser: { status: 'skipped', summary: '', output: '' }, reports: [] }; },
     runFinal: async (bctx) => { finals.push(bctx); return { status: 'ready', runId: bctx.build.runId, buildDir: bctx.buildDir }; },
   };
@@ -87,7 +100,9 @@ test('a fresh build: app made and named, features split and built tests-first, o
   const project = JSON.parse(readFileSync(path.join(s.projectDir, 'project.json'), 'utf8'));
   assert.equal(project.status, 'building');
   assert.deepEqual(Object.keys(project.foundation), ['repo', 'tag', 'commit']);
+  assert.deepEqual([project.approved, project.builtFromBrief], [null, null], 'only the gate records an approval');
   const b = latestBuild(s.projectDir);
+  assert.equal(b.briefVersion, 1);
   assert.deepEqual(b.features.map((f) => f.status), ['merged', 'merged']);
   const appDir = path.join(s.projectDir, 'app');
   assert.deepEqual((await log(appDir, b.branch)).slice(0, 3), ['Feature 2/2: Monthly report (report)', 'Feature 1/2: Submit and list expenses (expenses)', 'Name the app: Acme Ltd']);
@@ -149,6 +164,7 @@ test('a crash between landing a feature and merging it: the next run merges it o
 
 test('a feature whose checks fail is not accepted: the build stops, and the next run starts that feature again', async () => {
   const s = await setup({ testCommand: 'node -e "process.exit(1)"' });
+  // councilFixRounds here is Plan 5's per-feature-run option (no bounce-back), not factory.build.councilFixRounds
   const out = await runBuild({ factory: s.factory, slug: s.slug, team: team(), hooks: s.hooks, deps: s.deps, options: { councilFixRounds: 0 }, env: {} });
   assert.equal(out.status, 'stopped');
   assert.match(out.reason, /Feature 1 \(Submit and list expenses\) was not accepted/);
@@ -184,12 +200,12 @@ Expected: FAIL (`Cannot find module '../src/factory/build.js'`).
 
 In `runBuild`, before anything is spent, in this order (each returns `{ status: 'failed', runId: null, buildDir: null, reason }`):
 1. `readProject(factory.projectsRoot, slug)` (its own plain message on a missing project).
-2. `project.status` `ready` or `shipped` → `<client> is already built and approved. Changes to a finished app will go through "conductor change", which is not available yet.`
+2. `project.status` `ready` or `shipped` → `<client> is already built and approved. Changes to a finished app will go through "conductor change", which is not available yet.` (Plan 11 lifts this for `options.change` only.)
 3. `deps.loadBrief(projectDir)` (Plan 7's plain message when none is approved), then `briefProblems(brief)` joined by spaces.
 4. `testDatabaseProblem({ testCommand: factory.build.testCommand, env })`.
-5. `lockProject(projectDir, 'build')` (its BUSY message). Everything after this runs in `try { … } finally { release() }`.
+5. `release = lockProject(projectDir, 'build')` (Plan 7; its own "busy: a <kind> is running (pid …, since …)" message becomes the `reason`). Everything after this runs in `try { … } finally { release() }`.
 
-Then: `latest = latestBuild(projectDir)`. When `latest` is unfinished (`running`, `paused`, `failed`, `stopped`) and `options.newBuild` is not set: its `briefHash` must equal `hashBrief(brief)`, else refuse `The brief has changed since build <runId> started, so Conductor will not mix the two. Run "conductor build <slug> --new" to start a fresh build from the current brief.`; carry on with it (`status: 'running'`, `emit('build-start', { runId, slug, resumed: true })`). Otherwise (`newBuild`, or nothing unfinished) mark an unfinished `latest` as `stopped` with `Replaced by build <new runId>.` and create `newBuild(...)`.
+Then: `latest = latestBuild(projectDir)`. When `latest` is unfinished (`running`, `paused`, `failed`, `stopped`) and `options.newBuild` is not set: its `briefHash` must equal `hashBrief(brief)`, else refuse `The brief has changed since build <runId> started, so Conductor will not mix the two. Run "conductor build <slug> --new" to start a fresh build from the current brief.`; carry on with it (`status: 'running'`, `emit('build-start', { runId, slug, resumed: true })`). Otherwise (`newBuild`, or nothing unfinished) mark an unfinished `latest` as `stopped` with `Replaced by build <new runId>.` and create `newBuild({ runId: newRunId(deps.now()), slug, client: brief.client, briefHash: hashBrief(brief), briefVersion: deps.currentBriefInfo(projectDir)?.version ?? null, foundation, now })`. The gate copies `briefVersion` into `project.json.approved.briefVersion` and `builtFromBrief` (Task 9, Contract 7 §7.5).
 
 - [ ] **Step 4: Implement the phases**
 
@@ -197,7 +213,7 @@ Then: `latest = latestBuild(projectDir)`. When `latest` is unfinished (`running`
   - `createApp({ projectDir, foundation: project.foundation?.tag ? project.foundation : factory.foundation, expectCommit: project.foundation?.commit ?? null })`; record `foundation: { repo, tag, commit }` on the project when its `tag` is null, `status: 'building'`, `saveProject`; `build.foundation` = the same.
   - When `build.baseline` is unset: `deps.runAppChecks({ appDir, sha: <main>, workDir: <buildDir>/check, reportsDir: <buildDir>/baseline, testCommand: factory.build.testCommand, browser: false, env })`. Not `passed` → `finish('failed', 'The foundation does not pass its own checks on this computer, so building on it would hide problems. <verify.summary> The output is in <buildDir>/build-log.jsonl.')` (the output itself goes to the build log only). Save `build.baseline = { status, summary }`.
   - The app checkout must be clean (`status --porcelain`, else the `mergeFeature` dirty message); `checkout -q build/<runId>` when the branch exists, otherwise `checkout -q -b build/<runId> main`.
-  - `nameApp({ appDir, client: brief.client })`; `build.baseSha = rev-parse HEAD`; `phase = 'split'`; save.
+  - `nameApp({ appDir, brief })` (the BRAND line and `app-profile.json`, Task 2); `build.baseSha = rev-parse HEAD`; `phase = 'split'`; save.
 - **split:** a split workspace is a scratch clone of the app (`git clone --no-hardlinks <appDir> <baseDir>/split-<runId>`, removed afterwards, Ruling 8) with a `RunLog` at `<buildDir>/split`; `runSplit({ team, hooks, log, cwd, options: { ...DEFAULT_OPTIONS, ...options }, usage: build.usage, renderBrief: deps.renderBrief }, brief)`. `paused`/`failed`/`stopped` → `finish` with that status and reason. Save `units`, `features = units.map((u) => ({ id: u.id, title: u.title, status: 'pending', attempts: 0, workspaceDir: null, branch: null, landedSha: null, baseSha: null, mergedSha: null, transcript: null, notes: [], councilText: null, gateReason: null }))`, any `note` into `build.notes`, `emit('build-split', …)`. With `options.approvePlan`: `hooks.approvePlan({ summary: 'Features to build, in order:', steps: units.map((u) => u.title) })` must return exactly `true`, else `finish('stopped', 'You did not approve the list of features, so nothing was built.')`. `phase = 'features'`; save.
 - **features:** `runFeatures()` walks `build.features` from the first that is not `merged`, calling `progress('Feature <k> of <n>: <title>')` and `emit('build-feature', …)`. For each:
   1. The app checkout must be clean and on `build.branch`; `head` = its tip. When `f.baseSha` is set and differs from `head` while `f.status !== 'landed'`, fail with the `mergeFeature` "not where Conductor left it" message.
@@ -220,5 +236,7 @@ Expected: PASS.
 
 ```bash
 git add src/factory/build.js test/factory-build.test.js
-git commit -m "feat(factory): conductor build drives one Conductor run per feature, resumably"
+git commit -m "feat(factory): conductor build drives one Conductor run per feature, resumably
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
