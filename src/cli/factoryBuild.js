@@ -17,7 +17,9 @@ import { SLUG_RE } from '../factory/ids.js';
 import { createTerminal } from '../ui/terminal.js';
 import { defaultBaseDir } from '../workspace.js';
 import { redact } from '../secrets.js';
+import { terminalText } from '../factory/brief.js';
 
+export const NO_TTY_BUILD_START = 'conductor build needs a terminal: it asks for your decisions and for your approval of the finished app. Nothing was built or sent to any AI model. Run it in a terminal.';
 export const BUILD_EXIT = Object.freeze({ ready: 0, rejected: 1, stopped: 1, failed: 2, paused: 3 });
 const SETUP_PROBLEM = 2;
 const FINISHED = new Set(['ready', 'rejected']);
@@ -139,34 +141,47 @@ export async function buildCommand(cli, ctx) {
   let found;
   try { found = readProject(factory.projectsRoot, slug); } catch (e) { print(`Conductor could not start the build: ${plain(e)}`); return EXIT.usage; }
   const { dir, project } = found;
+  // Without a terminal nobody can answer the build's questions or approve it: refuse before anything is spent.
+  if (!ctx.isTTY) { print(NO_TTY_BUILD_START); return EXIT.stopped; }
 
   // The handler holds the project lock around the whole build; runBuild never takes it (Contract 7 §7.11).
   let release;
   try { release = lockProject(dir, 'build', deps.isAlive ? { isAlive: deps.isAlive } : {}); } catch (e) { print(plain(e)); return EXIT.stopped; }
   let term = null;
+  // The last hop: model-written text (feature titles, council text, reasons) reaches the terminal, so escape
+  // characters are stripped first, then secrets redacted (stripping could otherwise rejoin a split secret).
+  const clean = (s) => redact(terminalText(s));
   try {
     term = createTerminal({ input: ctx.stdin, output: ctx.stdout, isTTY: ctx.isTTY, bell: cli.flags.bell });
     const baseDir = env.CONDUCTOR_BASE_DIR || defaultBaseDir(env);
     const p = await (deps.prepareTeam ?? prepareTeam)({
-      cli, config, term, env, baseDir, onSignal: ctx.onSignal, exit: ctx.exit,
+      // Ctrl-C exits the process, which skips the finally below: free the project lock first.
+      cli, config, term, env, baseDir, onSignal: ctx.onSignal, exit: (code) => { release(); ctx.exit(code); },
       interruptedText: `Stopped. The build so far is kept. To carry on later, run:  conductor build ${slug}`,
     });
     if ('code' in p) return p.code;
+    const hooks = {
+      ...p.hooks,
+      approveBuild: (a) => term.approveBuild({ ...a, summary: clean(a?.summary ?? '') }),
+      onProgress: (t) => term.say(clean(String(t))),
+    };
+    if (typeof p.hooks.escalate === 'function') {
+      hooks.escalate = (esc) => p.hooks.escalate({ ...esc, title: clean(esc?.title ?? ''), message: clean(esc?.message ?? '') });
+    }
     let out;
     try {
       out = await (deps.runBuild ?? runBuild)({
-        factory, slug, team: p.built.team, env,
-        hooks: { ...p.hooks, approveBuild: term.approveBuild, onProgress: (t) => term.say(t) },
+        factory, slug, team: p.built.team, env, hooks,
         options: { ...config.options, ...p.overrides, ...(cli.flags.newBuild ? { newBuild: true } : {}) },
         baseDir, warnings: p.built.warnings,
       });
     } catch (e) {
       p.remember();
-      term.say(`Conductor could not start the build: ${plain(e)}`);
+      term.say(`Conductor could not start the build: ${clean(plain(e))}`);
       return EXIT.usage;
     }
     p.remember();
-    term.say(redact(`\n${buildOutcomeText(out, { slug, client: project.client, appDir: path.join(dir, 'app') })}`));
+    term.say(clean(`\n${buildOutcomeText(out, { slug, client: project.client, appDir: path.join(dir, 'app') })}`));
     return BUILD_EXIT[out.status] ?? EXIT.failed;
   } finally {
     term?.close();

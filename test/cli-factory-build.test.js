@@ -7,7 +7,7 @@ import { Writable, Readable } from 'node:stream';
 import { parseCli } from '../src/cli/args.js';
 import { main } from '../src/cli/main.js';
 import { FACTORY_COMMANDS } from '../src/cli/factory.js';
-import { projectSlugFor, buildOutcomeText, resumeBuildCommand } from '../src/cli/factoryBuild.js';
+import { projectSlugFor, buildOutcomeText, resumeBuildCommand, NO_TTY_BUILD_START } from '../src/cli/factoryBuild.js';
 import { git } from '../src/workspace.js';
 import { writeStubCli } from './helpers/stubCli.js';
 import { stubDockerPath, stubCurl } from './helpers/stubDocker.js';
@@ -115,7 +115,7 @@ test('build hands the prepared team, hooks and options to runBuild and maps the 
     runBuild: async (a) => { seen.push(a); return { status: 'paused', runId: 'r', buildDir: '/b', reason: 'Conductor paused: the local model stopped.' }; },
   };
   const o = out();
-  const ctx = { cwd: tmp('cwd-'), env: {}, stdin: Readable.from([]), stdout: o.stream, isTTY: false, onSignal: () => {}, exit: () => {}, deps,
+  const ctx = { cwd: tmp('cwd-'), env: {}, stdin: Readable.from([]), stdout: o.stream, isTTY: true, onSignal: () => {}, exit: () => {}, deps,
     factory: factoryConfig({ factory: { projectsRoot } }, { env: {} }), config: { participants: [], byName: new Map(), routing: {}, options: {}, factory: {} }, configPath: config };
   const code = await FACTORY_COMMANDS.build(parseCli(['build', slug, '--new', '--config', config]), ctx);
   assert.equal(code, 3);
@@ -145,7 +145,7 @@ test('resume inside a project with an unfinished build carries on that build; a 
     runBuild: async (a) => { seen.push(a); return { status: 'ready', runId: b.runId, buildDir: '/b' }; },
   };
   const o = out();
-  const ctx = { cwd: path.join(projectDir, 'app'), env: {}, stdin: Readable.from([]), stdout: o.stream, isTTY: false, onSignal: () => {}, exit: () => {}, deps,
+  const ctx = { cwd: path.join(projectDir, 'app'), env: {}, stdin: Readable.from([]), stdout: o.stream, isTTY: true, onSignal: () => {}, exit: () => {}, deps,
     factory: factoryConfig({ factory: { projectsRoot } }, { env: {} }), config: { participants: [], options: {} }, configPath: null };
   assert.equal(await resumeBuildCommand(parseCli(['resume']), ctx), 0);
   assert.equal(seen[0].slug, slug);
@@ -179,4 +179,71 @@ test('a reused preview says where its demo sign-ins were shown (Ruling Q34)', as
   const { previewText } = await import('../src/cli/factoryBuild.js');
   const t = previewText({ status: 'already', url: 'http://h:8080/', seedText: null, from: 'build' }, { slug: 'acme-ltd', client: 'Acme Ltd' });
   assert.match(t, /^The preview is already running \(the build in progress\): http:\/\/h:8080\/\n.*\nThe demo sign-ins are as shown when the preview was first started\.\nStop it with: conductor preview acme-ltd --stop$/);
+});
+
+function buildCtx({ isTTY = true, deps, onSignal = () => {}, exit = () => {} } = {}) {
+  const { projectsRoot, projectDir, slug } = makeProject();
+  const config = path.join(tmp('cfg-'), 'conductor.json');
+  writeFileSync(config, JSON.stringify({ participants: [], factory: { projectsRoot } }));
+  const o = out();
+  const ctx = { cwd: tmp('cwd-'), env: {}, stdin: Readable.from([]), stdout: o.stream, isTTY, onSignal, exit, deps,
+    factory: factoryConfig({ factory: { projectsRoot } }, { env: {} }), config: { participants: [], byName: new Map(), routing: {}, options: {}, factory: {} }, configPath: config };
+  return { ctx, o, slug, projectDir, config };
+}
+
+test('final-fix 7: conductor build without a terminal refuses before anything is prepared or spent', async () => {
+  const calls = [];
+  const deps = { prepareTeam: async () => { calls.push('prepare'); return { code: 0 }; }, runBuild: async () => { calls.push('build'); return { status: 'ready' }; } };
+  const { ctx, o, slug, projectDir, config } = buildCtx({ isTTY: false, deps });
+  assert.equal(await FACTORY_COMMANDS.build(parseCli(['build', slug, '--config', config]), ctx), 1);
+  assert.deepEqual(calls, []);
+  assert.ok(o.text().includes(NO_TTY_BUILD_START), o.text());
+  assert.match(NO_TTY_BUILD_START, /conductor build needs a terminal/);
+  assert.equal(existsSync(path.join(projectDir, '.conductor.lock')), false, 'the lock was never taken');
+});
+
+test('final-fix 9: progress, escalations and the gate reach the terminal without escape characters or secrets', async () => {
+  const seen = [];
+  const SECRET = 'sk-test-terminal-0123456789';
+  const deps = {
+    prepareTeam: async () => ({ built: { team: {}, warnings: [] }, hooks: { escalate: async (a) => { seen.push(a); return 'reject'; } }, overrides: {}, remember: () => {} }),
+    runBuild: async ({ hooks }) => {
+      hooks.onProgress(`Building \x1b]0;evil\x07step \x1b[31mred\x1b[0m with ${SECRET}`);
+      await hooks.escalate({ kind: 'council', title: 'the \x1b[2Jcouncil', options: ['approve', 'reject'], message: `Council said \x1b]8;;http://x\x07click\x1b]8;;\x07 ${SECRET}` });
+      const gate = await hooks.approveBuild({ summary: 'What was built:\n  1. \x1b[1mBold\x1b[0m title' });
+      return { status: 'stopped', runId: 'r', buildDir: '/b', reason: `Stopped \x1b[5mblink\x1b[0m ${JSON.stringify(gate)}` };
+    },
+  };
+  const { ctx, o, slug, config } = buildCtx({ deps });
+  ctx.env = { X_TEST_API_KEY: SECRET };
+  const before = process.env.X_TEST_API_KEY;
+  process.env.X_TEST_API_KEY = SECRET;
+  try {
+    assert.equal(await FACTORY_COMMANDS.build(parseCli(['build', slug, '--config', config]), ctx), 1);
+  } finally {
+    if (before === undefined) delete process.env.X_TEST_API_KEY; else process.env.X_TEST_API_KEY = before;
+  }
+  // the bell before a question and the status redraw (\x1b[J, \x1b[<n>F) are the terminal's own
+  const text = o.text().replaceAll('\x07', '').replaceAll('\x1b[J', '').replace(/\x1b\[\d+F/g, '');
+  assert.doesNotMatch(text, /\x1b/, JSON.stringify(text));
+  assert.ok(!text.includes(SECRET));
+  assert.match(text, /Building step red with \[redacted\]/);
+  assert.match(text, /1\. Bold title/);
+  assert.match(text, /Stopped blink \{"stop":true\}/);
+  assert.equal(seen[0].title, 'the council');
+  assert.doesNotMatch(seen[0].message, /\x1b|\x07/);
+  assert.ok(!seen[0].message.includes(SECRET));
+});
+
+test('final-fix 10: Ctrl-C during a build frees the project lock before Conductor exits', async () => {
+  let lockAtExit = null;
+  let projectDir;
+  const deps = {
+    prepareTeam: async ({ exit }) => { exit(130); return { code: 130 }; },   // what prepareTeam's Ctrl-C handler does
+    runBuild: async () => ({ status: 'ready' }),
+  };
+  const c = buildCtx({ deps, exit: () => { lockAtExit = existsSync(path.join(projectDir, '.conductor.lock')); } });
+  projectDir = c.projectDir;
+  assert.equal(await FACTORY_COMMANDS.build(parseCli(['build', c.slug, '--config', c.config]), c.ctx), 130);
+  assert.equal(lockAtExit, false, 'the lock was gone when exit ran');
 });
