@@ -31,6 +31,7 @@ test('preflight explains what is missing on the box', async () => {
     'acme-office has only 2.1 GB free where the bundle folder lives; a ship needs at least 4 GB.',
   ]);
   assert.deepEqual(r.facts, { arch: 'x86_64', freeKb: 2202009, hasDir: true, hasEnv: true, hasCompose: false });
+  assert.ok(f.calls()[0].command.includes('for t in setsid sha256sum tar awk mktemp cmp; do')); // cmp: a later ship's bundle refresh
 });
 
 test('probeBox reads version, checks and backup runs; the health token never appears in any command', async () => {

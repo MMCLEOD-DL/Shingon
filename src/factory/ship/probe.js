@@ -21,7 +21,7 @@ function preflightScript(bundleDir) {
 echo "arch=$(uname -m)"
 if docker version --format '{{.Server.Version}}' >/dev/null 2>&1; then echo docker=yes; else echo docker=no; fi
 if docker compose version >/dev/null 2>&1; then echo compose=yes; else echo compose=no; fi
-for t in setsid sha256sum tar awk mktemp; do command -v "$t" >/dev/null 2>&1 || echo "missing=$t"; done
+for t in setsid sha256sum tar awk mktemp cmp; do command -v "$t" >/dev/null 2>&1 || echo "missing=$t"; done
 if [ -d "$d" ]; then echo dir=yes; if [ -w "$d" ]; then echo writable=yes; else echo writable=no; fi; else echo dir=no; fi
 [ -f "$d/.env" ] && echo env=yes
 [ -f "$d/compose.yaml" ] && echo composefile=yes
