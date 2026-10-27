@@ -151,3 +151,26 @@ test('plan-agreed names the chunks, rounds, author and reviewer', async () => {
   assert.deepEqual({ chunks: agreed[0].chunks, rounds: agreed[0].rounds, author: agreed[0].author, reviewer: agreed[0].reviewer },
     { chunks: ['A'], rounds: 2, author: 'claude', reviewer: 'codex' });
 });
+
+const FIRST = { title: 'Acceptance tests', instructions: 'write the tagged tests' };
+
+test('firstChunk: the author plans the rest, the fixed step comes first, and the limit counts it', async () => {
+  const many = { summary: 'S', chunks: Array.from({ length: 12 }, (_, i) => ({ title: `C${i}`, instructions: 'x' })) };
+  const t = team({
+    author: (role, task, c, o, n) => (n === 0 ? { text: '```json\n' + JSON.stringify(many) + '\n```' } : planReply()),
+    reviewer: approve,
+  });
+  const r = await runPlanPhase(await makeCtx({ team: t, options: { firstChunk: FIRST } }));
+  assert.equal(r.status, 'ok');
+  assert.deepEqual(r.plan.chunks.map((c) => c.title), ['Acceptance tests', 'A']);
+  assert.match(t.author.calls[0].task, /Step 1 is already fixed and runs first:\nAcceptance tests: write the tagged tests/);
+  assert.match(t.author.calls[0].task, /At most 11 chunks/);
+  assert.match(t.author.calls[1].task, /plan has 12 chunks \(max 11\)/);
+  assert.match(t.reviewer.calls[0].task, /Step 1, fixed in advance: Acceptance tests/);
+});
+
+test('validateFirstChunk refuses a malformed fixed step', async () => {
+  const { validateFirstChunk } = await import('../src/planPhase.js');
+  assert.doesNotThrow(() => validateFirstChunk({ firstChunk: null }));
+  assert.throws(() => validateFirstChunk({ firstChunk: { title: '' } }), /firstChunk needs a title and instructions/);
+});

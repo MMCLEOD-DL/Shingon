@@ -19,5 +19,6 @@ export const DEFAULT_OPTIONS = Object.freeze({
   councilTools: Object.freeze({}),          // { semgrep: "/path/to/semgrep" | false }: a path not on PATH, or false to turn a check off
   councilAcceptLicences: Object.freeze([]), // licences you accept for THIS project despite the permissive-only rule, e.g. ["LGPL-3.0-only"]
   councilSemgrepConfig: 'p/default',        // Semgrep rules: a registry pack, or a local rules file to run fully offline
+  firstChunk: null,       // { title, instructions }: a step decided in advance that runs first; the author plans the rest (factory features)
   confirmLocalFallback: false, // true: ask (hooks.confirmLocalFallback) before the frontier does a step because the local model is down (factory spec §4.2)
 });

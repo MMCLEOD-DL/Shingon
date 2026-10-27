@@ -13,6 +13,7 @@ import { redact, REDACTED } from './secrets.js';
 import { vendorOf } from './vendors.js';
 import { SAME_VENDOR_WARNING } from './team.js';
 import { clip } from './text.js';
+import { validateFirstChunk } from './planPhase.js';
 import { runCouncilRound, validateCouncilOptions } from './council/index.js';
 import { fixChunk, reportText } from './council/report.js';
 import { MEMBER_LABEL } from './council/findings.js';
@@ -88,6 +89,7 @@ export async function runTask({ repoDir, request, team, hooks, options = {}, bas
   validateTeam(team, opts);
   validateHooks(hooks, opts);
   validateCouncilOptions(opts);
+  validateFirstChunk(opts);
   if (typeof request !== 'string' || !request.trim()) throw new Error('request must be a non-empty string');
   await Workspace.assertRepo(repoDir);
 
@@ -170,6 +172,7 @@ export async function resume({ workspaceDir, repoDir, team, hooks, options = {},
   const opts = { ...DEFAULT_OPTIONS, ...state.options, ...options };
   validateHooks(hooks, opts);
   validateCouncilOptions(opts);
+  validateFirstChunk(opts);
 
   try {
     const { gitdir, config: tampered } = await ws.guardGitDir(); // throws (and poisons) if unrepairable

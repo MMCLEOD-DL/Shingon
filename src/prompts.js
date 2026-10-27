@@ -50,10 +50,11 @@ function planBlock(plan) {
     plan.chunks.map((c, i) => `${i + 1}. ${c.title}`).join('\n');
 }
 
-export function planAuthor({ request, maxChunks, feedback, feedbackKind = 'blocked' }) {
+export function planAuthor({ request, maxChunks, feedback, feedbackKind = 'blocked', firstChunk = null }) {
   return [
     `User request:\n${show(request, TEXT_MAX)}`,
     'You are planning work in the repository in your current directory. Read what you need; do not edit files.',
+    firstChunk && `Step 1 is already fixed and runs first:\n${firstChunk.title}: ${show(firstChunk.instructions, 3000)}\nPlan only the steps after it; do not repeat it.`,
     'Write a short architecture summary, then an ordered list of small chunks. Each chunk must be small enough ' +
       'for a modest local coding model to finish in one run: one focused change plus its tests. ' +
       `At most ${maxChunks} chunks.`,
@@ -66,9 +67,10 @@ export function planAuthor({ request, maxChunks, feedback, feedbackKind = 'block
   ].filter(Boolean).join('\n\n');
 }
 
-export function planReview({ request, planText }) {
+export function planReview({ request, planText, firstChunk = null }) {
   return [
     `User request:\n${show(request, TEXT_MAX)}`,
+    firstChunk && `Step 1, fixed in advance: ${firstChunk.title}\n${show(firstChunk.instructions, 3000)}`,
     `Proposed plan:\n${show(planText, 20000)}`,
     'Review this plan. Check: wrong approach, missing requirements, chunks too large or in the wrong order, unsafe changes.',
     BLOCK_RULES,
