@@ -154,21 +154,22 @@ export function suppressionsAdded({ dir, files, changed, added, wholeFiles }) {
     if (text.includes('\0')) continue;
     const lines = text.split('\n');
     for (let i = 0; i < lines.length; i++) {
-      const m = SUPPRESSION.exec(lines[i]);
-      if (!m || !isIntroduced({ changed, added, wholeFiles }, file, i + 1)) continue;
-      if (m[0].toLowerCase() === 'gitleaks:allow') {
+      if (!SUPPRESSION.test(lines[i]) || !isIntroduced({ changed, added, wholeFiles }, file, i + 1)) continue;
+      if (/gitleaks:allow/i.test(lines[i])) {
         out.push(makeFinding({
           member: 'security', tool: 'settings', grade: 'blocking', locked: false, secretHint: true, file, line: i + 1,
           title: 'This change tells the secret scanner to skip a line, so a key may be hidden there',
           detail: 'Remove the comment and the key, and keep the key out of the code.',
         }));
-        continue;
       }
-      out.push(makeFinding({
-        member: 'security', tool: 'settings', grade: 'warning', locked: true, file, line: i + 1,
-        title: 'This change adds a comment that tells a scanner to skip a line',
-        detail: `The line carries "${m[0]}". Check that it does not hide a real problem.`,
-      }));
+      const other = /nosemgrep|\bnosem\b|\bnosec\b/i.exec(lines[i]);
+      if (other) {
+        out.push(makeFinding({
+          member: 'security', tool: 'settings', grade: 'warning', locked: true, file, line: i + 1,
+          title: 'This change adds a comment that tells a scanner to skip a line',
+          detail: `The line carries "${other[0]}". Check that it does not hide a real problem.`,
+        }));
+      }
     }
   }
   return out;

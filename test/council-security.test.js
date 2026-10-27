@@ -271,3 +271,13 @@ test('fix round 1: failed Semgrep, header-like added lines, missing line, gitlea
   assert.equal(g2[1].findings[0].title, 'Possible secret (detect --no-git --source . --report-format json --report-path ' + g2[1].findings[0].title.split('--report-path ')[1]);
   assert.match(g2[1].findings[0].title, /--no-git .*--redact --no-banner --exit-code 0\)$/);
 });
+
+test('suppressionsAdded: gitleaks:allow after or before another marker still blocks (and the other marker still warns)', () => {
+  const dir = tmp();
+  writeFileSync(path.join(dir, 'a.js'), 'eval(x) // nosemgrep gitleaks:allow\nk = v // gitleaks:allow nosemgrep\nz = v # nosec gitleaks:allow\n');
+  const f = suppressionsAdded({ dir, files: ['a.js'], changed: new Set(['a.js']), added: null });
+  for (const line of [1, 2, 3]) {
+    const mine = f.filter((x) => x.line === line);
+    assert.deepEqual(mine.map((x) => [x.grade, x.secretHint]), [['blocking', true], ['warning', false]], `line ${line}`);
+  }
+});
