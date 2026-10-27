@@ -47,8 +47,8 @@ test('rolled back automatically', () => {
 });
 
 test('cancelled, already on, busy', () => {
-  assert.equal(run(1, '[Acme Ltd] Update to 0.1.4 cancelled: the new images are not on this box. Nothing was changed; the app is running 0.1.3 again.\n').outcome, 'cancelled');
-  assert.match(run(1, '[Acme Ltd] Update to 0.1.4 cancelled: the new images are not on this box. Nothing was changed.').text, /cancelled before anything changed: the new images are not on this box\.$/);
+  assert.equal(run(1, '[Acme Ltd] Update to 0.1.4 cancelled: the new version is not on this box yet. Nothing was changed; the app is running 0.1.3 again.\n').outcome, 'cancelled');
+  assert.match(run(1, '[Acme Ltd] Update to 0.1.4 cancelled: the new version is not on this box yet. Nothing was changed.').text, /cancelled before anything changed: the new version is not on this box yet\.$/);
   assert.equal(run(1, 'Already on 0.1.4.\n').outcome, 'already-on');
   assert.match(run(1, 'Already on 0.1.4.\n').text, /^acme-office is already on 0\.1\.4\. Nothing was done\.$/);
   assert.equal(run(1, 'Another update is already running.\n').outcome, 'busy');
@@ -104,4 +104,46 @@ test('output is redacted', () => {
     assert.ok(!r.text.includes('s3cr3t-value-123'));
     assert.ok(!run(2, 'bad s3cr3t-value-123').text.includes('s3cr3t-value-123'));
   } finally { forgetRememberedSecrets(); }
+});
+
+test('S13a: cancelled with the app left down is urgent', () => {
+  const r = run(1, '[Acme Ltd] Update to 0.1.4 cancelled: the update record could not be kept up to date (disk full). Backup 1a2b3c4d was taken. Nothing was changed, but the app could not be started again: run docker compose up -d app ops\n');
+  assert.equal(r.outcome, 'urgent');
+  assert.equal(exitFor(r.outcome), 3);
+  assert.match(r.text, /^The app is NOT running: on the box run: docker compose up -d app ops\. .*disk full/);
+});
+
+test('S13b: refused because an earlier update was never recovered is urgent', () => {
+  const line = '[Acme Ltd] Update to 0.1.4 cancelled: an earlier update could not be undone and has not been marked as recovered (backup 1a2b3c4d holds the data from before it). Nothing was changed. Recover the box first (see the runbook, section "Recovering from a failed update"), then run: docker compose run --rm updater update --mark-recovered';
+  const r = run(1, `${line}\n`);
+  assert.equal(r.outcome, 'urgent');
+  assert.equal(exitFor(r.outcome), 3);
+  assert.ok(r.text.includes('Recover the box first'));
+  assert.ok(r.text.includes('--mark-recovered'));
+});
+
+test('S13c: a rollback with the monitor down keeps the note and does not say nothing needs recovering', () => {
+  const r = run(1, '[Acme Ltd] Update to 0.1.4 failed (the database update failed), so it was undone automatically. The app is back on 0.1.3 with its data exactly as it was before the update. (The monitor did not restart; run: docker compose up -d ops)\n');
+  assert.equal(r.outcome, 'rolled-back');
+  assert.match(r.text, /The monitor did not restart: on the box run docker compose up -d ops/);
+  assert.ok(!r.text.includes('Nothing needs recovering'));
+});
+
+test('real refusals: not a version name, Docker Hub, ops log unreadable', () => {
+  const t = run(1, '"bad tag!" is not a version name (letters, numbers, dots, dashes and underscores only).\n');
+  assert.equal(t.outcome, 'cancelled');
+  assert.match(t.text, /cancelled before anything changed: "bad tag!" is not a version name/);
+  const d = run(1, '[Acme Ltd] Update to 0.1.4 cancelled: APP_IMAGE or OPS_IMAGE in .env points at Docker Hub (docker.io), which Highland images never come from. Use your own registry (such as registry.example.com/highland/app) or load the images from a file with --image-file. Nothing was changed.\n');
+  assert.equal(d.outcome, 'cancelled');
+  assert.match(d.text, /points at Docker Hub/);
+  const o = run(1, '[Acme Ltd] Update to 0.1.4 cancelled: the ops log in the database could not be read to check for an earlier update that could not be undone, so nothing was changed. Check that the database is running, then try again.\n');
+  assert.equal(o.outcome, 'cancelled');
+  assert.match(o.text, /Check that the database is running, then try again\.$/);
+});
+
+test('exit 0 for a different version is lost contact; unknown trailing text is shown', () => {
+  assert.equal(run(0, '[Acme Ltd] Updated from 0.1.3 to 0.1.9. A backup (1a2b3c4d) was taken first.').outcome, 'lost-contact');
+  const r = run(0, '[Acme Ltd] Updated from 0.1.3 to 0.1.4. A backup (1a2b3c4d) was taken first. Something new happened.');
+  assert.equal(r.outcome, 'updated');
+  assert.match(r.text, /\nNote from the box: Something new happened\./);
 });
