@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { classifyLicence, licenceFindings, splitAccept, parseScancode, LEGAL } from '../src/council/licences.js';
@@ -179,4 +179,65 @@ test('parseScancode: matches respect which lines this run added', () => {
   const f = parseScancode(text, { accept: [], input });
   assert.deepEqual(f.map((x) => [x.file, x.grade, x.preExisting]), [
     ['new.js', 'blocking', false], ['old.js', 'warning', true], ['nolines.js', 'blocking', false]]);
+});
+
+// ---- Task 10: Legal/data for client apps ----
+const lock10 = (pkgs) => JSON.stringify({ lockfileVersion: 3, packages: { '': {}, ...pkgs } });
+const quiet10 = () => ({ councilTools: councilStubs(mkdtempSync(path.join(tmpdir(), 'cleg-')), {}) });
+async function project10(extra = {}, brief = { policy: { outbound: [] } }) {
+  const repo = await makeRepo({ 'package-lock.json': lock10({}), 'package.json': '{}' });
+  writeFileSync(path.join(repo, 'package-lock.json'), lock10({ 'node_modules/left-pad': { version: '1.3.0', license: 'WTFPL' } }));
+  for (const [f, s] of Object.entries(extra)) { mkdirSync(path.dirname(path.join(repo, f)), { recursive: true }); writeFileSync(path.join(repo, f), s); }
+  const input = await legalInput(repo, ['package-lock.json', ...Object.keys(extra).filter((f) => f !== 'licence-exceptions.json')], quiet10());
+  return { ...input, brief };
+}
+const titles10 = (runs, tool) => runs.find((r) => r.tool === tool).findings.map((f) => [f.grade, f.title]);
+
+test('LEGAL.collect on an ordinary repo is Plan 5 exactly, whatever files sit in the folder', async () => {
+  const repo = await makeRepo({ 'package-lock.json': lock10({}) });
+  writeFileSync(path.join(repo, 'package-lock.json'), lock10({ 'node_modules/left-pad': { version: '1.3.0', license: 'WTFPL' } }));
+  writeFileSync(path.join(repo, 'licence-exceptions.json'), JSON.stringify({ 'left-pad@1.3.0': 'ok' }));
+  mkdirSync(path.join(repo, 'apps/server/src'), { recursive: true });
+  writeFileSync(path.join(repo, 'apps/server/src/ocr.ts'), "fetch('https://vision.googleapis.com')\n");
+  const input = await legalInput(repo, ['package-lock.json', 'apps/server/src/ocr.ts'], quiet10());
+  const runs = await LEGAL.collect({ ...input, brief: null });
+  assert.deepEqual(runs.map((r) => r.tool), ['licences', 'scancode']);
+  assert.match(runs[0].findings[0].detail, /councilAcceptLicences/);
+  assert.equal(runs[0].findings[0].grade, 'blocking');
+});
+
+test('LEGAL.collect on a project: five runs, an unallowed connection blocks, no policy skips', async () => {
+  const input = await project10({ 'apps/server/src/ocr.ts': "const u = 'https://vision.googleapis.com/v1';\n" });
+  const runs = await LEGAL.collect(input);
+  assert.deepEqual(runs.map((r) => r.tool), ['licences', 'scancode', 'licence-exceptions', 'data-flow', 'data-policy']);
+  assert.deepEqual(titles10(runs, 'data-flow'), [['blocking', 'The app connects to vision.googleapis.com, which the data policy does not allow']]);
+  const none = await LEGAL.collect({ ...input, brief: {} });
+  const df = none.find((r) => r.tool === 'data-flow');
+  assert.equal(df.status, 'skipped');
+  assert.deepEqual(df.findings.map((f) => [f.grade, f.locked, f.title]), [['warning', true, "The brief has no data policy, so the app's outside connections could not be checked"]]);
+});
+
+test('licence exceptions: accepted with a reason, refused without, project remedy named', async () => {
+  const reason = 'Public-domain-like; the operator accepted it on 2026-10-20.';
+  const withFile = await project10({ 'licence-exceptions.json': JSON.stringify({ 'left-pad@1.3.0': reason, 'odd@1.0.0': '' }) });
+  const runs = await LEGAL.collect(withFile);
+  assert.deepEqual(runs.find((r) => r.tool === 'licences').findings, []);
+  assert.deepEqual(titles10(runs, 'licence-exceptions'), [
+    ['note', `left-pad@1.3.0 is accepted by the app's licence exceptions: ${reason}`],
+    ['warning', 'licence-exceptions.json lists odd@1.0.0 with no reason, so the council did not accept it'],
+  ]);
+  const without = await LEGAL.collect(await project10());
+  const [f] = without.find((r) => r.tool === 'licences').findings;
+  assert.equal(f.grade, 'blocking');
+  assert.ok(f.detail.endsWith('ask the operator to accept it in licence-exceptions.json with a reason (spec §5a).'));
+  assert.deepEqual(without.find((r) => r.tool === 'licence-exceptions').findings, []);
+  assert.equal(without.find((r) => r.tool === 'licence-exceptions').status, 'ran');
+});
+
+test('licence exceptions: a file that is not an object of strings accepts nothing', async () => {
+  for (const bad of ['[1]', '{ "left-pad@1.3.0": 5 }', 'not json']) {
+    const runs = await LEGAL.collect(await project10({ 'licence-exceptions.json': bad }));
+    assert.deepEqual(titles10(runs, 'licence-exceptions'), [['warning', "The app's licence-exceptions.json could not be read, so no exception was accepted"]], bad);
+    assert.equal(runs.find((r) => r.tool === 'licences').findings.length, 1, bad);
+  }
 });

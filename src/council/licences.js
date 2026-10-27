@@ -8,6 +8,9 @@ import { makeFinding } from './findings.js';
 import { runTool, skipped, TOOL_LABEL } from './tools.js';
 import { isIntroduced } from './security.js';
 import { lockPackages, readLock, lockDelta, hasLicenceData } from './lockfile.js';
+import { readFileSync } from 'node:fs';
+import { OUTBOUND_SERVICES } from '../factory/outbound.js';
+import { outboundDestinations, packageDestinations, dataFlowFindings, personalDataFindings, retentionFindings } from './dataflow.js';
 
 export const PERMISSIVE = Object.freeze(['MIT', 'MIT-0', 'ISC', '0BSD', 'BSD-2-Clause', 'BSD-3-Clause', 'Apache-2.0', 'Unlicense', 'CC0-1.0', 'Zlib', 'BlueOak-1.0.0', 'Python-2.0', 'BSL-1.0', 'CC-BY-3.0', 'CC-BY-4.0']);
 
@@ -49,7 +52,7 @@ export function splitAccept(accept) {
   return { ids, packages };
 }
 
-export function licenceFindings(packages, { introduced, accept = [] }) {
+export function licenceFindings(packages, { introduced, accept = [], project = false }) {
   const { ids, packages: acceptedPkgs } = splitAccept(accept);
   // The same name@version can sit at several lockfile paths with different dev flags: merge
   // them, and treat the package as shipped if ANY copy is non-dev.
@@ -70,7 +73,9 @@ export function licenceFindings(packages, { introduced, accept = [] }) {
     const title = kind === 'copyleft' ? `${p.name} ${p.version} uses ${p.license}, a copyleft licence`
       : !p.license ? `${p.name} ${p.version} has no licence`
         : `${p.name} ${p.version} has a licence Conductor does not recognise (${p.license})`;
-    const detail = shipped
+    const detail = shipped && project
+      ? 'Apps handed to clients may only use permissive licences (MIT, Apache-2.0, BSD, ISC). Replace it, or ask the operator to accept it in licence-exceptions.json with a reason (spec §5a).'
+      : shipped
       ? 'Apps handed to clients may only use permissive licences (MIT, Apache-2.0, BSD, ISC). Replace it, or accept it for this project by adding its licence, or "name@version" for just this package, to "councilAcceptLicences" in conductor.json.'
       : p.dev ? 'It is only used while developing, so it is not shipped.' : 'It was already in the project before this change.';
     out.push(makeFinding({ member: 'legal', tool: 'licences', grade: shipped ? 'blocking' : 'warning', title, detail,
@@ -122,7 +127,7 @@ const SCAN_EXCLUDE = /(^|\/)(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|
 const MAX_SCAN_FILES = 200;
 const MAX_SCAN_BYTES = 1024 * 1024;
 
-async function collectLicences(input) {
+async function collectLicences(input, { accept = [], project = false } = {}) {
   const label = TOOL_LABEL.licences;
   const head = await readLock(input.dir);
   if (!head) return skipped('legal', 'licences', label, 'There is no package-lock.json, so dependency licences were not checked (only Node projects are checked in this version).');
@@ -133,7 +138,7 @@ async function collectLicences(input) {
   // A missing base lockfile fails closed: every package counts as introduced.
   const base = input.baseSha ? await readLock(input.dir, input.baseSha) : null;
   const introduced = lockDelta(lockPackages(base), headPkgs);
-  return { tool: 'licences', label, status: 'ran', findings: licenceFindings(headPkgs, { introduced, accept: input.options.councilAcceptLicences }), note: null };
+  return { tool: 'licences', label, status: 'ran', findings: licenceFindings(headPkgs, { introduced, accept: [...(input.options.councilAcceptLicences ?? []), ...accept], project }), note: null };
 }
 
 async function collectScancode(input) {
@@ -168,7 +173,71 @@ async function collectScancode(input) {
   }
 }
 
+// The app's own licence-exceptions.json: { "name@version": "the operator's reason" } (Contract 7.7).
+export async function licenceExceptions({ dir }) {
+  let text;
+  try { text = readFileSync(path.join(dir, 'licence-exceptions.json'), 'utf8'); } catch (e) {
+    if (e?.code === 'ENOENT') return { accept: [], findings: [], notes: [] };
+    text = null;
+  }
+  let data = null;
+  try { data = JSON.parse(text); } catch {}
+  const isMap = data && typeof data === 'object' && !Array.isArray(data) && Object.values(data).every((v) => typeof v === 'string');
+  if (!isMap) {
+    return { accept: [], findings: [makeFinding({ member: 'legal', tool: 'licence-exceptions', grade: 'warning', file: 'licence-exceptions.json',
+      title: "The app's licence-exceptions.json could not be read, so no exception was accepted",
+      detail: 'It must be an object mapping "name@version" to the operator\'s reason (text).' })] };
+  }
+  const lock = await readLock(dir);
+  const inLock = new Set(lockPackages(lock).map((p) => `${p.name}@${p.version}`.toLowerCase()));
+  const accept = [];
+  const findings = [];
+  for (const [key, reason] of Object.entries(data)) {
+    if (!reason.trim()) {
+      findings.push(makeFinding({ member: 'legal', tool: 'licence-exceptions', grade: 'warning', file: 'licence-exceptions.json',
+        title: `licence-exceptions.json lists ${key} with no reason, so the council did not accept it`,
+        detail: "An exception needs the operator's reason written down (spec §5a)." }));
+      continue;
+    }
+    accept.push(key);
+    if (inLock.has(key.toLowerCase())) {
+      findings.push(makeFinding({ member: 'legal', tool: 'licence-exceptions', grade: 'note', file: 'licence-exceptions.json',
+        title: `${key} is accepted by the app's licence exceptions: ${reason}`, detail: 'The operator accepted this package for this app.' }));
+    }
+  }
+  return { accept, findings };
+}
+
+async function collectDataFlow(input) {
+  const label = TOOL_LABEL['data-flow'];
+  const policy = input.brief.policy;
+  if (!policy) return { ...skipped('legal', 'data-flow', label, 'The brief has no data policy, so the app\'s outside connections could not be checked.'),
+    findings: [makeFinding({ member: 'legal', tool: 'data-flow', grade: 'warning', locked: true, title: "The brief has no data policy, so the app's outside connections could not be checked",
+      detail: 'Without a data policy there is nothing to check the app\'s outside connections against.' })] };
+  const head = await readLock(input.dir);
+  const headPkgs = lockPackages(head);
+  const base = input.baseSha ? await readLock(input.dir, input.baseSha) : null;
+  const introduced = lockDelta(lockPackages(base), headPkgs);
+  const dests = [...outboundDestinations(input), ...packageDestinations(headPkgs.filter((p) => introduced.has(p.name)))];
+  const known = (Array.isArray(policy.outbound) ? policy.outbound : []).filter((id) => typeof id === 'string' && Object.hasOwn(OUTBOUND_SERVICES, id));
+  return { tool: 'data-flow', label, status: 'ran', note: null, findings: dataFlowFindings(dests, policy, OUTBOUND_SERVICES),
+    context: [`Outside destinations found: ${dests.length ? dests.map((d) => `${d.service ?? d.host} (${d.how === 'package' ? d.pkg : `${d.file}:${d.line}`})`).join('; ') : 'none'}.`,
+      `Outside services the policy allows: ${known.length ? known.map((id) => `${OUTBOUND_SERVICES[id].label} (${OUTBOUND_SERVICES[id].hosts.join(', ')})`).join('; ') : 'none'}.`] };
+}
+
+function collectDataPolicy(input) {
+  const label = TOOL_LABEL['data-policy'];
+  const p = personalDataFindings(input);
+  const r = retentionFindings({ dir: input.dir, files: input.files, policy: input.brief.policy, tables: p.tables });
+  return { tool: 'data-policy', label, status: 'ran', note: null, findings: [...p.findings, ...r] };
+}
+
 export const LEGAL = {
   member: 'legal', label: 'Legal', alwaysInterpret: false,
-  async collect(input) { return [await collectLicences(input), await collectScancode(input)]; },
+  async collect(input) {
+    if (!input.brief) return [await collectLicences(input), await collectScancode(input)];
+    const ex = await licenceExceptions(input);
+    const exRun = { tool: 'licence-exceptions', label: TOOL_LABEL['licence-exceptions'], status: 'ran', findings: ex.findings, note: null };
+    return [await collectLicences(input, { accept: ex.accept, project: true }), await collectScancode(input), exRun, await collectDataFlow(input), collectDataPolicy(input)];
+  },
 };
