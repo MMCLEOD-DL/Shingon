@@ -2,8 +2,8 @@
 // Two layers keep credentials out of prompts, transcripts, state and hook payloads:
 //   1. scrub at the source: child processes never inherit the keys listed in SCRUB_ENV
 //      unless a caller explicitly needs one (the local model's own provider key);
-//   2. redact at every exit: any value of a secret-looking env var is replaced
-//      before it is logged, saved, sent to an agent or handed to a hook.
+//   2. redact at every exit: any value of a secret-looking env var (or one listed in REDACT_ENV)
+//      is replaced before it is logged, saved, sent to an agent or handed to a hook.
 // Only the explicit SCRUB_ENV list is removed from child envs: blanket-scrubbing
 // every *KEY* name would break ANTHROPIC_API_KEY / OPENAI_API_KEY auth for the frontier CLIs.
 
@@ -34,10 +34,26 @@ export function strictChildEnv({ env = process.env } = {}) {
   return out;
 }
 
+// Redacted from every exit but NOT scrubbed from children: the app's tests need the test database's address,
+// which carries its password. Its name does not look secret, so it is listed here.
+export const REDACT_ENV = ['TEST_DATABASE_URL'];
+
+// A URL's password on its own, as written and decoded, so output that prints only the password is caught too.
+function urlPasswords(v) {
+  let pw;
+  try { pw = new URL(v).password; } catch { return []; }
+  if (!pw) return [];
+  let decoded = pw;
+  try { decoded = decodeURIComponent(pw); } catch { /* keep it as written */ }
+  return [pw, decoded];
+}
+
 export function secretValues(env = process.env) {
   const values = new Set();
+  const add = (v) => { if (typeof v === 'string' && v.length >= MIN_SECRET_LENGTH) values.add(v); };
   for (const [k, v] of Object.entries(env)) {
-    if ((SECRET_NAME.test(k) || SCRUB_ENV.includes(k)) && typeof v === 'string' && v.length >= MIN_SECRET_LENGTH) values.add(v);
+    if (SECRET_NAME.test(k) || SCRUB_ENV.includes(k)) add(v);
+    else if (REDACT_ENV.includes(k)) { add(v); if (typeof v === 'string') urlPasswords(v).forEach(add); }
   }
   return [...values].sort((a, b) => b.length - a.length);
 }

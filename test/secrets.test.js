@@ -121,3 +121,27 @@ test('the test command gets no secret-named vars; frontier CLIs keep their keys 
   assert.equal(strictChildEnv().LOCALAI_API_KEY, undefined);
   assert.ok(strictChildEnv().PATH);
 });
+
+test('final-fix 2: TEST_DATABASE_URL and its password are redacted, but the test command still gets the URL', async () => {
+  const { strictChildEnv } = await import('../src/secrets.js');
+  const url = 'postgres://hf_test:p%40ss-w0rd-long@127.0.0.1/postgres';
+  const values = secretValues({ TEST_DATABASE_URL: url });
+  assert.ok(values.includes(url));
+  assert.ok(values.includes('p@ss-w0rd-long'), 'the decoded password');
+  assert.ok(values.includes('p%40ss-w0rd-long'), 'the password as written in the URL');
+  assert.deepEqual(secretValues({ TEST_DATABASE_URL: 'postgres://hf_test:short@127.0.0.1/postgres' }), ['postgres://hf_test:short@127.0.0.1/postgres'], 'a short password is not a secret value on its own');
+  assert.deepEqual(secretValues({ TEST_DATABASE_URL: 'not a url but long enough' }), ['not a url but long enough']);
+  const before = process.env.TEST_DATABASE_URL;
+  process.env.TEST_DATABASE_URL = url;
+  try {
+    assert.equal(strictChildEnv().TEST_DATABASE_URL, url, 'the tests need the URL');
+    const ws = await Workspace.create({ repoDir: await makeRepo(), baseDir: tmp(), taskId: 'db' });
+    const r = await ws.runTests('echo "connect failed $TEST_DATABASE_URL"; echo "password p@ss-w0rd-long"; exit 1');
+    assert.equal(r.passed, false);
+    assert.ok(!r.output.includes('p@ss-w0rd-long'), r.output);
+    assert.ok(!r.output.includes('p%40ss-w0rd-long'), r.output);
+    assert.match(r.output, /connect failed \[redacted\]/);
+  } finally {
+    if (before === undefined) delete process.env.TEST_DATABASE_URL; else process.env.TEST_DATABASE_URL = before;
+  }
+});
