@@ -186,3 +186,27 @@ test('interpretMember never shows another member\'s findings to the model', asyn
   assert.match(task, /S1 \[warning\] Semgrep/);
   assert.equal(r.findings.length, 2);
 });
+
+import { orderShots } from '../src/council/interpret.js';
+
+test('orderShots puts phone shots first, keeps 40 of 45, and drops paths that escape the workspace', () => {
+  const paths = [];
+  for (let i = 0; i < 45; i++) paths.push(`reports/screenshots/p${String(i).padStart(2, '0')}-${i % 2 ? 'mobile' : 'desktop'}-chromium.png`);
+  const out = orderShots(paths);
+  assert.equal(out.length, 40);
+  assert.ok(out.slice(0, 22).every((p) => p.includes('mobile')));
+  assert.deepEqual(out.slice(0, 22), [...out.slice(0, 22)].sort());
+  assert.deepEqual(orderShots(['/etc/passwd', '../x.png', 'a/../../x.png', 'ok/a.png', 'bad\nname.png', 'C:\\x.png', 42]), ['ok/a.png']);
+});
+
+test('interpretMember passes phone screenshots first and the measurements to the prompt', async () => {
+  const prompts = [];
+  const ctx = await ctxWith((role, task) => { prompts.push(task); return { text: fence({ findings: [] }) }; });
+  const out = await interpretMember(ctx, { member: 'design', label: 'Design', findings: [], notes: [], context: ['x'],
+    attach: ['reports/screenshots/a-desktop-chromium.png', 'reports/screenshots/a-mobile-chromium.png'],
+    input: input(ctx) });
+  assert.equal(out.status, 'ok');
+  const p = prompts[0];
+  assert.ok(p.indexOf('a-mobile-chromium') < p.indexOf('a-desktop-chromium'));
+  assert.match(p, /What the checks measured:\n- x/);
+});

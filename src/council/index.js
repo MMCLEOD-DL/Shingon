@@ -139,6 +139,8 @@ export async function runCouncilRound(ctx, { files, tests, diff, members = MEMBE
   const input = {
     dir: ws.dir, files, changed: new Set(files), added, wholeFiles: wholeFiles ?? undefined, baseSha: ws.baseSha, tests,
     baseTests: c.baseTests ?? null, options, env, request: state.request, plan: state.plan, diff: hideFiles(diff, hidden),
+    // Client-app rounds fill these (Task 12); null on an ordinary repo.
+    project: null, brief: null, briefText: null, policy: null, evidence: null,
   };
 
   let findings = [];
@@ -165,7 +167,8 @@ export async function runCouncilRound(ctx, { files, tests, diff, members = MEMBE
     if (mine.length || m.alwaysInterpret) {
       log.event('council-member', { member: m.member, stage: 'interpreting' });
       const notes = runs.map((r) => r.note).filter(Boolean);
-      const out = await interpretMember(ctx, { member: m.member, label: m.label, findings: mine, notes, input });
+      const out = await interpretMember(ctx, { member: m.member, label: m.label, findings: mine, notes, input,
+        context: runs.flatMap((r) => r.context ?? []), attach: runs.flatMap((r) => r.attach ?? []) });
       if (out.status === 'paused') return { status: 'paused', reason: out.reason };
       mine = out.findings;
       by = out.by;

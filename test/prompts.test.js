@@ -100,3 +100,49 @@ test('planReview without firstChunk adds no blank line', async () => {
   const { planReview } = await import('../src/prompts.js');
   assert.doesNotMatch(planReview({ request: 'r', planText: 'p' }), /\n\n\n/);
 });
+
+import { councilMember, POLICY_LINES } from '../src/prompts.js';
+
+test('councilMember with no brief is exactly the Plan 5 prompt', () => {
+  const base = { member: 'legal', label: 'Legal', request: 'r', plan: null, diff: 'd', base: 'abc', tests: null, items: [], notes: [] };
+  assert.equal(councilMember({ ...base, briefText: null, policy: null, context: [], attachments: [] }), councilMember(base));
+  assert.doesNotMatch(councilMember(base), /brief|data policy|Screenshots/i);
+});
+
+test('every Plan 5 member prompt is byte-identical with the new options empty, and keeps its Tests line', () => {
+  for (const member of ['security', 'legal', 'correctness', 'foundation']) {
+    const base = { member, label: member, request: 'r', plan: null, diff: 'd', base: 'abc', tests: null, items: [], notes: ['n'] };
+    assert.equal(councilMember({ ...base, briefText: null, policy: null, context: [], attachments: [] }), councilMember(base));
+  }
+  const c = councilMember({ member: 'correctness', label: 'C', request: 'r', plan: null, diff: 'd', base: 'a', tests: null, items: [], notes: [] });
+  assert.match(c, /Tests: not configured/);
+  assert.doesNotMatch(c, /every feature and worked example/);
+});
+
+test('councilMember on a project: brief, policy, measurements and screenshots', () => {
+  const p = councilMember({ member: 'design', label: 'Design', request: 'Build the Acme app', plan: null, diff: 'd', base: 'abc', tests: null, items: [], notes: [],
+    briefText: '# Acme Ltd\n\nMileage claims…', policy: { hosting: 'client-box', outbound: [], residency: 'uk', retention: { text: 'six years', days: 2190 }, backupDestination: { kind: 'client-nas', detail: 'the office NAS' }, operatorAccess: true },
+    context: ['Pages checked: 13 at desktop and phone width.'], attachments: ['reports/screenshots/notes-mobile-chromium.png'] });
+  assert.match(p, /The client's approved brief:\n# Acme Ltd/);
+  assert.match(p, /The client's data policy:\nHosting: the client's own box\nOutside services allowed: none\nData may be kept: in the UK\nRetention: six years \(2190 days\)\nBackups go to: client-nas \(the office NAS\)\nOperator remote access: agreed/);
+  assert.match(POLICY_LINES({ outbound: ['cloudflare-tunnel'] }), /Outside services allowed: .*\*\.cloudflare\.com, \*\.argotunnel\.com; carries /);
+  assert.match(POLICY_LINES({ outbound: ['mystery'] }), /Outside services allowed: mystery/);
+  assert.match(p, /What the checks measured:\n- Pages checked: 13 at desktop and phone width\./);
+  assert.match(p, /Screenshots you can open \(read them, do not change them\):\n- reports\/screenshots\/notes-mobile-chromium\.png/);
+  assert.match(p, /PageHeader, ResponsiveList, FormCard, EmptyState, ConfirmAction, FileDropzone, ErrorNotice/);
+  assert.match(p, /A problem you see only in a screenshot can be a warning, never blocking/);
+  assert.match(p, /not proven, never that it is clean/);
+});
+
+test('Reliability and the project versions of Legal and Correctness say what to look for', () => {
+  const at = (member, briefText) => councilMember({ member, label: member, request: 'r', plan: null, diff: '', base: 'a', tests: null, items: [], notes: [], briefText });
+  assert.match(at('reliability', 'b'), /backup, restore, alerts and updates/);
+  assert.match(at('legal', 'b'), /outside services, residency, retention and personal data against the data policy and UK GDPR basics/);
+  assert.match(at('correctness', 'b'), /every feature and worked example in the brief/);
+  assert.doesNotMatch(at('legal', null), /UK GDPR/);
+});
+
+test('Correctness on a project round omits the Tests: not configured line (R14)', () => {
+  const p = councilMember({ member: 'correctness', label: 'C', request: 'r', plan: null, diff: '', base: 'a', tests: null, items: [], notes: [], briefText: 'b' });
+  assert.doesNotMatch(p, /Tests:/);
+});

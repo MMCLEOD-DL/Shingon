@@ -87,7 +87,18 @@ export function applyInterpretation(findings, ids, reply, { member }) {
   return out;
 }
 
-export async function interpretMember(ctx, { member, label, findings, notes, input }) {
+// At most MAX_SHOTS workspace-relative paths, phone shots first, then by name. A path that is
+// absolute, climbs out with "..", or holds control characters is dropped: the model opens these.
+export const MAX_SHOTS = 40;
+export function orderShots(paths) {
+  const ok = [...new Set(Array.isArray(paths) ? paths : [])].filter((p) => typeof p === 'string' && p
+    && !/[\u0000-\u001f\u007f]/.test(p) && !p.startsWith('/') && !p.startsWith('\\') && !/^[A-Za-z]:/.test(p)
+    && !p.split(/[\\/]/).includes('..'));
+  const phone = (p) => (p.includes('mobile') ? 0 : 1);
+  return ok.sort((a, b) => phone(a) - phone(b) || (a < b ? -1 : a > b ? 1 : 0)).slice(0, MAX_SHOTS);
+}
+
+export async function interpretMember(ctx, { member, label, findings, notes, input, context = [], attach = [] }) {
   // Only this member's own findings are ever shown to the model.
   const order = findings.map((_, i) => i).filter((i) => findings[i].member === member).sort((a, b) => GRADES.indexOf(findings[a].grade) - GRADES.indexOf(findings[b].grade) || a - b);
   const ids = findings.map(() => null);
@@ -100,6 +111,7 @@ export async function interpretMember(ctx, { member, label, findings, notes, inp
   const r = await callAgent(ctx, ctx.team.reviewer, 'reviewer', prompts.councilMember({
     member, label, request: input.request, plan: input.plan, diff: input.diff, base: input.baseSha,
     tests: input.tests, items, notes,
+    briefText: input.briefText ?? null, policy: input.policy ?? null, context, attachments: orderShots(attach),
   }), { cwd: input.dir, write: false, timeoutMs: ctx.options.agentTimeoutMs });
   const vendors = new Set([vendorOf(ctx.team.author.adapter.kind), ...(ctx.state.council?.fixVendors ?? [])]);
   for (const vendor of vendors) {

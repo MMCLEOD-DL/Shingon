@@ -4,6 +4,7 @@
 import { clip } from './text.js';
 import { redact } from './secrets.js';
 import { TOOL_LABEL } from './council/tools.js';
+import { OUTBOUND_SERVICES } from './factory/outbound.js';
 
 // Redact before clipping: a key split by the clip point would otherwise survive as a fragment.
 const show = (text, max) => clip(redact(typeof text === 'string' ? text : ''), max);
@@ -119,20 +120,53 @@ const FOCUS = {
   legal: 'Check the licence findings below against this rule: apps handed to clients may only use permissively licensed code and dependencies (MIT, Apache-2.0, BSD, ISC); copyleft (GPL, AGPL, LGPL, MPL and similar) and unknown or missing licences are blocking. Explain each risk in plain English. Only the operator can accept a licence.',
   correctness: 'Check that the change fully does what the request asks, and look for untested paths, especially around money, totals and permissions.',
   foundation: 'Check the foundation rule findings below. Code found them and they are facts: explain each one in plain English and say exactly how to fix it without weakening, skipping or editing any check.',
+  design: 'Judge the screenshots of every page, at desktop and phone width, against the house visual system: pages built from the house components (PageHeader, ResponsiveList, FormCard, EmptyState, ConfirmAction, FileDropzone, ErrorNotice), one ten-shade palette from theme.ts, the system font stack (no web fonts), every button and field big enough to tap on a phone, nothing scrolls sideways, and phone pages that look finished enough to charge for. The page checks (sideways scrolling, buttons too small to tap, script errors, a page that does not load) are facts. The accessibility results are measurements; if accessibility was not measured, say it is not proven, never that it is clean. A problem you see only in a screenshot can be a warning, never blocking. Flag clunky flows (too many steps, unclear labels, nothing that says what to do next).',
+  reliability: "Check the reliability test of the deployed app: deploy, backup, restore, alerts and updates (an update that fails must undo itself). A failed step is a fact: explain what it means for the client's data and what to fix.",
 };
+
+// Added to a member's focus only on a client-app round (when a brief is present).
+const FOCUS_PROJECT = {
+  legal: 'Also check the app\'s outside services, residency, retention and personal data against the data policy and UK GDPR basics. A destination the policy does not allow is blocking unless it is a false alarm (a link in a comment, an example address): say why if you set it aside. Retention and personal-data concerns are warnings or notes.',
+  correctness: 'Also check every feature and worked example in the brief is built and proven by a passing test, and look for untested paths around money (totals, VAT, rounding, pence) and permissions (who may see, edit or approve).',
+};
+
+const RESIDENCY = { uk: 'in the UK', 'uk-eu': 'in the UK or EU', any: 'anywhere' };
+
+export function POLICY_LINES(policy) {
+  const p = policy ?? {};
+  const lines = [];
+  if (p.hosting === 'client-box') lines.push("Hosting: the client's own box");
+  else if (p.hosting === 'operator-server') lines.push('Hosting: a server the operator runs');
+  const out = Array.isArray(p.outbound) ? p.outbound : [];
+  lines.push('Outside services allowed: ' + (out.length ? out.map((id) => {
+    const svc = typeof id === 'string' && Object.hasOwn(OUTBOUND_SERVICES, id) ? OUTBOUND_SERVICES[id] : null;
+    return svc ? `${svc.label} (${svc.hosts.join(', ')}; carries ${svc.carries})` : String(id);
+  }).join('; ') : 'none'));
+  if (RESIDENCY[p.residency]) lines.push(`Data may be kept: ${RESIDENCY[p.residency]}`);
+  if (p.retention && typeof p.retention.text === 'string') lines.push(`Retention: ${p.retention.text}${typeof p.retention.days === 'number' ? ` (${p.retention.days} days)` : ''}`);
+  if (p.backupDestination) lines.push(`Backups go to: ${p.backupDestination.kind} (${p.backupDestination.detail})`);
+  if (p.operatorAccess === true) lines.push('Operator remote access: agreed');
+  return lines.map((l) => show(l, 600)).join('\n');
+}
 
 const councilItem = ({ id, finding: f }) => {
   const head = `${id} [${f.grade}] ${TOOL_LABEL[f.tool] ?? f.tool ?? 'reviewer'}${f.file ? ` ${f.file}${f.line ? `:${f.line}` : ''}` : ''}: ${f.title}${f.preExisting ? ' (already there before this change)' : ''}${f.locked ? ' (a fact: you cannot set it aside or lower it)' : ''}`;
   return f.detail ? `${head}\n    ${show(f.detail, 600)}` : head;
 };
 
-export function councilMember({ member, label, request, plan, diff, base, tests, items, notes }) {
+export function councilMember({ member, label, request, plan, diff, base, tests, items, notes, briefText = null, policy = null, context = [], attachments = [] }) {
+  const project = typeof briefText === 'string' && briefText !== '';
+  const focus = FOCUS[member] + (project && FOCUS_PROJECT[member] ? ` ${FOCUS_PROJECT[member]}` : '');
   return [
-    `You are the ${label} member of a review council. You review independently: you do not see the other members' views. ${FOCUS[member]}`,
+    `You are the ${label} member of a review council. You review independently: you do not see the other members' views. ${focus}`,
     `Overall request:\n${show(request, TEXT_MAX)}` + (plan ? `\n\n${planBlock(plan)}` : ''),
+    project ? `The client's approved brief:\n${show(briefText, 8000)}` : '',
+    policy ? `The client's data policy:\n${POLICY_LINES(policy)}` : '',
     diffBlock('The change under review:', diff, 30000, base),
-    member === 'correctness' ? formatTests(tests) : '',
+    member === 'correctness' && !project ? formatTests(tests) : '',
     'What the checking tools found:\n' + (items.length ? items.map(councilItem).join('\n') : '(the tools found nothing)'),
+    context?.length ? 'What the checks measured:\n' + context.map((c) => `- ${show(c, 600)}`).join('\n') : '',
+    attachments?.length ? 'Screenshots you can open (read them, do not change them):\n' + attachments.map((a) => `- ${show(a, 300)}`).join('\n') : '',
     notes?.length ? 'Checks that did not run:\n' + notes.map((n) => `- ${n}`).join('\n') : '',
     [
       'Rules:',
