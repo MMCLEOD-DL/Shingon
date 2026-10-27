@@ -2,10 +2,11 @@
 import { test } from 'node:test';
 import { SHELL_ENV_EXCLUDE } from '../src/adapters/localAgent.js';
 import assert from 'node:assert/strict';
-import { writeFileSync, mkdtempSync } from 'node:fs';
+import { writeFileSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { loadConfig, buildAdapter } from '../src/config.js';
+import { factoryConfig } from '../src/factory/config.js';
 
 function writeConfig(obj) {
   const dir = mkdtempSync(path.join(tmpdir(), 'cfg-'));
@@ -155,4 +156,12 @@ test('wake.env names are scrubbed from every other child and their values redact
   } finally {
     if (saved === undefined) delete process.env.WAKE_HOST_FR1; else process.env.WAKE_HOST_FR1 = saved;
   }
+});
+
+test('config.example.json has a factory block that factoryConfig accepts, with the ship and alerts sections', () => {
+  const c = JSON.parse(readFileSync(new URL('../config.example.json', import.meta.url), 'utf8'));
+  const f = factoryConfig(c, { env: {}, home: '/home/op' });
+  assert.equal(f.ship.updateTimeoutMs, 2700000);
+  assert.equal(f.alerts.matrix.roomId, '!alerts:example.org');
+  assert.match(f.projectsRoot, /highland-projects$/);
 });

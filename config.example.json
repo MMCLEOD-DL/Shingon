@@ -34,6 +34,8 @@
       "static": { "hosts": [ { "id": "ct111", "name": "hf-build", "host": "192.168.1.111", "user": "root",
                                "keyPath": "~/.ssh/id_ed25519", "previewPort": 8080, "workRoot": "/srv/hf-factory" } ] },
       "proxmox": null
-    }
+    },
+    "alerts": { "matrix": { "homeserver": "https://matrix.example.org", "roomId": "!alerts:example.org" } },
+    "ship": { "updateTimeoutMs": 2700000, "pollMs": 5000, "startTimeoutMs": 300000, "buildTimeoutMs": 3600000 }
   }
 }

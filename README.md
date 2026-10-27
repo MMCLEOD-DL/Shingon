@@ -313,6 +313,93 @@ Once a client's brief is approved, Conductor can build the app.
   `conductor "build a login page"`, or word it differently (the same goes for `brief` and
   `project`).
 
+## Shipping client apps
+
+### What it does
+
+`conductor ship <project> --to <deployment>` finds the release of the approved build (it makes the app's first release, 1.0.0, the first time), builds it on a factory machine and puts it on the box. The first time, it sets the box up with the foundation's own tools and asks you a few questions. Later ships use the box's safe update, which takes a backup first and undoes itself if the new version fails.
+
+`conductor deployments` lists your deployments. `conductor deployments status [<project>]` checks every box over SSH: version, health, last backup and restore test, and foundation security fixes the app is missing.
+
+No AI model is used and no subscription is spent. `ship` needs a terminal and refuses without one.
+
+### Before the first ship (once per box)
+
+1. **Prepare the box.** x86-64 Linux with Docker Engine, the Compose plugin and `setsid` (util-linux), and a deploy user in the `docker` group. Create the folder for the deployment:
+   `sudo mkdir -p /opt/highland/<name> && sudo chown <user> /opt/highland/<name>`
+2. **Let Conductor log in.** From the machine running Conductor: `ssh-copy-id <user>@<box>`.
+3. **Trust the box's host key.** Conductor never accepts a new key by itself. Run `ssh-keyscan -t ed25519 <box> >> ~/.ssh/known_hosts`, then compare the fingerprint (`ssh-keygen -lf ~/.ssh/known_hosts`) with the one the box shows (`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the box). Remove the line if they differ.
+4. **Give the box an alias** in `~/.ssh/config` and use the alias as the deployment's address. For a box behind the Cloudflare tunnel, route an SSH hostname to `ssh://host.docker.internal:22` in the tunnel dashboard, install `cloudflared` on the machine running Conductor and add:
+   ```
+   Host acme-box
+     HostName ssh.acme.example.org
+     User highland
+     ProxyCommand cloudflared access ssh --hostname %h
+   ```
+   Do the first ship on the LAN or VPN; afterwards only the alias changes. A client's own box is reached through the Cloudflare tunnel or Tailscale only: nothing is opened inbound on their network. This is about how you reach the box from outside; Conductor's own SSH connection may go over the LAN, a VPN or the tunnel alias.
+5. **Matrix.** Make a bot account and an alerts room, invite the bot and let it join. Keep the bot's access token to paste at the first ship. Put the homeserver and room id in `factory.alerts.matrix` in `config.json` (they become the suggested answers).
+6. **Uptime Kuma.** Add one push monitor per deployment, set to alert after 5 minutes of silence. Keep its push address to paste at the first ship.
+7. **Cloudflare tunnel** (if you use it). One tunnel per client box. Keep its token to paste at the first ship, and add the routes in the dashboard (the staff address to `http://proxy:80`). The tunnel is refused unless the brief's data policy allows Cloudflare, because Cloudflare sees the traffic. It has not been tried on a real box yet.
+8. **Backup destination and password manager.** Set up the client's backup destination as their data policy says (for `sftp:`, authorise the box's own SSH key there) and make a password manager entry per client for the backup password.
+9. **Build machine** (CT 111 `hf-build` with the `static` provider): Node 22, npm with internet access, Docker and git. For a registry, run `docker login <registry>` once on it. The machine running Conductor also cuts the release, so it needs Node 22, npm with internet access and git.
+
+### What you will be asked
+
+In plain words: the box's address or SSH alias, the login user, the SSH port, the folder on the box, how you will reach the box from outside, the web address staff will type, how the images get there (a file copied over SSH, or your private registry, with its address, folder, user and password), the mail server address and sender address, the backup destination (and its sign-in details for S3, Backblaze or a REST server), where alerts go (Matrix with its bot token, and optionally a webhook), the Uptime Kuma push address (or `skip`, which leaves a standing warning in `deployments status`), the tunnel token if you use the tunnel, and whether to create the first admin account.
+
+Conductor checks your answers against the brief's data policy before it touches the box. It refuses, for example, a backup destination on the box itself.
+
+The backup password is shown **once**. Save it in your password manager, then type `saved`. Clear your terminal's scrollback afterwards. If you stop before typing `saved`, it is shown again next time.
+
+### What Conductor keeps, and what it never keeps
+
+Kept, in `<project>/deployments/<name>.json` and `<project>/deployments/logs/`: the box's address, user, folder and web address, how it is reached, the Matrix room, versions, and the history of ships. Every log line is redacted.
+
+Never kept anywhere by Conductor: the database and backup passwords, the health token, and the mail, Matrix, tunnel, backup and registry passwords and tokens, or the heartbeat address. They live only in the box's `.env`. What you type is sent to the box over SSH on standard input, never on a command line.
+
+### Outcomes and what to do
+
+| Outcome | What it means | What to do |
+|---|---|---|
+| updated | The box is on the new version; a backup was taken first. | Nothing. Read any "Note from the box". |
+| rolled back | The new version did not work and the box undid it. The old version and its data are as before. | Find out why the new version failed before shipping again. |
+| cancelled | The box refused before changing anything. | Fix the reason it gives, then ship again. |
+| busy | The box was running another update, backup or restore. | Try again in a few minutes. |
+| already on | The box already has that version. | Nothing. |
+| urgent | The box may be down or on the wrong data. | On the box, follow RUNBOOK.md, "Recovering from a failed update", then run `docker compose run --rm updater update --mark-recovered` there, then run `conductor deployments status`. |
+| lost contact | Conductor could not tell how the update ended; it may still be running or may have finished. | Run `conductor deployments status`. |
+
+An interrupted or lost-contact ship always needs `conductor deployments status` before the next ship. Status clears the block only when it can show the update is finished (the box runs the new version, or the update's result was read). If it says an update may still be running, wait and run status again.
+
+Press Ctrl-C during a later ship and Conductor stops watching, but the update carries on by itself on the box, so it is never killed half-way.
+
+A release may change only the release files (`CHANGELOG.md`, `package.json`, `package-lock.json`, `foundation.json`). If the app's release script changes anything else, Conductor refuses and leaves `main` untouched.
+
+### Exit codes
+
+`conductor ship`:
+
+- `0` shipped or updated
+- `1` not done and nothing changed (refused, cancelled, rolled back, already on, busy)
+- `2` stopped part-way through first-time setup, or lost contact (run `ship` again, or `deployments status`)
+- `3` urgent: the box may be down
+- `64` usage
+- `130` interrupted
+
+`conductor deployments status` exits `0` when every box is healthy and current, `1` otherwise.
+
+### Keeping apps patched
+
+Run `conductor deployments status` at least monthly, and whenever a `[security]` entry appears in the foundation's CHANGELOG. It lists apps that are behind on foundation security fixes. Operating-system updates on a box are still done by hand over SSH, in a quiet hour, after `docker compose run --rm ops backup` (the box's RUNBOOK.md, "Keeping a deployment patched").
+
+### Limits
+
+- Tailscale is set up by hand; Conductor only records it.
+- Conductor cannot send a test alert yet: foundation v0.1.0 has no such command (v0.2.0 adds `ops test-alert`, and using it is a follow-up once apps are on v0.2.0). Until then the first real alert proves the channel.
+- Updates are watched by polling. If Conductor loses contact, the update still finishes on the box.
+- The images file is copied through the machine running Conductor, so a slow link there slows the ship.
+- The operator smoke is `bash spikes/ship-smoke/run-ship-smoke.sh <project> <deployment>`. It uses a real box and works on a copy of the project in a throwaway folder; its later-ship phases need `conductor change` (after Plan 11).
+
 ## Waking the local model
 
 Conductor remembers which models your earlier runs used, and checks them before each run. Each
@@ -395,6 +482,10 @@ safe.
   - `machines`: `provider` (`static` or `proxmox`), `static.hosts` (each with `id`, `host`, `user`,
     `keyPath`, `previewPort`, `workRoot`), `proxmox` (`null` until set up; see the operator
     follow-ups in `spikes/factory-build-smoke/RESULT.md`), and `sweepAfterMs`.
+
+  - `alerts.matrix`: `homeserver` and `roomId`, the suggested answers when `ship` asks where alerts go;
+  - `ship`: `updateTimeoutMs` (default 2700000), `pollMs` (5000), `startTimeoutMs` (300000) and
+    `buildTimeoutMs` (3600000), all in milliseconds (see **Shipping client apps**).
 
   Later factory plans add their own keys to this same section.
 
