@@ -16,10 +16,10 @@ export class DeploymentError extends Error {
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const HOST_RE = /^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$/;
-const USER_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
-const BUNDLE_RE = /^\/[A-Za-z0-9._/-]+$/;
-const REG_HOST_RE = /^[A-Za-z0-9.-]+(:\d+)?$/;
-const REG_NS_RE = /^[a-z0-9][a-z0-9._/-]*$/;
+export const USER_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
+export const BUNDLE_RE = /^\/[A-Za-z0-9._/-]+$/;
+export const REG_HOST_RE = /^[A-Za-z0-9.-]+(:\d+)?$/;
+export const REG_NS_RE = /^[a-z0-9][a-z0-9._/-]*$/;
 const VERSION_RE = /^\d+\.\d+\.\d+$/;
 const FOUNDATION_RE = /^v\d+\.\d+\.\d+$/;
 const SECRET_KEY_RE = /token|password|secret|passphrase|credential|apikey|api_key/i;
@@ -27,7 +27,7 @@ const SECRET_KEY_RE = /token|password|secret|passphrase|credential|apikey|api_ke
 const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const isStr = (x) => typeof x === 'string';
 
-function validOrigin(origin) {
+export function validOrigin(origin) {
   if (!isStr(origin)) return false;
   let u;
   try { u = new URL(origin); } catch { return false; }
