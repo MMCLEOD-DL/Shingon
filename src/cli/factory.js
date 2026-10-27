@@ -1,13 +1,21 @@
 // src/cli/factory.js — factory commands (Contract 7 §7.3, §7.11): they run outside a git repository.
-import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import path from 'node:path';
 import { EXIT } from './main.js';
 import { findConfig } from './config.js';
 import { loadConfig } from '../config.js';
 import { factoryConfig } from '../factory/config.js';
 import { validateSlug, createProject, readProject, listProjects } from '../factory/projects.js';
 import { currentBriefInfo, briefPaths, ukDate } from '../factory/brief.js';
-import { loadSession } from '../factory/briefSession.js';
+import { loadSession, importNotes, newSession, saveSession, discardSession } from '../factory/briefSession.js';
+import { lockProject } from '../factory/projectLock.js';
+import { runBriefSession } from '../factory/briefRun.js';
+import { briefAuthorSeat } from '../factory/briefTeam.js';
+import { createTerminal } from '../ui/terminal.js';
+import { RunLog } from '../runlog.js';
+import { killAllChildren } from '../exec.js';
+import { redact } from '../secrets.js';
 
 const firstSentence = (s) => (/^.*?[.!?](?=\s|$)/s.exec(s)?.[0] ?? s);
 
@@ -82,10 +90,132 @@ async function projectShow(cli, ctx) {
   return 0;
 }
 
-// Task 10 replaces this placeholder with the real brief conversation.
+export const NO_TTY_BRIEF_START = 'conductor brief needs a terminal: it asks you questions and needs your approval. Nothing was read or sent to any AI model. Run it in a terminal.';
+const NOTES_ONLY_FRONTIER = 'Your meeting notes go only to the frontier models (Claude or Codex), never to the local model.';
+
+// `conductor brief` (Plan 7, Task 10). Refusals first; fails closed without a terminal; the author seat is
+// built before any notes are imported, so an unavailable author leaves nothing behind.
 async function briefCommand(cli, ctx) {
-  ctx.print('conductor brief is not ready yet.');
-  return EXIT.usage;
+  const { slug } = cli;
+  const deps = ctx.deps ?? {};
+  let found;
+  try { found = readProject(ctx.factory.projectsRoot, slug); } catch (e) { ctx.print(e.message); return EXIT.stopped; }
+  const { dir, project } = found;
+  if (!ctx.isTTY) { ctx.print(NO_TTY_BRIEF_START); return EXIT.stopped; }
+
+  const term = createTerminal({ input: ctx.stdin, output: ctx.stdout, isTTY: ctx.isTTY, bell: cli.flags.bell });
+  const say = (s) => term.say(s);
+  let release = null;
+  let session = null;
+  let interrupted = false;
+  let cwdDir = null;
+  // Ctrl-C: every save happened before the prompt that was interrupted, so nothing more needs writing.
+  ctx.onSignal(() => {
+    interrupted = true;
+    killAllChildren();
+    release?.();
+    release = null;
+    if (cwdDir) rmSync(cwdDir, { recursive: true, force: true }); // exit() skips the finally below
+    say(session
+      ? `\nStopped. Your answers so far are saved. To carry on, run: conductor brief ${slug}`
+      : '\nStopped before anything started. Nothing was sent to any AI model.');
+    term.close();
+    ctx.exit(EXIT.interrupted);
+  });
+
+  try {
+    try {
+      release = lockProject(dir, 'brief', deps.isAlive ? { isAlive: deps.isAlive } : {});
+    } catch (e) { say(e.message); return EXIT.stopped; }
+
+    let unreadable = null;
+    try { session = loadSession(dir, slug); } catch (e) { unreadable = e; }
+    if (cli.discardDraft) {
+      // An unreadable session can still be thrown away: its own message says to run --discard-draft.
+      if (!session && !unreadable) { say(`There is no unfinished brief for ${slug}.`); return EXIT.stopped; }
+      if (!(await term.confirmDiscard({ slug }))) { say('Nothing was thrown away.'); return EXIT.stopped; }
+      discardSession(dir);
+      session = null;
+      say(`The unfinished brief for ${slug} was thrown away. Your notes are kept in ${path.join(dir, 'notes')}`);
+      return 0;
+    }
+    if (unreadable) { say(unreadable.message); return EXIT.stopped; }
+
+    let info = null;
+    if (session && cli.notes) {
+      say(`There is an unfinished brief for ${slug} (started ${ukDate(session.startedAt)}). Run conductor brief ${slug} to carry on with it, or conductor brief ${slug} --discard-draft to start again.`);
+      return EXIT.stopped;
+    }
+    if (session) say(`Carrying on with the unfinished brief for ${slug}.`);
+    else if (!cli.notes) {
+      say(`There is no unfinished brief for ${slug}. To start one, run: conductor brief ${slug} --notes <file>`);
+      return EXIT.stopped;
+    } else {
+      info = currentBriefInfo(dir);
+      if (info?.broken) { say(info.broken); return EXIT.stopped; }
+      if (info && !cli.revise) {
+        say(`${slug} already has an approved brief (version ${info.version}, approved ${ukDate(info.approvedAt)}). To change it, run: conductor brief ${slug} --revise --notes <file>`);
+        return EXIT.stopped;
+      }
+      if (cli.revise && !info) { say(`${slug} has no approved brief to revise yet. Run: conductor brief ${slug} --notes <file>`); return EXIT.stopped; }
+    }
+
+    let config = ctx.config;
+    try {
+      if (!config) {
+        if (!ctx.configPath) findConfig({ cwd: ctx.cwd, env: ctx.env, home: ctx.home }); // throws its own plain message
+        config = loadConfig(ctx.configPath);
+      }
+    } catch (e) {
+      say(`Conductor could not read its config: ${e.message}`);
+      return EXIT.usage;
+    }
+    const buildAuthor = deps.buildAuthor ?? ((c, e) => briefAuthorSeat(c.participants, { routing: c.routing, env: e }));
+    let built;
+    try { built = await buildAuthor(config, ctx.env); } catch (e) { built = { ok: false, error: `Conductor could not check the AI models: ${redact(String(e?.message ?? e))}` }; }
+    if (interrupted) return EXIT.interrupted;
+    if (!built.ok) { say(built.error); return EXIT.failed; }
+    for (const w of built.warnings ?? []) say(`Note: ${w}`);
+    say(NOTES_ONLY_FRONTIER);
+
+    if (!session) {
+      const now = deps.now?.() ?? new Date();
+      let imported;
+      try { imported = importNotes(dir, path.resolve(ctx.cwd, cli.notes), { now }); } catch (e) { say(e.message); return EXIT.stopped; }
+      const s = newSession({ slug, mode: cli.revise ? 'revise' : 'new', baseVersion: cli.revise ? info.version : null, notes: [imported.name], now });
+      saveSession(dir, s, { now });
+      session = s;
+    }
+
+    cwdDir = mkdtempSync(path.join(tmpdir(), 'conductor-brief-'));
+    let out;
+    try {
+      out = await runBriefSession({
+        projectDir: dir, session, author: built.seat,
+        io: { say, ask: term.askBriefQuestion, approve: term.approveBrief },
+        log: new RunLog(briefPaths(dir).logs), operatorName: ctx.factory.operatorName, cwd: cwdDir, now: deps.now,
+      });
+    } catch (e) {
+      if (interrupted) return EXIT.interrupted;
+      say(`Conductor could not write the brief: ${redact(String(e?.message ?? e))}`);
+      return EXIT.failed;
+    }
+    if (interrupted) return EXIT.interrupted;
+    let code;
+    if (out.status === 'approved') {
+      say(`Approved. Brief version ${out.version} for ${project.client} is saved:\n  ${out.mdPath} (to read)\n  ${out.jsonPath} (what the factory builds from)`);
+      code = 0;
+    } else {
+      say(out.reason);
+      code = out.status === 'failed' ? EXIT.failed : out.status === 'paused' ? EXIT.paused : EXIT.stopped;
+    }
+    if (out.costUsd > 0) say(`Frontier cost reported by the AI tools this sitting: $${out.costUsd.toFixed(2)}`);
+    return code;
+  } finally {
+    release?.();
+    if (cwdDir) rmSync(cwdDir, { recursive: true, force: true });
+    term.close();
+  }
 }
 
 export const FACTORY_COMMANDS = {

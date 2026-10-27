@@ -91,3 +91,128 @@ test('a bad factory section in the config is a plain usage error', async () => {
   assert.equal(gone.code, 64);
   assert.match(gone.out, /No config file at \/nope\/c\.json/);
 });
+
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
+import { interactive, briefWorld } from './helpers/factoryCli.js';
+import { loadBrief, briefPaths } from '../src/factory/brief.js';
+import { loadSession } from '../src/factory/briefSession.js';
+import { NO_TTY_BRIEF_START } from '../src/cli/factory.js';
+import { validBrief } from './helpers/briefFixtures.js';
+
+const MARKER = 'MARKER-NOTES-5150';
+const Q = { id: 'q1', question: 'Where should backups go?', why: 'Never only on the same box' };
+const FIRST = validBrief({ policy: { ...validBrief().policy, backupDestination: null }, openQuestions: [Q] });
+
+async function briefSetup() {
+  const w = await briefWorld({ first: FIRST, second: validBrief() });
+  const root = path.join(tmp(), 'projects');
+  const env = envFor(root);
+  await runMain(['project', 'new', 'Thistle Joinery Ltd', '--slug', 'thistle', '--config', w.cfg], { env });
+  const notes = path.join(tmp(), 'meeting.md');
+  writeFileSync(notes, `Met Jo. ${MARKER}. 45 staff.`);
+  const dir = path.join(root, 'thistle');
+  // go(args, answers, { deps, main, onPrompt }) runs `conductor brief thistle …` on a scripted terminal.
+  const go = (args, answers, { deps, main, onPrompt } = {}) => {
+    const t = interactive(answers, { onPrompt });
+    return runMain(['brief', 'thistle', ...args, '--config', w.cfg, '--no-bell'], { env, isTTY: true, stdin: t.stdin, stdout: t.out, deps, main });
+  };
+  return { w, env, notes, dir, go };
+}
+
+test('no terminal: nothing is read, imported or sent', async () => {
+  const s = await briefSetup();
+  try {
+    const r = await runMain(['brief', 'thistle', '--notes', s.notes, '--config', s.w.cfg], { env: s.env, isTTY: false });
+    assert.equal(r.code, 1);
+    assert.ok(r.out.includes(NO_TTY_BRIEF_START));
+    assert.match(NO_TTY_BRIEF_START, /Nothing was read or sent to any AI model/);
+    assert.deepEqual(readdirSync(path.join(s.dir, 'notes')), []);
+    assert.equal(existsSync(briefPaths(s.dir).session), false);
+    assert.equal(existsSync(s.w.promptLog), false);
+    assert.equal(existsSync(path.join(s.dir, '.conductor.lock')), false, 'no lock taken without a terminal');
+  } finally { await s.w.close(); }
+});
+
+test('the whole sitting: one question, approve; notes go only to the author; the local model is never contacted', async () => {
+  const s = await briefSetup();
+  try {
+    const r = await s.go(['--notes', s.notes], ['A USB disk in their safe', 'a']);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /Your meeting notes go only to the frontier models \(Claude or Codex\), never to the local model\./);
+    assert.match(r.out, /Question 1 of 1: Where should backups go\?/);
+    assert.match(r.out, /=== The brief, ready for your approval ===\n# Brief: Thistle Joinery Ltd/);
+    assert.match(r.out, /Approved\. Brief version 1 for Thistle Joinery Ltd is saved:\n {2}.*brief-v1\.md \(to read\)\n {2}.*brief-v1\.json \(what the factory builds from\)/);
+    assert.match(r.out, /Frontier cost reported by the AI tools this sitting: \$0\.04/);
+    assert.equal(loadBrief(s.dir).approvedBy, 'Malcolm');
+    assert.ok(readFileSync(s.w.promptLog, 'utf8').includes(MARKER), 'the author got the notes');
+    assert.deepEqual(s.w.bodies, [], 'the local model was never contacted');
+    assert.equal(existsSync(path.join(s.dir, '.conductor.lock')), false);
+    const [copy] = readdirSync(path.join(s.dir, 'notes'));
+    assert.equal(readFileSync(path.join(s.dir, 'notes', copy), 'utf8'), `Met Jo. ${MARKER}. 45 staff.`);
+  } finally { await s.w.close(); }
+});
+
+test('stop, refusals, resume, approved-already and revise-without-brief', async () => {
+  const s = await briefSetup();
+  try {
+    const none = await s.go([], []);
+    assert.equal(none.code, 1);
+    assert.match(none.out, /There is no unfinished brief for thistle\. To start one, run: conductor brief thistle --notes <file>/);
+    const rev = await s.go(['--revise', '--notes', s.notes], []);
+    assert.equal(rev.code, 1);
+    assert.match(rev.out, /thistle has no approved brief to revise yet\. Run: conductor brief thistle --notes <file>/);
+
+    const stop = await s.go(['--notes', s.notes], ['stop']);
+    assert.equal(stop.code, 1);
+    assert.match(stop.out, /Stopped\. Your answers so far are saved\. To carry on, run: conductor brief thistle/);
+    assert.equal(loadSession(s.dir, 'thistle').stage, 'questions');
+    const again = await s.go(['--notes', s.notes], []);
+    assert.equal(again.code, 1);
+    assert.match(again.out, /There is an unfinished brief for thistle \(started \d{1,2} [A-Z][a-z]+ \d{4}\)\. Run conductor brief thistle to carry on with it, or conductor brief thistle --discard-draft to start again\./);
+
+    const resumed = await s.go([], ['USB disk', 'a']);
+    assert.equal(resumed.code, 0, resumed.out);
+    assert.match(resumed.out, /Carrying on with the unfinished brief for thistle\./);
+    const twice = await s.go(['--notes', s.notes], []);
+    assert.equal(twice.code, 1);
+    assert.match(twice.out, /thistle already has an approved brief \(version 1, approved \d{1,2} [A-Z][a-z]+ \d{4}\)\. To change it, run: conductor brief thistle --revise --notes <file>/);
+  } finally { await s.w.close(); }
+});
+
+test('the lock, discarding, an unavailable author leaves nothing behind, Ctrl-C', async () => {
+  const s = await briefSetup();
+  try {
+    await s.go(['--notes', s.notes], ['stop']);
+    // The project lock is shared with Plan 8's builds and Plan 11's changes (Contract 7 §7.1).
+    writeFileSync(path.join(s.dir, '.conductor.lock'), JSON.stringify({ pid: 424242, kind: 'build', at: '2026-10-27T09:00:00.000Z' }));
+    const locked = await s.go([], [], { deps: { isAlive: () => true } });
+    assert.equal(locked.code, 1);
+    assert.match(locked.out, /This project is busy: a build is running \(pid 424242, since 27 October 2026 09:00 UTC\)/);
+    const kept = await s.go(['--discard-draft'], ['n'], { deps: { isAlive: () => false } });
+    assert.equal(kept.code, 1);
+    assert.match(kept.out, /Nothing was thrown away\./);
+    assert.ok(loadSession(s.dir, 'thistle'));
+    const gone = await s.go(['--discard-draft'], ['y']);
+    assert.equal(gone.code, 0);
+    assert.match(gone.out, /The unfinished brief for thistle was thrown away\. Your notes are kept in .*notes/);
+    assert.equal(loadSession(s.dir, 'thistle'), null);
+    assert.equal((await s.go(['--discard-draft'], [])).code, 1);
+
+    const down = await s.go(['--notes', s.notes], [], { deps: { buildAuthor: async () => ({ ok: false, error: 'No AI subscription can write the brief (claude: rate-limited). Sign in to Claude Code or Codex, then run the same command again. Nothing was sent to any AI model.' }) } });
+    assert.equal(down.code, 2);
+    assert.match(down.out, /No AI subscription can write the brief/);
+    assert.equal(readdirSync(path.join(s.dir, 'notes')).length, 1, 'only the first sitting\'s copy: nothing new imported');
+    assert.equal(existsSync(briefPaths(s.dir).session), false);
+    assert.equal(existsSync(path.join(s.dir, '.conductor.lock')), false);
+
+    let handler = null; let exitCode = null;
+    const c = await s.go(['--notes', s.notes], [], {
+      onPrompt: () => { const h = handler; handler = null; h?.(); },
+      main: { onSignal: (h) => { handler = h; }, exit: (code) => { exitCode = code; } },
+    });
+    assert.equal(exitCode, 130, c.out);
+    assert.match(c.out, /Stopped\. Your answers so far are saved\. To carry on, run: conductor brief thistle/);
+    assert.equal(loadSession(s.dir, 'thistle').stage, 'questions');
+    assert.equal(existsSync(path.join(s.dir, '.conductor.lock')), false);
+  } finally { await s.w.close(); }
+});
