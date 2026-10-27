@@ -19,16 +19,20 @@ const notProven = (reason, detail) => finding({
   detail: detail ?? reason,
 });
 
+const UNREADABLE = 'the reliability test returned something that could not be read';
+const readable = (s) => s.passed === false && (Boolean(s.failure) || (Array.isArray(s.steps) && s.steps.length > 0));
+
 export function smokeFindings(smoke, { machine } = {}) {
   if (!smoke) return [notProven('no result came back from the reliability test')];
-  if (smoke.refused) return [notProven(smoke.refused)];
-  if (smoke.passed) {
+  if (typeof smoke.refused === 'string' && smoke.refused) return [notProven(smoke.refused)];
+  if (smoke.passed === true) {
     return [finding({
       grade: 'note',
       title: `Deployed on a fresh test machine (${machine ?? 'the test machine'}), backed up and restored, stopped and restarted with the alert sent and cleared, and a broken update undone automatically`,
       detail: '',
     })];
   }
+  if (!readable(smoke)) return [notProven(UNREADABLE)];
   const detail = [smoke.failure, smoke.tail].filter(Boolean).join('\n');
   if (smoke.timedOut) {
     const at = stepTitle(smoke.failedStep);
@@ -61,6 +65,7 @@ export const RELIABILITY = {
       return [{ ...base, status, findings: [notProven(note)], note }];
     }
     const findings = smokeFindings(smoke, { machine: ev.machine });
+    if (smoke.passed !== true && !readable(smoke) && !(typeof smoke.refused === 'string' && smoke.refused)) return [{ ...base, status: 'error', findings, note: findings[0].title }];
     if (smoke.refused) return [{ ...base, status: 'error', findings, note: smoke.refused }];
     if (smoke.timedOut) return [{ ...base, status: 'error', findings, note: findings[0].title }];
     return [{ ...base, status: 'ran', findings }];

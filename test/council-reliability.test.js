@@ -45,3 +45,24 @@ test('the interpreter cannot clear or lower a failed step, nor set aside "not pr
     findings: [{ id: 'R1', decision: 'dismiss', grade: 'note', why: 'flaky' }, { id: 'R2', decision: 'dismiss', why: 'machine problem' }], extra: [] }, { member: 'reliability' });
   assert.deepEqual(out.map((f) => [f.grade, f.dismissed]), [['blocking', false], ['warning', false]]);
 });
+
+test('an unreadable smoke result is "not proven", never a note or a block', async () => {
+  for (const odd of [{}, { passed: 'yes' }, { passed: 'false' }, { passed: 1 }, { ran: true }, { passed: false }]) {
+    const [f] = smokeFindings(odd, { machine: 'm' });
+    assert.deepEqual([f.grade, f.locked], ['warning', true], JSON.stringify(odd));
+    assert.equal(f.title, 'Reliability was not proven: the reliability test returned something that could not be read');
+    const [run] = await RELIABILITY.collect({ brief: {}, evidence: { smoke: odd, smokeStatus: 'ran', machine: 'm' } });
+    assert.equal(run.status, 'error');
+  }
+});
+
+test('collect: timed out and refused are ToolRun status error; fallbacks', async () => {
+  const [t] = await RELIABILITY.collect({ brief: {}, evidence: { smokeStatus: 'ran', machine: 'm', smoke: parseSmokeLog('== Step 8: update\n', 124, { timedOut: true }) } });
+  assert.equal(t.status, 'error');
+  const [r] = await RELIABILITY.collect({ brief: {}, evidence: { smokeStatus: 'ran', machine: 'm', smoke: parseSmokeLog(log('smoke-refused-images.log'), 2) } });
+  assert.equal(r.status, 'error');
+  const [b] = smokeFindings(parseSmokeLog('', 1), { machine: 'm' });
+  assert.deepEqual([b.title, b.grade], ['The reliability test failed at: before its first step', 'blocking']);
+  const [n] = await RELIABILITY.collect({ brief: {}, evidence: { smoke: null, smokeStatus: 'missing' } });
+  assert.match(n.findings[0].title, /^Reliability was not proven: the reliability test gave no result$/);
+});
