@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { parseCli, USAGE } from './args.js';
 import { findConfig } from './config.js';
 import { listRuns } from './runs.js';
+import { FACTORY_COMMANDS, runFactoryCommand } from './factory.js';
 import { loadConfig } from '../config.js';
 import { buildTeam, LOCAL_DOWN_WARNING } from '../team.js';
 import { LOCAL_PAUSE_SETTING_REASON } from '../chunkPhase.js';
@@ -79,13 +80,18 @@ export async function main(argv, {
   cwd = process.cwd(), env = process.env, stdin = process.stdin, stdout = process.stdout,
   isTTY = Boolean(stdin.isTTY && stdout.isTTY),
   onSignal = (handler) => process.once('SIGINT', handler), exit = (code) => process.exit(code),
-  wakeDeps = {},
+  wakeDeps = {}, factoryDeps = {},
 } = {}) {
   const print = (s) => stdout.write(`${s}\n`);
   const cli = parseCli(argv);
   if (cli.error) { print(`${cli.error}\n\n${USAGE}`); return EXIT.usage; }
   if (cli.command === 'help') { print(USAGE); return 0; }
   if (cli.command === 'version') { print(version()); return 0; }
+
+  if (Object.hasOwn(FACTORY_COMMANDS, cli.command)) {
+    const code = await runFactoryCommand(cli, { cwd, env, stdin, stdout, isTTY, onSignal, exit, deps: factoryDeps });
+    if (code !== null) return code;           // null = "not mine": carry on with the ordinary path (Contract 7 §7.11)
+  }
 
   const repoDir = await repoRoot(cwd);
   if (!repoDir) { print(NOT_A_REPO); return EXIT.usage; }

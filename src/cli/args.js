@@ -6,6 +6,13 @@ export const USAGE = `Usage:
   conductor resume [<workspace>]     continue the latest unfinished run here (or the one given)
   conductor runs                     list unfinished runs for this repository
   conductor doctor                   check which AI models are available
+  conductor project new "<client>"   make a folder for a new client app (--slug <name> picks its folder name)
+  conductor project list             list your client projects
+  conductor project show <slug>      show one project and its brief
+  conductor brief <slug> --notes <file>            draft a brief from your meeting notes: questions, then your approval
+  conductor brief <slug>                           carry on with an unfinished brief
+  conductor brief <slug> --revise --notes <file>   make a new version of an approved brief
+  conductor brief <slug> --discard-draft           throw away an unfinished brief (your notes are kept)
 Options:
   --config <file>        config file (default: ./conductor.json, then ~/.config/conductor/config.json)
   --test "<command>"     the command that runs this project's tests, e.g. "npm test"
@@ -29,6 +36,10 @@ const OPTIONS = {
   'no-bell': { type: 'boolean' },
   help: { type: 'boolean', short: 'h' },
   version: { type: 'boolean' },
+  notes: { type: 'string' },
+  revise: { type: 'boolean' },
+  slug: { type: 'string' },
+  'discard-draft': { type: 'boolean' },
 };
 const SUBCOMMANDS = new Set(['resume', 'runs', 'doctor']);
 
@@ -54,6 +65,37 @@ export function parseCli(argv) {
   if (v.version) return { command: 'version', flags };
   if (!positionals.length) return { command: 'help', flags };
   const [first, ...rest] = positionals;
+  const isBrief = first === 'brief';
+  const isProjectNew = first === 'project' && rest[0] === 'new';
+  if ((v.notes !== undefined || v.revise || v['discard-draft']) && !isBrief) {
+    return { error: '--notes, --revise and --discard-draft only go with conductor brief' };
+  }
+  if (v.slug !== undefined && !isProjectNew) return { error: '--slug only goes with conductor project new' };
+  if (first === 'project') {
+    const [sub, ...args] = rest;
+    if (sub === 'new') {
+      const client = args.join(' ').trim();
+      if (!client) return { error: "project new needs the client's name, e.g. conductor project new \"Acme Ltd\"" };
+      return { command: 'project-new', client, slug: v.slug ?? null, flags };
+    }
+    if (sub === 'list') {
+      if (args.length) return { error: 'project list takes no arguments' };
+      return { command: 'project-list', flags };
+    }
+    if (sub === 'show') {
+      if (args.length !== 1) return { error: 'project show needs one project name, e.g. conductor project show acme' };
+      return { command: 'project-show', slug: args[0], flags };
+    }
+    return { error: 'project needs new, list or show' };
+  }
+  if (isBrief) {
+    if (rest.length !== 1) return { error: 'brief needs one project name, e.g. conductor brief acme --notes meeting.md' };
+    const revise = v.revise === true;
+    const discardDraft = v['discard-draft'] === true;
+    if (discardDraft && (v.notes !== undefined || revise)) return { error: '--discard-draft cannot be combined with --notes or --revise' };
+    if (revise && v.notes === undefined) return { error: 'brief --revise needs --notes <file>: the notes that say what changes' };
+    return { command: 'brief', slug: rest[0], notes: v.notes ?? null, revise, discardDraft, flags };
+  }
   if (SUBCOMMANDS.has(first)) {
     if (first === 'resume') {
       if (rest.length > 1) return { error: 'resume takes at most one workspace path' };

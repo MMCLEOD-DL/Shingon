@@ -78,3 +78,34 @@ test('listRuns: unfinished runs of this repo only, newest first', () => {
 test('the usage text explains --council in plain words', () => {
   assert.match(USAGE, /--council +have specialist reviewers check security, licences and correctness before you approve/);
 });
+
+test('parseCli: project and brief commands (values outside flags)', () => {
+  assert.deepEqual(parseCli(['project', 'new', 'Acme Ltd']), { command: 'project-new', client: 'Acme Ltd', slug: null, flags: parseCli(['x']).flags });
+  assert.equal(parseCli(['project', 'new', 'Acme', 'Ltd']).client, 'Acme Ltd');
+  assert.equal(parseCli(['project', 'new', 'Acme Ltd', '--slug', 'acme']).slug, 'acme');
+  assert.equal(parseCli(['project', 'list']).command, 'project-list');
+  assert.deepEqual(parseCli(['project', 'show', 'acme']).slug, 'acme');
+  assert.deepEqual(parseCli(['brief', 'acme', '--notes', 'm.md']), { command: 'brief', slug: 'acme', notes: 'm.md', revise: false, discardDraft: false, flags: parseCli(['x']).flags });
+  assert.equal(parseCli(['brief', 'acme']).notes, null, 'no --notes: carry on with an unfinished brief');
+  assert.equal(parseCli(['brief', 'acme', '--revise', '--notes', 'm.md']).revise, true);
+  assert.equal(parseCli(['brief', 'acme', '--discard-draft']).discardDraft, true);
+  assert.equal(parseCli(['project brief for acme']).command, 'run', 'only a bare "project"/"brief" is a subcommand');
+  for (const [argv, re] of [
+    [['project'], /project needs new, list or show/],
+    [['project', 'delete', 'x'], /project needs new, list or show/],
+    [['project', 'new'], /project new needs the client's name/],
+    [['project', 'list', 'x'], /project list takes no arguments/],
+    [['project', 'show'], /project show needs one project name/],
+    [['brief'], /brief needs one project name/],
+    [['brief', 'a', 'b'], /brief needs one project name/],
+    [['brief', 'acme', '--revise'], /brief --revise needs --notes <file>: the notes that say what changes/],
+    [['brief', 'acme', '--discard-draft', '--notes', 'm.md'], /--discard-draft cannot be combined with --notes or --revise/],
+    [['fix it', '--notes', 'm.md'], /--notes, --revise and --discard-draft only go with conductor brief/],
+    [['project', 'list', '--slug', 'x'], /--slug only goes with conductor project new/],
+  ]) assert.match(parseCli(argv).error ?? '', re, argv.join(' '));
+});
+
+test('the usage text lists the project and brief commands', () => {
+  for (const s of ['conductor project new "<client>"', 'conductor project list', 'conductor project show <slug>',
+    'conductor brief <slug> --notes <file>', 'conductor brief <slug> --revise --notes <file>', 'conductor brief <slug> --discard-draft']) assert.ok(USAGE.includes(s), s);
+});
