@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { childEnv, redact, secretValues, SCRUB_ENV, REDACTED } from '../src/secrets.js';
+import { childEnv, redact, secretValues, SCRUB_ENV, REDACTED, rememberSecret, forgetRememberedSecrets } from '../src/secrets.js';
 import { writeStubCli } from './helpers/stubCli.js';
 import { LocalAgentAdapter } from '../src/adapters/localAgent.js';
 import { CodexAdapter } from '../src/adapters/codex.js';
@@ -144,4 +144,17 @@ test('final-fix 2: TEST_DATABASE_URL and its password are redacted, but the test
   } finally {
     if (before === undefined) delete process.env.TEST_DATABASE_URL; else process.env.TEST_DATABASE_URL = before;
   }
+});
+
+test('a remembered secret is redacted everywhere, whatever env var it came from', () => {
+  rememberSecret('hunter2-matrix-token');
+  rememberSecret('abc'); // too short to redact safely: ignored
+  rememberSecret('short12'); // under MIN_SECRET_LENGTH (8): ignored
+  try {
+    assert.equal(redact('token=hunter2-matrix-token'), 'token=[redacted]');
+    assert.ok(secretValues({}).includes('hunter2-matrix-token'));
+    assert.ok(!secretValues({}).includes('abc'));
+    assert.ok(!secretValues({}).includes('short12'));
+  } finally { forgetRememberedSecrets(); }
+  assert.equal(redact('hunter2-matrix-token', secretValues({})), 'hunter2-matrix-token');
 });

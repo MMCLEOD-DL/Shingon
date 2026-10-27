@@ -48,6 +48,14 @@ function urlPasswords(v) {
   return [pw, decoded];
 }
 
+// Values learned at run time (a typed bot token, a generated password) that no env var carries.
+// Same length floor as env values: shorter ones would redact ordinary words.
+const remembered = new Set();
+export function rememberSecret(value) {
+  if (typeof value === 'string' && value.length >= MIN_SECRET_LENGTH) remembered.add(value);
+}
+export function forgetRememberedSecrets() { remembered.clear(); }
+
 export function secretValues(env = process.env) {
   const values = new Set();
   const add = (v) => { if (typeof v === 'string' && v.length >= MIN_SECRET_LENGTH) values.add(v); };
@@ -55,6 +63,7 @@ export function secretValues(env = process.env) {
     if (SECRET_NAME.test(k) || SCRUB_ENV.includes(k)) add(v);
     else if (REDACT_ENV.includes(k)) { add(v); if (typeof v === 'string') urlPasswords(v).forEach(add); }
   }
+  for (const v of remembered) values.add(v);
   return [...values].sort((a, b) => b.length - a.length);
 }
 
