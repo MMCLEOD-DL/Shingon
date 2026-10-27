@@ -26,9 +26,16 @@ export function createAsk({ input, output, isTTY }) {
   // Reads up to Enter. A CR followed by LF counts once. Returns null at end of input (or Ctrl-C when `raw`).
   async function readLine({ raw }) {
     let line = '';
+    lastWasCR = false; // a CR that ended an earlier prompt must not swallow this prompt's Enter
     for (;;) {
       const c = await getChar();
       if (c === null) return null;
+      if (c === '\x1b') { // drop the rest of an escape sequence (arrow keys etc.)
+        const n = await getChar();
+        if (n === '[') { for (;;) { const f = await getChar(); if (f === null || (f >= '@' && f <= '~')) break; } }
+        else if (n === 'O') await getChar();
+        continue;
+      }
       if (c === '\n' && lastWasCR) { lastWasCR = false; continue; }
       lastWasCR = c === '\r';
       if (c === '\n' || c === '\r') return line;

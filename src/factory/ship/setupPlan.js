@@ -12,6 +12,9 @@ export function policyProblems(policy, { hosting, access }) {
     return ['The approved brief has no data policy, so Conductor cannot decide how to set up the box. Revise the brief.'];
   }
   const problems = [];
+  if (!['client-box', 'operator-server'].includes(policy.hosting)) {
+    return ["The brief's data policy does not say whether the app runs on the client's own box or on a server you run. Revise the brief."];
+  }
   if (policy.operatorAccess !== true) {
     problems.push("The client has not agreed to your remote access (the brief's data policy). Shipping needs it, so that you can fix things in flight.");
   }
@@ -70,6 +73,8 @@ export async function askDeploymentBasics(ask, { name, slug, policy, defaults: _
   const pick = await ask.choose('How will you reach this box from outside?', choices);
   if (pick === null) return refuse(ask, [NOT_ASKED]);
   const access = { t: 'cloudflare-tunnel', s: 'ssh', n: 'tailscale' }[pick];
+  const earlyAccess = policyProblems(policy, { hosting, access });
+  if (earlyAccess.length) return refuse(ask, earlyAccess);
 
   const origin = await ask.text('What web address will staff type? (for example https://staff.acme.co.uk)', {
     check: (a) => (validOrigin(a) ? null : 'Type the address like https://staff.acme.co.uk, with nothing after the host name.'),
@@ -153,7 +158,7 @@ export function backupProblem(repo) {
   if (r.startsWith('s3:')) {
     const p = s3Parts(r.slice(3));
     if (!p) return unknown;
-    return LOOPBACK(p.host.replace(/:\d+$/, '')) ? ON_BOX : null;
+    return LOOPBACK(p.host.replace(/^.*@/, '').replace(/:\d+$/, '')) ? ON_BOX : null;
   }
   if (r.startsWith('b2:')) return /^b2:[^:]+(:.*)?$/.test(r) ? null : unknown;
   return unknown;
@@ -164,7 +169,7 @@ export function backupShown(repo) {
   const r = typeof repo === 'string' ? repo.trim() : '';
   if (r.startsWith('sftp:')) { const h = sftpHost(r.slice(5)); if (h) return `an SFTP server at ${h}`; }
   if (r.startsWith('rest:')) { try { return `a restic REST server at ${new URL(r.slice(5)).host}`; } catch { /* fall through */ } }
-  if (r.startsWith('s3:')) { const p = s3Parts(r.slice(3)); if (p) return `an S3 bucket at ${p.whole}`; }
+  if (r.startsWith('s3:')) { const p = s3Parts(r.slice(3)); if (p) return `an S3 bucket at ${p.whole.replace(/^[^@/]*@/, '')}`; }
   if (r.startsWith('b2:')) { const m = /^b2:([^:]+)/.exec(r); if (m) return `the Backblaze B2 bucket ${m[1]}`; }
   return 'a backup destination Conductor does not recognise';
 }
@@ -185,10 +190,11 @@ export async function askSettings(ask, { dep, policy, defaults }) {
   if (from === null) return refuse(ask, [NOT_ASKED]);
   add('EMAIL_FROM', from, false);
 
-  const repo = await ask.secret('Backup destination (for example sftp:backup@host:/path, rest:https://host:8000/repo, s3:… or b2:…)', {
-    check: (a) => backupProblem(a),
+  let repo = await ask.secret('Backup destination (for example sftp:backup@host:/path, rest:https://host:8000/repo, s3:… or b2:…)', {
+    check: (a) => backupProblem(a.trim()),
   });
   if (repo === null) return refuse(ask, [NOT_ASKED]);
+  repo = repo.trim();
   const bd = policy?.backupDestination;
   const kindText = KIND_TEXT[bd?.kind] ?? 'storage the brief names';
   const detail = bd?.detail ? ` (${bd.detail})` : '';

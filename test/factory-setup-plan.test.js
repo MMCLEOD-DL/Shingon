@@ -94,3 +94,29 @@ test('initArgs and baseSettings follow the deployment', () => {
   assert.deepEqual(baseSettings({ ...dep, access: 'ssh', imageDelivery: 'registry', registry: { host: 'reg.example.com', namespace: 'highland-acme', user: 'u' } }, '0.1.3').map((s) => s.key),
     ['APP_TAG', 'APP_IMAGE', 'OPS_IMAGE', 'IMAGE_PULL_POLICY']);
 });
+
+test('SSH into a client box is refused with a plain message; unknown hosting is refused', () => {
+  assert.match(policyProblems(P, { hosting: 'client-box', access: 'ssh' }).join(' '), /never by opening SSH to it from outside their network/);
+  assert.match(policyProblems({ ...P, hosting: 'moon' }, { hosting: 'moon', access: 'tailscale' })[0], /does not say whether/);
+});
+
+test('the tunnel refusal comes before the registry questions', async () => {
+  const ask = scriptedAsk(['acme-box', '', '', '', 't', 'https://staff.acme.co.uk']);
+  assert.equal(await askDeploymentBasics(ask, { name: 'a', slug: 'acme', policy: { ...P, outbound: [] }, defaults: DEFAULTS }), null);
+  assert.equal(ask.asked.length, 5);
+});
+
+test('s3 destination asks for its credentials; nothing secret is asked or said in clear; repo is stored trimmed', async () => {
+  const dep = { access: 'ssh', imageDelivery: 'tar' };
+  const ask = scriptedAsk(['smtp://u:p@h.example.org:587', 'a@b.co', '  s3:user:pw12345678@s3.eu-west-2.amazonaws.com/acme-bk  ', true,
+    'AKIAEXAMPLE1234', 'secretkeyvalue99', 'eu-west-2', 'w', 'https://hooks.example.org/x1', 'skip', true]);
+  const r = await askSettings(ask, { dep, policy: P, defaults: DEFAULTS });
+  const by = Object.fromEntries(r.settings.map((s) => [s.key, s]));
+  assert.equal(by.BACKUP_REPOSITORY.value, 's3:user:pw12345678@s3.eu-west-2.amazonaws.com/acme-bk');
+  assert.equal(by.AWS_SECRET_ACCESS_KEY.secret, true);
+  assert.equal(by.AWS_DEFAULT_REGION.secret, false);
+  assert.equal(r.alerts.heartbeat, false);
+  const text = [...ask.asked, ...ask.said].join('\n');
+  for (const s of r.settings.filter((x) => x.secret)) assert.equal(text.includes(s.value), false);
+  assert.ok(ask.asked.some((q) => q.includes('an S3 bucket at s3.eu-west-2.amazonaws.com/acme-bk.') && !q.includes('pw12345678')));
+});

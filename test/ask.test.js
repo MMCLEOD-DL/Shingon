@@ -43,3 +43,32 @@ test('Ctrl-C in a secret prompt gives null', async () => {
   input.write('ab\x03');
   assert.equal(await p, null);
 });
+
+test('a CR that ends a secret does not swallow the next prompt\'s Enter', async () => {
+  const { input, ask } = io();
+  const s = ask.secret('Key');
+  input.write('abcdefgh\r');
+  assert.equal(await s, 'abcdefgh');
+  const t = ask.text('Region?', { def: 'eu-west-2' });
+  input.write('\n');
+  assert.equal(await t, 'eu-west-2');
+  forgetRememberedSecrets();
+});
+
+test('arrow keys leave nothing in a secret', async () => {
+  const { input, ask } = io();
+  const p = ask.secret('Key');
+  input.write('abc\x1b[Ade\x1bOBfgh\r');
+  assert.equal(await p, 'abcdefgh');
+  forgetRememberedSecrets();
+});
+
+test('raw mode is switched on and restored, also on Ctrl-C', async () => {
+  const { input, ask } = io();
+  const calls = [];
+  input.setRawMode = (v) => { calls.push(v); };
+  const a = ask.secret('One'); input.write('abcdefgh\r'); await a;
+  const b = ask.secret('Two'); input.write('ab\x03'); assert.equal(await b, null);
+  assert.deepEqual(calls, [true, false, true, false]);
+  forgetRememberedSecrets();
+});
