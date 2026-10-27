@@ -60,3 +60,13 @@ test('sessions save atomically with a readable draft, load back, and refuse corr
   assert.equal(loadSession(p, 'thistle'), null);
   assert.equal(existsSync(briefPaths(p).draftMd), false);
 });
+
+test('notes with dots in the name import and read back; bare dot components are refused', () => {
+  const p = project();
+  const src = path.join(tmp(), 'a..b.md');
+  writeFileSync(src, 'hello\n');
+  const r = importNotes(p, src, { now: NOW });
+  assert.deepEqual(readNotes(p, [r.name]), [{ name: r.name, text: 'hello\n' }]);
+  assert.throws(() => readNotes(p, ['notes/..']), /not one of this project's notes files/);
+  assert.throws(() => readNotes(p, ['notes/.']), /not one of this project's notes files/);
+});

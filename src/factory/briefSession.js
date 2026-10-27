@@ -40,7 +40,7 @@ export function importNotes(projectDir, notesFile, { now = new Date() } = {}) {
 
 export function readNotes(projectDir, names) {
   return names.map((name) => {
-    if (typeof name !== 'string' || !/^notes\/[A-Za-z0-9._-]+$/.test(name) || name.includes('..')) {
+    if (typeof name !== 'string' || !/^notes\/(?!\.{1,2}$)[A-Za-z0-9._-]+$/.test(name)) {
       throw new Error(`"${name}" is not one of this project's notes files.`);
     }
     return { name, text: readFileSync(path.join(projectDir, name), 'utf8') };
