@@ -19,7 +19,7 @@ test('each worked example needs a passing test that carries its tag', () => {
     ['A test names worked example mileage-claims#3, which the brief does not have', 'note', false],
   ]);
   assert.match(r.findings[0].detail, /expected 5400, got 5399/);
-  assert.deepEqual(r.lines, ['Worked examples proven: 2 of 3.', '- mileage-claims#1: its test fails']);
+  assert.deepEqual(r.lines, ['Worked examples proven: 2 of 3.', 'mileage-claims#1: its test fails']);
   assert.deepEqual([...testTag('mileage-claims#4').matchAll(TAG_PATTERN)].map((m) => m[1]), ['mileage-claims#4']);
 });
 
@@ -46,4 +46,22 @@ test('a failed and a passed match for one example is still a failure', () => {
     { title: '[mileage-claims#1] a', status: 'passed' }, { title: '[mileage-claims#1] b', status: 'failed', message: 'm' },
   ]);
   assert.equal(r.findings[0].title, 'Worked example mileage-claims#1 fails its test');
+});
+
+test('a lone missing report makes an unmatched example "not proven" (locked warning), not blocking', () => {
+  const one = { features: [BRIEF.features[0]] };
+  const r = coverageFindings(one, [{ title: '[mileage-claims#1] a', status: 'passed' }], { missing: 'browser' });
+  assert.deepEqual(r.findings.map((f) => [f.title, f.grade, f.locked]), [
+    ['Worked example mileage-claims#2 is not proven: the browser report was missing', 'warning', true],
+    ['Worked example mileage-claims#4 is not proven: the browser report was missing', 'warning', true]]);
+  assert.equal(r.proven, 1);
+  assert.ok(r.lines.every((l, i) => i === 0 || !l.startsWith('- ')));
+  const both = coverageFindings(one, [], { missing: null });
+  assert.ok(both.findings.every((f) => f.grade === 'blocking'));
+});
+
+test('[mileage-claims#10] does not prove #1', () => {
+  const r = coverageFindings({ features: [BRIEF.features[0]] }, [{ title: '[mileage-claims#10] x', status: 'passed' }]);
+  assert.equal(r.proven, 0);
+  assert.ok(r.findings.some((f) => f.title === 'Worked example mileage-claims#1 has no test'));
 });

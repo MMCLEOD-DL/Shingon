@@ -132,3 +132,20 @@ test('ordinary repo: exactly the Plan 5 checks', async () => {
   assert.deepEqual(runs.map((r) => r.tool), ['tests', 'test-files']);
   assert.deepEqual(runs[0], { tool: 'tests', label: 'the test command', status: 'ran', findings: [], note: null });
 });
+
+test('fix 1: an empty crossing failures list does not hide a failed crossing test from Correctness', () => {
+  const t = [{ file: 'apps/server/test/crossing/c.test.ts', title: 'c', status: 'failed', message: 'm' }];
+  const g = { steps: {}, logs: {}, browser: null, source: { verify: 'build' }, verify: { status: 'failed', summary: 's', output: '' }, tests: t };
+  assert.deepEqual(verifyFindings({ ...g, crossing: { routes: 1, checks: 1, failures: [] } }).map((f) => f.title), ['The tests fail']);
+  assert.deepEqual(verifyFindings({ ...g, crossing: { routes: 1, checks: 1, failures: ['x'] } }), []);
+});
+
+test('fix 4: council vitest non-zero with no failed test in the report is "The tests fail"; money rejects paths leaving the allowed dirs', () => {
+  const g = { steps: { vitest: 1 }, logs: { vitest: 'boom' }, source: { verify: 'council' }, crossing: null,
+    tests: [{ file: 'apps/server/test/a.test.ts', title: 'a', status: 'passed', message: '' }] };
+  assert.deepEqual(verifyFindings(g).map((f) => f.title), ['The tests fail']);
+  const d = mkdtempSync(nodePath.join(tmpdir(), 'cmoney-'));
+  wf(nodePath.join(d, 'evil.ts'), 'const price = parseFloat(s);\n');
+  mkdirSync(nodePath.join(d, 'apps/server/src'), { recursive: true });
+  assert.deepEqual(moneyFindings({ dir: d, files: ['apps/server/src/../../../evil.ts', 'apps/server/src/../../evil.ts'] }), []);
+});

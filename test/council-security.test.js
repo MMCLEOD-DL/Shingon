@@ -316,3 +316,10 @@ test('the interpreter cannot dismiss or lower a crossing block', () => {
   const out = applyInterpretation([f], ['C1'], { findings: [{ id: 'C1', decision: 'dismiss', grade: 'note', why: 'fine' }], extra: [] }, { member: 'security' });
   assert.deepEqual([out[0].grade, out[0].dismissed], ['blocking', false]);
 });
+
+test('fix 1: a failed crossing test with an empty report is a locked block, not "passed"', () => {
+  const tests = [{ file: 'apps/server/test/crossing/c.test.ts', title: 'c', status: 'failed', message: 'm' }];
+  const f = crossingFindings({ routes: 1, checks: 1, failures: [] }, tests);
+  assert.deepEqual(f.map((x) => [x.title, x.grade, x.locked]), [['The role-crossing tests failed without saying which crossing', 'blocking', true]]);
+  assert.equal(crossingFindings({ routes: 1, checks: 1, failures: [] }, [{ ...tests[0], status: 'passed' }])[0].grade, 'note');
+});

@@ -9,7 +9,8 @@ export const TAG_PATTERN = /\[([a-z0-9][a-z0-9-]*#\d+)\]/g;
 const finding = (spec) => makeFinding({ member: 'correctness', tool: 'coverage', ...spec });
 
 // cases: [{ title, status: 'passed' | 'failed' | 'skipped' | 'todo', message }]
-export function coverageFindings(brief, cases) {
+// missing: 'test' | 'browser' | null, the report that did not exist (a lone gap makes "no match" unprovable, not blocking).
+export function coverageFindings(brief, cases, { missing = null } = {}) {
   const examples = acceptanceIds(brief);
   const list = cases ?? [];
   const findings = [];
@@ -24,16 +25,22 @@ export function coverageFindings(brief, cases) {
         grade: 'blocking', locked: true, title: `Worked example ${ex.id} fails its test`,
         detail: `${bad.title}${bad.message ? `: ${bad.message}` : ''}`,
       }));
-      lines.push(`- ${ex.id}: its test fails`);
+      lines.push(`${ex.id}: its test fails`);
     } else if (hits.some((c) => c.status === 'passed')) {
       proven += 1;
+    } else if (missing) {
+      findings.push(finding({
+        grade: 'warning', locked: true, title: `Worked example ${ex.id} is not proven: the ${missing} report was missing`,
+        detail: `Feature: ${ex.title}. The ${missing} report was missing, so a test for ${tag} could not be looked for.`,
+      }));
+      lines.push(`${ex.id}: not proven, the ${missing} report was missing`);
     } else {
       const { given, when, then } = ex.example;
       findings.push(finding({
         grade: 'blocking', locked: true, title: `Worked example ${ex.id} has no test`,
         detail: `Feature: ${ex.title}. Given ${given}, when ${when}, then ${then}. Write a test whose title includes ${tag}.`,
       }));
-      lines.push(`- ${ex.id}: no test`);
+      lines.push(`${ex.id}: no test`);
     }
   }
   for (const f of brief.features ?? []) {

@@ -67,10 +67,10 @@ const vfinding = (spec) => makeFinding({ member: 'correctness', tool: 'verify', 
 const lastLines = (s, n) => String(s ?? '').split('\n').slice(-n).join('\n').trim();
 
 // Ruling R9: crossing-only failures leave Correctness only when the crossing report is present.
-// Without it Security has nothing to show for them, so they stay here.
+// An empty failures list gives Security nothing to show for them, so they stay here.
 function nonCrossingFailures(gates) {
   const failed = (gates.tests ?? []).filter((t) => t.status === 'failed');
-  return gates.crossing ? failed.filter((t) => !CROSSING_TEST.test(t.file ?? '')) : failed;
+  return gates.crossing?.failures?.length > 0 ? failed.filter((t) => !CROSSING_TEST.test(t.file ?? '')) : failed;
 }
 
 export function verifyFindings(gates) {
@@ -120,7 +120,8 @@ export function moneyFindings({ dir, files }) {
   const out = [];
   for (const file of files ?? []) {
     if (out.length >= 10) break;
-    if (!MONEY_DIRS.test(file) || !/\.tsx?$/.test(file) || TEST_FILE.test(file)) continue;
+    const norm = path.posix.normalize(String(file).replace(/\\/g, '/'));
+    if (norm !== file || !MONEY_DIRS.test(norm) || !/\.tsx?$/.test(file) || TEST_FILE.test(file)) continue;
     let text;
     try {
       const p = path.join(dir, file);
@@ -170,7 +171,8 @@ function projectRuns(input) {
       ...(gates.tests ?? []).map(({ title, status, message }) => ({ title, status, message })),
       ...(gates.browser ?? []).map((c) => ({ title: c.title, status: c.skipped ? 'skipped' : c.ok ? 'passed' : 'failed', message: c.message })),
     ];
-    const r = coverageFindings(input.brief, cases);
+    const missing = !Array.isArray(gates.tests) ? 'test' : !Array.isArray(gates.browser) ? 'browser' : null;
+    const r = coverageFindings(input.brief, cases, { missing });
     out.push(run('coverage', 'ran', r.findings, { context: r.lines, coverage: { proven: r.proven, total: r.total } }));
   }
 

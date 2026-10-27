@@ -5,6 +5,7 @@
 import { lstatSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { makeFinding } from './findings.js';
+import { CROSSING_TEST } from './correctness.js';
 import { runTool, skipped, TOOL_LABEL } from './tools.js';
 import { lockPackages, readLock, lockDelta } from './lockfile.js';
 
@@ -175,10 +176,14 @@ export function suppressionsAdded({ dir, files, changed, added, wholeFiles }) {
   return out;
 }
 
-export function crossingFindings(crossing) {
+export function crossingFindings(crossing, tests = null) {
   const f = (spec) => makeFinding({ member: 'security', tool: 'crossing', ...spec });
   if (!crossing) return [];
   const fails = crossing.failures ?? [];
+  if (!fails.length && (tests ?? []).some((t) => t.status === 'failed' && CROSSING_TEST.test(t.file ?? ''))) {
+    return [f({ grade: 'blocking', locked: true, title: 'The role-crossing tests failed without saying which crossing',
+      detail: 'A test under apps/server/test/crossing/ failed, but the crossing report lists no failure. Read the test output.' })];
+  }
   if (!fails.length) {
     return [f({ grade: 'note', title: `The role-crossing tests passed: ${crossing.routes} routes, ${crossing.checks} checks`, detail: 'No role could reach data it should not.' })];
   }
@@ -224,7 +229,7 @@ export const SECURITY = {
             title: 'The role-crossing tests were not proven: there was no report',
             detail: 'No role-crossing report was available, so no role was checked against data it should not reach.' })] });
       } else {
-        runs.push({ tool: 'crossing', label: TOOL_LABEL.crossing, status: 'ran', findings: crossingFindings(c), note: null,
+        runs.push({ tool: 'crossing', label: TOOL_LABEL.crossing, status: 'ran', findings: crossingFindings(c, input.evidence?.gates?.tests), note: null,
           context: `Role-crossing tests: ${c.routes} routes, ${c.checks} checks, ${(c.failures ?? []).length} failures.` });
       }
     }
