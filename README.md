@@ -163,6 +163,67 @@ A missing tool is listed under "Checks that did not run". It never stops a run.
 - `councilSemgrepConfig`: Semgrep rules (default `p/default`, downloaded from Semgrep's
   registry; point it at a local rules file to work fully offline).
 
+## The full council on client builds
+
+At the end of `conductor build`, the full council reviews the **whole app** (everything since
+the foundation release) against the approved brief and its data policy. It has five members:
+
+- **Security**: as before, plus the **role-crossing tests**: can any role reach data it should not?
+- **Legal and data**: the licences (including the app's own `licence-exceptions.json`, with its
+  reasons), where the app sends data (checked against the outside services the policy allows),
+  personal data, and how long records are kept.
+- **Correctness**: the foundation's own checks, plus every worked example in the brief must have
+  a passing test whose name carries its id, such as `[mileage-claims#2]`.
+- **Design**: every page at desktop and phone width, sideways scrolling, buttons too small to
+  tap, and accessibility.
+- **Reliability**: the app is deployed on a test machine, backed up, restored, stopped and
+  restarted, the alert is sent and cleared, and a broken update undoes itself.
+
+**What blocks and what only warns:**
+
+- Blocks: a page that does not load, scrolls sideways, has buttons too small to tap or has script
+  errors; a failed foundation check (install, lint, types, licences, tests, build); a worked
+  example with no test, or whose test fails or is skipped; a failed user journey; a failed
+  role-crossing test; a failed step in the reliability test; the app reaching an outside service
+  the policy does not allow (unless the reviewer sets it aside, with a reason).
+- Only warns: accessibility problems (serious ones are warnings, minor ones notes), house style,
+  money sums done in floating point, personal data and retention, and anything that could not be
+  checked ("not proven", below).
+
+**What it needs:**
+
+- what `conductor build` already needs: `TEST_DATABASE_URL` and the Playwright browsers;
+- a test machine (`factory.machines`; `static` uses CT 111) with Docker and Node 22, reachable by
+  SSH;
+- optionally **axe-core**, for the accessibility scan. Install it on the Conductor side only:
+  run `npm pack axe-core@4` in an empty folder, unpack it, and put `package/axe.min.js` at
+  `~/.local/share/conductor/axe-core/axe.min.js` (or set `councilTools.axe` to the file's path;
+  `false` turns the scan off). It is under the Mozilla Public License, and Conductor checks
+  the licence line at the top of the file before it uses it. Conductor uses axe as a checking tool and
+  injects it into the browser while it runs; it is **never** added to the client's app, its
+  `package.json` or its lockfile. `conductor doctor` shows whether it was found.
+
+**"Not proven".** Without a test machine, the Playwright browsers, the test database or axe-core,
+the council still runs. It does not guess: anything it could not check is a warning at the top
+of the report ("Reliability was not proven: ...", "The pages were not checked ...",
+"Accessibility was not proven ..."), and the "What was checked" section says which checks ran
+and whether they came from the build's own checks or the council's. A "not proven" warning
+never blocks, but it also never counts as a pass: read it before you approve.
+
+**Time.** About 15 to 25 minutes per council round. The build's own checks are reused for the
+same version of the app, so the council adds only the accessibility scan (a few minutes) and the
+reliability test on the machine (10 to 20 minutes). If a problem blocks, it goes back as a
+council fix and the council runs again, up to three rounds (`factory.build.councilFixRounds`);
+after that Conductor asks you. `options.councilGatesTimeoutMs` and `options.councilSmokeTimeoutMs`
+(40 minutes each by default) cap the council's own local checks and the machine test.
+
+**Where the report is.** `<project>/builds/<run>/council-report.md` (and `.json`), with the page
+screenshots under `<project>/builds/<run>/council/round-<n>/screenshots/`. The approval summary
+at the gate names the file.
+
+The Efficiency reviewer from the design is not in this version. Ordinary repositories with
+`--council` are unchanged: they still get Security, Legal and Correctness only.
+
 ## Client projects and briefs
 
 The factory builds a web app for a client from an approved **brief**. Each client gets a
@@ -246,7 +307,7 @@ Once a client's brief is approved, Conductor can build the app.
   was made but left without its label (a crash half way), remove it by hand in Proxmox.
 - **What it will not do yet.** Briefs that need optional modules (OCR, PDF or spreadsheet
   export, scheduled jobs); rebuilding an app that is already approved (that will be
-  `conductor change`); the full council (design, reliability) is the next plan.
+  `conductor change`).
 - **Quote run requests.** A run request that begins with the word `build`, `preview` or
   `machines` is read as one of these commands. Put the request in quotes, for example
   `conductor "build a login page"`, or word it differently (the same goes for `brief` and
@@ -319,8 +380,9 @@ safe.
   - timeouts: `agentTimeoutMs`, `localTimeoutMs`, `testTimeoutMs`;
   - `keepWorkspace`;
   - `watchDiffs`;
-  - the council: `council`, `councilFixRounds`, `councilAcceptLicences`, `councilTools`,
-    `councilSemgrepConfig` (see **The council**).
+  - the council: `council`, `councilFixRounds`, `councilAcceptLicences`, `councilTools`
+    (including `axe`), `councilSemgrepConfig`, `councilGatesTimeoutMs`, `councilSmokeTimeoutMs`
+    (see **The council** and **The full council on client builds**).
 
 - `factory` (client projects and briefs):
   - `projectsRoot`: where project folders go (default `~/highland-projects`). It must start with

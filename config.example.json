@@ -19,6 +19,8 @@
   "options": {
     "council": false,
     "councilFixRounds": 3,
+    "councilGatesTimeoutMs": 2400000,
+    "councilSmokeTimeoutMs": 2400000,
     "councilAcceptLicences": [],
     "councilTools": {}
   },
