@@ -213,8 +213,8 @@ never blocks, but it also never counts as a pass: read it before you approve.
 **Time.** About 15 to 25 minutes per council round. The build's own checks are reused for the
 same version of the app, so the council adds only the accessibility scan (a few minutes) and the
 reliability test on the machine (10 to 20 minutes). If a problem blocks, it goes back as a
-council fix and the council runs again, up to three rounds (`factory.build.councilFixRounds`);
-after that Conductor asks you. `options.councilGatesTimeoutMs` and `options.councilSmokeTimeoutMs`
+council fix and the council runs again, up to three fix rounds (so at most four council rounds;
+`factory.build.councilFixRounds`); after that Conductor asks you. `options.councilGatesTimeoutMs` and `options.councilSmokeTimeoutMs`
 (40 minutes each by default) cap the council's own local checks and the machine test.
 
 **Where the report is.** `<project>/builds/<run>/council-report.md` (and `.json`), with the page

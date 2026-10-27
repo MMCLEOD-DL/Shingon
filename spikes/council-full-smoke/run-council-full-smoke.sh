@@ -25,7 +25,7 @@ N=0
 step() { N=$((N + 1)); echo; echo "== Step $N: $1 =="; }
 ok() { local a; read -r -p "$1 OK? [y/N] " a; [ "$a" = y ] || { echo "SMOKE STOPPED at step $N"; exit 1; }; }
 
-step "0. pre-flight"
+step "pre-flight"
 [ -n "${TEST_DATABASE_URL:-}" ] || { echo "TEST_DATABASE_URL is not set"; exit 2; }
 psql "$TEST_DATABASE_URL" -c 'select 1' >/dev/null || { echo "cannot reach the test database"; exit 2; }
 ssh -o BatchMode=yes "root@$CT" 'docker compose version && node --version && mkdir -p /srv/hf-factory && test -w /srv/hf-factory' \
@@ -66,11 +66,11 @@ echo "projects folder (kept for evidence): $CONDUCTOR_PROJECTS_ROOT"
 $C doctor || { echo "conductor doctor failed"; exit 2; }
 ok "Pre-flight passed (the doctor lists axe-core and the test machine)."
 
-step "1. conductor project new \"Council Smoke Ltd\" (slug council-smoke-ltd)"
+step "conductor project new \"Council Smoke Ltd\" (slug council-smoke-ltd)"
 $C project new "Council Smoke Ltd" || exit 1
 ok "The slug is council-smoke-ltd."
 
-step "2. import the approved brief fixture (Plan 7's saveApprovedBrief; no model, no questions)"
+step "import the approved brief fixture (Plan 7's saveApprovedBrief; no model, no questions)"
 node --input-type=module -e '
   const [root, proj, file] = process.argv.slice(1);
   const { readFileSync } = await import("node:fs");
@@ -81,19 +81,19 @@ node --input-type=module -e '
 ls "$PROJ/brief"
 ok "brief-v1.json, brief-v1.md and current.json exist."
 
-step "3. conductor build; watch the progress lines, then answer the questions"
+step "conductor build; watch the progress lines, then answer the questions"
 echo "Expect, in order, among the build's own lines:"
 echo "  Council round 1: Security, Legal and data, Correctness, Design, Reliability"
 echo "  Council: using the build's own checks for this version."
 echo "  Council: running the checks the build did not cover (axe, or missing reports)…    (when axe is installed)"
 echo "  Council: starting a test machine…  then  Council: deploying on test machine ct111: backup, restore, alerts and updates (10–20 minutes)…"
-echo "  Council round 1: approved… or: N problem(s) to fix, then a council fix feature and round 2 (at most 3 rounds)."
+echo "  Council round 1: approved… or: N problem(s) to fix, then a council fix feature and round 2 (up to three fix rounds, so at most four council rounds)."
 echo "  Council report saved: .../builds/<run>/council-report.md"
 echo "At the approval question, read the council report in the summary, then approve (or give feedback once)."
 $C build council-smoke-ltd || echo "(exit $?)"
 ok "The build reached the gate with a council report, and you approved."
 
-step "4. the council's files"
+step "the council's files"
 BUILD_DIR="$(ls -dt "$PROJ"/builds/*/ | head -1)"
 echo "Build folder: $BUILD_DIR"
 for f in council-report.md council-report.json; do
@@ -110,12 +110,12 @@ echo "Screenshots:"; ls "${BUILD_DIR}council/"round-*/screenshots 2>/dev/null | 
 echo; echo "--- council-report.md ---"; cat "${BUILD_DIR}council-report.md" 2>/dev/null || true
 ok "Both report files exist; the report reads clearly; the examples mileage-claims#1 and #2 are listed as proven or missing."
 
-step "5. nothing may be left on CT 111, and the machine must be free"
+step "nothing may be left on CT 111, and the machine must be free"
 $C machines
 ssh -o BatchMode=yes "root@$CT" 'docker ps -a --format "{{.Names}}" | grep -E "hfsmoke|hf-smoke-rest" | wc -l; ls /srv/hf-factory/runs 2>/dev/null | wc -l; ls /tmp/hf-smoke /tmp/hf-smoke-cookies 2>&1 | head -2'
 ok "No machines in use; 0 containers named hfsmoke or hf-smoke-rest; the runs folder is empty; /tmp/hf-smoke is gone."
 
-step "6. sweep"
+step "sweep"
 $C machines sweep
 ok "It said: Nothing was left over."
 

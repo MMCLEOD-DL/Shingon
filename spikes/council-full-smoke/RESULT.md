@@ -14,7 +14,7 @@ Neither is run by the test suite.
 - Date / operator:
 - Machine (CT 111 host, Node and Docker versions):
 - Evidence-only: minutes for the gates; minutes for the smoke; exit code:
-- End to end: minutes for the build; council rounds used (of 3); frontier cost shown at the gate:
+- End to end: minutes for the build; council rounds used (up to three fix rounds, so at most four council rounds); frontier cost shown at the gate:
 
 ## Expected in the evidence-only report
 
@@ -30,9 +30,9 @@ Neither is run by the test suite.
 
 - [ ] progress lines: `Council round 1: ...`, `Council: using the build's own checks for this version.`, `Council: starting a test machine...`, `Council: deploying on test machine ...`, a verdict line, `Council report saved: ...`;
 - [ ] `builds/<run>/council-report.md` and `council-report.json` exist, and the gate summary names the report;
-- [ ] if something blocked: a council fix feature, then a second round (at most 3);
+- [ ] if something blocked: a council fix feature, then another round (up to three fix rounds, so at most four council rounds);
 - [ ] `mileage-claims#1` and `mileage-claims#2` are each listed as proven or missing, by name;
-- [ ] step 5 shows nothing left on CT 111.
+- [ ] step 6 ("nothing may be left on CT 111") shows nothing left on CT 111.
 
 ## Observations
 
