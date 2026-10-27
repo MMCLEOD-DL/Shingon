@@ -79,6 +79,17 @@ test('mergeFeature after a crash between moving the branch and the checkout: fin
   assert.equal(await out(appDir, ['rev-parse', 'build/r1']), crashed, 'never merged twice');
 });
 
+test('mergeFeature in the crash state keeps an untracked operator file at a path the feature adds', async () => {
+  const { appDir, base, landedSha } = await appWithBuildBranch();
+  const tree = await out(appDir, ['rev-parse', `${landedSha}^{tree}`]);
+  const crashed = await out(appDir, ['commit-tree', tree, '-p', base, '-m', 'Feature 1/2']);
+  await git(appDir, ['update-ref', 'refs/heads/build/r1', crashed, base]);
+  writeFileSync(path.join(appDir, 'f1.txt'), 'operator notes\n');
+  const args = { appDir, buildBranch: 'build/r1', landedBranch: 'conductor/feature', landedSha, expectedBase: base, message: 'Feature 1/2' };
+  assert.equal(await mergeFeature(args), crashed);
+  assert.equal(readFileSync(path.join(appDir, 'f1.txt'), 'utf8'), 'operator notes\n');
+});
+
 test('mergeFeature refuses a moved build branch and a dirty app folder, changing nothing', async () => {
   const { appDir, base, landedSha } = await appWithBuildBranch();
   writeFileSync(path.join(appDir, 'stray.txt'), 'x');

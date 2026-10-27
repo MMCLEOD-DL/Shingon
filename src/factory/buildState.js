@@ -75,6 +75,10 @@ export async function mergeFeature({ appDir, buildBranch, landedBranch, landedSh
     if (r.code !== 0) throw new Error(`${what} failed: ${(r.stderr || '').trim() || `exit ${r.code}`}. Nothing more was changed.`);
     return r.stdout.trim();
   };
+  const mustCheckout = async (sha) => {
+    const r = await git(appDir, ['reset', '-q', '--hard', sha]);
+    if (r.code !== 0) throw new Error(`The build branch ${buildBranch} was updated but the app folder was not (${(r.stderr || '').trim() || `exit ${r.code}`}). Run "conductor resume" to finish.`);
+  };
   const onBuildBranch = async () => (await git(appDir, ['symbolic-ref', '-q', 'HEAD'])).stdout.trim() === `refs/heads/${buildBranch}`;
   const dropLanded = async () => { if (await rev(`refs/heads/${landedBranch}`) === landedSha) await git(appDir, ['update-ref', '-d', `refs/heads/${landedBranch}`, landedSha]); };
 
@@ -84,7 +88,10 @@ export async function mergeFeature({ appDir, buildBranch, landedBranch, landedSh
     const done = parent === expectedBase && await rev(`${head}^{tree}`) === await rev(`${landedSha}^{tree}`);
     if (!done) throw new Error(`The build branch ${buildBranch} is not where Conductor left it, so it stopped rather than guess. Nothing was changed.`);
     // Already merged. If the crash came before the checkout followed, the app folder still matches the old base.
-    if (await onBuildBranch() && (await git(appDir, ['diff', '--quiet', expectedBase])).code === 0) await must(['reset', '-q', '--hard', head], 'Updating the app folder');
+    // Only then, and only with no untracked files (reset --hard would overwrite one at a path the feature adds), is it safe to update it;
+    // otherwise it stays stale and the next merge stops on "changes Conductor did not make".
+    if (await onBuildBranch() && (await git(appDir, ['diff', '--quiet', expectedBase])).code === 0
+        && !(await git(appDir, ['ls-files', '--others', '--exclude-standard'])).stdout.trim()) await mustCheckout(head);
     await dropLanded();
     return head;
   }
@@ -98,7 +105,7 @@ export async function mergeFeature({ appDir, buildBranch, landedBranch, landedSh
 
   const next = await must(['commit-tree', `${landedSha}^{tree}`, '-p', expectedBase, '-m', message], 'Writing the feature commit');
   await must(['update-ref', `refs/heads/${buildBranch}`, next, expectedBase], 'Moving the build branch');
-  if (await onBuildBranch()) await must(['reset', '-q', '--hard', next], 'Updating the app folder');
+  if (await onBuildBranch()) await mustCheckout(next);
   await dropLanded();
   return next;
 }
