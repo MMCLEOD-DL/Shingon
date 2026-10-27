@@ -46,3 +46,28 @@ test('examples are found by their stable id, not their position', () => {
   const s = acceptanceStep({ brief, unit: { ...units[0], acceptance: ['submit-expense#2'] } });
   assert.match(s.instructions, /\[submit-expense#2\] Given a member, when they submit a negative amount/);
 });
+
+test('final-fix 3: a fix unit is clipped to the room left, so its request never goes over the budget', async () => {
+  const { fixUnit } = await import('../src/factory/buildFinal.js');
+  const brief = sampleBrief({
+    purpose: 'p'.repeat(5000),
+    roles: Array.from({ length: 10 }, (_, i) => ({ name: `Role number ${i} with a long name`, whatTheyDo: 'w'.repeat(400), sees: 's', mapsTo: i === 0 ? 'admin' : 'member' })),
+  });
+  const many = Array.from({ length: 30 }, (_, i) => ({ id: `a-rather-long-unit-identifier-number-${i}`, title: `Unit ${i}`, covers: [], acceptance: [], instructions: 'Short.', dependsOn: [], kind: 'feature' }));
+  const build = { units: many, features: [] };
+  for (const [prefix, instructions] of [['fix', `Council fix: ${'c'.repeat(2990)}`], ['feedback', `Feedback: ${'f'.repeat(1990)}`], ['fix', `Checks: ${'o'.repeat(1500)}`]]) {
+    const unit = fixUnit({ build, prefix, title: 'A fix', instructions });
+    const index = build.units.indexOf(unit);
+    const r = featureRequest({ brief, units: build.units, index });
+    assert.ok(r.length <= REQUEST_BUDGET, `${unit.id}: ${r.length}`);
+    assert.ok(r.includes(BUILDING_ON_RULES), `${unit.id}: the foundation rules survive`);
+    assert.match(r, /\(clipped\)/, `${unit.id}: the clip is noted`);
+    assert.match(r, new RegExp(`\\(${unit.id}\\)`));
+  }
+  // an ordinary feature unit is still refused when it is too long
+  assert.throws(() => featureRequest({ brief, units: [{ ...many[0], instructions: 'y'.repeat(7000) }], index: 0 }), (e) => e.code === 'too-long');
+  // a fix unit that fits is not touched
+  const small = { units: [], features: [] };
+  const u = fixUnit({ build: small, prefix: 'fix', title: 'Small', instructions: 'Make the checks pass.' });
+  assert.doesNotMatch(featureRequest({ brief: sampleBrief(), units: small.units, index: small.units.indexOf(u) }), /\(clipped\)/);
+});

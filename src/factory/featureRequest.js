@@ -51,14 +51,35 @@ function policyLine(brief) {
   return `Data policy: hosting on ${hosting}; ${where}; data stays in ${country}.`;
 }
 
+const CLIPPED_NOTE = '\n(clipped)';
+
+// A fix unit's instructions come from check output, the council or the operator, not from the split that
+// checked every feature's request against the budget, so they are clipped to the room the rest of the request
+// leaves (render, measure, clip) rather than refused: a refusal there would fail every run of the build.
 export function featureRequest({ brief, units, index }) {
+  const unit = units[index];
+  const text = renderRequest({ brief, units, index, instructions: unit.instructions });
+  if (text.length <= REQUEST_BUDGET) return text;
+  if (unit.kind === 'fix') {
+    const instructions = String(unit.instructions ?? '');
+    const rest = text.length - instructions.length;
+    // clip() adds a marker line of its own; shrink until the whole request fits.
+    for (let room = REQUEST_BUDGET - rest - CLIPPED_NOTE.length; room > 0; room -= 40) {
+      const clipped = renderRequest({ brief, units, index, instructions: `${clip(instructions, room)}${CLIPPED_NOTE}` });
+      if (clipped.length <= REQUEST_BUDGET) return clipped;
+    }
+  }
+  throw Object.assign(new Error(`the request for "${unit.id}" is ${text.length} characters (the limit is ${REQUEST_BUDGET}); make its instructions shorter or split it`), { code: 'too-long' });
+}
+
+function renderRequest({ brief, units, index, instructions }) {
   const unit = units[index];
   const blocks = [];
   blocks.push(`Build step ${index + 1} of ${units.length} for ${brief.client}: ${unit.title} (${unit.id})`);
   blocks.push(`About the app: ${clip(brief.purpose, 600)}`);
   blocks.push(['People who use it (each maps to a foundation role):',
     ...(brief.roles ?? []).map((r) => `- ${r.name} → ${r.mapsTo}: ${clip(r.whatTheyDo, 160)}`)].join('\n'));
-  blocks.push(`What to build in this step:\n${unit.instructions}`);
+  blocks.push(`What to build in this step:\n${instructions}`);
   const covered = (unit.covers ?? []).map((id) => briefFeatureOf(brief, id)).filter(Boolean);
   if ((unit.covers ?? []).length) {
     blocks.push(["From the client's brief:", ...covered.flatMap((f) => [
@@ -75,11 +96,7 @@ export function featureRequest({ brief, units, index }) {
   blocks.push(`Already built (read the code, do not rebuild): ${before.join(', ') || 'nothing yet'}\nComing later (do not build now): ${after.join(', ') || 'nothing'}`);
   blocks.push(policyLine(brief));
   blocks.push(BUILDING_ON_RULES);
-  const text = blocks.join('\n\n');
-  if (text.length > REQUEST_BUDGET) {
-    throw Object.assign(new Error(`the request for "${unit.id}" is ${text.length} characters (the limit is ${REQUEST_BUDGET}); make its instructions shorter or split it`), { code: 'too-long' });
-  }
-  return text;
+  return blocks.join('\n\n');
 }
 
 export function acceptanceStep({ brief, unit }) {
