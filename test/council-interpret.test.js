@@ -204,9 +204,11 @@ test('interpretMember passes phone screenshots first and the measurements to the
   const ctx = await ctxWith((role, task) => { prompts.push(task); return { text: fence({ findings: [] }) }; });
   const out = await interpretMember(ctx, { member: 'design', label: 'Design', findings: [], notes: [], context: ['x'],
     attach: ['reports/screenshots/a-desktop-chromium.png', 'reports/screenshots/a-mobile-chromium.png'],
-    input: input(ctx) });
+    input: { ...input(ctx), briefText: '# Acme brief', policy: { hosting: 'client-box', outbound: [] } } });
   assert.equal(out.status, 'ok');
   const p = prompts[0];
+  assert.match(p, /The client's approved brief:\n# Acme brief/);
+  assert.match(p, /The client's data policy:\nHosting: the client's own box/);
   assert.ok(p.indexOf('a-mobile-chromium') < p.indexOf('a-desktop-chromium'));
   assert.match(p, /What the checks measured:\n- x/);
 });

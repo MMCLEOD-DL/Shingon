@@ -154,6 +154,20 @@ const councilItem = ({ id, finding: f }) => {
   return f.detail ? `${head}\n    ${show(f.detail, 600)}` : head;
 };
 
+const CONTEXT_MAX_LINES = 40;
+const CONTEXT_MAX_CHARS = 6000;
+function measured(context) {
+  const lines = [];
+  let used = 0;
+  for (const c of context) {
+    const line = `- ${show(c, 600)}`;
+    if (lines.length >= CONTEXT_MAX_LINES || used + line.length > CONTEXT_MAX_CHARS) { lines.push('(more not shown)'); break; }
+    lines.push(line);
+    used += line.length + 1;
+  }
+  return lines.join('\n');
+}
+
 export function councilMember({ member, label, request, plan, diff, base, tests, items, notes, briefText = null, policy = null, context = [], attachments = [] }) {
   const project = typeof briefText === 'string' && briefText !== '';
   const focus = FOCUS[member] + (project && FOCUS_PROJECT[member] ? ` ${FOCUS_PROJECT[member]}` : '');
@@ -165,7 +179,7 @@ export function councilMember({ member, label, request, plan, diff, base, tests,
     diffBlock('The change under review:', diff, 30000, base),
     member === 'correctness' && !project ? formatTests(tests) : '',
     'What the checking tools found:\n' + (items.length ? items.map(councilItem).join('\n') : '(the tools found nothing)'),
-    context?.length ? 'What the checks measured:\n' + context.map((c) => `- ${show(c, 600)}`).join('\n') : '',
+    context?.length ? 'What the checks measured:\n' + measured(context) : '',
     attachments?.length ? 'Screenshots you can open (read them, do not change them):\n' + attachments.map((a) => `- ${show(a, 300)}`).join('\n') : '',
     notes?.length ? 'Checks that did not run:\n' + notes.map((n) => `- ${n}`).join('\n') : '',
     [

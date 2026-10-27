@@ -109,14 +109,29 @@ test('councilMember with no brief is exactly the Plan 5 prompt', () => {
   assert.doesNotMatch(councilMember(base), /brief|data policy|Screenshots/i);
 });
 
-test('every Plan 5 member prompt is byte-identical with the new options empty, and keeps its Tests line', () => {
+test('ordinary Plan 5 prompts equal goldens captured at the base commit d1139f3', async () => {
+  const { readFileSync } = await import('node:fs');
+  const gold = JSON.parse(readFileSync(new URL('./fixtures/plan5-council-prompts.json', import.meta.url), 'utf8'));
   for (const member of ['security', 'legal', 'correctness', 'foundation']) {
-    const base = { member, label: member, request: 'r', plan: null, diff: 'd', base: 'abc', tests: null, items: [], notes: ['n'] };
-    assert.equal(councilMember({ ...base, briefText: null, policy: null, context: [], attachments: [] }), councilMember(base));
+    const args = { member, label: member[0].toUpperCase() + member.slice(1), request: 'Add export', plan: { summary: 'S', chunks: [{ title: 'A', instructions: 'do' }] }, diff: '+x', base: 'abc', tests: member === 'correctness' ? { ran: true, passed: true, code: 0, output: 'ok' } : null, items: [], notes: ['n1'] };
+    assert.equal(councilMember(args), gold[member], member);
+    assert.equal(councilMember({ ...args, briefText: null, policy: null, context: [], attachments: [] }), gold[member], member);
   }
+});
+
+test('Correctness keeps its Tests line on an ordinary repo', () => {
   const c = councilMember({ member: 'correctness', label: 'C', request: 'r', plan: null, diff: 'd', base: 'a', tests: null, items: [], notes: [] });
   assert.match(c, /Tests: not configured/);
-  assert.doesNotMatch(c, /every feature and worked example/);
+});
+
+test('measurements are capped at 40 lines and 6000 characters', () => {
+  const mk = (context) => councilMember({ member: 'design', label: 'D', request: 'r', plan: null, diff: '', base: 'a', tests: null, items: [], notes: [], context });
+  const many = mk(Array.from({ length: 60 }, (_, i) => `m${i}`));
+  assert.match(many, /- m39\n\(more not shown\)/);
+  assert.doesNotMatch(many, /m40/);
+  const big = mk(Array.from({ length: 30 }, () => 'x'.repeat(500)));
+  assert.match(big, /\(more not shown\)/);
+  assert.ok(big.length < 9000);
 });
 
 test('councilMember on a project: brief, policy, measurements and screenshots', () => {
