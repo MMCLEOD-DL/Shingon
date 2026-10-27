@@ -74,7 +74,7 @@ export function planReview({ request, planText, firstChunk = null }) {
     `Proposed plan:\n${show(planText, 20000)}`,
     'Review this plan. Check: wrong approach, missing requirements, chunks too large or in the wrong order, unsafe changes.',
     BLOCK_RULES,
-  ].join('\n\n');
+  ].filter(Boolean).join('\n\n');
 }
 
 export function chunkExec({ request, plan, chunk, index, total, feedback, feedbackKind = 'blocked' }) {

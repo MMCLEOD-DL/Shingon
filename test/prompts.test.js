@@ -95,3 +95,8 @@ test('councilMember: one member, its own evidence, the rules and the JSON shape'
   assert.match(none, /\(the tools found nothing\)/);
   assert.doesNotMatch(none, /Tests:/, 'only Correctness is shown the test result');
 });
+
+test('planReview without firstChunk adds no blank line', async () => {
+  const { planReview } = await import('../src/prompts.js');
+  assert.doesNotMatch(planReview({ request: 'r', planText: 'p' }), /\n\n\n/);
+});
