@@ -201,9 +201,14 @@ ok "restored ($NOTES_BEFORE notes kept); upload after restore works"
 
 # ---- 7. The app dies: an alert, then Fixed.
 STEP="step 7 (alert when the app dies)"
-say "Step 7: stop the app and wait for the alert (up to 180 s), then start it and wait for Fixed"
+say "Step 7: stop the app, check the front door's 'being updated' page, wait for the alert (up to 180 s), then start it and wait for Fixed"
 MARK="$(alert_lines)"
 dc stop app >/dev/null 2>&1
+# Staff never see a bare 502: the front door answers with its plain "being updated" page, keeping the real status.
+DOWN_CODE="$(curl -s -o "$DIR/down.html" -w '%{http_code}' "$BASE/notes" || true)"
+case "$DOWN_CODE" in 502|503|504) ;; *) fail "with the app stopped the front door answered $DOWN_CODE, not 502, 503 or 504" ;; esac
+grep -qF 'The app is being updated' "$DIR/down.html" || fail "with the app stopped the front door did not show the 'being updated' page"
+ok "front door shows the 'being updated' page (status $DOWN_CODE) while the app is stopped"
 wait_alert 'Problem: The app is not answering.' 180 "$MARK" || fail "no 'The app is not answering.' alert within 180 s"
 ok "alert received: Problem: The app is not answering."
 dc start app >/dev/null 2>&1

@@ -73,7 +73,6 @@ export async function latestSnapshot(deps: OpsDeps): Promise<SnapshotInfo | null
   return best;
 }
 
-/** Whether a file or folder exists, or (given a maintenance connection) whether a database of that name exists. */
 /**
  * Looks up one backup by its id (or the start of it) and checks it was made by this box: a backup id typed by hand could be
  * another deployment's on a shared destination. Throws RestoreError, before anything is changed, when the backup is not
@@ -101,6 +100,7 @@ export async function snapshotById(deps: OpsDeps, id: string, opts: { anyHost?: 
   return { id: found.id, short, host, time: typeof found.time === 'string' ? parseTime(found.time) : new Date(Number.NaN) };
 }
 
+/** Whether a file or folder exists, or (given a maintenance connection) whether a database of that name exists. */
 async function exists(p: string, c?: pg.Client): Promise<boolean> {
   if (c !== undefined) return (await c.query('select 1 from pg_database where datname = $1', [p])).rowCount === 1;
   try {
