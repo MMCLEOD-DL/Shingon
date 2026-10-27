@@ -1,6 +1,10 @@
-// Machine providers for previews and council deploy tests (Contract 3). `static` hands out machines the operator runs.
+// Machine providers for previews and council deploy tests (Contract 3). `static` hands out machines the operator runs;
+// `proxmox` clones LXC containers inside the factory's own pool.
 import { createSsh } from '../ssh.js';
+import { addScrubEnv } from '../../secrets.js';
 import { StaticProvider } from './static.js';
+import { ProxmoxProvider } from './proxmox.js';
+import { createPveClient } from './pveApi.js';
 
 export class MachineError extends Error {
   // code: busy | unreachable | cap | config | failed. The message is the plain sentence shown to the operator.
@@ -22,9 +26,18 @@ export function whenText(iso) {
 }
 
 export function getMachineProvider(factory, { ssh, pve = null, now = () => new Date(), env = process.env } = {}) {
-  void pve; void env;
   const m = factory?.machines;
-  if (m?.provider === 'proxmox') throw new MachineError('config', 'The proxmox machine provider is not available yet.');
+  if (m?.provider === 'proxmox') {
+    const cfg = m.proxmox;
+    addScrubEnv(cfg.tokenEnv);
+    const secret = env[cfg.tokenEnv];
+    if (!secret) throw new MachineError('config', `The Proxmox API token is not set. Put its secret in the environment variable ${cfg.tokenEnv} (never in the config file).`);
+    let client = pve;
+    if (!client) {
+      try { client = createPveClient({ apiUrl: cfg.apiUrl, tokenId: cfg.tokenId, secret, caFile: cfg.caFile }); } catch (e) { throw new MachineError('config', e.message); }
+    }
+    return new ProxmoxProvider({ cfg, pve: client, ssh: ssh ?? createSsh({ sshBin: m.sshBin, scpBin: m.scpBin }), now });
+  }
   const hosts = m?.static?.hosts ?? [];
   if (hosts.length === 0) {
     throw new MachineError('config', 'No factory machines are set up. Add one under factory.machines.static.hosts in the config (for example CT 111, hf-build at 192.168.1.111).');

@@ -26,7 +26,7 @@ export async function startPveStub({ token = 'conductor@pve!factory=s3cret-token
       const query = Object.fromEntries(u.searchParams);
       const prefix = '/api2/json';
       const path = u.pathname.startsWith(prefix) ? u.pathname.slice(prefix.length) : u.pathname;
-      requests.push({ method: req.method, path, query, form });
+      requests.push({ method: req.method, path: u.pathname, query, form });
       if (req.headers.authorization !== `PVEAPIToken=${token}`) return send(401, null, 'no ticket');
       let m;
       const M = req.method;
