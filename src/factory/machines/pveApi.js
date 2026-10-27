@@ -45,15 +45,21 @@ export function createPveClient({
   apiUrl, tokenId, secret, caFile = null, request = nodeRequest,
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now, timeoutMs = 30000,
 } = {}) {
+  const shown = String(apiUrl).replace(/\/\/[^/@\s]*@/, '//');
   let base;
-  try { base = new URL(apiUrl); } catch { throw new PveError(0, `The Proxmox address must start with https:// (got ${apiUrl})`); }
+  try { base = new URL(apiUrl); } catch { throw new PveError(0, `The Proxmox address must start with https:// (got ${shown})`); }
   if (!(base.protocol === 'https:' || (base.protocol === 'http:' && base.hostname === '127.0.0.1'))) {
-    throw new PveError(0, `The Proxmox address must start with https:// (got ${apiUrl})`);
+    throw new PveError(0, `The Proxmox address must start with https:// (got ${shown})`);
   }
   if (!secret || typeof secret !== 'string') {
     throw new PveError(0, 'The Proxmox API token secret is missing. Put it in the environment variable named by factory.machines.proxmox.tokenEnv.');
   }
-  const ca = caFile ? fs.readFileSync(caFile) : undefined;
+  let ca;
+  if (caFile) {
+    try { ca = fs.readFileSync(caFile); } catch {
+      throw new PveError(0, `Conductor could not read the Proxmox CA certificate at ${caFile}. Check factory.machines.proxmox.caFile.`);
+    }
+  }
   const origin = base.origin;
 
   const clean = (s) => {
@@ -99,7 +105,7 @@ export function createPveClient({
       const st = await call('GET', `/nodes/${node}/tasks/${encodeURIComponent(upid)}/status`);
       if (st?.status === 'stopped') {
         if (st.exitstatus === 'OK') return st;
-        throw fail(500, `The Proxmox task did not finish properly: ${st.exitstatus}.`);
+        throw fail(500, `The Proxmox task did not finish properly: ${st.exitstatus || 'unknown'}.`);
       }
       if (now() - start >= limit) throw fail(0, `The Proxmox task did not finish within ${Math.round(limit / 1000)} seconds.`);
       await sleep(intervalMs);
