@@ -217,9 +217,12 @@ export async function licenceExceptions({ dir }) {
   return { accept, findings };
 }
 
+// The hook's policy (Contract 7.7), falling back to the brief's own.
+const policyOf = (input) => input.policy ?? input.brief?.policy ?? null;
+
 async function collectDataFlow(input) {
   const label = TOOL_LABEL['data-flow'];
-  const policy = input.brief.policy;
+  const policy = policyOf(input);
   if (!policy) return { ...skipped('legal', 'data-flow', label, 'The brief has no data policy, so the app\'s outside connections could not be checked.'),
     findings: [makeFinding({ member: 'legal', tool: 'data-flow', grade: 'warning', locked: true, title: "The brief has no data policy, so the app's outside connections could not be checked",
       detail: 'Without a data policy there is nothing to check the app\'s outside connections against.' })] };
@@ -237,7 +240,7 @@ async function collectDataFlow(input) {
 function collectDataPolicy(input) {
   const label = TOOL_LABEL['data-policy'];
   const p = personalDataFindings(input);
-  const r = retentionFindings({ dir: input.dir, files: input.files, policy: input.brief.policy, tables: p.tables });
+  const r = retentionFindings({ dir: input.dir, files: input.files, policy: policyOf(input), tables: p.tables });
   return { tool: 'data-policy', label, status: 'ran', note: null, findings: [...p.findings, ...r] };
 }
 

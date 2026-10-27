@@ -265,3 +265,14 @@ test('licence exceptions: a symlinked file is refused; data-flow context names i
   assert.match(ctx, /cloudflare-tunnel \(Cloudflare Tunnel\): \*\.cloudflare\.com, \*\.argotunnel\.com/);
   assert.match(ctx, /nope \(not a known service\)/);
 });
+
+test('LEGAL.collect on a project reads the hook\'s policy, falling back to the brief\'s', async () => {
+  const extra = { 'apps/server/src/ocr.ts': "const u = 'https://vision.googleapis.com/v1';\n", 'apps/server/src/db/schema/c.ts': "export const c = pgTable('c', { email: text('email') });\n" };
+  const input = await project10(extra, {});
+  const runs = await LEGAL.collect({ ...input, policy: { outbound: [], retention: { days: 30 } } });
+  assert.equal(runs.find((r) => r.tool === 'data-flow').status, 'ran');
+  assert.deepEqual(titles10(runs, 'data-flow'), [['blocking', 'The app connects to vision.googleapis.com, which the data policy does not allow']]);
+  assert.ok(titles10(runs, 'data-policy').some(([, t]) => t === 'The data policy keeps records for 30 days, but nothing the factory added deletes them after that'));
+  const fallback = await LEGAL.collect({ ...input, policy: null, brief: { policy: { outbound: [] } } });
+  assert.equal(fallback.find((r) => r.tool === 'data-flow').status, 'ran');
+});
