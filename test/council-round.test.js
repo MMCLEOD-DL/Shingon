@@ -215,3 +215,16 @@ test('options: axe path or false is accepted; true is not; the smoke timeout is 
   assert.equal(DEFAULT_OPTIONS.councilGatesTimeoutMs, 2400000);
   assert.equal(DEFAULT_OPTIONS.councilSmokeTimeoutMs, 2400000);
 });
+
+test('an added gitleaks:allow hides the file and sets secretSeen', async () => {
+  const { ctx } = await ctxWith(undefined, { councilTools: councilStubs(mkdtempSync(path.join(tmpdir(), 'crnd-')), {}) });
+  writeFileSync(path.join(ctx.ws.dir, 'new.js'), 'export const k = "fake"; // gitleaks:allow\n');
+  await ctx.ws.commitAll('step');
+  const diff = 'diff --git a/new.js b/new.js\n+export const k = "fake"; // gitleaks:allow\ndiff --git a/b.js b/b.js\n+ok\n';
+  const out = await runCouncilRound(ctx, { files: ['new.js', 'b.js'], tests: null, diff, members: [SECURITY, member('correctness', [], true)] });
+  assert.equal(out.report.verdict, 'blocked');
+  assert.equal(ctx.state.council.secretSeen, true);
+  const last = ctx.team.reviewer.calls.at(-1).task;
+  assert.match(last, /\(changes to new\.js hidden: the secret scanner found a possible secret in it\)/);
+  assert.match(last, /\+ok/);
+});

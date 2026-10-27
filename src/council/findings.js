@@ -37,6 +37,7 @@ export function makeFinding(spec) {
     line: Number.isInteger(line) ? line : null,
     evidence,
     locked: Boolean(spec.locked),
+    secretHint: Boolean(spec.secretHint),
     preExisting: Boolean(preExisting),
     dismissed: Boolean(spec.dismissed),
     why,

@@ -27,7 +27,7 @@ test('no tool evidence, or already there before the change: at most a warning', 
   assert.equal(makeFinding({ member: 'security', tool: 'semgrep', grade: 'blocking', title: 't', preExisting: true }).grade, 'warning');
   assert.deepEqual(makeFinding({ member: 'security', tool: 'semgrep', grade: 'blocking', title: 't', file: 'a.js', line: 3 }), {
     member: 'security', tool: 'semgrep', grade: 'blocking', maxGrade: 'blocking', title: 't', detail: '', file: 'a.js', line: 3,
-    evidence: true, locked: false, preExisting: false, dismissed: false, why: null, fix: null,
+    evidence: true, locked: false, secretHint: false, preExisting: false, dismissed: false, why: null, fix: null,
   });
   assert.throws(() => makeFinding({ member: 'marketing', tool: 'x', grade: 'note', title: 't' }), /unknown council member/);
   assert.throws(() => makeFinding({ member: 'legal', tool: 'x', grade: 'fatal', title: 't' }), /unknown grade/);

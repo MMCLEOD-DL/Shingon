@@ -121,8 +121,8 @@ test('a missing tool and a broken tool never stop the run (Review Focus 1)', asy
   assert.equal(out.status, 'landed');
   const summary = h.calls.find((c) => c.name === 'approveResult').arg.summary;
   assert.match(summary, /Semgrep \(code scanner\) is not installed, so this check did not run\./);
-  assert.match(summary, /Gitleaks \(secret scanner\) did not finish \(.+\), so this check gave no answer\./);
-  assert.match(summary, /- \[Security\] Gitleaks \(secret scanner\) could not run/);
+  assert.match(summary, /Gitleaks \(secret scanner\) could not run \(.+\)/);
+  assert.equal(summary.split('Gitleaks').length - 1, 1, 'listed once');
 });
 
 test('paused in the middle of round 2: resume finishes the round without redoing the fix or resetting the cap (Review Focus 4)', async () => {

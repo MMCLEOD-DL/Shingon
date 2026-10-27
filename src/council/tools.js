@@ -90,7 +90,7 @@ export async function runTool({ member, name, label, bin, args = [], cwd, option
 
   if (why !== null) {
     return { tool: name, label, status: 'error',
-      findings: [makeFinding({ member, tool: name, grade: 'warning', title: `${label} could not run`, detail: why })],
+      findings: [makeFinding({ member, tool: name, grade: 'warning', title: `${label} could not run (${why})`, detail: why })],
       note: `${label} did not finish (${why}), so this check gave no answer.` };
   }
   return { tool: name, label, status: 'ran', findings, note: null };

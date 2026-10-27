@@ -66,7 +66,7 @@ test('runTool: garbage output or a hang is a warning, not a crash (Review Focus 
   assert.match(r.note, /^Semgrep \(code scanner\) did not finish \(.+\), so this check gave no answer\.$/);
   assert.equal(r.findings.length, 1);
   assert.equal(r.findings[0].grade, 'warning');
-  assert.equal(r.findings[0].title, 'Semgrep (code scanner) could not run');
+  assert.match(r.findings[0].title, /^Semgrep \(code scanner\) could not run \(.+\)$/);
 
   const hang = writeStubCli(dir, 'hang', 'setInterval(() => {}, 1000);');
   const h = await runTool({ ...base, cwd: tmp(), options: opts({ councilTools: { semgrep: hang }, councilToolTimeoutMs: 300 }), parse: parseList });

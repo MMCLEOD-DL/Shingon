@@ -44,7 +44,7 @@ export function buildReport({ round, findings, toolRuns, by, history = [], overr
   const report = {
     round, verdict: councilVerdict(findings), blocking, warnings: grade('warning'), notes: grade('note'),
     dismissed: byMember(findings.filter((f) => f.dismissed)), resolved,
-    toolNotes: (toolRuns ?? []).filter((r) => r.status !== 'ran').map((r) => r.note).filter(Boolean),
+    toolNotes: (toolRuns ?? []).filter((r) => r.status !== 'ran' && r.status !== 'error').map((r) => r.note).filter(Boolean),
     by: by ?? null, overridden: Boolean(overridden),
   };
   report.text = reportText(report);
@@ -52,7 +52,7 @@ export function buildReport({ round, findings, toolRuns, by, history = [], overr
 }
 
 function itemLine(f) {
-  const where = [f.tool && `found by ${TOOL_LABEL[f.tool] ?? f.tool}`, f.file && (f.line ? `${f.file}:${f.line}` : f.file)].filter(Boolean);
+  const where = [f.tool && !String(f.title).startsWith(TOOL_LABEL[f.tool] ?? f.tool) && `found by ${TOOL_LABEL[f.tool] ?? f.tool}`, f.file && (f.line ? `${f.file}:${f.line}` : f.file)].filter(Boolean);
   return `  - [${MEMBER_LABEL[f.member]}] ${f.title}${f.why ? `: ${f.why}` : ''}${where.length ? ` (${where.join(', ')})` : ''}${f.preExisting ? ' — already there before this change' : ''}`;
 }
 

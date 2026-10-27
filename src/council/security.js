@@ -111,8 +111,10 @@ export function parseGitleaks(text, { changed, added, wholeFiles }, { code = 0 }
 export function parseNpmAudit(text, { introduced }) {
   const data = JSON.parse(text);
   if (data?.error) throw new Error(data.error.summary || data.error.code || 'npm audit failed');
+  if (data?.advisories && typeof data.advisories === 'object') throw new Error('npm audit gave the old npm 6 report, which this version cannot read. Update npm to version 7 or later.');
+  if (!data?.vulnerabilities || typeof data.vulnerabilities !== 'object') throw new Error('npm audit gave no list of vulnerabilities');
   const out = [];
-  for (const [name, v] of Object.entries(data?.vulnerabilities ?? {})) {
+  for (const [name, v] of Object.entries(data.vulnerabilities ?? {})) {
     const via = (Array.isArray(v?.via) ? v.via : []).find((x) => x !== null && typeof x === 'object');
     if (!via) continue;
     out.push(makeFinding({
@@ -137,7 +139,7 @@ export function settingsTouched(files) {
 
 // A skip-this-line comment a step added can hide a problem instead of fixing it. Only lines this
 // change added count (a new file counts as all added); old suppressions on unchanged lines are ignored.
-const SUPPRESSION = /nosemgrep|gitleaks:allow|\bnosec\b/i;
+const SUPPRESSION = /nosemgrep|\bnosem\b|gitleaks:allow|\bnosec\b/i;
 const MAX_SUPPRESSION_FILE = 2 * 1024 * 1024;
 export function suppressionsAdded({ dir, files, changed, added, wholeFiles }) {
   const out = [];
@@ -154,6 +156,14 @@ export function suppressionsAdded({ dir, files, changed, added, wholeFiles }) {
     for (let i = 0; i < lines.length; i++) {
       const m = SUPPRESSION.exec(lines[i]);
       if (!m || !isIntroduced({ changed, added, wholeFiles }, file, i + 1)) continue;
+      if (m[0].toLowerCase() === 'gitleaks:allow') {
+        out.push(makeFinding({
+          member: 'security', tool: 'settings', grade: 'blocking', locked: false, secretHint: true, file, line: i + 1,
+          title: 'This change tells the secret scanner to skip a line, so a key may be hidden there',
+          detail: 'Remove the comment and the key, and keep the key out of the code.',
+        }));
+        continue;
+      }
       out.push(makeFinding({
         member: 'security', tool: 'settings', grade: 'warning', locked: true, file, line: i + 1,
         title: 'This change adds a comment that tells a scanner to skip a line',

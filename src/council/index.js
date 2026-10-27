@@ -153,12 +153,12 @@ export async function runCouncilRound(ctx, { files, tests, diff, members = MEMBE
     } catch (e) {
       const msg = String(e?.message ?? e);
       runs = [{ tool: m.member, label: `${m.label} checks`, status: 'error', note: `The ${m.label} checks hit a problem (${clip(msg, 200)}), so they gave no answer.`,
-        findings: [makeFinding({ member: m.member, grade: 'warning', title: `The ${m.label} checks hit a problem and gave no answer`, detail: msg })] }];
+        findings: [makeFinding({ member: m.member, grade: 'warning', title: `The ${m.label} checks hit a problem (${clip(msg, 120)}), so they gave no answer.`, detail: msg })] }];
     }
     for (const r of runs) log.event('council-tool', { member: m.member, tool: r.tool, status: r.status, findings: r.findings.length });
     toolRuns.push(...runs);
     let mine = runs.flatMap((r) => r.findings);
-    for (const f of mine) if (f.tool === 'gitleaks' && !f.preExisting && f.file) hidden.add(f.file);
+    for (const f of mine) if ((f.tool === 'gitleaks' || f.secretHint) && !f.preExisting && f.file) hidden.add(f.file);
     input.diff = hideFiles(diff, hidden);
     let by = null;
     let interpreted = false;

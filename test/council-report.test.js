@@ -97,3 +97,11 @@ test('fixChunk says "is" for one leftover problem and "are" for several', () => 
   const t = fixChunk(mk(60), 1).instructions;
   assert.match(t, /\(\d+ more problems are listed in the council report\.\)$/);
 });
+
+test('an errored check is listed once, as its warning', () => {
+  const run = { tool: 'gitleaks', label: 'Gitleaks (secret scanner)', status: 'error', note: 'Gitleaks (secret scanner) did not finish (it wrote no report), so this check gave no answer.',
+    findings: [makeFinding({ member: 'security', tool: 'gitleaks', grade: 'warning', title: 'Gitleaks (secret scanner) could not run (it wrote no report)' })] };
+  const r = buildReport({ round: 1, findings: run.findings, toolRuns: [run], by: null });
+  assert.deepEqual(r.toolNotes, []);
+  assert.equal(r.text.split('Gitleaks').length - 1, 1);
+});
