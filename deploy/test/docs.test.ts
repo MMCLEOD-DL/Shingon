@@ -5,7 +5,7 @@ const doc = (p: string) => readFileSync(new URL(`../../${p}`, import.meta.url), 
 test('the runbook has every section the operator needs', () => {
   const headings = [...doc('docs/RUNBOOK.md').matchAll(/^## (.+)$/gm)].map((m) => m[1]);
   expect(headings).toEqual(['What this is', 'Setting up a new deployment', 'Where data goes', 'What the alerts mean', 'Backups and restoring',
-    'Updating', 'Recovering from a failed update', 'Remote access', 'HTTPS on a client\'s network', 'Rotating secrets']);
+    'Updating', 'Recovering from a failed update', 'Locked out: no admin can sign in', 'Remote access', 'HTTPS on a client\'s network', 'Rotating secrets']);
 });
 test('every alert the monitor can send is explained', () => {
   const runbook = doc('docs/RUNBOOK.md');
@@ -28,4 +28,16 @@ test('LICENCES.md is current', async () => {
   const locked = await collectLockfile(new URL('../../', import.meta.url).pathname);
   expect(locked).not.toBeNull();
   expect(doc('docs/LICENCES.md')).toBe(renderMarkdown(locked ?? []));
+});
+test('the lockout section gives the exact recovery command, its fallback, and when it is allowed', () => {
+  const section = doc('docs/RUNBOOK.md').split('## Locked out: no admin can sign in')[1]!.split('\n## ')[0]!;
+  expect(section).toContain('docker compose run --rm app node apps/server/dist/auth/bootstrap-admin.js --recover --email ');
+  expect(section).toContain('docker compose run --rm --no-deps app node apps/server/dist/auth/bootstrap-admin.js --recover --email ');
+  expect(section).toContain('only when no admin is both switched on and has a password');
+  expect(section).toMatch(/UPDATE users SET disabled_at = NULL/);
+});
+test('the runbook covers the operator notes from the final review', () => {
+  const runbook = doc('docs/RUNBOOK.md');
+  for (const phrase of ['email_outbox', 'INSTANCE_MODE', 'within 30 days of the newest pre-update backup', '--any-host', 'superuser', 'did not come back', 'being updated'])
+    expect(runbook, phrase).toContain(phrase);
 });

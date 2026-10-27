@@ -200,3 +200,21 @@ test('the ops image trusts only the pinned apt keys, never a whole downloaded ke
   expect(d).toMatch(/pin-apt-key \/tmp\/pgdg\.asc "\$\{PGDG_KEY_FPR\}" \/etc\/apt\/keyrings\/pgdg\.gpg/);
   expect(d).toMatch(/pin-apt-key \/tmp\/docker\.asc "\$\{DOCKER_KEY_FPR\}" \/etc\/apt\/keyrings\/docker\.gpg/);
 });
+
+test('while the app is down the front door shows a plain "being updated" page with the real status, holding no settings', () => {
+  const block = caddyfile.slice(caddyfile.indexOf('handle_errors'));
+  expect(caddyfile).toMatch(/^\s*handle_errors 502 503 504 \{$/m);
+  expect(block).toContain('The app is being updated');
+  expect(block).toContain('back in a few minutes');
+  expect(block).toMatch(/^\s*HTML \{err\.status_code\}$/m);            // the status stays 502/503/504, never 200
+  expect(block).toMatch(/header Cache-Control "no-store"/);
+  // static: no environment value ({$...}) or request value ({http....}) is put into the page
+  const page = block.slice(block.indexOf('<<HTML'), block.indexOf('HTML {err.status_code}'));
+  expect(page).not.toMatch(/\{\$|\{http\.|\{env\./);
+  expect(page).not.toMatch(/<script|src=|href=/i);                       // nothing loaded from anywhere
+});
+
+test('the production app build leaves out the test-only e2e server', () => {
+  const build = JSON.parse(readFileSync(new URL('../../apps/server/tsconfig.build.json', import.meta.url), 'utf8')) as { exclude?: string[] };
+  expect(build.exclude).toContain('src/e2e-server.ts');
+});

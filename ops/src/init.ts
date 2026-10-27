@@ -81,6 +81,7 @@ export function generateEnv(opts: InitOptions): { env: string; checklist: string
         { key: 'AUDIT_RETENTION_DAYS', comment: 'How many days of the audit log to keep.', example: '730' },
         { key: 'AWS_ACCESS_KEY_ID', comment: 'Sign-in details for an S3-compatible backup destination.', example: '' },
         { key: 'AWS_SECRET_ACCESS_KEY', comment: 'The matching secret.', example: '' },
+        { key: 'AWS_DEFAULT_REGION', comment: 'The S3 region, only if the destination needs one (for example eu-west-2 for Amazon S3).', example: '' },
         { key: 'B2_ACCOUNT_ID', comment: 'Sign-in details for a Backblaze B2 backup destination.', example: '' },
         { key: 'B2_ACCOUNT_KEY', comment: 'The matching key.', example: '' },
         { key: 'RESTIC_REST_USERNAME', comment: 'Sign-in details for a password-protected restic REST server.', example: '' },

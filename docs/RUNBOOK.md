@@ -17,7 +17,10 @@ A Highland deployment is a staff web app for one company, running on one small m
 ### Good to know before you start
 
 - **Accounts.** There is no public sign-up. The first admin is created with a one-off command (below); everyone else is invited by an admin. People are switched off ("disabled"), never deleted, because the activity log keeps a reference to them.
-- **The activity (audit) log** cannot be edited or deleted by the app's normal code paths: it protects against bugs in the app, not against someone who has taken over the app's own process (that would need the separate database role planned as later work). The nightly tidy-up removes entries older than `AUDIT_RETENTION_DAYS` (default 730 days).
+- **The activity (audit) log** cannot be edited or deleted by the app's normal code paths: it protects against bugs in the app, not against someone who has taken over the app's own process. The nightly tidy-up removes entries older than `AUDIT_RETENTION_DAYS` (default 730 days).
+- **The app connects to the database as PostgreSQL's superuser** (`app`, the role that owns the database). So someone who took over the app's own process could do anything in the database, the activity log included. A separate, limited role for the app (`app_rw`) is the planned later fix.
+- **`INSTANCE_MODE`.** On its own, the app defaults to `demo` and ops to `production`. The bundle's `compose.yaml` always sets it for both from `.env` (default `production`), so on a box they always agree and follow `.env`; the different defaults only matter when the app or ops are run by hand outside the bundle.
+- **Invitation and reset links sit in the database until the email is sent.** A queued email keeps its one-time link in the `email_outbox` table (column `data`) until it is sent or finally gives up, when the link is wiped. While mail is stuck, those links are in the database and so can be in a backup. They still expire (invites after 7 days, resets after 1 hour) and work only once, so a stale backup's links are useless; fix stuck mail promptly all the same.
 - **Demo boxes stay demo boxes.** A database that has ever held demo data (made-up people, published demo password) can never be switched to `INSTANCE_MODE=production`. Start a live box from a fresh, empty database.
 - **Nothing here is shared between clients.** Each box has its own secrets, its own backup destination and its own backup password.
 
@@ -88,7 +91,7 @@ You need: a Linux machine with Docker Engine and the Compose plugin; the release
    docker compose run --rm app node apps/server/dist/auth/bootstrap-admin.js --email jo@acme.co.uk --name "Jo Bloggs"
    ```
 
-   It prints a link. Send it to that person (it works for 7 days); they open it and choose their own password. Running it again for the same address issues a fresh link.
+   It prints a link. Send it to that person (it works for 7 days); they open it and choose their own password. Running it again for the same address issues a fresh link. If one day no admin can sign in at all, see "Locked out: no admin can sign in".
 
 7. **Check the box and take the first backup:**
 
@@ -110,7 +113,7 @@ Every outbound connection the app and ops can make, and the `.env` setting that 
 | Destination | Who connects | Setting | What is sent |
 |---|---|---|---|
 | **SMTP server** | app | `SMTP_URL`, `EMAIL_FROM` | Invitation, password-reset and password-changed emails: the person's name and email address, and a one-time link. |
-| **Backup destination** | ops (and the updater, for the pre-update backup) | `BACKUP_REPOSITORY`, plus `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, `B2_ACCOUNT_ID`/`B2_ACCOUNT_KEY` or `RESTIC_REST_USERNAME`/`RESTIC_REST_PASSWORD` | A full copy of the database and the uploaded files, **encrypted on the box** with `BACKUP_PASSWORD` before it leaves. The destination cannot read it. |
+| **Backup destination** | ops (and the updater, for the pre-update backup) | `BACKUP_REPOSITORY`, plus `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` (and `AWS_DEFAULT_REGION` if the destination needs one), `B2_ACCOUNT_ID`/`B2_ACCOUNT_KEY` or `RESTIC_REST_USERNAME`/`RESTIC_REST_PASSWORD` | A full copy of the database and the uploaded files, **encrypted on the box** with `BACKUP_PASSWORD` before it leaves. The destination cannot read it. |
 | **Matrix homeserver** | ops (and the updater) | `MATRIX_HOMESERVER`, `MATRIX_ACCESS_TOKEN`, `MATRIX_ROOM_ID` | Alert text: the client label, a plain-English problem, version numbers, backup ids, disk figures and counts. No client records. Secrets are removed from every alert. |
 | **Alert webhook** | ops (and the updater) | `ALERT_WEBHOOK_URL` | The same alert text, as JSON `{"text": "…"}`. |
 | **Heartbeat (outside watcher)** | ops, every minute | `HEARTBEAT_URL` | `status=up` and a short message: `OK`, or the number of problems and the first one (at most 100 characters). |
@@ -169,6 +172,7 @@ To see the current state at any time: `docker compose run --rm ops check`. The o
 
 - **"The last restore test failed: …"** or **"Problem: the restore test failed. …"** The weekly test restored the newest backup into a scratch database and something did not match or could not be read. The reason follows, for example "There are no backups yet.", "The newest backup is 40 hours old (expected one every day).", a missing backup record, or table and file counts that differ. Run `ops restore-test` to see it again. A backup that cannot be restored is as bad as no backup: fix it the same day.
 - **"No restore test has passed in the last 8 days."** The weekly test did not run or did not pass. Run `ops restore-test`.
+- **"1 files listed in the backed-up database did not come back (for example …)."** once, after a quiet backup otherwise, can be a harmless race: the backup copies the database first and the uploads folder a moment later, so a file someone deleted in between is listed by the database copy but missing from the uploads copy. Run `ops backup` and then `ops restore-test`: if the new test passes, it was the race. If files keep going missing, treat it as a real problem with the uploads volume.
 
 ### Updates
 
@@ -206,7 +210,7 @@ To see the current state at any time: `docker compose run --rm ops check`. The o
 
 **Retention:**
 - **Daily and manual backups:** 7 daily, 5 weekly and 12 monthly (`BACKUP_KEEP`). Only the nightly scheduled backup prunes.
-- **Pre-update backups** (taken by every update): always the last 5, and every one within 30 days. They are outside the daily rule, because a failed update's alert names one.
+- **Pre-update backups** (taken by every update): always the last 5, and every one taken within 30 days of the newest pre-update backup (not of today, so a box that is rarely updated keeps its recent ones). They are outside the daily rule, because a failed update's alert names one.
 - **Safety backups** (taken by `ops restore` just before it overwrites anything, tagged `safety`): **never pruned**, never counted as "latest", and restored only by naming their id. Delete them by hand once you are sure you will not need them.
 
 **Commands:**
@@ -222,6 +226,8 @@ To see the current state at any time: `docker compose run --rm ops check`. The o
   ```
 
   It refuses while the app is still answering. It first takes a **safety backup** of the current data and prints its id: write it down. If anything goes wrong after that point, `restore <that safety id>` (not `latest`) takes you back.
+
+  A backup named **by id** must have been made by this box (its host name, see "List the backups"), or the restore is refused before anything changes: on a shared destination a mistyped or copied id could otherwise put another client's data on this box. To restore another box's backup on purpose (for example when moving a client to a new box with a different `CLIENT_LABEL`), add `--any-host`: `docker compose run --rm ops restore <backup id> --yes-replace-live-data --any-host`.
 - **List the backups:** restic is in the ops image:
 
   ```bash
@@ -255,7 +261,7 @@ Updates are run by hand, in a quiet hour, with the **updater**: the only contain
 docker compose run --rm updater update --to 0.1.1
 ```
 
-What it does, in order: stops the app **and the monitor (ops)**, takes an encrypted pre-update backup, switches `APP_TAG` in `.env`, updates the database, starts the new version and waits up to 3 minutes for it to report the new version and a healthy database. If anything fails after the backup, it puts the backup and the previous version back by itself. Then it starts ops again. Because ops is stopped for the whole update, **no "app is not answering" alert is sent for a planned update**. Staff see a few minutes of downtime; no write can be lost, because the app is stopped before the backup is taken.
+What it does, in order: stops the app **and the monitor (ops)**, takes an encrypted pre-update backup, switches `APP_TAG` in `.env`, updates the database, starts the new version and waits up to 3 minutes for it to report the new version and a healthy database. If anything fails after the backup, it puts the backup and the previous version back by itself. Then it starts ops again. Because ops is stopped for the whole update, **no "app is not answering" alert is sent for a planned update**. Staff see a few minutes of downtime, as a plain "The app is being updated, back in a few minutes" page from the front door (also shown whenever the app is stopped or restarting, with the real 502/503 status, so monitors still see the outage); no write can be lost, because the app is stopped before the backup is taken.
 
 **Getting the new images onto the box:**
 - **From a file** (the default, local-only image names): copy the `docker save` file into the bundle folder and add `--image-file`: `docker compose run --rm updater update --to 0.1.1 --image-file images-0.1.1.tar`. The file must be inside the bundle folder.
@@ -284,7 +290,7 @@ Until Phase 7 automates it, patching is the operator's job. **Once a month**, an
 
 1. On the build machine, raise the pinned tags to the newest patch release of the same version: `postgres:17.x-bookworm`, `caddy:2.x.y-alpine` and `cloudflare/cloudflared:<date>` in `deploy/compose.yaml`; `RESTIC_VERSION` (with its SHA-256) in `deploy/ops.Dockerfile` if restic has a fix. Never change PostgreSQL's major version (17) this way.
 2. Run `npm audit --omit=dev` and update any shipped package with a known problem.
-3. Release a patch version (`npx tsx scripts/release.ts patch`; it refuses while `npm audit` finds high-severity problems in shipped packages), then `docker pull node:22-bookworm-slim` (so the rebuild picks up the newest Node 22 and Debian fixes), `npm run images` and `npm run bundle`.
+3. Release a patch version (`npm run release -- patch`; it refuses while `npm audit` finds high-severity problems in shipped packages), then `docker pull node:22-bookworm-slim` (so the rebuild picks up the newest Node 22 and Debian fixes), `npm run images` and `npm run bundle`.
 4. On each box, ship it through the normal update path above (`update --to <new version>`). If the new bundle changed `compose.yaml` (new PostgreSQL, Caddy or cloudflared tags), copy the new `compose.yaml` and `Caddyfile` into the bundle folder after the update (keep `.env`), then `docker compose pull db proxy` (add `tunnel` with the tunnel) and `docker compose up -d` (with `--profile tunnel` if used). That restarts those containers with a few seconds' interruption.
 
 **Host operating-system updates** (`sudo apt update && sudo apt upgrade` on the box itself) are done over the tunnel in a quiet hour, after a manual `docker compose run --rm ops backup`. If a reboot is needed, expect the outside watcher to report the box silent for a few minutes. After the reboot, check `docker compose ps` and `docker compose run --rm ops check`.
@@ -336,6 +342,38 @@ It refuses (exit 1, nothing changed) if an update is running right now, if there
 - Keep both versions' images on the box (no `docker image prune -a`).
 - If you use a registry, `IMAGE_PULL_POLICY=missing` is for fully named registry images only.
 - Find out why the update failed before trying it again.
+
+## Locked out: no admin can sign in
+
+You are here when nobody can open the People page to fix accounts: every admin account is switched off, or no admin has ever set a password (for example the only admin was switched off by mistake, or left before a second admin was made). If an admin has simply **forgotten their password**, this is not the section: they use "Forgot your password?" on the sign-in page.
+
+**Recovery** switches one existing admin back on and prints a link to set a password, like the first-admin command:
+
+```bash
+docker compose run --rm app node apps/server/dist/auth/bootstrap-admin.js --recover --email jo@acme.co.uk
+```
+
+- It is allowed **only when no admin is both switched on and has a password**. Otherwise it is refused with "An admin can still sign in …" and nothing is changed: that admin can switch accounts back on and invite people in the app.
+- The email must belong to an **existing admin**. A member's or manager's address, or an unknown one, is refused ("That email address is not an admin's account …"): recovery never promotes anyone.
+- It prints a **reset link valid for 1 hour** for an admin who had a password (run the command again for a fresh one if it runs out), or an **invite link valid for 7 days** for an admin who never set one. It sends no email (the box's mail may be what is broken): give the link to that person yourself, by a channel you trust.
+- It ends that admin's old sessions, and it is recorded in the activity log ("Switched an account on", then the reset or invite), with no person as the actor (it came from the command line).
+
+**If that command cannot run** because the app's start-up chain fails (for example the `migrate` container fails, so `docker compose run --rm app …` never starts), run it without the other services, with only the database up:
+
+```bash
+docker compose up -d db
+docker compose run --rm --no-deps app node apps/server/dist/auth/bootstrap-admin.js --recover --email jo@acme.co.uk
+```
+
+**Last resort, if the app image itself will not run:** switch the admin back on directly in the database and end their old sessions. This bypasses the activity log, so write down in your deployment notes what you did and when.
+
+```bash
+docker compose up -d db
+docker compose exec db psql -U app -d app -c "UPDATE users SET disabled_at = NULL WHERE email = 'jo@acme.co.uk' AND role = 'admin'"
+docker compose exec db psql -U app -d app -c "DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE email = 'jo@acme.co.uk' AND role = 'admin')"
+```
+
+Once the app runs again, that admin signs in with their old password, or uses "Forgot your password?" (which needs working mail). If they never set a password, run the `--recover` command above once the app image works: with nobody able to sign in it is still allowed.
 
 ## Remote access
 
@@ -390,29 +428,25 @@ Visitors coming through Tailscale all appear to the app as one address (the Tail
 | `staff.acme.co.uk` | The name is in public DNS, pointing at the box, and ports 80 and 443 reach it from the internet | Caddy gets and renews a free certificate automatically (Let's Encrypt or ZeroSSL) and redirects HTTP to HTTPS. |
 | `staff.acme.lan` or `192.168.1.50`, with `tls internal` | A LAN-only box that should still use HTTPS | Caddy acts as its own small certificate authority. Staff devices must trust its root certificate once (below). |
 
-**The `tls internal` recipe.** Edit the `Caddyfile` in the bundle folder:
+**The `tls internal` recipe.** Edit the `Caddyfile` in the bundle folder and add two lines, leaving everything else as shipped (including the `handle_errors` block that shows staff the "being updated" page):
 
 ```caddyfile
 {
 	# Do not try to add the root certificate to the read-only container's own trust store (it is not needed there).
 	skip_install_trust
 	servers {
-		trusted_proxies static {$TUNNEL_IP}
-		client_ip_headers Cf-Connecting-IP
-		protocols h1 h2
+		…                  # as shipped
 	}
 }
 
 {$SITE_ADDRESS} {
 	tls internal
 	encode zstd gzip
-	reverse_proxy app:3000 {
-		header_up X-Forwarded-For {client_ip}
-	}
+	…                      # as shipped: reverse_proxy and handle_errors
 }
 ```
 
-That is the shipped file with two lines added: `skip_install_trust` in the top block and `tls internal` in the site block. Without `skip_install_trust` Caddy tries to add its root certificate to the container's own trust store, which fails because the front door's file system is read-only, and fills its log with "failed to install root certificate" errors (checked on the build machine). Keep a note that this box's `Caddyfile` is changed, so a later bundle's `Caddyfile` is merged rather than copied over it. Then set `SITE_ADDRESS=staff.acme.lan` (make sure the client's router or DNS server points that name at the box) and `APP_ORIGIN=https://staff.acme.lan`, and run `docker compose up -d`.
+That is: `skip_install_trust` as the first line of the top block and `tls internal` as the first line of the site block. Without `skip_install_trust` Caddy tries to add its root certificate to the container's own trust store, which fails because the front door's file system is read-only, and fills its log with "failed to install root certificate" errors (checked on the build machine). Keep a note that this box's `Caddyfile` is changed, so a later bundle's `Caddyfile` is merged rather than copied over it. Then set `SITE_ADDRESS=staff.acme.lan` (make sure the client's router or DNS server points that name at the box) and `APP_ORIGIN=https://staff.acme.lan`, and run `docker compose up -d`.
 
 **Trusting Caddy's root certificate on staff devices.** Copy it off the box once:
 

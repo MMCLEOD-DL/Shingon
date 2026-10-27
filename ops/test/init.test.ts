@@ -1,6 +1,7 @@
 import { test, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { generateEnv } from '../src/init.js';
+import { BACKEND_ENV_KEYS } from '../src/config.js';
 
 const opts = { client: 'Acme Ltd', origin: 'https://expenses.acme.co.uk', siteAddress: 'expenses.acme.co.uk', bundleDir: '/opt/highland/acme', mode: 'production' as const };
 
@@ -39,4 +40,16 @@ test('odd characters in the client name cannot break the file or inject a settin
   expect(() => generateEnv({ ...opts, client: 'Bad\nINSTANCE_MODE=demo' })).toThrow(/one line/);
   const { env } = generateEnv({ ...opts, client: `O'Brien & Sons "Ltd" $5 #1` });
   expect(env.match(/^INSTANCE_MODE=/gm)).toHaveLength(1);
+});
+
+test('every backup-destination setting ops reads reaches it: compose passes it to ops and the updater, and .env.example and ops init list it', () => {
+  const compose = readFileSync(new URL('../../deploy/compose.yaml', import.meta.url), 'utf8');
+  const example = readFileSync(new URL('../../deploy/.env.example', import.meta.url), 'utf8');
+  const { env } = generateEnv(opts);
+  expect(BACKEND_ENV_KEYS).toContain('AWS_DEFAULT_REGION');
+  for (const k of BACKEND_ENV_KEYS) {
+    expect(compose, k).toContain(`\n  ${k}: \${${k}:-}\n`);   // in x-ops-env, shared by ops and the updater
+    expect(example, k).toMatch(new RegExp(`^# ${k}=$`, 'm'));
+    expect(env, k).toMatch(new RegExp(`^# ${k}=$`, 'm'));
+  }
 });

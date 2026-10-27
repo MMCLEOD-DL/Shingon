@@ -16,4 +16,35 @@
 		# The app counts exactly one proxy hop, so it always gets exactly one Caddy-set value: the real visitor.
 		header_up X-Forwarded-For {client_ip}
 	}
+	# While the app is stopped or restarting (an update, a restore, a crash), staff get this small page instead of a bare
+	# 502. It is static: no settings, names or secrets are put into it. The status code stays the real one (502/503/504).
+	handle_errors 502 503 504 {
+		header Content-Type "text/html; charset=utf-8"
+		header Cache-Control "no-store"
+		header Retry-After "120"
+		respond <<HTML
+			<!doctype html>
+			<html lang="en-GB">
+			<head>
+			<meta charset="utf-8">
+			<meta name="viewport" content="width=device-width, initial-scale=1">
+			<meta http-equiv="refresh" content="60">
+			<title>Back in a few minutes</title>
+			<style>
+			body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #e6f7f5; color: #1f2933; font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+			main { max-width: 26rem; margin: 1rem; padding: 2rem 1.5rem; background: #fff; border-top: 6px solid #007163; border-radius: 12px; box-shadow: 0 2px 12px rgba(0, 0, 0, .08); text-align: center; }
+			h1 { margin: 0 0 .75rem; font-size: 1.4rem; font-weight: 650; color: #007163; }
+			p { margin: .5rem 0; line-height: 1.5; }
+			</style>
+			</head>
+			<body>
+			<main>
+			<h1>The app is being updated</h1>
+			<p>It will be back in a few minutes. Nothing you have saved is lost.</p>
+			<p>This page tries again by itself every minute.</p>
+			</main>
+			</body>
+			</html>
+			HTML {err.status_code}
+	}
 }
