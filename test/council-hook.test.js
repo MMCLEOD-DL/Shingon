@@ -252,3 +252,38 @@ test('the hook redacts what it hands back: an env secret in an interpreter reply
     if (before === undefined) delete process.env.COUNCIL_TEST_TOKEN; else process.env.COUNCIL_TEST_TOKEN = before;
   }
 });
+
+test('council-report.json names the reviewed commit, the run and secretSeen', async () => {
+  const s = await setup({ build: { 'apps/server/src/key.ts': "const k = 'x'; // gitleaks:allow\n" } });
+  const r = await runProjectCouncil(s.args, { options: s.options, deps: s.deps });
+  assert.equal(r.status, 'blocked');
+  const json = JSON.parse(readFileSync(path.join(s.projectDir, 'builds', RUN, 'council-report.json'), 'utf8'));
+  assert.deepEqual([json.sha, json.runId, json.secretSeen], [s.buildSha, RUN, true]);
+});
+
+test('a pause on a new commit marks an older commit\'s saved report as stale (Plans 11 and 12 never read it as current)', async () => {
+  let pause = false;
+  const s = await setup({ reviewer: () => (pause ? { ok: false, failure: 'no-participant', error: 'no model' } : { text: 'VERDICT: APPROVE' }) });
+  const r1 = await runProjectCouncil(s.args, { options: s.options, deps: s.deps });
+  assert.equal(r1.status, 'blocked');
+  const dir = path.join(s.projectDir, 'builds', RUN);
+  assert.equal(JSON.parse(readFileSync(path.join(dir, 'council-report.json'), 'utf8')).sha, s.buildSha);
+  const later = await buildCommit(s.appDir, { 'apps/server/src/claims/total.ts': 'export const total = (m: number) => m * 45;\n' }, 'fix');
+  pause = true;
+  const r2 = await runProjectCouncil({ ...s.args, sha: later }, { options: s.options, deps: s.deps });
+  assert.equal(r2.status, 'paused');
+  const json = JSON.parse(readFileSync(path.join(dir, 'council-report.json'), 'utf8'));
+  assert.deepEqual(json, { sha: later, runId: RUN, status: 'paused', reason: 'no model' });
+  const md = readFileSync(path.join(dir, 'council-report.md'), 'utf8');
+  assert.doesNotMatch(md, /Round 1|The reliability test failed/);
+  assert.match(md, /paused before it finished/);
+  // A pause on the same commit as the saved report leaves that report alone.
+  let pause2 = false;
+  const s2 = await setup({ reviewer: () => (pause2 ? { ok: false, failure: 'no-participant', error: 'no model' } : { text: 'VERDICT: APPROVE' }) });
+  await runProjectCouncil(s2.args, { options: s2.options, deps: s2.deps });
+  const before = readFileSync(path.join(s2.projectDir, 'builds', RUN, 'council-report.json'), 'utf8');
+  pause2 = true;
+  const same = await runProjectCouncil(s2.args, { options: s2.options, deps: s2.deps });
+  assert.equal(same.status, 'paused');
+  assert.equal(readFileSync(path.join(s2.projectDir, 'builds', RUN, 'council-report.json'), 'utf8'), before);
+});

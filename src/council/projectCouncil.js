@@ -13,21 +13,29 @@ import { projectContext } from './project.js';
 import { openCouncilWorkspace, openCouncilLog } from './councilWorkspace.js';
 import { runCouncilRound, membersFor, validateCouncilOptions, PROJECT_COUNCIL } from './index.js';
 import { fixChunk } from './report.js';
+import { markCouncilReportStale } from './reportFile.js';
 
 // Everything handed back to Plan 8 (text, fix, reason) goes through redact() once more on the way out:
 // Plan 8 stores it in the build state.
 // Plan 8 clips a council fix's instructions to 3000 characters (Ruling R16).
 const FIX_MAX = 3000;
 
+// A pause on a new commit must not leave an older commit's report looking current. Best effort: never throws.
+function staleOnPause(project, reason) {
+  if (!project?.buildDir || !/^[0-9a-f]{7,64}$/.test(String(project.sha))) return;
+  try { markCouncilReportStale(project.buildDir, { sha: project.sha, runId: project.runId, reason }); } catch { /* best effort */ }
+}
+
 const plain = (e) => clip(redact(String(e?.message ?? e ?? '')).replace(/\s*\n\s*/g, ' ').trim(), 300) || 'an unknown error';
 
 export async function runProjectCouncil(args, { options = {}, deps = {} } = {}) {
   let opened = null;
   let state = null;
+  let project = null;
   const sticky = () => (state?.council?.secretSeen === true ? { secretSeen: true } : {});
   try {
     // Ruling R19: an unsafe run id or slug, an unreadable project file or a missing pin pauses (caught below).
-    const project = await projectContext(args, { loadProject: deps.loadProject, ids: deps.ids });
+    project = await projectContext(args, { loadProject: deps.loadProject, ids: deps.ids });
     project.factory = args.factory ?? {};
     project.deps = deps;
 
@@ -49,7 +57,11 @@ export async function runProjectCouncil(args, { options = {}, deps = {} } = {}) 
     const diff = await ws.diffRange(ws.baseSha, project.sha);
     const r = await runCouncilRound(ctx, { files, tests: null, diff, members: membersFor(PROJECT_COUNCIL), project });
 
-    if (r.status === 'paused') return { status: 'paused', reason: redact(String(r.reason ?? '')), ...sticky() };
+    if (r.status === 'paused') {
+      const reason = redact(String(r.reason ?? ''));
+      staleOnPause(project, reason);
+      return { status: 'paused', reason, ...sticky() };
+    }
     const { report } = r;
     const out = { status: report.verdict, text: redact(String(report.text ?? '')), secretSeen: state.council.secretSeen === true };
     if (report.verdict === 'blocked') {
@@ -58,11 +70,9 @@ export async function runProjectCouncil(args, { options = {}, deps = {} } = {}) 
     }
     return out;
   } catch (e) {
-    return {
-      status: 'paused',
-      reason: redact(`The council hit a problem it could not get past (${plain(e)}), so the build paused. Run "conductor build ${args?.slug}" to try again.`),
-      ...sticky(),
-    };
+    const reason = redact(`The council hit a problem it could not get past (${plain(e)}), so the build paused. Run "conductor build ${args?.slug}" to try again.`);
+    staleOnPause(project, reason);
+    return { status: 'paused', reason, ...sticky() };
   } finally {
     try { opened?.remove(); } catch { /* best effort */ }
   }

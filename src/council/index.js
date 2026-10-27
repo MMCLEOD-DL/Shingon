@@ -218,7 +218,7 @@ export async function runCouncilRound(ctx, { files, tests, diff, members = MEMBE
   log.saveState(state);
   log.event('council-verdict', { round, verdict: report.verdict, ...tally(findings) });
   if (project) {
-    const { md } = await writeCouncilReport(project.buildDir, report);
+    const { md } = await writeCouncilReport(project.buildDir, report, { sha: head, runId: project.runId, secretSeen: c.secretSeen === true });
     log.event('council-report-saved', { md });
   }
   return { status: 'ok', report };
