@@ -53,6 +53,13 @@ Other commands:
 | `conductor resume` | carry on with the latest unfinished run in this project |
 | `conductor runs` | list the unfinished runs in this project |
 | `conductor doctor` | check which models are installed (subscriptions) or answering (local model) |
+| `conductor project new "<client>"` | make a client project folder (`--slug <name>` picks the folder name) |
+| `conductor project list` | list projects and where each brief stands |
+| `conductor project show <project>` | details of one project and its brief |
+| `conductor brief <project> --notes <file>` | draft, question and approve a brief |
+| `conductor brief <project>` | carry on with an unfinished brief |
+| `conductor brief <project> --revise --notes <file>` | make a new version of the approved brief |
+| `conductor brief <project> --discard-draft` | throw away an unfinished brief (your notes are kept) |
 
 Add `--approve-plan` to see the plan and say yes before any work starts.
 
@@ -152,6 +159,50 @@ A missing tool is listed under "Checks that did not run". It never stops a run.
 - `councilSemgrepConfig`: Semgrep rules (default `p/default`, downloaded from Semgrep's
   registry; point it at a local rules file to work fully offline).
 
+## Client projects and briefs
+
+The factory builds a web app for a client from an approved **brief**. Each client gets a
+project folder (by default under `~/highland-projects`; change it with `factory.projectsRoot`).
+The commands in the table above work from any folder, not only a git project.
+
+    conductor project new "Thistle Joinery Ltd"      # makes ~/highland-projects/thistle-joinery-ltd
+    conductor brief thistle-joinery-ltd --notes ~/meetings/thistle-2026-10-27.md
+
+Conductor gives your meeting notes to Claude (or Codex), which drafts the brief: who uses the
+app and what each role may see, what it stores, each feature with **worked examples** (real
+figures, such as "a £12.40 receipt with £2.07 VAT appears in March's report under Travel"),
+reports, outside systems, and the client's **data policy** (where it is hosted, where data may
+go, how long it is kept, where backups go, and that the client accepts your remote access).
+
+Anything the notes don't settle comes back to you as a plain question, **one at a time**.
+Type your answer, `skip` if you don't know yet, or `stop` to finish for now. When nothing is
+left to ask, you see the whole brief and choose `a` approve, `c` ask for changes, or `s` stop.
+
+- **Your notes stay private.** They are copied into the project's `notes/` folder and sent only
+  to the frontier model writing the brief, never to the local model.
+- **Split long notes.** If the notes are too long to send in one go, Conductor says so and sends
+  nothing: split them and run the brief in parts, or shorten them.
+- **Vague examples are refused.** "It works correctly" can't become a test, so Conductor sends it
+  back to the AI before you ever see it.
+- **Each example gets a tag** such as `[upload-receipt#1]` when you approve. The factory's tests
+  carry the same tag, so you can see which example each test proves. A revised brief keeps the
+  tag of every example whose words did not change; a new or reworded example gets a new number,
+  and an old number is never reused.
+- **Outside services come from a fixed list.** The data policy names the services data may go
+  to by id (today `cloudflare-tunnel` and `azure-document-intelligence`). Anything else is
+  refused until it has been added to Conductor's list, so a brief can never quietly allow a
+  service nobody has checked.
+- **Nothing is lost if you stop.** Run `conductor brief <project>` later to carry on where you
+  left off. `conductor brief <project> --discard-draft` throws an unfinished brief away (your
+  notes are kept).
+- **Briefs are versioned.** Approving writes `brief/brief-v1.md` (for you to read and send) and
+  `brief/brief-v1.json` (what the factory builds from). To change an approved brief, run
+  `conductor brief <project> --revise --notes <new notes>`: you get version 2, and version 1
+  is kept. If Conductor crashes after writing a version's files but before recording it, the
+  next approval takes the next number and the unused file stays behind: harmless, and never
+  overwritten.
+- **It needs a terminal.** Without one, Conductor does nothing and sends nothing.
+
 ## Waking the local model
 
 Conductor remembers which models your earlier runs used, and checks them before each run. Each
@@ -221,6 +272,13 @@ safe.
   - `watchDiffs`;
   - the council: `council`, `councilFixRounds`, `councilAcceptLicences`, `councilTools`,
     `councilSemgrepConfig` (see **The council**).
+
+- `factory` (client projects and briefs):
+  - `projectsRoot`: where project folders go (default `~/highland-projects`). It must start with
+    `/` or `~`, and the `CONDUCTOR_PROJECTS_ROOT` environment variable overrides it;
+  - `operatorName`: the name recorded on approved briefs (default: your computer login name).
+
+  Later factory plans add their own keys to this same section.
 
 ## Safety
 

@@ -21,5 +21,9 @@
     "councilFixRounds": 3,
     "councilAcceptLicences": [],
     "councilTools": {}
+  },
+  "factory": {
+    "projectsRoot": "~/highland-projects",
+    "operatorName": "Malcolm"
   }
 }
