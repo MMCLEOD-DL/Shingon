@@ -49,6 +49,15 @@ test('more than 6 examples in one feature is refused', () => {
   assert.match(validateSplit([{ ...GOOD[0], acceptance: ids }, GOOD[1]], brief).problems.join('\n'), /expenses has 7 worked examples \(at most 6\); split it/);
 });
 
+test('briefProblems: a malformed id, a mismatched prefix and a duplicate id are plain refusals', () => {
+  const bad = sampleBrief(); bad.features[0].acceptance[0].id = 'x';
+  assert.match(briefProblems(bad).join('\n'), /has the id "x", which is not in the form feature-id#number/);
+  const mism = sampleBrief(); mism.features[0].acceptance[0].id = 'other#1';
+  assert.match(briefProblems(mism).join('\n'), /"other#1", which belongs to a different feature than "submit-expense"/);
+  const dup = sampleBrief(); dup.features[0].acceptance[1].id = 'submit-expense#1';
+  assert.match(briefProblems(dup).join('\n'), /"submit-expense#1" is used more than once/);
+});
+
 test('briefProblems: modules, a feature with no examples, an example without an id', () => {
   assert.deepEqual(briefProblems(sampleBrief()), []);
   const noId = sampleBrief(); delete noId.features[0].acceptance[0].id;

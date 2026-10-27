@@ -3,7 +3,7 @@ import { reviewLoop } from '../review.js';
 import { callRole } from '../runlog.js';
 import { askUser } from '../askUser.js';
 import { extractJson } from '../plan.js';
-import { acceptanceIds } from './acceptance.js';
+import { acceptanceIds, EXAMPLE_ID_RE } from './acceptance.js';
 import { featureRequest } from './featureRequest.js';
 import { isApiKind } from '../vendors.js';
 import { redact } from '../secrets.js';
@@ -27,13 +27,21 @@ export function briefProblems(brief) {
   if (Array.isArray(brief.modules) && brief.modules.length) {
     out.push(`The brief needs optional modules (${brief.modules.join(', ')}) that the foundation does not have yet, so building it now would leave them out.`);
   }
+  const seenIds = new Set();
   for (const f of brief.features ?? []) {
     const examples = f.acceptance ?? [];
     if (examples.length === 0) out.push(`The feature "${f.title}" has no worked examples. Add at least one to the brief, so it can be tested.`);
+    const redo = 'Approve the brief again with this version of Conductor (conductor brief <project> --revise).';
     examples.forEach((e, i) => {
       if (typeof e?.id !== 'string') {
-        out.push(`The worked example ${i + 1} of "${f.title}" has no id, so its test could not be traced. Approve the brief again with this version of Conductor (conductor brief <project> --revise).`);
+        out.push(`The worked example ${i + 1} of "${f.title}" has no id, so its test could not be traced. ${redo}`);
+        return;
       }
+      const m = EXAMPLE_ID_RE.exec(e.id);
+      if (!m) out.push(`The worked example ${i + 1} of "${f.title}" has the id "${e.id}", which is not in the form feature-id#number. ${redo}`);
+      else if (m[1] !== f.id) out.push(`The worked example ${i + 1} of "${f.title}" has the id "${e.id}", which belongs to a different feature than "${f.id}". ${redo}`);
+      if (seenIds.has(e.id)) out.push(`The worked example id "${e.id}" is used more than once in the brief. ${redo}`);
+      seenIds.add(e.id);
     });
   }
   return out;
