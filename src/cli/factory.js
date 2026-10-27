@@ -14,6 +14,7 @@ import { lockProject } from '../factory/projectLock.js';
 import { runBriefSession } from '../factory/briefRun.js';
 import { briefAuthorSeat } from '../factory/briefTeam.js';
 import { buildCommand, previewCommand, machinesCommand, resumeBuildCommand } from './factoryBuild.js';
+import { shipCommand, deploymentsCommand } from './factoryShip.js';
 import { createTerminal } from '../ui/terminal.js';
 import { RunLog } from '../runlog.js';
 import { killAllChildren } from '../exec.js';
@@ -239,6 +240,8 @@ export const FACTORY_COMMANDS = {
   preview: previewCommand,
   machines: machinesCommand,
   resume: resumeBuildCommand,
+  ship: shipCommand,
+  deployments: deploymentsCommand,
 };
 
 export async function runFactoryCommand(cli, { cwd, env, stdin, stdout, isTTY, onSignal, exit, deps = {} }) {

@@ -1,5 +1,5 @@
 // src/factory/config.js — the factory section of the config (Contract 7 §7.1).
-// Plan 8 adds the foundation, build and machines sections; unknown keys are refused (Plan 10 adds alerts and ship).
+// Plan 8 adds the foundation, build and machines sections; unknown keys are refused. Plan 10 adds alerts and ship.
 import { homedir, userInfo } from 'node:os';
 import path from 'node:path';
 
@@ -154,12 +154,41 @@ function machinesSection(raw, { home }) {
   });
 }
 
+const SHIP_DEFAULTS = Object.freeze({ updateTimeoutMs: 2700000, pollMs: 5000, startTimeoutMs: 300000, buildTimeoutMs: 3600000 });
+
+function alertsSection(raw) {
+  const s = objectOf(raw, 'factory.alerts');
+  checkKeys(s, ['matrix'], 'factory.alerts');
+  if (s.matrix === undefined || s.matrix === null) return Object.freeze({ matrix: null });
+  const m = objectOf(s.matrix, 'factory.alerts.matrix');
+  checkKeys(m, ['homeserver', 'roomId'], 'factory.alerts.matrix');
+  if (typeof m.homeserver !== 'string' || !/^https?:\/\/\S+$/.test(m.homeserver)) {
+    throw new Error('factory.alerts.matrix.homeserver must be a web address such as https://matrix.example.org.');
+  }
+  if (typeof m.roomId !== 'string' || !/^![^\s:]+:\S+$/.test(m.roomId)) {
+    throw new Error('factory.alerts.matrix.roomId must be a Matrix room id such as !alerts:example.org.');
+  }
+  return Object.freeze({ matrix: Object.freeze({ homeserver: m.homeserver, roomId: m.roomId }) });
+}
+
+function shipSection(raw) {
+  const s = objectOf(raw, 'factory.ship');
+  checkKeys(s, Object.keys(SHIP_DEFAULTS), 'factory.ship');
+  const out = {};
+  for (const [k, d] of Object.entries(SHIP_DEFAULTS)) {
+    const v = s[k] ?? d;
+    if (!isInt(v) || v <= 0) throw new Error(`factory.ship.${k} must be a whole number of milliseconds above 0.`);
+    out[k] = v;
+  }
+  return Object.freeze(out);
+}
+
 export function factoryConfig(config, { env = process.env, home = homedir(), user = safeUserName() } = {}) {
   const section = config?.factory ?? {};
   if (typeof section !== 'object' || section === null || Array.isArray(section)) {
     throw new Error('the config\'s "factory" section must be an object');
   }
-  checkKeys(section, ['projectsRoot', 'operatorName', 'foundation', 'build', 'machines'], 'factory');
+  checkKeys(section, ['projectsRoot', 'operatorName', 'foundation', 'build', 'machines', 'alerts', 'ship'], 'factory');
   const rawRoot = env.CONDUCTOR_PROJECTS_ROOT || section.projectsRoot || DEFAULT_PROJECTS_ROOT;
   const projectsRoot = typeof rawRoot === 'string' ? expandHome(rawRoot, home) : rawRoot;
   if (typeof projectsRoot !== 'string' || !path.isAbsolute(projectsRoot)) {
@@ -180,5 +209,7 @@ export function factoryConfig(config, { env = process.env, home = homedir(), use
     foundation: foundationSection(section.foundation, { home }),
     build: buildSection(section.build),
     machines: machinesSection(section.machines, { home }),
+    alerts: alertsSection(section.alerts),
+    ship: shipSection(section.ship),
   };
 }

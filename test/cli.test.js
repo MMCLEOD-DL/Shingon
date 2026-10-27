@@ -109,3 +109,11 @@ test('the usage text lists the project and brief commands', () => {
   for (const s of ['conductor project new "<client>"', 'conductor project list', 'conductor project show <slug>',
     'conductor brief <slug> --notes <file>', 'conductor brief <slug> --revise --notes <file>', 'conductor brief <slug> --discard-draft']) assert.ok(USAGE.includes(s), s);
 });
+
+test('parseCli: ship and deployments', () => {
+  assert.deepEqual(pick(parseCli(['ship', 'acme', '--to', 'acme-office'])), { command: 'ship', slug: 'acme', to: 'acme-office' });
+  assert.match(parseCli(['ship', 'acme']).error, /ship needs a project and a deployment/);
+  assert.deepEqual(pick(parseCli(['deployments'])), { command: 'deployments', status: false, slug: null });
+  assert.deepEqual(pick(parseCli(['deployments', 'status', 'acme'])), { command: 'deployments', status: true, slug: 'acme' });
+});
+function pick(c) { const { flags, ...rest } = c; return rest; }

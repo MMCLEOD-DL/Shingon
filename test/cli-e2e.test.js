@@ -441,3 +441,12 @@ test('doctor still shows the council section when the models could not be checke
   assert.match(text, /Council checks \(used with --council\):/);
   assert.match(text, /✗ axe-core \(accessibility scanner\): not installed/);
 });
+
+test('ship runs outside a git repository and explains a missing project', async () => {
+  const dir = tmp();
+  const cfg = path.join(dir, 'conductor.json');
+  writeFileSync(cfg, JSON.stringify({ participants: [], factory: { projectsRoot: path.join(dir, 'projects') } }));
+  const r = await spawnBin(['ship', 'acme', '--to', 'acme-office', '--config', cfg], { cwd: dir, env: process.env });
+  assert.match(r.out, /acme/);              // Plan 7's readProject message names the missing project
+  assert.doesNotMatch(r.out, /git repo/i);  // dispatched before the git-repo check
+});

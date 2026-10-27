@@ -87,3 +87,14 @@ test('config.example.json has a valid factory block', async () => {
   assert.equal(f.machines.proxmox, null);
   assert.equal(f.operatorName, 'Malcolm');
 });
+
+test('alerts and ship sections: defaults, overrides and plain refusals', () => {
+  const f = factoryConfig({}, { env: {}, home: '/home/op' });
+  assert.deepEqual(f.alerts, { matrix: null });
+  assert.deepEqual(f.ship, { updateTimeoutMs: 2700000, pollMs: 5000, startTimeoutMs: 300000, buildTimeoutMs: 3600000 });
+  assert.equal(factoryConfig({ factory: { alerts: { matrix: { homeserver: 'https://m.example.org', roomId: '!a:example.org' } } } }, { env: {}, home: '/h' }).alerts.matrix.roomId, '!a:example.org');
+  assert.throws(() => factoryConfig({ factory: { alerts: { matrix: { homeserver: 'm.example.org', roomId: '!a:b' } } } }, { env: {}, home: '/h' }), /homeserver must be a web address/);
+  assert.throws(() => factoryConfig({ factory: { ship: { pollMs: 0 } } }, { env: {}, home: '/h' }), /factory\.ship\.pollMs must be a whole number of milliseconds above 0/);
+  assert.throws(() => factoryConfig({ factory: { ship: { pollMS: 5 } } }, { env: {}, home: '/h' }), /Unknown setting "factory\.ship\.pollMS"/);
+  assert.doesNotThrow(() => factoryConfig({ factory: { alerts: {}, ship: {} } }, { env: {}, home: '/h' }), 'alerts and ship are known top-level keys');
+});

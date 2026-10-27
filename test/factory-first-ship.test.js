@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fakeSsh } from './helpers/fakeSsh.js';
 import { scriptedAsk } from './helpers/scriptedAsk.js';
-import { TEST_BRIEF } from './helpers/shipProject.js';
+import { TEST_BRIEF, BOX_RULES } from './helpers/shipProject.js';
 import { runFirstSetup } from '../src/factory/ship/firstShip.js';
 import { newDeployment, withStep } from '../src/factory/deployments/store.js';
 import { forgetRememberedSecrets } from '../src/secrets.js';
@@ -15,17 +15,6 @@ const T = { host: 'acme-box', user: 'highland', port: null, keyPath: null, label
 const PW = 'Zq3-backup-password-from-ops-init_xyz';
 const SETTINGS = { settings: [{ key: 'SMTP_URL', value: 'smtp://u:mailpass@h:587', secret: true }, { key: 'MATRIX_ACCESS_TOKEN', value: 'syt_matrix_token_1', secret: true }],
   alerts: { matrix: { homeserver: 'https://m.example.org', roomId: '!a:example.org' }, webhook: false, heartbeat: true } };
-// The box claims foundation 0.1.3 (foundation v0.1.0's release script stamps the app version into foundation.json): Conductor must not believe it.
-const VERSION = JSON.stringify({ version: { app: '0.1.3', foundation: '0.1.3', commit: 'abc' }, ready: { status: 'ok', checks: [] } });
-const BOX_RULES = [
-  { match: "\\[ ! -e \\.env \\]" },
-  { match: 'docker run --rm -u', stderr: 'Setting up Acme Ltd. Do these before you start the box:\n' },
-  { match: "sed -n 's/\\^BACKUP_PASSWORD=//p'", stdout: `${PW}\n` },
-  { match: 'entrypoint node ops', stdout: VERSION },
-  { match: 'ops check', stdout: '✓ app\n✓ app:backups\n✓ app:restore-test\n' },
-  { match: 'psql', stdout: '{}' },
-  { match: 'bootstrap-admin', stdout: 'Send this link: https://staff.acme.co.uk/invite/tok_one_time_123\n' },
-];
 const dep0 = () => newDeployment({ name: 'acme-office', project: 'acme', host: 'acme-box', ssh: { user: 'highland', port: null, keyPath: null },
   bundleDir: '/opt/highland/acme', hosting: 'client-box', imageDelivery: 'tar', registry: null, access: 'cloudflare-tunnel',
   origin: 'https://staff.acme.co.uk', site: ':80', alerts: { matrix: null, webhook: false, heartbeat: false } });

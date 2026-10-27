@@ -18,6 +18,8 @@ export const USAGE = `Usage:
   conductor preview <project>        run the app with demo data on a factory machine and show its address
   conductor preview <project> --stop stop that preview
   conductor machines [list|sweep]    show the factory's machines, or clear ones left over from crashes
+  conductor ship <project> --to <deployment>   ship the approved release to a box (the first time, it sets the box up)
+  conductor deployments [status] [<project>]   list deployments; with status, check every box over SSH
 Options:
   --config <file>        config file (default: ./conductor.json, then ~/.config/conductor/config.json)
   --test "<command>"     the command that runs this project's tests, e.g. "npm test"
@@ -28,6 +30,7 @@ Options:
   --keep-workspace       keep Conductor's working copy after the run
   --new                  with build: start a fresh build instead of carrying on an unfinished one
   --stop                 with preview: stop the running preview
+  --to <deployment>      with ship: the deployment (box) to ship to
   --no-bell              do not ring the terminal bell when Conductor needs you
   -h, --help             show this help
   --version              show the version`;
@@ -49,6 +52,7 @@ const OPTIONS = {
   'discard-draft': { type: 'boolean' },
   stop: { type: 'boolean' },
   new: { type: 'boolean' },
+  to: { type: 'string' },
 };
 const SUBCOMMANDS = new Set(['resume', 'runs', 'doctor']);
 
@@ -84,6 +88,19 @@ export function parseCli(argv) {
   if (v.slug !== undefined && !isProjectNew) return { error: '--slug only goes with conductor project new' };
   if (v.stop && first !== 'preview') return { error: '--stop only goes with conductor preview' };
   if (v.new && first !== 'build') return { error: '--new only goes with conductor build' };
+  if (v.to !== undefined && first !== 'ship') return { error: '--to only goes with conductor ship' };
+  if (first === 'ship') {
+    if (rest.length !== 1 || typeof v.to !== 'string' || v.to === '') {
+      return { error: 'ship needs a project and a deployment: conductor ship <project> --to <deployment>' };
+    }
+    return { command: 'ship', slug: rest[0], to: v.to, flags };
+  }
+  if (first === 'deployments') {
+    const status = rest[0] === 'status';
+    const args = status ? rest.slice(1) : rest;
+    if (args.length > 1) return { error: 'deployments takes [status] [<project>], e.g. conductor deployments status acme' };
+    return { command: 'deployments', status, slug: args[0] ?? null, flags };
+  }
   if (first === 'build' || first === 'preview') {
     if (!rest.length) return { error: `${first} needs the project's short name, for example: conductor ${first} acme-ltd (see "conductor project list")` };
     const arg = rest.join(' ');

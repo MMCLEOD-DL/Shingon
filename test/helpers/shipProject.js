@@ -157,3 +157,51 @@ export function fakeProvider({ host = 'hf-build', user = 'hf' } = {}) {
     acquired: () => acquired,
   };
 }
+
+// Task 8's box rules for a whole first-time setup: no .env yet, ops init, the backup password, the app on <version>,
+// passing checks, and a first-admin link.
+export function boxRules({ version = '0.1.3', password = 'Zq3-backup-password-from-ops-init_xyz' } = {}) {
+  // The box claims foundation <version> (foundation v0.1.0's release script stamps the app version into foundation.json): Conductor must not believe it.
+  const v = JSON.stringify({ version: { app: version, foundation: version, commit: 'abc' }, ready: { status: 'ok', checks: [] } });
+  return [
+    { match: "\\[ ! -e \\.env \\]" },
+    { match: 'docker run --rm -u', stderr: 'Setting up Acme Ltd. Do these before you start the box:\n' },
+    { match: "sed -n 's/\\^BACKUP_PASSWORD=//p'", stdout: `${password}\n` },
+    { match: 'entrypoint node ops', stdout: v },
+    { match: 'ops check', stdout: '✓ app\n✓ app:backups\n✓ app:restore-test\n' },
+    { match: 'psql', stdout: '{}' },
+    { match: 'bootstrap-admin', stdout: 'Send this link: https://staff.acme.co.uk/invite/tok_one_time_123\n' },
+  ];
+}
+export const BOX_RULES = boxRules();
+
+const SUM = 'a'.repeat(64);
+const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Rules for a whole first ship of <version>: the build machine (hf-build, whatever run folder the provider gave),
+// the box's preflight, the checked copy and the unpacked bundle, then the first-time setup (boxRules).
+export function shipRules(dir, { version = '0.1.3', password = 'Zq3-backup-password-from-ops-init_xyz' } = {}) {
+  const v = esc(version);
+  return [
+    { host: 'hf-build', match: '^uname -m', stdout: 'x86_64\n' },
+    { host: 'hf-build', match: "^cat > .*app\\.bundle'$", saveStdinTo: path.join(dir, 'got.bundle') },
+    { host: 'hf-build', match: `^docker save .* -o '(/srv/hf/runs/hf-[a-z0-9-]+-\\d{8}-\\d{6}-[0-9a-f]{4})/images-${v}\\.tar'`, subst: true,
+      stdout: `${SUM}  $1/images-${version}.tar\n${SUM}  $1/src/dist/highland-bundle-${version}.tar.gz\n` },
+    { host: 'acme-box', match: 'uname -m', stdout: 'arch=x86_64\ndocker=yes\ncompose=yes\ndir=no\nfreekb=99999999\n' },
+    { host: 'acme-box', match: "^sha256sum .*\\.part'$", stdout: `${SUM}  x.part\n` },
+    { host: 'acme-box', match: "^ls -A '", stdout: 'compose.yaml\nCaddyfile\n.env.example\nRUNBOOK.md\n' },
+    ...boxRules({ version, password }),
+  ];
+}
+
+// After a ship of the current release: a "More work" commit (approved), then "release: v<version>" tagged v<version>.
+export function releaseNext(p, version) {
+  const more = commit(p.appDir, { [`apps/web/src/more-${version}.ts`]: `export const more = '${version}';\n` }, 'More work');
+  approve(p, more);
+  const changelog = readFileSync(path.join(p.appDir, 'CHANGELOG.md'), 'utf8')
+    .replace('## [Unreleased]\n', `## [Unreleased]\n\n## [${version}] - 2026-10-27\n- More work.\n`);
+  const slug = path.basename(p.projectDir);
+  const sha = commit(p.appDir, { 'package.json': pkg(slug, version), 'foundation.json': foundationJson(version), 'CHANGELOG.md': changelog }, `release: v${version}`);
+  git(p.appDir, [...GIT_ID, 'tag', '-a', `v${version}`, '-m', `v${version}`]);
+  return sha;
+}
