@@ -6,6 +6,7 @@ import { mkdirSync, mkdtempSync, rmSync, readFileSync, existsSync } from 'node:f
 import path from 'node:path';
 import { Workspace, git, defaultBaseDir, metaDirOf } from '../workspace.js';
 import { RunLog } from '../runlog.js';
+import { redact } from '../secrets.js';
 
 const HEX = /^[0-9a-f]{4,64}$/i;
 const SAFE_REF = /^[A-Za-z0-9._\/-]+$/;
@@ -13,9 +14,13 @@ const SAFE_RUN = /^[A-Za-z0-9._-]+$/;
 
 async function ok(cwd, args, what) {
   const r = await git(cwd, args, { timeoutMs: 300000 });
-  if (r.code !== 0) throw new Error(`${what}: ${(r.stderr || r.stdout).trim().slice(0, 300)}`);
+  if (r.code !== 0) {
+    const detail = redact((r.stderr || r.stdout || '').trim().slice(0, 300));
+    throw new Error(`${what}${detail ? `\n${detail}` : ''}`);
+  }
   return r.stdout.trim();
 }
+const COPY_FAILED = 'The council could not copy the build to check it.';
 
 const hasCommit = async (cwd, rev) => (await git(cwd, ['cat-file', '-e', `${rev}^{commit}`])).code === 0;
 
@@ -30,17 +35,23 @@ export async function openCouncilWorkspace({ appDir, sha, foundation, runId, bas
     try { rmSync(metaDirOf(dir), { recursive: true, force: true }); } catch {}
   };
   try {
-    await ok(dir, ['clone', '--quiet', '--no-hardlinks', path.resolve(appDir), '.'], 'clone failed');
+    await ok(dir, ['clone', '--quiet', '--no-hardlinks', path.resolve(appDir), '.'], COPY_FAILED);
     const branch = `conductor-council/${runId}`;
-    await ok(dir, ['checkout', '-q', '-b', branch, sha], 'checkout failed');
-    await ok(dir, ['remote', 'remove', 'origin'], 'remote remove failed');
+    await ok(dir, ['checkout', '-q', '-b', branch, sha], COPY_FAILED);
+    // the merge base is worked out before origin goes: a clone of appDir on another branch has no local main
+    let mergeBase = '';
+    for (const main of ['main', 'origin/main']) {
+      const r = await git(dir, ['merge-base', sha, main]);
+      if (r.code === 0 && HEX.test(r.stdout.trim())) { mergeBase = r.stdout.trim(); break; }
+    }
+    await ok(dir, ['remote', 'remove', 'origin'], COPY_FAILED);
 
     let baseSha = null;
     let problem = null;
     const commit = foundation?.commit;
     const tag = foundation?.tag;
     if (typeof commit === 'string' && HEX.test(commit) && await hasCommit(dir, commit)) {
-      baseSha = (await ok(dir, ['rev-parse', `${commit}^{commit}`], 'rev-parse failed'));
+      baseSha = (await ok(dir, ['rev-parse', `${commit}^{commit}`], COPY_FAILED));
     }
     if (!baseSha && typeof tag === 'string' && SAFE_REF.test(tag) && !tag.startsWith('-')) {
       // an app repo keeps its foundation release under refs/foundation/<tag>; a clone does not copy it
@@ -49,11 +60,10 @@ export async function openCouncilWorkspace({ appDir, sha, foundation, runId, bas
       if (HEX.test(found) && await hasCommit(dir, found)) baseSha = found;
     }
     if (!baseSha) {
-      const r = await git(dir, ['merge-base', sha, 'main']);
-      const mb = r.code === 0 ? r.stdout.trim() : '';
-      if (!HEX.test(mb)) throw new Error('The council could not find where this build started.');
-      baseSha = mb;
-      problem = `Conductor could not find foundation release ${tag}, so the council reviewed only this build's own changes`;
+      if (!mergeBase) throw new Error('The council could not find where this build started.');
+      baseSha = mergeBase;
+      const what = typeof tag === 'string' && tag ? `foundation release ${tag}` : 'the foundation release';
+      problem = `Conductor could not find ${what}, so the council reviewed only this build's own changes`;
     }
     const ws = new Workspace(dir, branch, baseSha);
     mkdirSync(ws.metaDir, { recursive: true });
@@ -70,6 +80,15 @@ const freshState = () => ({
   council: { round: 0, fixRounds: 0, secretSeen: false, history: [] },
 });
 
+const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+function validState(s) {
+  if (!isObj(s) || !Array.isArray(s.notes) || !Array.isArray(s.warnings)) return false;
+  const c = s.council;
+  return isObj(c) && Number.isFinite(c.round) && Number.isFinite(c.fixRounds)
+    && Array.isArray(c.history) && typeof c.secretSeen === 'boolean'
+    && (c.evidence === undefined || c.evidence === null || isObj(c.evidence));
+}
+
 export function openCouncilLog(buildDir, { onEvent } = {}) {
   const log = new RunLog(path.join(buildDir, 'council'), { onEvent });
   let state = null;
@@ -77,14 +96,13 @@ export function openCouncilLog(buildDir, { onEvent } = {}) {
   if (existsSync(log.statePath)) {
     try {
       const s = JSON.parse(readFileSync(log.statePath, 'utf8'));
-      if (!s || typeof s !== 'object' || Array.isArray(s)) throw new Error('not an object');
+      if (!validState(s)) throw new Error('wrong shape');
       state = s;
     } catch {
       reset = true;
     }
   }
   if (!state) state = freshState();
-  state.council ??= freshState().council;
   if (reset) log.event('council-state-reset', {});
   return { log, state };
 }

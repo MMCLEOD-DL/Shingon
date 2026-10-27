@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { git } from '../src/workspace.js';
@@ -70,4 +70,31 @@ test('the council log keeps its state across calls; a broken state file starts f
   const c = openCouncilLog(buildDir, { onEvent: (e) => events.push(e.type) });
   assert.equal(c.state.council.round, 0);
   assert.ok(events.includes('council-state-reset'));
+});
+
+test('a valid-JSON state of the wrong shape starts fresh too', () => {
+  for (const bad of ['{"council":{}}', '{"council":"x"}', '{"version":1,"notes":[],"warnings":[],"council":{"round":"1","fixRounds":0,"secretSeen":false,"history":[]}}']) {
+    const buildDir = tmp('b-');
+    mkdirSync(path.join(buildDir, 'council'), { recursive: true });
+    writeFileSync(path.join(buildDir, 'council', 'state.json'), bad);
+    const events = [];
+    const c = openCouncilLog(buildDir, { onEvent: (e) => events.push(e.type) });
+    assert.deepEqual(c.state.council, { round: 0, fixRounds: 0, secretSeen: false, history: [] });
+    assert.ok(events.includes('council-state-reset'), bad);
+  }
+});
+
+test('merge-base fallback works when appDir was on another branch, and a missing tag reads plainly', async () => {
+  const { repo, sha } = await app();
+  await git(repo, ['checkout', '-q', 'build/r1']);   // clone has no local main, only origin/main
+  const c = await openCouncilWorkspace({ appDir: repo, sha, foundation: {}, runId: 'r2', baseDir: tmp('cw-') });
+  assert.ok(c.baseSha);
+  assert.equal(c.problem, "Conductor could not find the foundation release, so the council reviewed only this build's own changes");
+  c.remove();
+});
+
+test('a failed copy says so plainly', async () => {
+  await assert.rejects(
+    openCouncilWorkspace({ appDir: tmp('nogit-'), sha: 'abcdef12', foundation: {}, runId: 'r3', baseDir: tmp('cw-') }),
+    /^Error: The council could not copy the build to check it\./);
 });
