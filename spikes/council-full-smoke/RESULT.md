@@ -54,3 +54,13 @@ Neither is run by the test suite.
 - The axe-core file: `npm pack axe-core@4`, then put `package/axe.min.js` at `~/.local/share/conductor/axe-core/axe.min.js` (or set `options.councilTools.axe`). Conductor side only; never in a client app.
 - `TEST_DATABASE_URL` set and the Playwright browsers installed on this machine (as for Plan 8).
 - The decisions in the index's "Operator Questions" and "Contract gaps" (`docs/superpowers/plans/2026-10-27-factory-council-full/00-index.md`).
+
+## Follow-ups from the Plan 9 final review (2026-10-27)
+
+- **Run the evidence-only smoke first** (`node spikes/council-full-smoke/evidence-only.mjs`, no model spend). Nothing has yet proven the council's Playwright config import, the axe pass or the reliability smoke against the real foundation and CT 111.
+- After Plan 8 squashes a build because the council saw a possible secret, `council-report.json` still names the commit before the squash. Plans 11 and 12 should match the report to a build by `runId`, not by `sha`.
+- When a council round on a newer commit pauses, the older report is rewritten as `{ sha, runId, status: "paused", reason }`. Anything reading `council-report.json` must check `status` first.
+- The reliability smoke still trusts the last "finished" line printed while the app's own containers run; a process in the app could in principle fake it. The smoke files themselves are now protected from edits.
+- A missing project name reaches the council as the text "undefined" and is not refused.
+- The smoke clean-up's check on a leftover alert catcher has a tiny gap between checking the process and stopping it.
+- Council model spend is kept in the council's own state, so the cost shown at the build gate leaves it out.
