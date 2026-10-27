@@ -10,7 +10,7 @@ export async function makeFoundationRepo({ tag = 'v0.1.0', extra = {} } = {}) {
   const files = {
     'foundation.json': '{"name":"highland-foundation","version":"0.1.0","commit":"v0.1.0"}\n',
     'package.json': JSON.stringify({ name: 'highland-foundation', version: '0.1.0', scripts: { verify: 'node -e 0', test: 'node -e 0', lint: 'node -e 0' } }, null, 2) + '\n',
-    'apps/web/src/brand.ts': "export const BRAND = { appName: 'Highland App', shortName: 'HA' } as const;\n",
+    'apps/web/src/brand.ts': "// The client's name: the one line a client build may change.\nexport const BRAND = { appName: 'Highland App', shortName: 'HA' } as const;\n",
     'docs/BUILDING-ON.md': '# Building\n',
     'apps/server/test/crossing/harness.ts': '// crossing harness\n',
     'apps/server/test/crossing/cases.ts': '// crossing cases\n',
