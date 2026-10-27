@@ -5,10 +5,11 @@ import { sql } from 'drizzle-orm';
 import type pg from 'pg';
 import { describeRepo, slug } from './config.js';
 import { BackupError, firstLine, LATEST_TAGS, resticEnv, resticProblem, runBackup, TIMEOUTS, workFiles } from './backup.js';
-import { confirmOpsLock, OpsBusyError, withOpsLock } from './opsLock.js';
+import { confirmOpsLock, lockKey, OpsBusyError, withOpsLock } from './opsLock.js';
 import { checkRestoredFiles, compareManifest, countTables, type Manifest } from './manifest.js';
 import { connect, DB_IDENT, pgEnv } from './pg.js';
 import { recordRun, scrub, type OpsDeps } from './runs.js';
+import { ukDate } from './time.js';
 
 export class RestoreError extends Error {
   /** `reported`: the message has already been logged and recorded, so the CLI need not print it again. */
@@ -29,10 +30,14 @@ export const LOCK_WAIT = { restore: 2 * 60e3, restoreTest: 10 * 60e3 } as const;
 
 const STOP_BOTH = 'Stop both the app and ops first (docker compose stop app ops), then run the restore on its own: docker compose run --rm ops restore <backup id | latest> --yes-replace-live-data';
 
-export const stamp = (d: Date): string => `${d.toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)}_${randomBytes(3).toString('hex')}`;
+/**
+ * The start of every restore-test scratch database name of this deployment: `hf_rt_<lock key in hex>_`. Each deployment
+ * (and each parallel test database) on a shared Postgres has its own, so the leftover sweep at start only ever removes its
+ * own scratch databases, never another deployment's restore test in progress. A full name is at most 36 characters.
+ */
+export const scratchPrefix = (appDb: string): string => `hf_rt_${(lockKey(appDb) >>> 0).toString(16).padStart(8, '0')}_`;
 
-export const ukDate = (d: Date): string =>
-  new Intl.DateTimeFormat('en-GB', { dateStyle: 'long', timeStyle: 'short', timeZone: 'Europe/London' }).format(d);
+export const stamp = (d: Date): string => `${d.toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)}_${randomBytes(3).toString('hex')}`;
 
 
 export interface SnapshotInfo { id: string; short: string; time: Date }
@@ -68,7 +73,36 @@ export async function latestSnapshot(deps: OpsDeps): Promise<SnapshotInfo | null
   return best;
 }
 
-async function exists(p: string): Promise<boolean> {
+/** Whether a file or folder exists, or (given a maintenance connection) whether a database of that name exists. */
+/**
+ * Looks up one backup by its id (or the start of it) and checks it was made by this box: a backup id typed by hand could be
+ * another deployment's on a shared destination. Throws RestoreError, before anything is changed, when the backup is not
+ * there or (unless `anyHost`) belongs to another box.
+ */
+export async function snapshotById(deps: OpsDeps, id: string, opts: { anyHost?: boolean } = {}): Promise<SnapshotInfo & { host: string }> {
+  const r = await deps.run.run('restic', ['snapshots', '--json', id], { env: resticEnv(deps.cfg), timeoutMs: TIMEOUTS.resticQuick });
+  if (r.code !== 0) throw new RestoreError(resticProblem(deps, r, TIMEOUTS.resticQuick, `Backup ${id.slice(0, 8)} could not be looked up`));
+  let found: { id?: unknown; short_id?: unknown; time?: unknown; hostname?: unknown } | undefined;
+  try {
+    const parsed = JSON.parse(r.stdout.trim() === '' ? '[]' : r.stdout) as unknown;
+    found = Array.isArray(parsed) ? (parsed as (typeof found)[]).find((x) => typeof x?.id === 'string' && x.id.startsWith(id)) : undefined;
+  } catch {
+    throw new RestoreError('The list of backups could not be read: restic gave an answer ops does not understand.');
+  }
+  if (found === undefined || typeof found.id !== 'string') {
+    throw new RestoreError(`There is no backup ${id.slice(0, 8)} at ${describeRepo(deps.cfg.backup.repository)}, so nothing has been changed. Check the id (the list of backups is in the runbook, "Backups and restoring").`);
+  }
+  const host = typeof found.hostname === 'string' ? found.hostname : '';
+  const mine = slug(deps.cfg.client);
+  if (host !== mine && opts.anyHost !== true) {
+    throw new RestoreError(`Backup ${found.id.slice(0, 8)} was made by another box ("${host || 'unknown'}"), not this one ("${mine}"), so nothing has been changed. To put another box's backup on this one on purpose, run the restore again with --any-host.`);
+  }
+  const short = typeof found.short_id === 'string' ? found.short_id : found.id.slice(0, 8);
+  return { id: found.id, short, host, time: typeof found.time === 'string' ? parseTime(found.time) : new Date(Number.NaN) };
+}
+
+async function exists(p: string, c?: pg.Client): Promise<boolean> {
+  if (c !== undefined) return (await c.query('select 1 from pg_database where datname = $1', [p])).rowCount === 1;
   try {
     await stat(p);
     return true;
@@ -117,7 +151,7 @@ async function verifyLocked(deps: OpsDeps, problems: string[]): Promise<Snapshot
   const { cfg } = deps;
   const ts = stamp(deps.now());
   const target = path.join(cfg.workDir, `verify-${ts}`);
-  const scratch = `hf_restore_test_${ts}`;
+  const scratch = `${scratchPrefix(pgEnv(cfg.databaseUrl).PGDATABASE)}${ts}`;
   let created = false;
   const snap = await latestSnapshot(deps);
   if (snap === null) {
@@ -179,7 +213,7 @@ async function verifyLocked(deps: OpsDeps, problems: string[]): Promise<Snapshot
   return snap;
 }
 
-type SavedRun = { kind: string; ok: boolean; detail: string; snapshot_id: string | null; at: string } & Record<string, unknown>;
+type SavedRun = { kind: string; ok: boolean; detail: string; snapshot_id: string | null; busy: boolean; at: string } & Record<string, unknown>;
 
 /** Test seam only: make one step of the database swap fail, to prove what each failure leaves behind. */
 export type SwapFault = 'aside' | 'into-place' | 'into-place-and-back' | 'drop-old';
@@ -203,9 +237,6 @@ export async function restoreDatabase(deps: OpsDeps, snapshotId: string, targetD
     throw e;
   }
 }
-
-const exists_ = async (c: pg.Client, db: string): Promise<boolean> =>
-  (await c.query('select 1 from pg_database where datname = $1', [db])).rowCount === 1;
 
 /** Renames a database once nobody is connected to it; new connections are refused first, then existing ones ended. */
 async function renameClosed(c: pg.Client, from: string, to: string): Promise<void> {
@@ -255,7 +286,7 @@ async function restoreDatabaseLocked(deps: OpsDeps, snapshotId: string, n: { tar
 
     const own = pgEnv(cfg.databaseUrl).PGDATABASE === n.target;
     const saved: SavedRun[] = own
-      ? await deps.db.execute<SavedRun>(sql`select kind, ok, detail, snapshot_id, at::text as at from ops_runs order by id`).then((x) => x.rows, () => [])
+      ? await deps.db.execute<SavedRun>(sql`select kind, ok, detail, snapshot_id, busy, at::text as at from ops_runs order by id`).then((x) => x.rows, () => [])
       : [];
 
     // From here on databases are renamed and dropped: only while this run still holds the lock.
@@ -264,7 +295,7 @@ async function restoreDatabaseLocked(deps: OpsDeps, snapshotId: string, n: { tar
       throw new RestoreError(`The restore stopped before changing anything because ops lost its lock (its database connection dropped). ${n.target} is unchanged; the restored copy is in ${n.incoming}. Run the restore again.`);
     }
     await withMaintenance(deps, async (c) => {
-      const hadTarget = await exists_(c, n.target);
+      const hadTarget = await exists(n.target, c);
       if (hadTarget) {
         // A leftover _old next to a live database is stale: the live database is complete.
         await c.query(`DROP DATABASE IF EXISTS "${n.old}" WITH (FORCE)`);
@@ -306,7 +337,7 @@ async function restoreDatabaseLocked(deps: OpsDeps, snapshotId: string, n: { tar
         const max = (await deps.db.execute<{ m: string | null }>(sql`select max(at)::text as m from ops_runs`)).rows[0]?.m ?? null;
         for (const s of saved) {
           if (max !== null && new Date(s.at) <= new Date(max)) continue;
-          await deps.db.execute(sql`insert into ops_runs (kind, ok, detail, snapshot_id, at) values (${s.kind}, ${s.ok}, ${s.detail}, ${s.snapshot_id}, ${s.at}::timestamptz)`);
+          await deps.db.execute(sql`insert into ops_runs (kind, ok, detail, snapshot_id, busy, at) values (${s.kind}, ${s.ok}, ${s.detail}, ${s.snapshot_id}, ${s.busy}, ${s.at}::timestamptz)`);
         }
       } catch {
         deps.log('The ops log entries since that backup could not be copied back. Nothing else is affected.');
@@ -342,6 +373,8 @@ export interface RestoreLiveOptions {
   appCheckTimeoutMs?: number;
   /** Test seam: how the app's state is found (default: ask its /healthz). */
   appState?: () => Promise<'stopped' | 'running' | 'unclear'>;
+  /** `--any-host`: allow a backup id made by another box (normally refused). */
+  anyHost?: boolean;
 }
 
 export async function restoreLive(deps: OpsDeps, which: string, opts: RestoreLiveOptions = {}): Promise<{ snapshotId: string }> {
@@ -357,7 +390,7 @@ export async function restoreLive(deps: OpsDeps, which: string, opts: RestoreLiv
     return await withOpsLock(deps, { waitMs: opts.lockWaitMs ?? LOCK_WAIT.restore, busyMessage: `Another backup or restore is running, so nothing has been changed. ${STOP_BOTH}` }, async () => {
       // Again after the wait for the lock: the app may have been started meanwhile.
       await refuseIfRunning();
-      return restoreLiveLocked(deps, which);
+      return restoreLiveLocked(deps, which, opts.anyHost === true);
     });
   } catch (e) {
     if (e instanceof OpsBusyError) throw new RestoreError(e.message);
@@ -366,7 +399,7 @@ export async function restoreLive(deps: OpsDeps, which: string, opts: RestoreLiv
 }
 
 /** The whole restore, safety backup included, under one hold of the ops lock. */
-async function restoreLiveLocked(deps: OpsDeps, which: string): Promise<{ snapshotId: string }> {
+async function restoreLiveLocked(deps: OpsDeps, which: string, anyHost: boolean): Promise<{ snapshotId: string }> {
   let snap: { id: string; short: string; time?: Date };
   try {
     // Chosen before the safety backup, or "latest" would mean the safety backup itself.
@@ -376,7 +409,9 @@ async function restoreLiveLocked(deps: OpsDeps, which: string): Promise<{ snapsh
       snap = s;
     } else {
       if (!/^[0-9a-f]{8,64}$/.test(which)) throw new RestoreError('Give a backup id (8 to 64 letters a-f and numbers) or latest.');
-      snap = { id: which, short: which.slice(0, 8) };
+      const s = await snapshotById(deps, which, { anyHost });
+      if (s.host !== slug(deps.cfg.client)) deps.log(`Backup ${s.short} was made by another box ("${s.host}"); restoring it here because --any-host was given.`);
+      snap = Number.isNaN(s.time.getTime()) ? { id: s.id, short: s.short } : s;
     }
   } catch (e) {
     const msg = e instanceof RestoreError ? e.message : 'The backups could not be listed.';

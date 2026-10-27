@@ -7,7 +7,8 @@ import { opsRuns } from '@hf/server/db/schema';
 import { realIo, runHelp, runInit, USAGE } from './init-cli.js';
 import { checkEdgePair, loadOpsConfig, OpsConfigError, type OpsConfig } from './config.js';
 import { BackupError, runBackup, firstLine } from './backup.js';
-import { RestoreError, restoreDataFrom, restoreLive, ukDate, verifyLatestRestore } from './restore.js';
+import { RestoreError, restoreDataFrom, restoreLive, verifyLatestRestore } from './restore.js';
+import { ukDate } from './time.js';
 import { createOpsDeps, manualBackup, runDaemon } from './daemon.js';
 import { execRunner, redact } from './runner.js';
 import { formatChecks, monitorChecks } from './checks.js';
@@ -191,7 +192,7 @@ async function main(argv: string[]): Promise<number> {
     case 'restore': {
       let parsed;
       try {
-        parsed = parseArgs({ args: rest, allowPositionals: true, strict: true, options: { 'yes-replace-live-data': { type: 'boolean' } } });
+        parsed = parseArgs({ args: rest, allowPositionals: true, strict: true, options: { 'yes-replace-live-data': { type: 'boolean' }, 'any-host': { type: 'boolean' } } });
       } catch {
         complain(USAGE);
         return 2;
@@ -203,7 +204,7 @@ async function main(argv: string[]): Promise<number> {
         return 2;
       }
       return withDeps(async (deps) => {
-        await restoreLive(deps, which);
+        await restoreLive(deps, which, { anyHost: parsed.values['any-host'] === true });
         say('Done. Start the app and ops again: docker compose start app ops');
         return 0;
       });

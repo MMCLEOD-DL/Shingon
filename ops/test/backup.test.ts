@@ -1,8 +1,9 @@
-import { test, expect } from 'vitest';
+import { describe, test, expect } from 'vitest';
 import { existsSync } from 'node:fs';
 import { sql } from 'drizzle-orm';
 import { runBackup, BackupError } from '../src/backup.js';
-import { verifyLatestRestore, restoreDatabase, restoreLive } from '../src/restore.js';
+import { pgEnv } from '../src/pg.js';
+import { verifyLatestRestore, restoreDatabase, restoreLive, scratchPrefix } from '../src/restore.js';
 import { lastRun } from '../src/runs.js';
 import { purgeAuditLog, onJobFailure } from '../src/daemon.js';
 import { withDeps, okBackup, deps0, TEST_BACKUP_PASSWORD } from './helpers.js';
@@ -145,9 +146,17 @@ test('restore test: no backups yet, and a destination it cannot read, are both r
       'Backup ffffffff could not be restored: some of the saved data could not be read back from sftp:backup@nas.test.lan:/srv/restic, so the copy there may be damaged.',
     ]);
     expect((await lastRun(deps.db, 'restore-test', { okOnly: false }))!.detail).toBe(r.problems.join(' '));
-    const leftover = await deps.db.execute(sql`select datname from pg_database where datname like 'hf_restore_test_%'`);
+    const leftover = await deps.db.execute(sql`select datname from pg_database where starts_with(datname, ${scratchPrefix(pgEnv(deps.cfg.databaseUrl).PGDATABASE)})`);
     expect(leftover.rows).toEqual([]);
   });
+});
+
+test('restore-test scratch databases are named per deployment: hf_rt_<lock key in hex>_', () => {
+  expect(scratchPrefix('app')).toMatch(/^hf_rt_[0-9a-f]{8}_$/);
+  expect(scratchPrefix('app')).toBe(scratchPrefix('app'));
+  expect(scratchPrefix('app')).not.toBe(scratchPrefix('app2'));
+  // the longest app database name ops accepts still leaves a legal (≤63 character) scratch name
+  expect(`${scratchPrefix('x'.repeat(54))}${'2'.repeat(14)}_abcdef`.length).toBeLessThanOrEqual(63);
 });
 
 test('a rollback restore refuses a database name that is not a plain identifier, before touching anything', async () => {
@@ -218,4 +227,39 @@ test('a scheduled backup asked to pause pruning saves the backup but tidies noth
   });
   expect(calls.some((c) => c.args[0] === 'forget')).toBe(false);
   expect(calls.some((c) => c.args[0] === 'backup')).toBe(true);
+});
+
+describe('ops restore <backup id> checks the backup was made by this box', () => {
+  const snap = (host: string) => ({ code: 0, stdout: JSON.stringify([{ id: 'b'.repeat(64), short_id: 'bbbbbbbb', time: new Date().toISOString(), hostname: host }]), stderr: '' });
+
+  test("another box's backup is refused before the safety backup, and nothing is changed", async () => {
+    await withDeps({}, async (deps, rec) => {
+      rec.respond((c) => c.args[0] === 'snapshots' ? snap('other-client') : okBackup(c));
+      const err = await restoreLive(deps, 'bbbbbbbb').then(() => null, (e: unknown) => e as Error);
+      expect(err?.message).toBe('Backup bbbbbbbb was made by another box ("other-client"), not this one ("acme-test-ltd"), so nothing has been changed. To put another box\'s backup on this one on purpose, run the restore again with --any-host.');
+      expect(rec.calls.map((c) => c.args.slice(0, 3))).toEqual([['snapshots', '--json', 'bbbbbbbb']]);
+      expect(await lastRun(deps.db, 'restore', { okOnly: false })).toMatchObject({ ok: false, detail: err!.message });
+    });
+  });
+
+  test('--any-host lets it through (after the safety backup), and says so in the log', async () => {
+    await withDeps({}, async (deps, rec) => {
+      rec.respond((c) => c.args[0] === 'snapshots' ? snap('other-client') : okBackup(c));
+      // The fake restic restores nothing, so the restore stops at the missing uploads folder: far enough to prove the check passed.
+      const err = await restoreLive(deps, 'bbbbbbbb', { anyHost: true }).then(() => null, (e: unknown) => e as Error);
+      expect(err?.message).toMatch(/^Backup bbbbbbbb does not contain the uploads folder, so nothing has been changed\./);
+      expect(rec.logs).toContain('Backup bbbbbbbb was made by another box ("other-client"); restoring it here because --any-host was given.');
+      expect(rec.calls.find((c) => c.args[0] === 'restore')!.args.slice(0, 2)).toEqual(['restore', 'b'.repeat(64)]);
+    });
+  });
+
+  test("this box's own backup by id goes ahead without --any-host; an unknown id is refused plainly", async () => {
+    await withDeps({}, async (deps, rec) => {
+      rec.respond((c) => c.args[0] === 'snapshots' ? snap('acme-test-ltd') : okBackup(c));
+      const err = await restoreLive(deps, 'bbbbbbbb').then(() => null, (e: unknown) => e as Error);
+      expect(err?.message).toMatch(/^Backup bbbbbbbb does not contain the uploads folder/);
+      rec.respond((c) => c.args[0] === 'snapshots' ? { code: 0, stdout: '[]', stderr: '' } : okBackup(c));
+      await expect(restoreLive(deps, 'cccccccc')).rejects.toThrow('There is no backup cccccccc at sftp:backup@nas.test.lan:/srv/restic, so nothing has been changed.');
+    });
+  });
 });

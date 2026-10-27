@@ -1,4 +1,5 @@
 import type { AlertChannel } from './alerts.js';
+import { ukTime } from './time.js';
 
 /** One health check. `critical`: a standing problem with the settings, alerted on its first sighting and marked as critical. */
 export interface Check { name: string; ok: boolean; detail: string; critical?: boolean }
@@ -29,9 +30,6 @@ interface State {
 
 export const HEARTBEAT_TIMEOUT_MS = 10_000;
 
-/** Europe/London wall-clock time, HH:mm. */
-export const ukTime = (d: Date): string =>
-  new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hour12: false }).format(d);
 
 /**
  * The same problem with different numbers in it ("31 hours ago" an hour later, "0.2 GB free" then "0.1 GB free") is the

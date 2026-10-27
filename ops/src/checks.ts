@@ -2,6 +2,7 @@ import { statfs as fsStatfs } from 'node:fs/promises';
 import path from 'node:path';
 import type { OpsConfig } from './config.js';
 import type { Check } from './monitor.js';
+import { ukDate } from './time.js';
 import { leftoverDetail, readRecord, recordIsLeftover, UPDATE_RECORD } from './journal.js';
 
 export type { Check } from './monitor.js';
@@ -19,7 +20,6 @@ export interface MonitorCheckDeps {
   opsLockHeld?: () => Promise<boolean>;
 }
 
-const ukTime = (d: Date): string => new Intl.DateTimeFormat('en-GB', { dateStyle: 'long', timeStyle: 'short', timeZone: 'Europe/London' }).format(d);
 
 /** An update that stopped part-way (its record is still in /state): critical, alerted on first sighting (Task 20). */
 async function updateRecordCheck(deps: MonitorCheckDeps): Promise<Check> {
@@ -27,7 +27,7 @@ async function updateRecordCheck(deps: MonitorCheckDeps): Promise<Check> {
   if (r === null) return { name: 'update-record', ok: true, detail: '' };
   const stateDir = path.dirname(deps.cfg.workDir);
   if (!(await recordIsLeftover(r, stateDir, (deps.now ?? (() => new Date()))(), deps.opsLockHeld))) return { name: 'update-record', ok: true, detail: '' };
-  return { name: 'update-record', ok: false, critical: true, detail: leftoverDetail(r, ukTime) };
+  return { name: 'update-record', ok: false, critical: true, detail: leftoverDetail(r, ukDate) };
 }
 
 export const APP_TIMEOUT_MS = 5000;

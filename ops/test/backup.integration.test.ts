@@ -6,7 +6,8 @@ import { sql } from 'drizzle-orm';
 import { runBackup, resticEnv } from '../src/backup.js';
 import { slug } from '../src/config.js';
 import { execRunner } from '../src/runner.js';
-import { verifyLatestRestore, restoreDatabase } from '../src/restore.js';
+import { pgEnv } from '../src/pg.js';
+import { verifyLatestRestore, restoreDatabase, scratchPrefix } from '../src/restore.js';
 import { lastRun } from '../src/runs.js';
 import { withRealDeps, q, TEST_BACKUP_PASSWORD } from './helpers.js';
 
@@ -18,10 +19,16 @@ describe.runIf(has('restic', ['version']) && has('pg_dump') && has('pg_restore')
     await withRealDeps(async (deps, info) => {
       const { snapshotId } = await runBackup(deps, 'manual');
       expect(snapshotId).toMatch(/^[0-9a-f]{64}$/);
+      const restoreArgs: string[][] = [];
+      deps.run = { run: (cmd, args, o) => { if (cmd === 'pg_restore') restoreArgs.push([...args]); return execRunner.run(cmd, args, o); } };
       const v = await verifyLatestRestore(deps);
       expect(v).toEqual({ ok: true, problems: [] });
+      // The scratch database is named for this deployment, so no other deployment's sweep can ever take it.
+      const scratch = restoreArgs.flat().find((a) => a.startsWith('--dbname='))!.slice('--dbname='.length);
+      expect(scratch).toMatch(new RegExp(`^${scratchPrefix(info.dbName)}\\d{14}_[0-9a-f]{6}$`));
+      expect(scratch.length).toBeLessThanOrEqual(63);
       expect((await lastRun(deps.db, 'restore-test', { okOnly: true }))!.detail).toMatch(/^Restore test passed: backup [0-9a-f]{8} from /);
-      const leftover = await deps.db.execute(sql`select datname from pg_database where datname like 'hf_restore_test_%'`);
+      const leftover = await deps.db.execute(sql`select datname from pg_database where starts_with(datname, ${scratchPrefix(pgEnv(deps.cfg.databaseUrl).PGDATABASE)})`);
       expect(leftover.rows).toEqual([]);
       expect(info.logs.join('\n')).not.toContain(TEST_BACKUP_PASSWORD);
       const details = await deps.db.execute<{ detail: string }>(sql`select detail from ops_runs`);
@@ -69,7 +76,7 @@ describe.runIf(has('restic', ['version']) && has('pg_dump') && has('pg_restore')
       expect(v.ok).toBe(false);
       expect(v.problems.join(' ')).toMatch(/could not be restored/);
       expect(await lastRun(deps.db, 'restore-test', { okOnly: false })).toMatchObject({ ok: false });
-      const leftover = await deps.db.execute(sql`select datname from pg_database where datname like 'hf_restore_test_%'`);
+      const leftover = await deps.db.execute(sql`select datname from pg_database where starts_with(datname, ${scratchPrefix(pgEnv(deps.cfg.databaseUrl).PGDATABASE)})`);
       expect(leftover.rows).toEqual([]);
     });
   }, 120_000);

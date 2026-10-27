@@ -3,6 +3,7 @@ import type { AlertChannel } from './alerts.js';
 import { isDockerHub, isQualified, notATag, TAG, type Compose } from './compose.js';
 import { leftoverMessage, type UpdateJournal, type UpdateRecord, type UpdateStep } from './journal.js';
 import { OpsBusyError } from './opsLock.js';
+import { ukDate } from './time.js';
 
 export type { Compose } from './compose.js';
 
@@ -66,8 +67,6 @@ const minutes = (ms: number): string => {
   return `${String(n)} ${n === 1 ? 'minute' : 'minutes'}`;
 };
 
-const defaultWhen = (d: Date): string =>
-  new Intl.DateTimeFormat('en-GB', { dateStyle: 'long', timeStyle: 'short', timeZone: 'Europe/London' }).format(d);
 
 /**
  * `ops update --to <version>`: stop the app and the monitor, take an encrypted backup, switch the image tag, migrate, start,
@@ -107,7 +106,7 @@ async function decide(deps: UpdateDeps, to: string): Promise<Result & { clearJou
     left = (await deps.journal?.read()) ?? null;
   } catch { /* unreadable is handled by read() itself */ }
   if (left !== null) {
-    return { outcome: 'cancelled', message: leftoverMessage(client, left, deps.when ?? defaultWhen), alert: true, urgent: true, ...(left.snapshot !== undefined ? { snapshotId: left.snapshot } : {}), clearJournal: false };
+    return { outcome: 'cancelled', message: leftoverMessage(client, left, deps.when ?? ukDate), alert: true, urgent: true, ...(left.snapshot !== undefined ? { snapshotId: left.snapshot } : {}), clearJournal: false };
   }
   let urgent: { snapshotId?: string } | null = null;
   try {

@@ -1,12 +1,14 @@
 import { describe, test, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, writeFile, utimes } from 'node:fs/promises';
+import { copyFile, mkdir, writeFile, utimes } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import path from 'node:path';
 import pg from 'pg';
 import { sql } from 'drizzle-orm';
 import { runBackup, workFiles } from '../src/backup.js';
-import { verifyLatestRestore, restoreDatabase, restoreLive, stamp, type SwapFault } from '../src/restore.js';
+import { pgEnv } from '../src/pg.js';
+import { execRunner } from '../src/runner.js';
+import { verifyLatestRestore, restoreDatabase, restoreLive, scratchPrefix, stamp, type SwapFault } from '../src/restore.js';
 import { createOpsDeps, daemonJobs, onJobFailure, sweepLeftovers } from '../src/daemon.js';
 import { withOpsLock, lockKey, lockSessionName } from '../src/opsLock.js';
 import type { OpsDeps } from '../src/runs.js';
@@ -161,21 +163,23 @@ test('at start the daemon removes leftovers of interrupted runs older than an ho
     const old = new Date(Date.now() - 2 * 3600e3);
     for (const d of ['verify-old', 'restore-old', 'verify-new', 'backup', 'unrelated-old']) await mkdir(path.join(deps.cfg.workDir, d), { recursive: true });
     for (const d of ['verify-old', 'restore-old', 'unrelated-old']) await utimes(path.join(deps.cfg.workDir, d), old, old);
-    const oldDb = `hf_restore_test_${stamp(old)}`;
-    const newDb = `hf_restore_test_${stamp(new Date())}`;
+    const oldDb = `${scratchPrefix(dbName)}${stamp(old)}`;
+    const newDb = `${scratchPrefix(dbName)}${stamp(new Date())}`;
+    // Another deployment's restore test on the same server: never this deployment's to remove, however old.
+    const othersDb = `${scratchPrefix(`${dbName}_other`)}${stamp(old)}`;
     const admin = new pg.Client({ connectionString: deps.cfg.databaseUrl });
     await admin.connect();
     try {
-      for (const n of [oldDb, newDb, `${dbName}_incoming`, `${dbName}_old`]) await admin.query(`create database "${n}"`);
+      for (const n of [oldDb, newDb, othersDb, `${dbName}_incoming`, `${dbName}_old`]) await admin.query(`create database "${n}"`);
       const removed = await sweepLeftovers(deps);
       // The live database is there, so its _incoming and _old copies are leftovers.
       expect(removed.sort()).toEqual([`database ${dbName}_incoming`, `database ${dbName}_old`, `database ${oldDb}`, 'folder backup', 'folder restore-old', 'folder verify-old'].sort());
       expect(existsSync(path.join(deps.cfg.workDir, 'verify-new'))).toBe(true);
       expect(existsSync(path.join(deps.cfg.workDir, 'unrelated-old'))).toBe(true);
-      const left = await admin.query<{ datname: string }>(`select datname from pg_database where datname in ($1, $2, $3, $4)`, [oldDb, newDb, `${dbName}_incoming`, `${dbName}_old`]);
-      expect(left.rows.map((r) => r.datname)).toEqual([newDb]);
+      const left = await admin.query<{ datname: string }>(`select datname from pg_database where datname in ($1, $2, $3, $4, $5) order by datname`, [oldDb, newDb, othersDb, `${dbName}_incoming`, `${dbName}_old`]);
+      expect(left.rows.map((r) => r.datname)).toEqual([newDb, othersDb].sort());
     } finally {
-      await admin.query(`drop database if exists "${newDb}"`).catch(() => undefined);
+      for (const n of [newDb, othersDb]) await admin.query(`drop database if exists "${n}"`).catch(() => undefined);
       await admin.end();
     }
   });
@@ -286,6 +290,37 @@ test('the app check runs again once the lock is held: an app started while waiti
     await expect(restoreLive(deps, 'latest', { appState: () => Promise.resolve(answers.shift() ?? 'running') })).rejects.toThrow(/^The app is still running, so nothing has been changed\. Stop both the app and ops first \(docker compose stop app ops\)/);
     expect(answers).toEqual([]);
     expect(rec.calls).toEqual([]);
+  });
+});
+
+test("restoring ops' own database keeps the ops log entries newer than the backup, busy flag included", async () => {
+  await withDeps({}, async (deps, rec) => {
+    const url = deps.cfg.databaseUrl;
+    const name = pgEnv(url).PGDATABASE;
+    // The "backup": a real dump of the database as it is now, handed out by a stand-in for restic.
+    const dumpFile = path.join(path.dirname(deps.cfg.workDir), 'backup.dump');
+    await mkdir(path.dirname(dumpFile), { recursive: true });
+    const d = await execRunner.run('pg_dump', ['--format=custom', '--no-owner', `--file=${dumpFile}`], { env: pgEnv(url), timeoutMs: 60_000 });
+    expect(d.code, d.stderr).toBe(0);
+    rec.respond(async (c) => {
+      if (c.cmd === 'restic' && c.args[0] === 'restore') {
+        const to = path.join(c.args[c.args.indexOf('--target') + 1]!, c.args[c.args.indexOf('--include') + 1]!);
+        await mkdir(path.dirname(to), { recursive: true });
+        await copyFile(dumpFile, to);
+        return ok;
+      }
+      return execRunner.run(c.cmd, c.args, { env: c.env, ...(c.timeoutMs !== undefined ? { timeoutMs: c.timeoutMs } : {}) });
+    });
+    const later = new Date(Date.now() + 60e3).toISOString();
+    await q(url, `insert into ops_runs (kind, ok, detail, busy, at) values
+      ('backup', false, 'carried: refused while busy', true, '${later}'),
+      ('restore-test', false, 'carried: a real failure', false, '${later}')`);
+    await restoreDatabase(deps, 'c'.repeat(64), name);
+    expect(await q(url, `select kind, ok, busy, detail from ops_runs where detail like 'carried:%' order by detail`)).toEqual([
+      { kind: 'restore-test', ok: false, busy: false, detail: 'carried: a real failure' },
+      // without busy, a refusal while another run held the lock would come back as "the last backup failed"
+      { kind: 'backup', ok: false, busy: true, detail: 'carried: refused while busy' },
+    ]);
   });
 });
 

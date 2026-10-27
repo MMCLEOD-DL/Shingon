@@ -7,7 +7,7 @@ import * as schema from '@hf/server/db/schema';
 import type { Db } from '@hf/server/db';
 import { type OpsConfig } from './config.js';
 import { runBackup, LOCAL_WARNING, BackupError, firstLine } from './backup.js';
-import { verifyLatestRestore } from './restore.js';
+import { scratchPrefix, verifyLatestRestore } from './restore.js';
 import { withOpsLock, OpsBusyError, opsLockHeld } from './opsLock.js';
 import { connect, pgEnv } from './pg.js';
 import { outstandingUpdate, recordRun, scrub, type OpsDeps } from './runs.js';
@@ -181,7 +181,6 @@ export function buildMonitor(deps: OpsDeps): { channel: AlertChannel; monitor: M
 }
 
 const LEFTOVER_FOLDER = /^(verify|restore|restore-uploads)-/;
-const SCRATCH_DB = /^hf_restore_test_(\d{14})_[0-9a-f]+$/;
 
 function stampTime(ts: string): Date {
   return new Date(`${ts.slice(0, 4)}-${ts.slice(4, 6)}-${ts.slice(6, 8)}T${ts.slice(8, 10)}:${ts.slice(10, 12)}:${ts.slice(12, 14)}Z`);
@@ -224,9 +223,12 @@ export async function sweepLeftovers(deps: OpsDeps, maxAgeMs = 3600e3): Promise<
       const copies = [`${appDb}_incoming`, `${appDb}_old`];
       const c = await connect(deps.cfg.databaseUrl, 'postgres');
       try {
-        const dbs = (await c.query<{ datname: string }>(`select datname from pg_database where datname like 'hf\\_restore\\_test\\_%' or datname = any($1) or datname = $2`, [copies, appDb])).rows.map((r) => r.datname);
+        // Only this deployment's own scratch databases: another deployment on the same server may be mid restore test.
+        const prefix = scratchPrefix(appDb);
+        const scratchDb = new RegExp(`^${prefix}(\\d{14})_[0-9a-f]+$`);
+        const dbs = (await c.query<{ datname: string }>(`select datname from pg_database where starts_with(datname, $3) or datname = any($1) or datname = $2`, [copies, appDb, prefix])).rows.map((r) => r.datname);
         for (const datname of dbs) {
-          const m = SCRATCH_DB.exec(datname);
+          const m = scratchDb.exec(datname);
           if (m?.[1] !== undefined && stampTime(m[1]).getTime() < cutoff) {
             await c.query(`DROP DATABASE IF EXISTS "${datname}" WITH (FORCE)`);
             removed.push(`database ${datname}`);
