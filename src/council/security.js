@@ -175,6 +175,18 @@ export function suppressionsAdded({ dir, files, changed, added, wholeFiles }) {
   return out;
 }
 
+export function crossingFindings(crossing) {
+  const f = (spec) => makeFinding({ member: 'security', tool: 'crossing', ...spec });
+  if (!crossing) return [];
+  const fails = crossing.failures ?? [];
+  if (!fails.length) {
+    return [f({ grade: 'note', title: `The role-crossing tests passed: ${crossing.routes} routes, ${crossing.checks} checks`, detail: 'No role could reach data it should not.' })];
+  }
+  const out = fails.slice(0, 20).map((s) => f({ grade: 'blocking', locked: true, title: `A role can reach data it should not: ${s}`, detail: 'The role-crossing tests found a role reaching data outside its rights.' }));
+  if (fails.length > 20) out.push(f({ grade: 'blocking', locked: true, title: `…and ${fails.length - 20} more role-crossing failures`, detail: 'See the role-crossing report for the rest.' }));
+  return out;
+}
+
 export const SECURITY = {
   member: 'security',
   label: 'Security',
@@ -203,6 +215,19 @@ export const SECURITY = {
         parse: (t) => parseNpmAudit(t, { introduced }) });
     }
     const settings = { tool: 'settings', label: TOOL_LABEL.settings, status: 'ran', findings: [...settingsTouched(input.files), ...suppressionsAdded(input)], note: null };
-    return [semgrep, gitleaks, audit, settings];
+    const runs = [semgrep, gitleaks, audit, settings];
+    if (input.brief) {
+      const c = input.evidence?.gates?.crossing ?? null;
+      if (!c) {
+        runs.push({ tool: 'crossing', label: TOOL_LABEL.crossing, status: 'skipped', note: 'The role-crossing tests were not proven: there was no report.',
+          findings: [makeFinding({ member: 'security', tool: 'crossing', grade: 'warning', locked: true,
+            title: 'The role-crossing tests were not proven: there was no report',
+            detail: 'No role-crossing report was available, so no role was checked against data it should not reach.' })] });
+      } else {
+        runs.push({ tool: 'crossing', label: TOOL_LABEL.crossing, status: 'ran', findings: crossingFindings(c), note: null,
+          context: `Role-crossing tests: ${c.routes} routes, ${c.checks} checks, ${(c.failures ?? []).length} failures.` });
+      }
+    }
+    return runs;
   },
 };

@@ -281,3 +281,38 @@ test('suppressionsAdded: gitleaks:allow after or before another marker still blo
     assert.deepEqual(mine.map((x) => [x.grade, x.secretHint]), [['blocking', true], ['warning', false]], `line ${line}`);
   }
 });
+
+// ---------- Task 9: role-crossing evidence ----------
+import { crossingFindings } from '../src/council/security.js';
+import { applyInterpretation } from '../src/council/interpret.js';
+
+test('crossingFindings: each failure sentence blocks, a clean report is a note', () => {
+  const f = crossingFindings({ routes: 3, checks: 9, failures: ["A member could read another team's claim."] });
+  assert.deepEqual(f.map((x) => [x.title, x.grade, x.locked, x.tool, x.member]),
+    [["A role can reach data it should not: A member could read another team's claim.", 'blocking', true, 'crossing', 'security']]);
+  const ok = crossingFindings({ routes: 31, checks: 7012, failures: [] });
+  assert.deepEqual(ok.map((x) => [x.title, x.grade]), [['The role-crossing tests passed: 31 routes, 7012 checks', 'note']]);
+  const many = crossingFindings({ routes: 1, checks: 1, failures: Array.from({ length: 23 }, (_, i) => `s${i}`) });
+  assert.equal(many.length, 21);
+  assert.equal(many[20].title, '…and 3 more role-crossing failures');
+});
+
+test('SECURITY.collect: crossing run on project rounds only', async () => {
+  const repo = await makeRepo();
+  const base = await input(repo, { options: { councilTools: councilStubs(tmp(), {}) } });
+  const ord = await SECURITY.collect(base);
+  assert.deepEqual(ord.map((r) => r.tool), ['semgrep', 'gitleaks', 'npm-audit', 'settings']);
+  const none = await SECURITY.collect({ ...base, brief: { features: [] }, evidence: { gates: null } });
+  const c = none.at(-1);
+  assert.deepEqual([c.tool, c.status], ['crossing', 'skipped']);
+  assert.deepEqual(c.findings.map((f) => [f.title, f.grade, f.locked]), [['The role-crossing tests were not proven: there was no report', 'warning', true]]);
+  const bad = await SECURITY.collect({ ...base, brief: { features: [] }, evidence: { gates: { crossing: { routes: 3, checks: 9, failures: ['A member read a claim.'] } } } });
+  assert.equal(bad.at(-1).context, 'Role-crossing tests: 3 routes, 9 checks, 1 failures.');
+  assert.equal(bad.at(-1).findings[0].grade, 'blocking');
+});
+
+test('the interpreter cannot dismiss or lower a crossing block', () => {
+  const [f] = crossingFindings({ routes: 1, checks: 1, failures: ['A member read a claim.'] });
+  const out = applyInterpretation([f], ['C1'], { findings: [{ id: 'C1', decision: 'dismiss', grade: 'note', why: 'fine' }], extra: [] }, { member: 'security' });
+  assert.deepEqual([out[0].grade, out[0].dismissed], ['blocking', false]);
+});
