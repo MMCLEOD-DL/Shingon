@@ -1,0 +1,67 @@
+// src/council/projectCouncil.js
+// The full council on a client app: Plan 8's hooks.council (Contract 7 §7.7, index A1).
+//   args = { projectDir, appDir, sha, brief, policy, runId, slug, team, factory, onEvent, checks }
+//   -> { status: 'approved'|'approved-with-warnings'|'blocked'|'paused', text, fix?: { title, instructions }, reason?, secretSeen? }
+// One round per call, in a throwaway workspace whose base is the foundation commit (so the whole app is reviewed).
+// Rounds, history and cached evidence persist in builds/<runId>/council/state.json. Plan 8 owns the fix loop and
+// its cap; this hook never counts fix rounds. It never throws: Plan 8 would treat a throw as a crash.
+import { DEFAULT_OPTIONS } from '../options.js';
+import { redact } from '../secrets.js';
+import { clip } from '../text.js';
+import { renderBrief } from '../factory/brief.js';
+import { projectContext } from './project.js';
+import { openCouncilWorkspace, openCouncilLog } from './councilWorkspace.js';
+import { runCouncilRound, membersFor, validateCouncilOptions, PROJECT_COUNCIL } from './index.js';
+import { fixChunk } from './report.js';
+
+// Plan 8 clips a council fix's instructions to 3000 characters (Ruling R16).
+const FIX_MAX = 3000;
+
+const plain = (e) => clip(redact(String(e?.message ?? e ?? '')).replace(/\s*\n\s*/g, ' ').trim(), 300) || 'an unknown error';
+
+export async function runProjectCouncil(args, { options = {}, deps = {} } = {}) {
+  let opened = null;
+  let state = null;
+  const sticky = () => (state?.council?.secretSeen === true ? { secretSeen: true } : {});
+  try {
+    // Ruling R19: an unsafe run id or slug, an unreadable project file or a missing pin pauses (caught below).
+    const project = await projectContext(args, { loadProject: deps.loadProject, ids: deps.ids });
+    project.factory = args.factory ?? {};
+    project.deps = deps;
+
+    const opened_log = openCouncilLog(project.buildDir, { onEvent: args.onEvent });
+    const { log } = opened_log;
+    state = opened_log.state;
+    state.request ??= `Build the client app for ${project.client} described in the approved brief.`;
+
+    const ctxOptions = { ...DEFAULT_OPTIONS, ...options, council: true };
+    validateCouncilOptions(ctxOptions);
+
+    opened = await openCouncilWorkspace({ appDir: project.appDir, sha: project.sha, foundation: project.foundation, runId: project.runId, baseDir: deps.baseDir });
+    project.problem = opened.problem;
+    const { ws } = opened;
+    const ctx = { ws, log, state, team: args.team, options: ctxOptions };
+    project.briefText = (deps.renderBrief ?? renderBrief)(args.brief);
+
+    const files = await ws.filesRange(ws.baseSha, project.sha);
+    const diff = await ws.diffRange(ws.baseSha, project.sha);
+    const r = await runCouncilRound(ctx, { files, tests: null, diff, members: membersFor(PROJECT_COUNCIL), project });
+
+    if (r.status === 'paused') return { status: 'paused', reason: r.reason, ...sticky() };
+    const { report } = r;
+    const out = { status: report.verdict, text: report.text, secretSeen: state.council.secretSeen === true };
+    if (report.verdict === 'blocked') {
+      const { title, instructions } = fixChunk(report, state.council.round, FIX_MAX);
+      out.fix = { title, instructions };
+    }
+    return out;
+  } catch (e) {
+    return {
+      status: 'paused',
+      reason: `The council hit a problem it could not get past (${plain(e)}), so the build paused. Run "conductor build ${args?.slug}" to try again.`,
+      ...sticky(),
+    };
+  } finally {
+    try { opened?.remove(); } catch { /* best effort */ }
+  }
+}

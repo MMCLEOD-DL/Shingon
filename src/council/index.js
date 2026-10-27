@@ -1,6 +1,7 @@
 // src/council/index.js
 // One council round: members run one after another, independently; the result is saved in
 // state.council so a resume re-runs only the unfinished round.
+import path from 'node:path';
 import { git } from '../workspace.js';
 import { clip } from '../text.js';
 import { makeFinding, findingKey, tally } from './findings.js';
@@ -9,13 +10,20 @@ import { SECURITY, addedLines, unquoteGitPath } from './security.js';
 import { LEGAL } from './licences.js';
 import { CORRECTNESS } from './correctness.js';
 import { FOUNDATION } from './foundationRules.js';
+import { DESIGN } from './design.js';
+import { RELIABILITY } from './reliability.js';
+import { collectEvidence } from './evidence.js';
+import { writeCouncilReport } from './reportFile.js';
 import { EXAMPLE_ID_RE } from '../factory/acceptance.js';
 import { interpretMember } from './interpret.js';
 import { buildReport } from './report.js';
 
 export const MEMBERS_V1 = [SECURITY, LEGAL, CORRECTNESS];
-export const MEMBERS = Object.freeze({ security: SECURITY, legal: LEGAL, correctness: CORRECTNESS, foundation: FOUNDATION });
+export const MEMBERS = Object.freeze({ security: SECURITY, legal: LEGAL, correctness: CORRECTNESS, foundation: FOUNDATION, design: DESIGN, reliability: RELIABILITY });
 export const FEATURE_COUNCIL = Object.freeze(['foundation', 'correctness']);
+// The full council on a client app (Plan 9). Design and Reliability review client apps only (Ruling R24a).
+export const PROJECT_COUNCIL = Object.freeze(['security', 'legal', 'correctness', 'design', 'reliability']);
+const PROJECT_ONLY = new Set(['design', 'reliability']);
 
 // null = the Plan 5 council (Security, Legal, Correctness); otherwise the named members, in order.
 export function membersFor(names) {
@@ -71,8 +79,9 @@ export function validateCouncilOptions(o) {
   const names = o.councilMembers ?? null;
   if (names !== null) {
     if (!Array.isArray(names) || names.length === 0) throw new Error(`councilMembers must list at least one member (got ${shown(names)})`);
-    const known = Object.keys(MEMBERS);
+    const known = Object.keys(MEMBERS).filter((n) => !PROJECT_ONLY.has(n));
     for (const n of names) {
+      if (PROJECT_ONLY.has(n)) throw new Error(`councilMembers: ${n} reviews client apps only (it runs in the full council of "conductor build")`);
       if (typeof n !== 'string' || !Object.hasOwn(MEMBERS, n)) throw new Error(`councilMembers: unknown member ${shown(n)} (known: ${known.join(', ')})`);
     }
     if (new Set(names).size !== names.length) throw new Error(`councilMembers must not name a member twice (got ${shown(names)})`);
@@ -117,8 +126,10 @@ async function addedFiles(ws, head) {
   return out;
 }
 
-export async function runCouncilRound(ctx, { files, tests, diff, members = MEMBERS_V1, env = process.env }) {
+export async function runCouncilRound(ctx, { files, tests, diff, members = MEMBERS_V1, env = process.env, project = null }) {
   const { ws, state, log, options } = ctx;
+  // Ruling R24b: a project round always reviews against the brief; without one the members would fall back to v1.
+  if (project && !project.brief) throw new Error('A client-app council round needs the approved brief.');
   const c = (state.council ??= { round: 0, fixRounds: 0, secretSeen: false, history: [] });
   const head = await ws.head();
   const last = c.history.at(-1);
@@ -144,6 +155,12 @@ export async function runCouncilRound(ctx, { files, tests, diff, members = MEMBE
   };
 
   let findings = [];
+  if (project) {
+    Object.assign(input, { project, brief: project.brief, briefText: project.briefText ?? null, policy: project.policy ?? null });
+    input.evidence = await collectEvidence(ctx, { project, head, round, deps: project.deps ?? {} });
+    findings = projectFindings(project, input.evidence);
+  }
+  const checked = [];
   const toolRuns = [];
   const names = new Set();
   const interpretedBy = new Set();
@@ -159,6 +176,7 @@ export async function runCouncilRound(ctx, { files, tests, diff, members = MEMBE
     }
     for (const r of runs) log.event('council-tool', { member: m.member, tool: r.tool, status: r.status, findings: r.findings.length });
     toolRuns.push(...runs);
+    if (project) checked.push(checkedLine(m, runs, input.evidence));
     let mine = runs.flatMap((r) => r.findings);
     for (const f of mine) if ((f.tool === 'gitleaks' || f.secretHint) && !f.preExisting && f.file) hidden.add(f.file);
     input.diff = hideFiles(diff, hidden);
@@ -183,11 +201,52 @@ export async function runCouncilRound(ctx, { files, tests, diff, members = MEMBE
   for (const f of findings) {
     log.event('council-finding', { member: f.member, tool: f.tool, grade: f.grade, title: f.title, file: f.file, line: f.line, preExisting: f.preExisting, dismissed: f.dismissed });
   }
-  const report = buildReport({ round, findings, toolRuns, by: [...names].join(', ') || null, history: earlier, interpreted: interpretedBy });
+  const projectParts = project ? {
+    checked,
+    coverage: toolRuns.find((r) => r.tool === 'coverage' && r.status === 'ran' && r.coverage)?.coverage ?? null,
+    files: { md: path.join(project.buildDir, 'council-report.md'), json: path.join(project.buildDir, 'council-report.json'), screenshots: input.evidence?.shotsDir ?? null },
+  } : {};
+  const report = buildReport({ round, findings, toolRuns, by: [...names].join(', ') || null, history: earlier, interpreted: interpretedBy, ...projectParts });
   c.round = round;
   c.secretSeen = c.secretSeen || hidden.size > 0;
   c.history = [...earlier, { round, sha: head, fixRounds: c.fixRounds, blocking: report.blocking.map((f) => ({ key: findingKey(f), title: f.title, member: f.member })) }];
   log.saveState(state);
   log.event('council-verdict', { round, verdict: report.verdict, ...tally(findings) });
+  if (project) {
+    const { md } = await writeCouncilReport(project.buildDir, report);
+    log.event('council-report-saved', { md });
+  }
   return { status: 'ok', report };
+}
+
+// ---------- project rounds (Plan 9) ----------
+
+// Locked warnings the round itself adds, outside any member (so no interpreter sees them):
+//  - the foundation release could not be found (Task 3);
+//  - Ruling R24c: axe-core missing or turned off leaves accessibility "not proven" (Design itself adds no finding).
+function projectFindings(project, evidence) {
+  const out = [];
+  if (project.problem) out.push(makeFinding({ member: 'correctness', grade: 'warning', locked: true, title: project.problem, detail: project.problem }));
+  const axe = evidence?.gates?.axe;
+  if (axe && (axe.status === 'missing' || axe.status === 'off')) {
+    const why = axe.status === 'off' ? 'axe-core is turned off in the config' : 'axe-core is not installed';
+    out.push(makeFinding({ member: 'design', grade: 'warning', locked: true, title: `Accessibility was not proven: ${why}`, detail: axe.note || why }));
+  }
+  return out;
+}
+
+// Where a ToolRun's evidence came from, for "What was checked" (evidence.gates.source).
+function fromBuild(member, tool, gates) {
+  const src = gates?.source ?? {};
+  if (member === 'correctness' && (tool === 'verify' || tool === 'coverage')) return src.verify === 'build';
+  if ((member === 'design' && (tool === 'page-gate' || tool === 'registry')) || (member === 'correctness' && tool === 'journeys')) return src.browser === 'build';
+  // The crossing report is the council's own only when its own test run made it.
+  if (member === 'security' && tool === 'crossing') return src.verify !== 'council';
+  return false;
+}
+
+function checkedLine(m, runs, evidence) {
+  const ran = runs.filter((r) => r.status === 'ran')
+    .map((r) => `${r.label ?? TOOL_LABEL[r.tool] ?? r.tool}${fromBuild(m.member, r.tool, evidence?.gates) ? " (from the build's checks)" : ''}`);
+  return `${m.label}: ${ran.length ? ran.join(', ') : 'nothing could run'}`;
 }

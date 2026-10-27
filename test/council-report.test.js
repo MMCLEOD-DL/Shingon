@@ -105,3 +105,66 @@ test('an errored check is listed once, as its warning', () => {
   assert.deepEqual(r.toolNotes, []);
   assert.equal(r.text.split('Gitleaks').length - 1, 1);
 });
+
+// ---------- Plan 9 Task 12: project rounds ----------
+import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { writeCouncilReport } from '../src/council/reportFile.js';
+
+const projectReport = () => {
+  const other = F({ member: 'legal', tool: 'data-policy', grade: 'warning', title: 'Personal data is held' });
+  const notProven = F({ member: 'reliability', tool: 'smoke', grade: 'warning', locked: true, title: 'Reliability was not proven: no machine' });
+  return buildReport({
+    round: 1, findings: [other, notProven], toolRuns: [], by: 'codex',
+    checked: ['Security: Semgrep (code scanner)', 'Reliability: nothing could run'],
+    coverage: { proven: 2, total: 3 },
+    files: { md: '/p/builds/r1/council-report.md', json: '/p/builds/r1/council-report.json', screenshots: '/p/builds/r1/council/round-1/screenshots' },
+  });
+};
+
+test('project report: what was checked, worked examples proven, "not proven" first, and where the files are', () => {
+  const r = projectReport();
+  assert.ok(r.text.includes('What was checked:\n  - Security: Semgrep (code scanner)\n  - Reliability: nothing could run'));
+  assert.ok(r.text.includes('  Worked examples proven: 2 of 3'));
+  assert.ok(r.text.indexOf('Reliability was not proven: no machine') < r.text.indexOf('Personal data is held'));
+  assert.equal(r.warnings[0].title, 'Reliability was not proven: no machine');
+  assert.ok(r.text.endsWith('  Full report: /p/builds/r1/council-report.md\n  Screenshots: /p/builds/r1/council/round-1/screenshots'), r.text);
+  assert.deepEqual(r.coverage, { proven: 2, total: 3 });
+});
+
+test('project report: no coverage line without coverage, no screenshots line without screenshots', () => {
+  const r = buildReport({ round: 1, findings: [], toolRuns: [], by: null, checked: ['Design: nothing could run'], coverage: null,
+    files: { md: '/p/m.md', json: '/p/m.json', screenshots: null } });
+  assert.doesNotMatch(r.text, /Worked examples proven/);
+  assert.ok(r.text.endsWith('What was checked:\n  - Design: nothing could run\n  Full report: /p/m.md'), r.text);
+});
+
+test('ordinary report: none of the project sections', () => {
+  const r = buildReport({ round: 1, findings: [], toolRuns: [], by: null });
+  assert.equal(r.checked, undefined);
+  assert.equal(r.files, undefined);
+  assert.doesNotMatch(r.text, /What was checked|Full report|Worked examples/);
+});
+
+test('fixChunk takes an optional size limit (Plan 8 clips fix instructions to 3000)', () => {
+  const blocking = Array.from({ length: 40 }, (_, i) => F({ member: 'security', grade: 'blocking', title: `problem ${i}`, detail: 'x'.repeat(300) }));
+  const c = fixChunk({ blocking }, 1, 3000);
+  assert.ok(c.instructions.length <= 3000, String(c.instructions.length));
+  assert.match(c.instructions, /more problems are listed in the council report/);
+});
+
+test('writeCouncilReport writes the text and the JSON (no text key) atomically, leaving no temp file', async () => {
+  const dir = path.join(mkdtempSync(path.join(tmpdir(), 'crep-')), 'builds', '20261027-100000-abcd');
+  const r = projectReport();
+  const out = await writeCouncilReport(dir, r);
+  assert.deepEqual(out, { md: path.join(dir, 'council-report.md'), json: path.join(dir, 'council-report.json') });
+  assert.equal(readFileSync(out.md, 'utf8'), r.text);
+  const j = JSON.parse(readFileSync(out.json, 'utf8'));
+  assert.equal(j.verdict, 'approved-with-warnings');
+  assert.equal('text' in j, false);
+  assert.deepEqual(j.coverage, { proven: 2, total: 3 });
+  assert.deepEqual(j.checked, r.checked);
+  assert.equal(j.files.md, '/p/builds/r1/council-report.md');
+  assert.deepEqual(readdirSync(dir).sort(), ['council-report.json', 'council-report.md']);
+});

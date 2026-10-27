@@ -228,3 +228,81 @@ test('an added gitleaks:allow hides the file and sets secretSeen', async () => {
   assert.match(last, /\(changes to new\.js hidden: the secret scanner found a possible secret in it\)/);
   assert.match(last, /\+ok/);
 });
+
+// ---------- Plan 9 Task 12: the project round ----------
+import { PROJECT_COUNCIL, MEMBERS, membersFor } from '../src/council/index.js';
+import { readdirSync as readdirSync12, mkdirSync as mkdirSync12 } from 'node:fs';
+import { BRIEF } from './fixtures/council-full/brief.js';
+import { fakeGatesRun } from './helpers/councilFull.js';
+
+const ofType = (events, type) => events.filter((e) => e.type === type);
+
+test('ordinary repo: the Plan 5 round exactly — no evidence, no project sections, no files written (Ruling R5)', async () => {
+  const { ctx, events } = await ctxWith(undefined, { councilTools: councilStubs(mkdtempSync(path.join(tmpdir(), 'crnd-')), {}) });
+  writeFileSync(path.join(ctx.ws.dir, 'a.js'), 'const a = 1;\n');
+  await ctx.ws.commitAll('step');
+  const r = await runCouncilRound(ctx, { files: ['a.js'], tests: { ran: true, passed: true, code: 0, output: '' }, diff: 'd' });
+  assert.equal(r.status, 'ok');
+  assert.deepEqual(ofType(events, 'council-start')[0].members, ['security', 'legal', 'correctness']);
+  assert.equal(ofType(events, 'council-evidence').length, 0);
+  assert.equal(r.report.checked, undefined);
+  assert.equal(r.report.coverage, undefined);
+  assert.equal(r.report.files, undefined);
+  assert.doesNotMatch(r.report.text, /What was checked|Full report|Worked examples/);
+  assert.equal(ofType(events, 'council-report-saved').length, 0);
+  assert.equal(ctx.state.council.evidence, undefined);
+  assert.deepEqual(readdirSync12(ctx.ws.metaDir).filter((n) => n.startsWith('council')), [], 'no report file next to the run state');
+  assert.equal(existsSync(path.join(ctx.ws.dir, 'council-report.md')), false);
+});
+
+test('the member registry: design and reliability only in the project council (Ruling R24a)', () => {
+  assert.deepEqual(PROJECT_COUNCIL, ['security', 'legal', 'correctness', 'design', 'reliability']);
+  assert.ok(Object.isFrozen(PROJECT_COUNCIL));
+  assert.deepEqual(membersFor(PROJECT_COUNCIL).map((m) => m.member), PROJECT_COUNCIL);
+  assert.equal(MEMBERS.design.label, 'Design');
+  assert.equal(MEMBERS.reliability.label, 'Reliability');
+  assert.deepEqual(membersFor(null).map((m) => m.member), ['security', 'legal', 'correctness']);
+  const v = (names) => () => validateCouncilOptions({ ...DEFAULT_OPTIONS, council: true, councilMembers: names });
+  assert.doesNotThrow(v(['foundation', 'correctness']));
+  assert.throws(v(['design']), /councilMembers: design reviews client apps only/);
+  assert.throws(v(['security', 'reliability']), /councilMembers: reliability reviews client apps only/);
+});
+
+test('a project round always gives the members the project, brief, policy and evidence (Ruling R24b)', async () => {
+  const { ctx, events } = await ctxWith(() => ({ text: fence({ findings: [] }) }), { councilTools: { ...councilStubs(mkdtempSync(path.join(tmpdir(), 'crnd-')), {}), axe: false } });
+  const buildDir = path.join(mkdtempSync(path.join(tmpdir(), 'crnd-p-')), 'builds', '20261027-100000-abcd');
+  mkdirSync12(buildDir, { recursive: true });
+  const project = { slug: 'acme', runId: '20261027-100000-abcd', buildDir, brief: BRIEF, policy: BRIEF.policy, briefText: '# Acme Ltd', checks: null, factory: {}, problem: null,
+    deps: { run: fakeGatesRun().run, helpers: { browsersInstalled: () => ({ ok: true, why: '' }), testDatabaseProblem: () => null }, getMachineProvider: () => null } };
+  const seen = [];
+  const spy = { member: 'correctness', label: 'Correctness', alwaysInterpret: false, collect: async (input) => { seen.push(input); return []; } };
+  const r = await runCouncilRound(ctx, { files: [], tests: null, diff: '', members: [spy], project });
+  assert.equal(r.status, 'ok');
+  assert.equal(seen[0].project, project);
+  assert.equal(seen[0].brief, BRIEF);
+  assert.equal(seen[0].briefText, '# Acme Ltd');
+  assert.equal(seen[0].policy, BRIEF.policy);
+  assert.ok(seen[0].evidence && 'gates' in seen[0].evidence && 'smoke' in seen[0].evidence);
+  assert.ok(ofType(events, 'council-evidence').length > 0);
+  assert.deepEqual(ofType(events, 'council-report-saved'), [{ ...ofType(events, 'council-report-saved')[0], md: path.join(buildDir, 'council-report.md') }]);
+  assert.equal(readFileSync(path.join(buildDir, 'council-report.md'), 'utf8'), r.report.text);
+  // A project with no brief is refused rather than silently reviewed as an ordinary repo.
+  await assert.rejects(runCouncilRound(ctx, { files: [], tests: null, diff: '', members: [spy], project: { ...project, brief: null } }), /approved brief/);
+});
+
+test('a project round adds the foundation problem as a locked warning, and missing axe as "not proven" (Ruling R24c)', async () => {
+  const { ctx } = await ctxWith(() => ({ text: fence({ findings: [] }) }), { councilTools: { ...councilStubs(mkdtempSync(path.join(tmpdir(), 'crnd-')), {}), axe: false } });
+  const buildDir = path.join(mkdtempSync(path.join(tmpdir(), 'crnd-p-')), 'builds', '20261027-100000-abcd');
+  const problem = "Conductor could not find foundation release v0.1.0, so the council reviewed only this build's own changes";
+  const project = { slug: 'acme', runId: '20261027-100000-abcd', buildDir, brief: BRIEF, policy: BRIEF.policy, briefText: '# Acme Ltd', checks: null, factory: {}, problem,
+    deps: { run: fakeGatesRun().run, helpers: { browsersInstalled: () => ({ ok: true, why: '' }), testDatabaseProblem: () => null }, getMachineProvider: () => null } };
+  const r = await runCouncilRound(ctx, { files: [], tests: null, diff: '', members: membersFor(['design']), project });
+  const p = r.report.warnings.find((f) => f.title === problem);
+  assert.ok(p && p.locked && p.member === 'correctness' && p.tool === null);
+  const a = r.report.warnings.find((f) => f.title.startsWith('Accessibility was not proven'));
+  assert.equal(a.title, 'Accessibility was not proven: axe-core is turned off in the config');
+  assert.ok(a.locked);
+  assert.ok(r.report.warnings.indexOf(a) < r.report.warnings.indexOf(p), '"not proven" heads the warnings');
+  assert.deepEqual(r.report.checked.map((l) => l.split(':')[0]), ['Design']);
+  assert.match(r.report.checked[0], /^Design: the page check \(desktop and phone\), the screen list check, house style check$/);
+});
