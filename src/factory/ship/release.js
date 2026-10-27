@@ -22,6 +22,9 @@ const UNRELEASED_NAME = 'highland-foundation';
 const NPM_CI_TIMEOUT_MS = 15 * 60 * 1000;
 const NPM_RELEASE_TIMEOUT_MS = 10 * 60 * 1000;
 const SHA_RE = /^[0-9a-f]{40}$/;
+// Ruling S20: the only files a release (and the first release's preparation) may change.
+const RELEASE_FILES = new Set(['CHANGELOG.md', 'package.json', 'package-lock.json', 'foundation.json']);
+const GIT_LOCATION_ENV = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE'];
 const DEFAULT_IDENTITY = { name: 'Conductor', email: 'conductor@localhost' };
 
 const NOT_EXPECTED = 'The app\'s release script did not leave the release Conductor expected, so nothing was added.';
@@ -37,6 +40,7 @@ function plainVersion(s) {
 
 function gitRunner(run, gitBin, env) {
   const genv = childEnv({ env });
+  for (const k of GIT_LOCATION_ENV) delete genv[k]; // git must work on the repo named by -C, never one the caller's env points at
   const git = (dir, args, opts = {}) => run({ cmd: gitBin, args: ['-C', dir, ...args], env: genv, ...opts });
   const out = async (dir, args) => {
     const r = await git(dir, args);
@@ -90,7 +94,8 @@ async function identityOf(g, appDir) {
   return name && email ? { name, email } : DEFAULT_IDENTITY;
 }
 
-export async function releaseApp({ projectDir, bump, runId } = {}, { env = process.env, run = runCommand } = {}) {
+// expectedMain (optional): the main commit the caller checked; releaseApp refuses when its own read differs.
+export async function releaseApp({ projectDir, bump, runId, expectedMain = null } = {}, { env = process.env, run = runCommand } = {}) {
   const no = (reason) => ({ ok: false, reason });
   if (!RELEASE_BUMPS.includes(bump)) return no(`"${bump}" is not a kind of release Conductor makes (first, minor or patch).`);
   if (typeof runId !== 'string' || !RUN_ID_RE.test(runId)) return no(`"${runId}" is not a run id.`);
@@ -106,6 +111,9 @@ export async function releaseApp({ projectDir, bump, runId } = {}, { env = proce
   const g = gitRunner(run, gitBin, env);
   const main = await g.out(appDir, ['rev-parse', '--verify', '-q', 'refs/heads/main']);
   if (!main || !SHA_RE.test(main)) return no(NO_APP);
+  if (expectedMain !== null && main !== expectedMain) {
+    return no('The app\'s main branch moved before the release could start, so the release was not made. Run it again.');
+  }
   const identity = await identityOf(g, appDir);
 
   // 3. Adopt a release that already happened: main moved but the tag was never added (a crash). Ruling S5: only when
@@ -115,6 +123,7 @@ export async function releaseApp({ projectDir, bump, runId } = {}, { env = proce
   const subject = await g.out(appDir, ['log', '-1', '--format=%s', main]);
   const adopted = /^release: v(\d+\.\d+\.\d+)$/.exec(subject ?? '');
   if (adopted && plainVersion(adopted[1]) && pkgAtMain.version === adopted[1]) {
+    await tidyAfterCrash(g, appDir, main);
     const version = adopted[1];
     const tag = `v${version}`;
     if (!(await g.ok(appDir, ['rev-parse', '--verify', '-q', `refs/tags/${tag}`]))) {
@@ -173,6 +182,16 @@ export async function releaseApp({ projectDir, bump, runId } = {}, { env = proce
     const tag = `v${version}`;
     if ((await g.out(clone, ['rev-parse', '--verify', '-q', `refs/tags/${tag}^{commit}`])) !== sha) return no(NOT_EXPECTED);
     if (!(await g.ok(clone, ['merge-base', '--is-ancestor', main, sha]))) return no(NOT_EXPECTED);
+    // Ruling S20: the release adds only release content, in exactly the commits a release makes.
+    const count = await g.out(clone, ['rev-list', '--count', `${main}..${sha}`]);
+    if (count !== String(bump === 'first' ? 2 : 1)) return no('The app\'s release script made more commits than a release needs, so nothing was added.');
+    const changed = await g.out(clone, ['diff', '--name-only', '-z', main, sha]);
+    if (changed === null) return no(NOT_EXPECTED);
+    const stray = changed.split('\0').filter((f) => f !== '' && !RELEASE_FILES.has(f));
+    if (stray.length > 0) {
+      const named = stray.slice(0, 5).join(', ') + (stray.length > 5 ? ` and ${stray.length - 5} more` : '');
+      return no(`The app's release script changed files a release should not touch (${named}), so nothing was added.`);
+    }
 
     // 9. Into the app repo: objects first, then main by compare-and-swap, then the tag.
     const fetched = await g.git(appDir, ['fetch', '-q', '--no-tags', clone, `+refs/heads/main:${tmpRef}`]);
@@ -193,6 +212,23 @@ export async function releaseApp({ projectDir, bump, runId } = {}, { env = proce
   } finally {
     await g.git(appDir, ['update-ref', '-d', tmpRef]);
     rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+// A crash between moving main and `reset --hard` leaves the app folder (on main) holding the main the release started
+// from: main^ for minor/patch, main~2 for a first release (its preparation commit). When the index and the working tree
+// match one of those commits exactly, with nothing untracked, bring them up to main (nothing is lost: what they hold
+// is already committed); anything else is the operator's and is left alone.
+async function tidyAfterCrash(g, appDir, main) {
+  if ((await g.out(appDir, ['symbolic-ref', '-q', '--short', 'HEAD'])) !== 'main') return;
+  if ((await g.out(appDir, ['status', '--porcelain'])) === '') return;
+  if ((await g.out(appDir, ['ls-files', '--others', '--exclude-standard'])) !== '') return;
+  for (const base of [`${main}^`, `${main}~2`]) {
+    if (!(await g.ok(appDir, ['rev-parse', '--verify', '-q', `${base}^{commit}`]))) return;
+    if (await g.ok(appDir, ['diff', '--quiet', base]) && await g.ok(appDir, ['diff', '--cached', '--quiet', base])) {
+      await g.git(appDir, ['reset', '-q', '--hard', main]);
+      return;
+    }
   }
 }
 
@@ -260,7 +296,7 @@ export async function approvedRelease(projectDir, { runId, env = process.env, ru
   if (main !== approved) {
     return no(`The app's main branch has moved since the build was approved (main is ${short(main)}, the approved build is ${short(approved)}), so Conductor will not release it. Approve the build again.`);
   }
-  const r = await releaseApp({ projectDir, bump: 'first', runId }, { env, run });
+  const r = await releaseApp({ projectDir, bump: 'first', runId, expectedMain: main }, { env, run });
   if (!r.ok) return no(`Conductor could not make the app's first release: ${r.reason}`);
   return { ok: true, sha: r.sha, version: r.version, tag: r.tag, cut: true };
 }

@@ -85,8 +85,9 @@ export function approve(p, sha) {
 // A stub `npm` modelled on the foundation's scripts/release.ts (v0.1.0): `ci` succeeds; `run release -- <bump>` refuses
 // as the foundation does (dirty tree, no v* tags, empty Unreleased, clashing tag), otherwise raises the version, moves
 // the Unreleased lines under a dated section, stamps package.json and foundation.json, commits "release: v<x>" and adds
-// an annotated tag. With mainBump set, it first commits to that repo's main (main moving during the release).
-export function fakeNpm(dir, { mainBump = null } = {}) {
+// an annotated tag. With mainBump set, it first commits to that repo's main (main moving during the release). With
+// extraFile set, the release commit also adds that file; with extraCommit, it makes one more commit (a misbehaving script).
+export function fakeNpm(dir, { mainBump = null, extraFile = null, extraCommit = false } = {}) {
   const binDir = path.join(dir, 'fake-npm-bin');
   const callsFile = path.join(dir, 'npm-calls.jsonl');
   writeStubCli(binDir, 'npm', String.raw`
@@ -120,6 +121,9 @@ const after = parts.slice(at + 1).join('');
 fs.writeFileSync('CHANGELOG.md', parts.slice(0, at).join('') + '## [Unreleased]\n\n## [' + v + '] - 2026-10-27\n' + body + '\n' + (after === '' ? '' : '\n' + after));
 fs.writeFileSync('package.json', JSON.stringify({ ...pkg, version: v }, null, 2) + '\n');
 fs.writeFileSync('foundation.json', JSON.stringify({ ...found, version: v, commit: 'v' + v }, null, 2) + '\n');
+const extraFile = ${JSON.stringify(extraFile)};
+if (extraFile) { fs.writeFileSync(extraFile, 'not a release file\n'); git('add', extraFile); }
+if (${JSON.stringify(extraCommit)}) git('commit', '-q', '--allow-empty', '-m', 'extra');
 git('commit', '-qam', 'release: v' + v);
 git('tag', '-a', 'v' + v, '-m', 'v' + v);
 console.log('Released v' + v + ' on this machine. Nothing has been pushed: when you are happy, run "git push --follow-tags".');
