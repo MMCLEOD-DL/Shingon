@@ -136,3 +136,50 @@ test('a clone that collides with a container made meanwhile moves on to the next
     assert.deepEqual(deletes(stub), []);
   } finally { await stub.close(); }
 });
+
+test('final-fix 8: guard regressions: a look-alike tag, another node, a VM, a vmid given as text', async () => {
+  const lookAlike = { ...ours(9122, L('20261027-143005-a1b2')), tags: tagsFor(L('20261027-143005-a1b2')).replace('hf-factory;', 'hf-factoryX;') };
+  const otherNode = { ...ours(9123, L('20261027-143005-a1b2')), node: 'ms02' };
+  const vm = { ...ours(9124, L('20261027-143005-a1b2')), type: 'qemu' };
+  const storage = { id: 'storage/ms01/local', type: 'storage', node: 'ms01', storage: 'local' };
+  const { stub, p } = await setup({ resources: [lookAlike, otherNode, vm, storage, ours(9125, L('20261027-143005-a1b2'))] });
+  try {
+    assert.ok(!(await p.resources()).some((r) => r.type === 'storage'), 'the stub answers type=vm with guests only');
+    for (const vmid of [9122, 9123, 9124, '9125']) {
+      await assert.rejects(p.destroy(vmid), /refused to delete container 912\d: it is not one of the factory's own machines/, String(vmid));
+    }
+    assert.deepEqual(deletes(stub), []);
+    assert.equal(stub.requests.some((r) => r.path.includes('/status/stop')), false);
+    assert.equal(stub.state.resources.filter((r) => r.type !== 'storage').length, 5, 'nothing was removed (the template and four containers)');
+  } finally { await stub.close(); }
+});
+
+test('final-fix 8: a container moved out of the pool or relabelled between the stop and the delete is not deleted', async () => {
+  for (const change of [(r) => { r.pool = 'prod'; }, (r) => { r.tags = 'web;prod'; }]) {
+    const { stub, p } = await setup({ resources: [ours(9130, L('20261027-143005-a1b2'))] });
+    try {
+      const realPost = p.pve.post;
+      p.pve = { ...p.pve, post: async (pth, form) => {
+        const upid = await realPost(pth, form);
+        if (pth.endsWith('/status/stop')) change(stub.state.resources.find((r) => r.vmid === 9130));
+        return upid;
+      } };
+      await assert.rejects(p.destroy(9130), /refused to delete container 9130/);
+      assert.equal(stub.requests.filter((r) => r.path.endsWith('/lxc/9130/status/stop')).length, 1, 'it was stopped');
+      assert.deepEqual(deletes(stub), [], 'the second check refused the delete');
+      assert.ok(stub.state.resources.some((r) => r.vmid === 9130));
+    } finally { await stub.close(); }
+  }
+});
+
+test('final-fix 8: the delete asks Proxmox to purge the container and its unreferenced disks', async () => {
+  const { stub, p } = await setup({ resources: [ours(9131, L('20261027-143005-a1b2'))] });
+  try {
+    await p.destroy(9131);
+    const del = stub.requests.find((r) => r.method === 'DELETE');
+    assert.equal(del.path, '/api2/json/nodes/ms01/lxc/9131');
+    assert.equal(del.search, '?purge=1&destroy-unreferenced-disks=1');
+    assert.deepEqual(del.query, { purge: '1', 'destroy-unreferenced-disks': '1' });
+    assert.equal(stub.requests.find((r) => r.path === '/api2/json/cluster/resources').search, '?type=vm');
+  } finally { await stub.close(); }
+});

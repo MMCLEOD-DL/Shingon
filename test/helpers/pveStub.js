@@ -26,11 +26,16 @@ export async function startPveStub({ token = 'conductor@pve!factory=s3cret-token
       const query = Object.fromEntries(u.searchParams);
       const prefix = '/api2/json';
       const path = u.pathname.startsWith(prefix) ? u.pathname.slice(prefix.length) : u.pathname;
-      requests.push({ method: req.method, path: u.pathname, query, form });
+      requests.push({ method: req.method, path: u.pathname, search: u.search, query, form });
       if (req.headers.authorization !== `PVEAPIToken=${token}`) return send(401, null, 'no ticket');
       let m;
       const M = req.method;
-      if (M === 'GET' && path === '/cluster/resources') return send(200, state.resources);
+      if (M === 'GET' && path === '/cluster/resources') {
+        // type=vm: guests only (lxc and qemu), as Proxmox answers; other types (storage, node) are left out.
+        const list = query.type === 'vm' ? state.resources.filter((r) => r.type === 'lxc' || r.type === 'qemu')
+          : query.type ? state.resources.filter((r) => r.type === query.type) : state.resources;
+        return send(200, list);
+      }
       if ((m = path.match(/^\/nodes\/([^/]+)\/tasks\/([^/]+)\/status$/)) && M === 'GET') {
         const t = state.tasks.get(decodeURIComponent(m[2]));
         return t ? send(200, t) : send(500, null, 'no such task');
