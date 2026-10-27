@@ -78,3 +78,12 @@ test('the sample brief is a valid approved brief with example ids', () => {
   assert.deepEqual(validateBrief(b, { stage: 'approved' }).problems, []);
   assert.deepEqual(b.features.flatMap((f) => f.acceptance.map((a) => a.id)), ['submit-expense#1', 'submit-expense#2', 'monthly-report#1']);
 });
+
+test('config.example.json has a valid factory block', async () => {
+  const { readFileSync } = await import('node:fs');
+  const f = factoryConfig(JSON.parse(readFileSync(new URL('../config.example.json', import.meta.url), 'utf8')), { env: {}, home: '/h' });
+  assert.equal(f.machines.provider, 'static');
+  assert.equal(f.machines.static.hosts[0].id, 'ct111');
+  assert.equal(f.machines.proxmox, null);
+  assert.equal(f.operatorName, 'Malcolm');
+});

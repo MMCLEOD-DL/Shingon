@@ -24,6 +24,14 @@
   },
   "factory": {
     "projectsRoot": "~/highland-projects",
-    "operatorName": "Malcolm"
+    "operatorName": "Malcolm",
+    "foundation": { "repo": "/root/highland-foundation", "tag": "v0.1.0" },
+    "build": { "browserGate": true, "fixRounds": 2, "councilFixRounds": 3 },
+    "machines": {
+      "provider": "static",
+      "static": { "hosts": [ { "id": "ct111", "name": "hf-build", "host": "192.168.1.111", "user": "root",
+                               "keyPath": "~/.ssh/id_ed25519", "previewPort": 8080, "workRoot": "/srv/hf-factory" } ] },
+      "proxmox": null
+    }
   }
 }

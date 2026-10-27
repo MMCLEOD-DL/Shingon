@@ -207,6 +207,51 @@ left to ask, you see the whole brief and choose `a` approve, `c` ask for changes
   overwritten.
 - **It needs a terminal.** Without one, Conductor does nothing and sends nothing.
 
+## Building a client's app
+
+Once a client's brief is approved, Conductor can build the app.
+
+    conductor build harbour-cafe
+
+- **What it does.** It makes the app from the foundation release named in the config (the
+  release is recorded in the project and never moved silently). It splits the approved brief
+  into small features and shows you the list. Each feature is built in turn with the usual
+  plan, local model and cross-checking, and the brief's worked examples are written as tests
+  **first**. The foundation's rules are checked on every feature and `npm run verify` is kept
+  passing. At the end Conductor runs every check plus the browser checks, then asks for your
+  approval. Approving puts the build on the app's `main` branch, records the approval in
+  `project.json` and marks the project ready. It does not make a release: that happens when
+  the app is first shipped (`conductor ship`). Sending feedback turns it into one more feature;
+  rejecting leaves `main` alone. The app's `app-profile.json` (its modules and data policy) is
+  written from the brief in the build's first commit. Reports from the final checks are kept in
+  the build folder under `reports/`.
+- **Before the first build.** Set `TEST_DATABASE_URL` to a PostgreSQL role that may create
+  databases (for example the local one on this VM). Install Playwright's browsers with
+  `npx playwright install chromium webkit` for the browser checks; without them the checks are
+  reported as not run.
+- **Stopping and carrying on.** Press Ctrl-C at any time. `conductor build <project>` (or
+  `conductor resume` inside the project's folder) carries on where it stopped. `--new` starts
+  again from the current brief; you need it after the brief changes.
+- **Previews.** `conductor preview <project>` shows the build in progress (or the approved
+  app) with made-up data on a factory machine, at an address on your own network only (the
+  machine's private LAN address, never `0.0.0.0`), and prints the demo sign-ins (password
+  `demo-password-1`, which is why a preview can never become a live box). `--stop` ends it.
+  There is one preview per project, and one use per CT 111 at a time.
+- **Machines.** `conductor machines` lists what is in use. `conductor machines sweep` clears
+  machines left over from crashes (older than 6 hours, never a running preview). The same
+  machines also run the council's deploy tests and build release images for shipping. The
+  `static` provider uses machines you already run. The `proxmox` provider makes and destroys its
+  own containers, only inside the pool, number range and limits you set up for it, and only ones
+  it labelled itself. Keep that number range free of any other container, and if a container
+  was made but left without its label (a crash half way), remove it by hand in Proxmox.
+- **What it will not do yet.** Briefs that need optional modules (OCR, PDF or spreadsheet
+  export, scheduled jobs); rebuilding an app that is already approved (that will be
+  `conductor change`); the full council (design, reliability) is the next plan.
+- **Quote run requests.** A run request that begins with the word `build`, `preview` or
+  `machines` is read as one of these commands. Put the request in quotes, for example
+  `conductor "build a login page"`, or word it differently (the same goes for `brief` and
+  `project`).
+
 ## Waking the local model
 
 Conductor remembers which models your earlier runs used, and checks them before each run. Each
@@ -281,6 +326,14 @@ safe.
   - `projectsRoot`: where project folders go (default `~/highland-projects`). It must start with
     `/` or `~`, and the `CONDUCTOR_PROJECTS_ROOT` environment variable overrides it;
   - `operatorName`: the name recorded on approved briefs (default: your computer login name).
+
+  - `foundation`: `repo` (the foundation's folder or address, default `/root/highland-foundation`)
+    and `tag` (the release to build from, default `v0.1.0`);
+  - `build`: `browserGate` (default `true`), `fixRounds` (default 2), `councilFixRounds`
+    (default 3) and `testCommand` (replaces `npm run verify`);
+  - `machines`: `provider` (`static` or `proxmox`), `static.hosts` (each with `id`, `host`, `user`,
+    `keyPath`, `previewPort`, `workRoot`), `proxmox` (`null` until set up; see the operator
+    follow-ups in `spikes/factory-build-smoke/RESULT.md`), and `sweepAfterMs`.
 
   Later factory plans add their own keys to this same section.
 
