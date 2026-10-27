@@ -55,6 +55,18 @@ async function gitOut(cwd, args) {
   return r.stdout.trim();
 }
 
+// A crash after the gate saved project.json as ready but before build.json was finished leaves the build at the
+// gate. When main is the approved commit, the approval is complete: record the build as done (best effort).
+async function finishApprovedBuild(projectDir, project) {
+  try {
+    const b = newestBuild(projectDir);
+    if (!b || b.phase !== 'gate' || !UNFINISHED.has(b.status) || !project.approved?.sha || project.approved.runId !== b.runId) return;
+    const main = await git(path.join(projectDir, 'app'), ['rev-parse', '--verify', '--quiet', 'refs/heads/main^{commit}']);
+    if (main.code !== 0 || main.stdout.trim() !== project.approved.sha) return;
+    saveBuild(buildDirOf(projectDir, b.runId), { ...b, phase: 'done', status: 'ready', reason: null });
+  } catch { /* the refusal below still stands */ }
+}
+
 export async function runBuild({ factory, slug, team, hooks, options = {}, baseDir, warnings = [], env = process.env, deps = {} }) {
   const d = { ...defaultDeps(), ...deps };
   baseDir ??= defaultBaseDir(env);   // ruling Q4
@@ -65,6 +77,7 @@ export async function runBuild({ factory, slug, team, hooks, options = {}, baseD
   let project;
   try { ({ dir: projectDir, project } = readProject(factory.projectsRoot, slug)); } catch (e) { return refuse(e.message); }
   if (project.status === 'ready' || project.status === 'shipped') {
+    await finishApprovedBuild(projectDir, project);
     return refuse(`${project.client} is already built and approved. Changes to a finished app will go through "conductor change", which is not available yet.`);
   }
   let brief;

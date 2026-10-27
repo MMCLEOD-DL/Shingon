@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { runBuild } from '../src/factory/build.js';
-import { latestBuild } from '../src/factory/buildState.js';
+import { latestBuild, saveBuild, buildDirOf } from '../src/factory/buildState.js';
+import { saveProject } from '../src/factory/projects.js';
 import { git } from '../src/workspace.js';
 import { squashBuild } from '../src/factory/buildFinal.js';
 import { team, setup } from './helpers/buildHarness.js';
@@ -172,4 +173,61 @@ test('squashBuild is re-entrant and refuses a branch that moved', async () => {
   assert.equal(await squashBuild(args), first, 'a second call returns the same commit');
   await git(appDir, ['update-ref', `refs/heads/${b.branch}`, onto]);
   await assert.rejects(squashBuild(args), /is not where Conductor left it/);
+});
+
+test('review fix 1: a stop on red checks drops the cached result, so the retry runs the checks again', async () => {
+  for (const kind of ['verify', 'browser']) {
+    const s = await setup();
+    const factory = { ...s.factory, build: { ...s.factory.build, fixRounds: 0 } };
+    const red = kind === 'verify'
+      ? { ...green, verify: { status: 'failed', summary: 'The main checks failed.', output: 'no database' } }
+      : { ...green, browser: { status: 'failed', summary: 'The browser checks failed.', output: 'no browser' } };
+    let n = 0;
+    const first = await runBuild({ factory, slug: s.slug, baseDir: s.baseDir, team: team(), hooks: { ...s.hooks, ...gate([true]) }, deps: { ...s.deps, runAppChecks: async () => (++n === 1 ? green : red) }, env: {} });
+    assert.equal(first.status, 'stopped', kind);
+    assert.equal(latestBuild(s.projectDir).checks, null, `${kind}: the red result is not kept`);
+    let calls = 0;
+    const g = gate([true]);
+    const again = await runBuild({ factory, slug: s.slug, baseDir: s.baseDir, team: team(), hooks: { ...s.hooks, ...g }, deps: { ...s.deps, runAppChecks: async () => { calls++; return green; } }, env: {} });
+    assert.equal(again.status, 'ready', kind);
+    assert.equal(again.runId, first.runId);
+    assert.deepEqual([calls, g.seen.length], [1, 1]);
+    assert.deepEqual(latestBuild(s.projectDir).features.map((f) => f.id), ['expenses', 'report'], `${kind}: no fix units at the cap`);
+  }
+});
+
+test('review fix 2: a crash after project.json said ready but before the build was finished is tidied on the next run', async () => {
+  const s = await setup();
+  const pause = async (bctx) => bctx.finish('paused', 'p');
+  await runBuild({ factory: s.factory, slug: s.slug, baseDir: s.baseDir, team: team(), hooks: s.hooks, deps: { ...s.deps, runFinal: pause }, env: {} });
+  const appDir = path.join(s.projectDir, 'app');
+  const b = latestBuild(s.projectDir);
+  const sha = await rev(appDir, b.branch);
+  await git(appDir, ['update-ref', 'refs/heads/main', sha]);
+  const project = JSON.parse(readFileSync(path.join(s.projectDir, 'project.json'), 'utf8'));
+  saveProject(s.projectDir, { ...project, status: 'ready', approved: { sha, at: '2026-10-27T12:00:00.000Z', runId: b.runId, briefVersion: 1 }, builtFromBrief: 1 });
+  saveBuild(buildDirOf(s.projectDir, b.runId), { ...b, phase: 'gate', status: 'running' });
+  const out = await runBuild({ factory: s.factory, slug: s.slug, baseDir: s.baseDir, team: team(), hooks: s.hooks, deps: s.deps, env: {} });
+  assert.equal(out.status, 'failed');
+  assert.match(out.reason, /already built and approved/);
+  const after = latestBuild(s.projectDir);
+  assert.deepEqual([after.status, after.phase], ['ready', 'done']);
+});
+
+test('review fix 3 and 4: a council fix without a title and instructions is no fix; the log records the status as saved', async () => {
+  const s = await setup();
+  const asked = [];
+  const council = async () => ({ status: 'blocked', text: 'Council report: blocked', fix: { instructions: 'Hide the totals.' } });
+  const hooks = { ...s.hooks, ...gate([true]), council, escalate: async (a) => { asked.push(a); return 'reject'; } };
+  const out = await runBuild({ factory: s.factory, slug: s.slug, baseDir: s.baseDir, team: team(), hooks, deps: { ...s.deps, runAppChecks: async () => green }, env: {} });
+  assert.equal(out.status, 'stopped');
+  const b = latestBuild(s.projectDir);
+  assert.deepEqual([asked.length, b.councilFixRounds, b.features.length], [1, 0, 2]);
+
+  const g = await setup();
+  const hooks2 = { ...g.hooks, ...gate([true]), council: async () => ({ status: 'fine' }), escalate: async () => 'reject' };
+  await runBuild({ factory: g.factory, slug: g.slug, baseDir: g.baseDir, team: team(), hooks: hooks2, deps: { ...g.deps, runAppChecks: async () => green }, env: {} });
+  const events = readFileSync(path.join(buildDirOf(g.projectDir, latestBuild(g.projectDir).runId), 'build-log.jsonl'), 'utf8')
+    .trim().split('\n').map((l) => JSON.parse(l)).filter((e) => e.type === 'build-council');
+  assert.deepEqual(events.map((e) => e.status), ['blocked']);
 });

@@ -128,14 +128,17 @@ export async function runFinal(bctx) {
       save();
       return { next: 'features' };
     }
+    // A stop drops the cached red result, so a retry runs the checks again: the cause may be outside the code
+    // (a database or browsers missing, a flaky runner). fixRounds stays at the cap, so no new fix unit follows.
+    const stop = (reason) => { build.checks = null; return finish('stopped', reason); };
     if (verifyRed) {
-      return finish('stopped', `The whole-app checks still fail after ${rounds(build.fixRounds)}, so the build cannot be approved. ${checksLine(checks).replace(/\.$/, '')}. The build is kept; fix the cause and run "conductor build ${slug}" to try again.`);
+      return stop( `The whole-app checks still fail after ${rounds(build.fixRounds)}, so the build cannot be approved. ${checksLine(checks).replace(/\.$/, '')}. The build is kept; fix the cause and run "conductor build ${slug}" to try again.`);
     }
     const what = firstLine(checks.browser.output) || checks.browser.summary;
     const message = `Conductor needs your decision on: the browser checks\n\nWhat happened: The browser checks still fail on the finished build after ${rounds(build.fixRounds)}, although the main checks pass.\n\nThe first failure: ${what}\n\nApprove to carry on to the build's approval with a warning, or reject to stop the build here (it is kept).`;
     let answer;
     try { answer = await hooks.escalate({ kind: 'build', title: 'the browser checks', options: ['approve', 'reject'], message }); } catch { answer = null; }
-    if (answer !== 'approve') return finish('stopped', 'You stopped the build because the browser checks fail. The build is kept.');
+    if (answer !== 'approve') return stop('You stopped the build because the browser checks fail. The build is kept.');
     checks.overridden = true;
     if (!build.warnings.includes(BROWSER_WARNING)) build.warnings.push(BROWSER_WARNING);
     save();
@@ -154,19 +157,21 @@ export async function runFinal(bctx) {
       build.council = known ? { ...r, sha } : { status: 'blocked', text: 'The council gave no usable answer.', sha };
       build.secretSeen = build.secretSeen || r?.secretSeen === true;
       save();
-      emit('build-council', { status: r?.status });
+      emit('build-council', { status: build.council.status });
     }
     const c = build.council;
     councilText = c.text ?? '';
     if (c.status === 'paused') return finish('paused', c.reason ?? 'The council paused.');
     if (c.status === 'blocked' && !c.overridden) {
-      if (c.fix && build.councilFixRounds < factory.build.councilFixRounds) {
-        fixUnit({ build, prefix: 'fix', title: c.fix.title, instructions: clip(String(c.fix.instructions ?? ''), 3000) });
+      // A fix needs both a title and instructions; anything less is treated as no fix.
+      const fix = c.fix && typeof c.fix.title === 'string' && c.fix.title.trim() && typeof c.fix.instructions === 'string' && c.fix.instructions.trim() ? c.fix : null;
+      if (fix && build.councilFixRounds < factory.build.councilFixRounds) {
+        fixUnit({ build, prefix: 'fix', title: fix.title.trim(), instructions: clip(fix.instructions, 3000) });
         build.councilFixRounds += 1;
         save();
         return { next: 'features' };
       }
-      const message = `Conductor needs your decision on: the council review\n\nWhat happened: The council still found problems that must be fixed${c.fix ? `, after ${rounds(build.councilFixRounds)}` : ''}.\n\nThe concern:\n${clip(c.text ?? '', 3000)}\n\nApprove to carry on to the build's approval anyway, or reject to stop the build here (it is kept).`;
+      const message = `Conductor needs your decision on: the council review\n\nWhat happened: The council still found problems that must be fixed${fix ? `, after ${rounds(build.councilFixRounds)}` : ''}.\n\nThe concern:\n${clip(c.text ?? '', 3000)}\n\nApprove to carry on to the build's approval anyway, or reject to stop the build here (it is kept).`;
       let answer;
       try { answer = await hooks.escalate({ kind: 'council', title: 'the council review', options: ['approve', 'reject'], message }); } catch { answer = null; }
       if (answer !== 'approve') return finish('stopped', 'You stopped the build because the council still found problems that must be fixed. The build is kept.');
