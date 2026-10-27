@@ -2,7 +2,11 @@
 // validator every brief passes through. Content keys come from the model via normalizeBrief; the
 // meta keys (slug, version, approvedAt, example ids...) are stamped by Conductor only.
 
-import { exampleProblems, EXAMPLE_ID_RE } from './acceptance.js';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
+import path from 'node:path';
+import { exampleProblems, EXAMPLE_ID_RE, testTag } from './acceptance.js';
+import { writeFileAtomic, writeJsonAtomic, createFileExclusive } from './fsAtomic.js';
 import { OUTBOUND_SERVICES, outboundProblems } from './outbound.js';
 import { validateSlug } from './projects.js';
 import { secretValues } from '../secrets.js';
@@ -315,4 +319,208 @@ export function validateBrief(obj, { stage = 'ready' } = {}) {
   }
 
   return { ok: problems.length === 0, problems };
+}
+
+// ---- rendering ----
+
+export function ukDate(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return 'an unknown date';
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+}
+
+const NOT_DECIDED = 'not decided yet';
+const HOSTING_WORDS = { 'client-box': "on the client's own computer (a box on their network)", 'operator-server': 'on a server you run for the client' };
+const RESIDENCY_WORDS = { uk: 'UK only', 'uk-eu': 'UK and EU', any: 'anywhere' };
+const BACKUP_WORDS = { 'client-owned': 'client-owned storage', 'operator-run': 'storage you run', 'cloud-bucket': 'a cloud storage bucket' };
+const FORMAT_WORDS = { screen: 'on screen', pdf: 'PDF', xlsx: 'spreadsheet', csv: 'CSV file', email: 'email' };
+const MODULE_WORDS = { ocr: 'Reading receipts automatically (OCR)', 'pdf-export': 'PDF reports', 'xlsx-export': 'Spreadsheet exports', 'scheduled-jobs': 'Scheduled jobs' };
+
+const oneLine = (v) => String(v ?? '').replace(/\s*[\r\n]+\s*/g, ' ').trim();
+const cell = (v) => oneLine(v).replace(/\|/g, '\\|');
+const word = (map, v) => (typeof v === 'string' && v !== '' ? (Object.hasOwn(map, v) ? map[v] : oneLine(v)) : NOT_DECIDED);
+const sentence = (s) => { const t = oneLine(s); return /[.!?]$/.test(t) ? t : `${t}.`; };
+
+function outboundWords(outbound) {
+  if (!Array.isArray(outbound)) return NOT_DECIDED;
+  if (outbound.length === 0) return 'nowhere outside the app';
+  return `only to ${outbound.map((id) => (Object.hasOwn(OUTBOUND_SERVICES, id)
+    ? `${OUTBOUND_SERVICES[id].label} (carries ${OUTBOUND_SERVICES[id].carries})`
+    : `${oneLine(id)} (not a service Conductor knows)`)).join('; ')}`;
+}
+
+function policyLines(policy) {
+  const p = isObj(policy) ? policy : {};
+  const r = p.retention;
+  let retention = NOT_DECIDED;
+  if (isObj(r)) {
+    const text = oneLine(r.text);
+    const days = typeof r.days === 'number' ? `${r.days} days` : '';
+    retention = text ? (days ? `${text} (${days})` : text) : (days || NOT_DECIDED);
+  }
+  const b = p.backupDestination;
+  const backups = isObj(b) && typeof b.kind === 'string' && b.kind !== ''
+    ? `${word(BACKUP_WORDS, b.kind)}${oneLine(b.detail) ? `: ${oneLine(b.detail)}` : ''}`
+    : NOT_DECIDED;
+  return [
+    `- **Hosting:** ${word(HOSTING_WORDS, p.hosting)}`,
+    `- **Where data may go:** ${outboundWords(p.outbound)}`,
+    `- **Data residency:** ${word(RESIDENCY_WORDS, p.residency)}`,
+    `- **Retention:** ${retention}`,
+    `- **Backups:** ${backups}`,
+    `- **Operator access:** ${p.operatorAccess === true ? 'the client accepts that you can reach the app remotely to support it' : NOT_DECIDED}`,
+  ];
+}
+
+function featureLines(f, n) {
+  const lines = [`### ${n}. ${oneLine(f.title)} (\`${oneLine(f.id)}\`)`, '', oneLine(f.story), ''];
+  const roles = arr(f.roles).map(oneLine);
+  const data = arr(f.data).map(oneLine);
+  if (roles.length) lines.push(`- Used by: ${roles.join(', ')}`);
+  if (data.length) lines.push(`- Uses: ${data.join(', ')}`);
+  const examples = objs(f.acceptance);
+  if (examples.length) {
+    lines.push('- Worked examples:');
+    for (const ex of examples) {
+      const tag = typeof ex.id === 'string' && EXAMPLE_ID_RE.test(ex.id) ? `${testTag(ex.id)} ` : '';
+      lines.push(`  - ${tag}Given ${oneLine(ex.given)}, when ${oneLine(ex.when)}, then ${sentence(ex.then)}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+export function renderBrief(brief) {
+  const b = isObj(brief) ? brief : {};
+  const v = Number.isInteger(b.version) ? b.version : null;
+  const approved = isIso(b.approvedAt) && filled(b.approvedBy);
+  const status = approved
+    ? `Version ${v} · approved by ${oneLine(b.approvedBy)} on ${ukDate(b.approvedAt)}`
+    : `Draft: not yet approved${v !== null ? ` (will become version ${v})` : ''}`;
+  const sections = [`# Brief: ${oneLine(b.client)}`, status, `## What the app is for\n\n${b.purpose ?? ''}`];
+  sections.push(['## Data policy', '', ...policyLines(b.policy)].join('\n'));
+
+  sections.push(['## Who uses it', '', '| Role | What they do | What they can see | Foundation role |', '|---|---|---|---|',
+    ...objs(b.roles).map((r) => `| ${cell(r.name)} | ${cell(r.whatTheyDo)} | ${cell(r.sees)} | ${cell(r.mapsTo)} |`)].join('\n'));
+
+  sections.push(['## What it stores', '', ...objs(b.records).map((r) => {
+    const flags = [r.holdsFiles === true && 'holds files', r.personalData === true && 'personal data'].filter(Boolean);
+    return `- **${oneLine(r.name)}:** ${oneLine(r.description)}${flags.length ? ` (${flags.join('; ')})` : ''}`;
+  })].join('\n'));
+
+  sections.push(['## Features', '', objs(b.features).map((f, i) => featureLines(f, i + 1)).join('\n\n')].join('\n'));
+
+  sections.push(['## Reports, exports and emails', '', ...objs(b.outputs).map((o) => {
+    const roles = arr(o.roles).map(oneLine);
+    return `- **${oneLine(o.name)}** (${word(FORMAT_WORDS, o.format)}${roles.length ? `, for ${roles.join(', ')}` : ''}): ${oneLine(o.description)}`;
+  })].join('\n'));
+
+  const integrations = objs(b.integrations);
+  sections.push(['## Outside systems', '', ...(integrations.length ? integrations.map((it) => {
+    const label = Object.hasOwn(OUTBOUND_SERVICES, it.service) ? OUTBOUND_SERVICES[it.service].label : oneLine(it.service);
+    return `- **${oneLine(it.name)}:** ${oneLine(it.purpose)} (sends: ${oneLine(it.dataSent)} to ${label})`;
+  }) : ['None.'])].join('\n'));
+
+  const modules = arr(b.modules);
+  sections.push(['## Optional modules', '', ...(modules.length ? modules.map((m) => `- ${word(MODULE_WORDS, m)}`) : ['None.'])].join('\n'));
+
+  const assumptions = arr(b.assumptions);
+  if (assumptions.length) sections.push(['## Assumptions to check', '', ...assumptions.map((a) => `- ${oneLine(a)}`)].join('\n'));
+
+  const questions = objs(b.openQuestions);
+  if (questions.length) {
+    sections.push(['## Open questions', '', ...questions.map((q, i) => `${i + 1}. ${oneLine(q.question)} (Why it matters: ${oneLine(q.why)})`)].join('\n'));
+  }
+  if (v !== null) sections.push(`---\n\nThis file is a copy for reading. Conductor builds from brief-v${v}.json.`);
+  return `${sections.join('\n\n')}\n`;
+}
+
+// ---- versioned save and load ----
+
+export function briefPaths(projectDir) {
+  const dir = path.join(projectDir, 'brief');
+  return {
+    dir,
+    current: path.join(dir, 'current.json'),
+    session: path.join(dir, 'session.json'),
+    draftMd: path.join(dir, 'draft.md'),
+    logs: path.join(dir, 'logs'),
+    json: (v) => path.join(dir, `brief-v${v}.json`),
+    md: (v) => path.join(dir, `brief-v${v}.md`),
+  };
+}
+
+const BRIEF_FILE_RE = /^brief-v([1-9]\d{0,5})\.json$/;
+const SHA_RE = /^[0-9a-f]{64}$/;
+const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
+const NO_BRIEF = 'There is no approved brief for this project yet. Make one with: conductor brief <slug> --notes <file>';
+const DAMAGED = 'The brief pointer (current.json) is damaged. Approve the brief again with conductor brief <slug> --revise --notes <file>.';
+
+export function nextVersion(projectDir) {
+  const { dir } = briefPaths(projectDir);
+  if (!existsSync(dir)) return 1;
+  let max = 0;
+  for (const name of readdirSync(dir)) {
+    const m = BRIEF_FILE_RE.exec(name);
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return max + 1;
+}
+
+export function saveApprovedBrief(projectDir, brief) {
+  const check = validateBrief(brief, { stage: 'approved' });
+  if (!check.ok) throw new Error(`This brief cannot be saved as approved: ${check.problems.slice(0, 3).join(' ')}`);
+  const v = brief.version;
+  const p = briefPaths(projectDir);
+  mkdirSync(p.dir, { recursive: true });
+  const text = `${JSON.stringify(brief, null, 2)}\n`;
+  try {
+    createFileExclusive(p.json(v), text);
+  } catch (err) {
+    if (err.code === 'EEXIST') throw new Error(`Brief version ${v} already exists; Conductor never overwrites an approved brief.`);
+    throw err;
+  }
+  writeFileAtomic(p.md(v), renderBrief(brief));
+  writeJsonAtomic(p.current, {
+    schema: 1, version: v, json: `brief-v${v}.json`, md: `brief-v${v}.md`,
+    sha256: sha256(Buffer.from(text)), approvedAt: brief.approvedAt, approvedBy: brief.approvedBy,
+  });
+  return { version: v, jsonPath: p.json(v), mdPath: p.md(v) };
+}
+
+function readPointer(projectDir) {
+  const { current } = briefPaths(projectDir);
+  if (!existsSync(current)) throw new Error(NO_BRIEF);
+  let ptr;
+  try { ptr = JSON.parse(readFileSync(current, 'utf8')); } catch { throw new Error(DAMAGED); }
+  if (!isObj(ptr) || ptr.schema !== 1 || typeof ptr.json !== 'string' || !BRIEF_FILE_RE.test(ptr.json)
+    || typeof ptr.sha256 !== 'string' || !SHA_RE.test(ptr.sha256)) throw new Error(DAMAGED);
+  return ptr;
+}
+
+export function loadBrief(projectDir) {
+  const ptr = readPointer(projectDir);
+  let buf;
+  try { buf = readFileSync(path.join(briefPaths(projectDir).dir, ptr.json)); } catch {
+    throw new Error(`${ptr.json} is missing. Approve a new version with conductor brief <slug> --revise --notes <file>.`);
+  }
+  if (sha256(buf) !== ptr.sha256) {
+    throw new Error(`${ptr.json} has changed since it was approved (its fingerprint does not match). Conductor will not use it. Approve a new version with conductor brief <slug> --revise --notes <file>.`);
+  }
+  let brief;
+  try { brief = JSON.parse(buf.toString('utf8')); } catch {
+    throw new Error(`The approved brief (v${ptr.version}) is not valid: it is not readable JSON.`);
+  }
+  const check = validateBrief(brief, { stage: 'approved' });
+  if (!check.ok) throw new Error(`The approved brief (v${ptr.version}) is not valid: ${check.problems.slice(0, 3).join(' ')}`);
+  return brief;
+}
+
+export function currentBriefInfo(projectDir) {
+  try {
+    if (!existsSync(briefPaths(projectDir).current)) return null;
+    const b = loadBrief(projectDir);
+    return { version: b.version, approvedAt: b.approvedAt, approvedBy: b.approvedBy };
+  } catch (e) {
+    return { broken: e.message };
+  }
 }
