@@ -135,3 +135,10 @@ test('archiveFeatureRun never overwrites an earlier attempt', () => {
   const none = path.join(tmp('wsbase-'), 'ws'); mkdirSync(none);
   assert.equal(archiveFeatureRun({ workspaceDir: none, buildDir, index: 0, id: 'a' }), null);
 });
+
+test('final-fix 11: a checkout that fails after the branch moved says to run conductor build, not resume', async () => {
+  const { appDir, base, landedSha } = await appWithBuildBranch();
+  const failingReset = async (dir, args, o) => (args[0] === 'reset' ? { code: 1, stdout: '', stderr: 'disk full' } : git(dir, args, o));
+  const args = { appDir, buildBranch: 'build/r1', landedBranch: 'conductor/feature', landedSha, expectedBase: base, message: 'Feature 1/2', git: failingReset };
+  await assert.rejects(mergeFeature(args), (e) => /Run "conductor build" with the project.s short name to finish\./.test(e.message) && !/conductor resume/.test(e.message));
+});

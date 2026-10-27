@@ -77,7 +77,7 @@ export async function mergeFeature({ appDir, buildBranch, landedBranch, landedSh
   };
   const mustCheckout = async (sha) => {
     const r = await git(appDir, ['reset', '-q', '--hard', sha]);
-    if (r.code !== 0) throw new Error(`The build branch ${buildBranch} was updated but the app folder was not (${(r.stderr || '').trim() || `exit ${r.code}`}). Run "conductor resume" to finish.`);
+    if (r.code !== 0) throw new Error(`The build branch ${buildBranch} was updated but the app folder was not (${(r.stderr || '').trim() || `exit ${r.code}`}). Run "conductor build" with the project's short name to finish.`);
   };
   const onBuildBranch = async () => (await git(appDir, ['symbolic-ref', '-q', 'HEAD'])).stdout.trim() === `refs/heads/${buildBranch}`;
   const dropLanded = async () => { if (await rev(`refs/heads/${landedBranch}`) === landedSha) await git(appDir, ['update-ref', '-d', `refs/heads/${landedBranch}`, landedSha]); };
