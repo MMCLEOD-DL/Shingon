@@ -61,6 +61,10 @@ Other commands:
 | `conductor brief <project> --revise --notes <file>` | make a new version of the approved brief |
 | `conductor brief <project> --discard-draft` | throw away an unfinished brief (your notes are kept) |
 
+A request whose first word is `project` or `brief` is read as one of these commands, so put the
+whole request in quotes (`conductor "brief the new starter on the rota page"`) or start it with
+another word.
+
 Add `--approve-plan` to see the plan and say yes before any work starts.
 
 Add `--council` to have three specialist reviewers check the finished work first (see
