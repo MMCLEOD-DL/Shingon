@@ -7,6 +7,7 @@ import { StatusModel } from './status.js';
 export const NO_TTY_ESCALATION = 'There is no terminal to ask you, so Conductor answered "reject" to stay safe. Run Conductor in a terminal to answer questions.';
 export const NO_TTY_GATE = 'There is no terminal to ask you, so the result was not approved and nothing was added to your repository. Run Conductor in a terminal to approve results.';
 export const NO_TTY_LOCAL = 'There is no terminal to ask you, so Conductor did not use your subscription in place of the local model. Start the local model, or run Conductor in a terminal to choose.';
+export const NO_TTY_BRIEF = 'There is no terminal to ask you, so the brief was not approved. Run Conductor in a terminal to answer its questions and approve the brief.';
 
 // [w] must not promise a wake that will not happen: with warn-only, Conductor can only check again.
 const WAIT_LABEL = Object.freeze({
@@ -91,6 +92,23 @@ export function createTerminal({ input = process.stdin, output = process.stdout,
     }
   }
 
+  // Free text rather than a fixed choice. Rings the bell once (only when the bell option is on);
+  // EOF answers null; a blank line is asked again unless allowEmpty.
+  async function askText(promptText, { allowEmpty = false } = {}) {
+    if (bell) write('\x07');
+    for (;;) {
+      write(promptText);
+      const raw = await nextLine();
+      if (raw == null) {
+        write('\n');
+        return null;
+      }
+      const a = raw.trim();
+      if (a || allowEmpty) return a;
+      write('Please type an answer, "skip" or "stop".\n');
+    }
+  }
+
   // Every prompt pauses the live redraw and puts the status back afterwards.
   const prompt = (fn) => async (arg) => {
     prompting = true;
@@ -160,6 +178,35 @@ export function createTerminal({ input = process.stdin, output = process.stdout,
     return a === 'w' ? 'wait' : a === 'f' ? 'frontier' : 'stop';
   });
 
+  // Brief intake (Plan 7). Fails closed: no terminal or end of input means "stop for now"; only [a] approves.
+  const askBriefQuestion = prompt(async ({ index, total, question, why }) => {
+    say(`\nQuestion ${index} of ${total}: ${question}${why ? `\n(Why it matters: ${why})` : ''}`);
+    if (!isTTY) { say(NO_TTY_BRIEF); return { stop: true }; }
+    const a = await askText('Your answer (or "skip" to leave it open, "stop" to finish for now) > ');
+    if (a == null) return { stop: true };
+    const word = a.toLowerCase();
+    if (word === 'skip') return { skip: true };
+    if (word === 'stop') return { stop: true };
+    return { answer: a };
+  });
+
+  const approveBrief = prompt(async ({ markdown, draftPath }) => {
+    say(`\n=== The brief, ready for your approval ===\n${markdown ?? ''}\n\nA copy is saved at: ${draftPath ?? '(not available)'}\n`);
+    if (!isTTY) { say(NO_TTY_BRIEF); return { decision: 'stop' }; }
+    const a = await ask('[a] approve · [c] ask for changes · [s] stop for now > ', ['a', 'c', 's']);
+    if (a === 'a') return { decision: 'approve' };
+    if (a !== 'c') return { decision: 'stop' };
+    write('What should change? (one line): ');
+    const note = (await nextLine())?.trim();
+    return note ? { decision: 'change', note } : { decision: 'stop' };
+  });
+
+  const confirmDiscard = prompt(async ({ slug }) => {
+    say(`\nThis throws away the unfinished brief for ${slug}. Your notes are kept.`);
+    if (!isTTY) { say('There is no terminal to ask you, so nothing was thrown away.'); return false; }
+    return (await ask('[y] throw it away · [n] keep it > ', ['y', 'n'])) === 'y';
+  });
+
   function onEvent(e) {
     model.apply(e);
     if (e?.type === 'chunk-done' && typeof e.diff === 'string') say(`--- Step ${e.index + 1} changes ---\n${e.diff}`);
@@ -168,7 +215,7 @@ export function createTerminal({ input = process.stdin, output = process.stdout,
   }
 
   return {
-    onEvent, escalate, approveResult, approveChunk, approvePlan, confirmLocalFallback, say, model,
+    onEvent, escalate, approveResult, approveChunk, approvePlan, confirmLocalFallback, askBriefQuestion, approveBrief, confirmDiscard, say, model,
     close: () => { closed = true; reader?.close(); reader = null; },
   };
 }

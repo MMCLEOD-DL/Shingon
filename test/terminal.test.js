@@ -211,3 +211,53 @@ test('local consent: type-ahead cannot answer it', async () => {
   await new Promise((r) => setImmediate(r));
   assert.equal(await t.confirmLocalFallback({ message: DOWN_MSG }), 'stop');
 });
+
+import { NO_TTY_BRIEF } from '../src/ui/terminal.js';
+
+test('askBriefQuestion: shows one question with why; free text, skip, stop; blank is asked again; EOF stops', async () => {
+  const q = { index: 2, total: 4, question: 'Where should backups go?', why: 'Backups must never stay only on the same box' };
+  const a = term({ answers: ['', '  A USB disk in their safe  '] });
+  assert.deepEqual(await a.t.askBriefQuestion(q), { answer: 'A USB disk in their safe' });
+  assert.match(a.text(), /Question 2 of 4: Where should backups go\?\n\(Why it matters: Backups must never stay only on the same box\)/);
+  assert.match(a.text(), /Your answer \(or "skip" to leave it open, "stop" to finish for now\) > /);
+  assert.match(a.text(), /Please type an answer, "skip" or "stop"\./);
+  assert.deepEqual(await term({ answers: ['SKIP'] }).t.askBriefQuestion(q), { skip: true });
+  assert.deepEqual(await term({ answers: ['stop'] }).t.askBriefQuestion(q), { stop: true });
+  assert.deepEqual(await term({ answers: [] }).t.askBriefQuestion(q), { stop: true });
+});
+
+test('askBriefQuestion rings the bell only when the bell option is on', async () => {
+  const q = { index: 1, total: 1, question: 'Q?', why: 'w' };
+  const on = term({ answers: ['x'] });
+  await on.t.askBriefQuestion(q);
+  assert.ok(on.text().includes('\x07'));
+  const off = term({ answers: ['x'], bell: false });
+  await off.t.askBriefQuestion(q);
+  assert.ok(!off.text().includes('\x07'));
+});
+
+test('approveBrief: shows the brief and where it is saved; a / c with a note / s; EOF stops', async () => {
+  const arg = { markdown: '# Brief: Thistle Joinery Ltd\n\nDraft: not yet approved', draftPath: '/p/thistle/brief/draft.md' };
+  const a = term({ answers: ['x', 'a'] });
+  assert.deepEqual(await a.t.approveBrief(arg), { decision: 'approve' });
+  assert.match(a.text(), /=== The brief, ready for your approval ===\n# Brief: Thistle Joinery Ltd/);
+  assert.match(a.text(), /A copy is saved at: \/p\/thistle\/brief\/draft\.md/);
+  assert.match(a.text(), /\[a\] approve · \[c\] ask for changes · \[s\] stop for now > /);
+  assert.match(a.text(), /Please type one of: a, c, s/);
+  assert.deepEqual(await term({ answers: ['c', 'Call Finance "Accounts"'] }).t.approveBrief(arg), { decision: 'change', note: 'Call Finance "Accounts"' });
+  assert.deepEqual(await term({ answers: ['c'] }).t.approveBrief(arg), { decision: 'stop' }, 'EOF at the note stops');
+  assert.deepEqual(await term({ answers: ['s'] }).t.approveBrief(arg), { decision: 'stop' });
+  assert.deepEqual(await term({ answers: [] }).t.approveBrief(arg), { decision: 'stop' });
+});
+
+test('brief prompts fail closed without a terminal; confirmDiscard needs a clear yes', async () => {
+  const n = term({ answers: ['a'], isTTY: false });
+  assert.deepEqual(await n.t.approveBrief({ markdown: '# B', draftPath: '/d' }), { decision: 'stop' });
+  assert.deepEqual(await n.t.askBriefQuestion({ index: 1, total: 1, question: 'Q?', why: 'w' }), { stop: true });
+  assert.ok(n.text().includes(NO_TTY_BRIEF));
+  assert.match(NO_TTY_BRIEF, /There is no terminal to ask you, so the brief was not approved/);
+  assert.equal(await term({ answers: ['y'] }).t.confirmDiscard({ slug: 'thistle' }), true);
+  assert.equal(await term({ answers: ['n'] }).t.confirmDiscard({ slug: 'thistle' }), false);
+  assert.equal(await term({ answers: [] }).t.confirmDiscard({ slug: 'thistle' }), false);
+  assert.equal(await term({ answers: ['y'], isTTY: false }).t.confirmDiscard({ slug: 'thistle' }), false);
+});
