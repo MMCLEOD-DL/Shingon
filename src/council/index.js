@@ -8,10 +8,19 @@ import { resolveTool, TOOL_LABEL } from './tools.js';
 import { SECURITY, addedLines, unquoteGitPath } from './security.js';
 import { LEGAL } from './licences.js';
 import { CORRECTNESS } from './correctness.js';
+import { FOUNDATION } from './foundationRules.js';
+import { EXAMPLE_ID_RE } from '../factory/acceptance.js';
 import { interpretMember } from './interpret.js';
 import { buildReport } from './report.js';
 
 export const MEMBERS_V1 = [SECURITY, LEGAL, CORRECTNESS];
+export const MEMBERS = Object.freeze({ security: SECURITY, legal: LEGAL, correctness: CORRECTNESS, foundation: FOUNDATION });
+export const FEATURE_COUNCIL = Object.freeze(['foundation', 'correctness']);
+
+// null = the Plan 5 council (Security, Legal, Correctness); otherwise the named members, in order.
+export function membersFor(names) {
+  return names == null ? MEMBERS_V1 : names.map((n) => MEMBERS[n]);
+}
 const COUNCIL_TOOLS = [['semgrep', 'semgrep'], ['gitleaks', 'gitleaks'], ['npm-audit', 'npm'], ['scancode', 'scancode']];
 
 function diffPath(part) {
@@ -55,6 +64,20 @@ export function validateCouncilOptions(o) {
   }
   for (const k of Object.keys(tools)) {
     if (!COUNCIL_TOOLS.some(([n]) => n === k)) throw new Error(`councilTools: unknown tool "${k}" (known: ${COUNCIL_TOOLS.map(([n]) => n).join(', ')})`);
+  }
+  const names = o.councilMembers ?? null;
+  if (names !== null) {
+    if (!Array.isArray(names) || names.length === 0) throw new Error(`councilMembers must list at least one member (got ${shown(names)})`);
+    const known = Object.keys(MEMBERS);
+    for (const n of names) {
+      if (typeof n !== 'string' || !Object.hasOwn(MEMBERS, n)) throw new Error(`councilMembers: unknown member ${shown(n)} (known: ${known.join(', ')})`);
+    }
+    if (new Set(names).size !== names.length) throw new Error(`councilMembers must not name a member twice (got ${shown(names)})`);
+  }
+  const ff = o.factoryFeature ?? null;
+  if (ff !== null && (typeof ff !== 'object' || Array.isArray(ff) || typeof ff.id !== 'string' || !ff.id.trim()
+    || !Array.isArray(ff.tags) || ff.tags.some((t) => typeof t !== 'string' || !EXAMPLE_ID_RE.test(t)))) {
+    throw new Error(`factoryFeature needs an id and a list of tags (got ${shown(ff)})`);
   }
 }
 

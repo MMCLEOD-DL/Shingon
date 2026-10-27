@@ -16,7 +16,7 @@ test('council options: off by default, frozen containers', () => {
 
 test('grades run blocking > warning > note; clamp only ever lowers', () => {
   assert.deepEqual(GRADES, ['blocking', 'warning', 'note']);
-  assert.deepEqual(MEMBER_LABEL, { security: 'Security', legal: 'Legal', correctness: 'Correctness' });
+  assert.deepEqual(MEMBER_LABEL, { security: 'Security', legal: 'Legal', correctness: 'Correctness', foundation: 'Foundation rules' });
   assert.equal(clampGrade('blocking', 'warning'), 'warning');
   assert.equal(clampGrade('note', 'warning'), 'note');
   assert.equal(clampGrade('warning', 'blocking'), 'warning');

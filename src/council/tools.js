@@ -12,7 +12,7 @@ import { makeFinding } from './findings.js';
 export const TOOL_LABEL = Object.freeze({
   semgrep: 'Semgrep (code scanner)', gitleaks: 'Gitleaks (secret scanner)', 'npm-audit': 'npm audit (dependency security check)',
   scancode: 'ScanCode (licence scanner)', licences: 'dependency licence check', settings: 'scanner settings check',
-  tests: 'the test command', 'test-files': 'test coverage check',
+  tests: 'the test command', 'test-files': 'test coverage check', 'foundation-rules': 'foundation rules check',
 });
 
 const isExecutableFile = (p) => {

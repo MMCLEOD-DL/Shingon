@@ -8,7 +8,7 @@ import { clip } from '../text.js';
 import * as prompts from '../prompts.js';
 import { makeFinding, clampGrade, GRADES } from './findings.js';
 
-export const ID_PREFIX = Object.freeze({ security: 'S', legal: 'L', correctness: 'C' });
+export const ID_PREFIX = Object.freeze({ security: 'S', legal: 'L', correctness: 'C', foundation: 'F' });
 export const MAX_SENT = 40;
 export const MAX_EXTRA = 10;
 

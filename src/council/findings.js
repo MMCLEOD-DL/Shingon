@@ -5,7 +5,7 @@ import { redact } from '../secrets.js';
 import { clip } from '../text.js';
 
 export const GRADES = Object.freeze(['blocking', 'warning', 'note']);
-export const MEMBER_LABEL = Object.freeze({ security: 'Security', legal: 'Legal', correctness: 'Correctness' });
+export const MEMBER_LABEL = Object.freeze({ security: 'Security', legal: 'Legal', correctness: 'Correctness', foundation: 'Foundation rules' });
 
 const checkGrade = (g) => {
   if (!GRADES.includes(g)) throw new Error(`unknown grade: ${g}`);

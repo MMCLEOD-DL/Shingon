@@ -14,7 +14,7 @@ import { vendorOf } from './vendors.js';
 import { SAME_VENDOR_WARNING } from './team.js';
 import { clip } from './text.js';
 import { validateFirstChunk } from './planPhase.js';
-import { runCouncilRound, validateCouncilOptions } from './council/index.js';
+import { runCouncilRound, validateCouncilOptions, membersFor } from './council/index.js';
 import { fixChunk, reportText } from './council/report.js';
 import { MEMBER_LABEL } from './council/findings.js';
 import { askUser } from './askUser.js';
@@ -326,7 +326,7 @@ async function drive(ctx) {
       // Council v1 (factory spec §4.3, §8 item 2): after the final review, before the gate.
       let council = null;
       if (options.council) {
-        const round = await runCouncilRound(ctx, { files, tests, diff });
+        const round = await runCouncilRound(ctx, { files, tests, diff, members: membersFor(options.councilMembers) });
         if (round.status === 'paused') return finish('paused', { reason: pausedReason(round.reason) });
         council = round.report;
         if (council.verdict === 'blocked') {

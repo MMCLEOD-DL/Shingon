@@ -238,3 +238,16 @@ test('without a secret the steps keep their own commits', async () => {
 test('bad council settings are refused before anything starts', async () => {
   await assert.rejects(runTask({ repoDir: await makeRepo(), request: 'x', team: team(), hooks: hooks(), baseDir: base(), options: { council: true, councilFixRounds: -1 } }), /councilFixRounds must be a whole number from 0 to 10/);
 });
+
+test('councilMembers: a feature council of Foundation rules bounces a missing acceptance test back as a fix step', async () => {
+  const events = [];
+  const writeTests = (role, task, c, opts) => {
+    writeFileSync(path.join(opts.cwd, 'app.test.js'), /Council fixes, round/.test(task) ? "it('[f#1] ok', () => {});\n" : '// none\n');
+    return { text: 'ok' };
+  };
+  const out = await runTask({ repoDir: await makeRepo(), request: 'x', team: team({ local: writeTests }), hooks: { ...hooks(), onEvent: (e) => events.push(e) },
+    baseDir: base(), options: { council: true, councilMembers: ['foundation'], factoryFeature: { id: 'f', tags: ['f#1'] }, testCommand: 'node -e "process.exit(0)"' } });
+  assert.equal(out.status, 'landed');
+  assert.deepEqual(types(events, 'council-start').map((e) => e.members), [['foundation'], ['foundation']]);
+  assert.equal(types(events, 'council-fix').length, 1);
+});

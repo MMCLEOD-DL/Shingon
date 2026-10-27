@@ -118,6 +118,7 @@ const FOCUS = {
   security: 'Check the security findings below. Set aside false alarms (for example test fixtures, example keys, code that never sees outside input), explain the real problems and propose fixes.',
   legal: 'Check the licence findings below against this rule: apps handed to clients may only use permissively licensed code and dependencies (MIT, Apache-2.0, BSD, ISC); copyleft (GPL, AGPL, LGPL, MPL and similar) and unknown or missing licences are blocking. Explain each risk in plain English. Only the operator can accept a licence.',
   correctness: 'Check that the change fully does what the request asks, and look for untested paths, especially around money, totals and permissions.',
+  foundation: 'Check the foundation rule findings below. Code found them and they are facts: explain each one in plain English and say exactly how to fix it without weakening, skipping or editing any check.',
 };
 
 const councilItem = ({ id, finding: f }) => {
