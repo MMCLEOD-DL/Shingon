@@ -12,20 +12,30 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 HERE="$ROOT/spikes/ship-smoke"
-C="node $ROOT/bin/conductor.js"
+C() { node "$ROOT/bin/conductor.js" "$@"; }
 [ $# -eq 2 ] || { echo "Usage: bash spikes/ship-smoke/run-ship-smoke.sh <project> <deployment>"; exit 64; }
 PROJECT="$1"; DEP="$2"
 case "$PROJECT$DEP" in *[!A-Za-z0-9._-]*) echo "Use plain project and deployment names (letters, digits, . _ -)."; exit 64;; esac
 [ -t 0 ] && [ -t 1 ] || { echo "Run this in a real terminal (it asks you questions)."; exit 2; }
 
 for tool in node ssh git; do command -v "$tool" >/dev/null || { echo "$tool is not on PATH"; exit 2; }; done
-$C doctor >/dev/null 2>&1 || { echo "conductor does not run here (node bin/conductor.js doctor failed)"; exit 2; }
+C --help >/dev/null 2>&1 || { echo "conductor does not run here (node bin/conductor.js --help failed)"; exit 2; }
 
 SOURCE_ROOT="${SOURCE_PROJECTS_ROOT:-$HOME/highland-projects}"
 [ -d "$SOURCE_ROOT/$PROJECT/app/.git" ] || { echo "No built project at $SOURCE_ROOT/$PROJECT (set SOURCE_PROJECTS_ROOT if yours is elsewhere)."; exit 2; }
 export CONDUCTOR_PROJECTS_ROOT="$(mktemp -d /var/tmp/hf-ship-smoke.XXXXXX)"
 case "$CONDUCTOR_PROJECTS_ROOT" in /var/tmp/hf-ship-smoke.*) ;; *) echo "unexpected temp folder"; exit 2;; esac
-cp -a "$SOURCE_ROOT/$PROJECT" "$CONDUCTOR_PROJECTS_ROOT/$PROJECT"
+# Copy the project WITHOUT its deployments/ folder, so a real client box's record can never be picked up.
+mkdir "$CONDUCTOR_PROJECTS_ROOT/$PROJECT"
+for f in "$SOURCE_ROOT/$PROJECT"/* "$SOURCE_ROOT/$PROJECT"/.[!.]*; do
+  [ -e "$f" ] || continue
+  [ "$(basename "$f")" = deployments ] && continue
+  cp -a "$f" "$CONDUCTOR_PROJECTS_ROOT/$PROJECT/"
+done
+[ ! -e "$CONDUCTOR_PROJECTS_ROOT/$PROJECT/deployments/$DEP.json" ] || { echo "The copy already has a deployment record for $DEP; refusing."; exit 2; }
+echo "The deployment must be a disposable TEST box, never a client's: the smoke really installs an app on it."
+read -r -p "Type the deployment name ($DEP) to confirm it is a test box: " CONFIRM
+[ "$CONFIRM" = "$DEP" ] || { echo "Not confirmed."; exit 2; }
 echo "throwaway projects folder (kept for evidence): $CONDUCTOR_PROJECTS_ROOT"
 echo "In any second terminal, run:  export CONDUCTOR_PROJECTS_ROOT=$CONDUCTOR_PROJECTS_ROOT"
 
@@ -74,8 +84,8 @@ trap finish EXIT
 step "Phase 1: first ship (conductor ship $PROJECT --to $DEP)"
 echo "You will be asked the setup questions. The backup password is shown ONCE: save it in your password manager, then type saved."
 P1=pass
-expect 0 "ship" $C ship "$PROJECT" --to "$DEP" || P1=FAIL
-expect 0 "deployments status" $C deployments status "$PROJECT" || P1=FAIL
+expect 0 "ship" C ship "$PROJECT" --to "$DEP" || P1=FAIL
+expect 0 "deployments status" C deployments status "$PROJECT" || P1=FAIL
 echo "Check by hand on the box (cd to the deployment's folder):"
 echo "  docker compose ps                      every service Up / healthy"
 echo "  docker compose run --rm ops check      every line a tick"
@@ -88,7 +98,7 @@ RESULTS[0]=$P1; VERSIONS[0]="$(version_now)"
 # ---------------- Phase 2: a later ship ----------------
 # Needs Plan 11's 'conductor change'. Until Plan 11 is merged, stop here.
 step "Phase 2: a later ship (after Plan 11)"
-if ! $C --help 2>&1 | grep -q 'conductor change'; then
+if ! C --help 2>&1 | grep -q 'conductor change'; then
   echo "This conductor has no 'change' command yet (Plan 11). Phases 2 and 3 are skipped."
   RESULTS[1]="skipped (after Plan 11)"; RESULTS[2]="skipped (after Plan 11)"
   exit 0
@@ -97,9 +107,9 @@ P2=pass
 echo "Make a change and let it ship:  conductor change $PROJECT --notes <file>"
 echo "(it releases the change and updates this box through the same safe update conductor ship uses)."
 read -r -p "Press Enter when it has finished " _
-expect 0 "deployments status" $C deployments status "$PROJECT" || P2=FAIL
+expect 0 "deployments status" C deployments status "$PROJECT" || P2=FAIL
 echo "The version above should be the new one."
-expect 1 "ship again (nothing new)" $C ship "$PROJECT" --to "$DEP" || P2=FAIL
+expect 1 "ship again (nothing new)" C ship "$PROJECT" --to "$DEP" || P2=FAIL
 echo "That last ship should have said: There is nothing new to ship"
 ok "The new version is shown and the second ship said there is nothing new" || P2=FAIL
 RESULTS[1]=$P2; VERSIONS[1]="$(version_now)"
@@ -113,7 +123,7 @@ echo "  The update carries on by itself on the box"
 ok "You saw that message (and the shell showed exit 130 if you checked with echo \$?)" || P3=FAIL
 echo "Wait for the update to finish on the box (docker compose logs --tail 20 updater, or a minute or two), then press Enter."
 read -r -p "Press Enter when the box has finished " _
-expect 0 "deployments status" $C deployments status "$PROJECT" || P3=FAIL
+expect 0 "deployments status" C deployments status "$PROJECT" || P3=FAIL
 ok "Status said: The last update's result is now known" || P3=FAIL
 RESULTS[2]=$P3; VERSIONS[2]="$(version_now)"
 [ "$P1$P2$P3" = passpasspass ] || exit 1

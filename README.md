@@ -481,8 +481,7 @@ safe.
     (default 3) and `testCommand` (replaces `npm run verify`);
   - `machines`: `provider` (`static` or `proxmox`), `static.hosts` (each with `id`, `host`, `user`,
     `keyPath`, `previewPort`, `workRoot`), `proxmox` (`null` until set up; see the operator
-    follow-ups in `spikes/factory-build-smoke/RESULT.md`), and `sweepAfterMs`.
-
+    follow-ups in `spikes/factory-build-smoke/RESULT.md`), and `sweepAfterMs`;
   - `alerts.matrix`: `homeserver` and `roomId`, the suggested answers when `ship` asks where alerts go;
   - `ship`: `updateTimeoutMs` (default 2700000), `pollMs` (5000), `startTimeoutMs` (300000) and
     `buildTimeoutMs` (3600000), all in milliseconds (see **Shipping client apps**).
