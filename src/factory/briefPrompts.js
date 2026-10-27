@@ -96,7 +96,7 @@ export function briefDraftPrompt({ notes, baseBrief, answers, changeRequests, pr
   const prompt = sections.join('\n\n');
   const bytes = Buffer.byteLength(prompt, 'utf8');
   if (bytes > PROMPT_MAX_BYTES) {
-    throw new Error(`These notes are too long to send in one go (the request would be ${Math.ceil(bytes / 1000)} KB; the limit is ${Math.floor(PROMPT_MAX_BYTES / 1024)} KB). Split the notes and run the brief in parts, or shorten them.`);
+    throw new Error(`These notes are too long to send in one go (the request would be ${Math.ceil(bytes / 1000)} KB; the limit is ${PROMPT_MAX_BYTES / 1000} KB). Split the notes and run the brief in parts, or shorten them.`);
   }
   return prompt;
 }

@@ -79,3 +79,8 @@ test('a prompt over the command-line limit is refused in plain English, not sent
   assert.ok(Buffer.byteLength(fits, 'utf8') <= PROMPT_MAX_BYTES);
 });
 
+
+test('the too-long refusal uses one unit: KB is 1000 bytes, so the limit reads 120 KB', () => {
+  const big = [{ name: 'n', text: 'é'.repeat(70_000) }];
+  assert.throws(() => briefDraftPrompt({ notes: big }), /the request would be 14\d KB; the limit is 120 KB\)/);
+});

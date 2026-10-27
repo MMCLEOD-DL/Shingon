@@ -106,9 +106,11 @@ const list = (items) => items.join(', ');
 const orList = (items) => `${items.slice(0, -1).join(', ')} or ${items.at(-1)}`;
 const isIso = (x) => typeof x === 'string' && Number.isFinite(Date.parse(x)) && new Date(x).toISOString() === x;
 
-function credentialProblems(brief) {
+// envSecrets: also look for the values of this environment's secret variables. Skipped when loading an
+// approved brief, so its validity never depends on the environment it is read in.
+function credentialProblems(brief, { envSecrets = true } = {}) {
   const found = [];
-  const secrets = secretValues();
+  const secrets = envSecrets ? secretValues() : [];
   const seen = new Set();
   const walk = (v, path) => {
     if (found.length >= 3) return;
@@ -167,6 +169,10 @@ function policyProblems(policy, lenient) {
 }
 
 export function validateBrief(obj, { stage = 'ready' } = {}) {
+  return checkBrief(obj, { stage, envSecrets: true });
+}
+
+function checkBrief(obj, { stage, envSecrets }) {
   if (!STAGES.includes(stage)) throw new Error('validateBrief: stage must be draft, ready or approved');
   if (!isObj(obj)) return { ok: false, problems: ['The brief is not a JSON object.'] };
   const problems = [];
@@ -283,7 +289,7 @@ export function validateBrief(obj, { stage = 'ready' } = {}) {
   else if (!lenient) problems.push('The brief has no data policy: hosting, where data may go, residency, retention, backups and operator access.');
 
   // 8. credentials
-  problems.push(...credentialProblems(b));
+  problems.push(...credentialProblems(b, { envSecrets }));
 
   // 9. assumptions and open questions
   arr(b.openQuestions).forEach((q, i) => {
@@ -454,6 +460,7 @@ const SHA_RE = /^[0-9a-f]{64}$/;
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
 const NO_BRIEF = 'There is no approved brief for this project yet. Make one with: conductor brief <slug> --notes <file>';
 const DAMAGED = 'The brief pointer (current.json) is damaged. Approve the brief again with conductor brief <slug> --revise --notes <file>.';
+const MISMATCH = 'The brief pointer (current.json) does not match the brief it points to. Conductor will not use it. Approve the brief again with conductor brief <slug> --revise --notes <file>.';
 
 export function nextVersion(projectDir) {
   const { dir } = briefPaths(projectDir);
@@ -510,7 +517,8 @@ export function loadBrief(projectDir) {
   try { brief = JSON.parse(buf.toString('utf8')); } catch {
     throw new Error(`The approved brief (v${ptr.version}) is not valid: it is not readable JSON.`);
   }
-  const check = validateBrief(brief, { stage: 'approved' });
+  if (isObj(brief) && (brief.version !== ptr.version || ptr.json !== `brief-v${ptr.version}.json`)) throw new Error(MISMATCH);
+  const check = checkBrief(brief, { stage: 'approved', envSecrets: false });
   if (!check.ok) throw new Error(`The approved brief (v${ptr.version}) is not valid: ${check.problems.slice(0, 3).join(' ')}`);
   return brief;
 }

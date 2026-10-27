@@ -117,3 +117,37 @@ test('renderBrief: a draft with null retention and backups shows "not decided ye
   const { retention, backupDestination, ...rest } = d.policy;
   assert.ok(renderBrief({ ...d, policy: rest }).includes('- **Retention:** not decided yet'));
 });
+
+test('loadBrief refuses a pointer whose version or file name does not match the brief', () => {
+  const p = project();
+  saveApprovedBrief(p, approvedBrief());
+  const ptr = JSON.parse(readFileSync(briefPaths(p).current, 'utf8'));
+  // The pointer says version 2 but names (and fingerprints) the version 1 file.
+  writeFileSync(briefPaths(p).current, JSON.stringify({ ...ptr, version: 2 }));
+  assert.throws(() => loadBrief(p), /The brief pointer \(current\.json\) does not match the brief it points to/);
+  // A copy of version 1 saved as brief-v2.json, pointed at as version 2: the brief inside still says version 1.
+  writeFileSync(briefPaths(p).json(2), readFileSync(briefPaths(p).json(1)));
+  writeFileSync(briefPaths(p).current, JSON.stringify({ ...ptr, version: 2, json: 'brief-v2.json' }));
+  assert.throws(() => loadBrief(p), /The brief pointer \(current\.json\) does not match the brief it points to/);
+  // Version 1 pointing at the brief-v2.json copy: the file name is not the one for version 1.
+  writeFileSync(briefPaths(p).current, JSON.stringify({ ...ptr, json: 'brief-v2.json' }));
+  assert.throws(() => loadBrief(p), /The brief pointer \(current\.json\) does not match the brief it points to/);
+  writeFileSync(briefPaths(p).current, JSON.stringify(ptr));
+  assert.equal(loadBrief(p).version, 1);
+});
+
+test('an approved brief still loads when an environment secret appears in its text; saving still checks', () => {
+  const key = 'CONDUCTOR_TEST_BRIEF_TOKEN';
+  const text = "A USB disk kept in the client's office safe";
+  const p = project();
+  saveApprovedBrief(p, approvedBrief());
+  const before = process.env[key];
+  process.env[key] = text;
+  try {
+    assert.equal(loadBrief(p).version, 1, 'a brief approved in one environment loads in another');
+    assert.equal(currentBriefInfo(p).version, 1);
+    assert.throws(() => saveApprovedBrief(project(), approvedBrief()), /seems to contain a password or key/);
+  } finally {
+    if (before === undefined) delete process.env[key]; else process.env[key] = before;
+  }
+});
