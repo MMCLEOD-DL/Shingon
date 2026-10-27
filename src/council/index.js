@@ -192,7 +192,12 @@ export async function runCouncilRound(ctx, { files, tests, diff, members = MEMBE
       const notes = runs.map((r) => r.note).filter(Boolean);
       const out = await interpretMember(ctx, { member: m.member, label: m.label, findings: mine, notes, input,
         context: runs.flatMap((r) => r.context ?? []), attach: runs.flatMap((r) => r.attach ?? []) });
-      if (out.status === 'paused') return { status: 'paused', reason: out.reason };
+      if (out.status === 'paused') {
+        // A client-app round keeps what the secret scanner hid so far (Plan 8 squashes the build on it).
+        // An ordinary round keeps the Plan 5 behaviour.
+        if (project && hidden.size > 0 && !c.secretSeen) { c.secretSeen = true; log.saveState(state); }
+        return { status: 'paused', reason: out.reason };
+      }
       mine = out.findings;
       by = out.by;
       interpreted = out.interpreted;

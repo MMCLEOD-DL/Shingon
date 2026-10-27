@@ -287,3 +287,22 @@ test('a pause on a new commit marks an older commit\'s saved report as stale (Pl
   assert.equal(same.status, 'paused');
   assert.equal(readFileSync(path.join(s2.projectDir, 'builds', RUN, 'council-report.json'), 'utf8'), before);
 });
+
+test('a first round that pauses after the secret scanner hid a file still says secretSeen', async () => {
+  const s = await setup({ build: { 'apps/server/src/key.ts': "const k = 'x'; // gitleaks:allow\n" },
+    reviewer: () => ({ ok: false, failure: 'no-participant', error: 'no model' }) });
+  const r = await runProjectCouncil(s.args, { options: s.options, deps: s.deps });
+  assert.deepEqual(r, { status: 'paused', reason: 'no model', secretSeen: true });
+  const state = JSON.parse(readFileSync(path.join(s.projectDir, 'builds', RUN, 'council', 'state.json'), 'utf8'));
+  assert.equal(state.council.secretSeen, true, 'saved, so a later call keeps saying it');
+});
+
+test('the resume hint stays plain when the project name is missing', async () => {
+  const s = await setup();
+  for (const slug of [undefined, null, '']) {
+    const r = await runProjectCouncil({ ...s.args, slug }, { options: s.options, deps: { ...s.deps, loadProject: async () => { throw new Error('The project file could not be read.'); } } });
+    assert.equal(r.status, 'paused');
+    assert.match(r.reason, /Run "conductor build <project>" to try again\.$/);
+    assert.doesNotMatch(r.reason, /conductor build (undefined|null|)"/);
+  }
+});

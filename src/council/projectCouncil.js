@@ -26,6 +26,9 @@ function staleOnPause(project, reason) {
   try { markCouncilReportStale(project.buildDir, { sha: project.sha, runId: project.runId, reason }); } catch { /* best effort */ }
 }
 
+// The project name for the resume hint, or a neutral placeholder when it is missing.
+const resumeName = (slug) => (typeof slug === 'string' && slug.trim() ? slug : '<project>');
+
 const plain = (e) => clip(redact(String(e?.message ?? e ?? '')).replace(/\s*\n\s*/g, ' ').trim(), 300) || 'an unknown error';
 
 export async function runProjectCouncil(args, { options = {}, deps = {} } = {}) {
@@ -70,7 +73,7 @@ export async function runProjectCouncil(args, { options = {}, deps = {} } = {}) 
     }
     return out;
   } catch (e) {
-    const reason = redact(`The council hit a problem it could not get past (${plain(e)}), so the build paused. Run "conductor build ${args?.slug}" to try again.`);
+    const reason = redact(`The council hit a problem it could not get past (${plain(e)}), so the build paused. Run "conductor build ${resumeName(args?.slug)}" to try again.`);
     staleOnPause(project, reason);
     return { status: 'paused', reason, ...sticky() };
   } finally {
