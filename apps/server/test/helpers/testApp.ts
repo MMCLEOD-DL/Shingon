@@ -7,6 +7,7 @@ import type { Db } from '../../src/db/client.js';
 import { buildApp } from '../../src/app.js';
 import { SESSION_COOKIE, createSession } from '../../src/auth/sessions.js';
 import { memoryTransport } from '../../src/email/index.js';
+import type { Storage } from '../../src/files/storage.js';
 import { createTestDb } from './testDb.js';
 
 export type MemoryTransport = ReturnType<typeof memoryTransport>;
@@ -21,9 +22,9 @@ export interface TestApp {
 }
 
 export async function createTestApp(
-  overrides: Partial<Config> & { beforeReady?: (app: FastifyInstance) => void | Promise<void>; readinessCacheMs?: number } = {},
+  overrides: Partial<Config> & { beforeReady?: (app: FastifyInstance) => void | Promise<void>; readinessCacheMs?: number; storage?: (dir: string) => Storage } = {},
 ): Promise<TestApp> {
-  const { beforeReady, readinessCacheMs, ...configOverrides } = overrides;
+  const { beforeReady, readinessCacheMs, storage: makeStorage, ...configOverrides } = overrides;
   const testDb = await createTestDb();
   let storageDir: string | undefined;
   let app: FastifyInstance | undefined;
@@ -45,7 +46,7 @@ export async function createTestApp(
       ...configOverrides,
     };
     const mail = memoryTransport();
-    app = await buildApp({ config, db: testDb.db, emailTransport: mail, ...(readinessCacheMs !== undefined ? { readinessCacheMs } : {}) });
+    app = await buildApp({ config, db: testDb.db, emailTransport: mail, ...(readinessCacheMs !== undefined ? { readinessCacheMs } : {}), ...(makeStorage ? { storage: makeStorage(storageDir) } : {}) });
     await beforeReady?.(app);
     await app.ready();
     const dir = storageDir;

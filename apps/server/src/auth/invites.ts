@@ -1,12 +1,13 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import type { InviteInput } from '@hf/shared';
 import type { Db, Tx } from '../db/client.js';
-import { teams, users } from '../db/schema/index.js';
+import { users } from '../db/schema/index.js';
 import { audit } from '../audit/audit.js';
 import { queueEmail } from '../email/index.js';
 import { badRequest, conflict, HttpError } from '../http/errors.js';
 import { checkPasswordRules, hashPassword } from './password.js';
 import { createSession, type Actor } from './sessions.js';
+import { checkTeamRule } from '../users/teamRule.js';
 import { consumeToken, issueToken, peekToken, TOKEN_TTL } from './tokens.js';
 
 export { TOKEN_TTL };
@@ -25,13 +26,7 @@ export async function createInvite(
   input: InviteInput,
   opts: { appOrigin: string; now?: Date; ip?: string },
 ): Promise<{ userId: string }> {
-  if ((input.role === 'manager' || input.role === 'member') && input.teamId === null) {
-    throw badRequest('Managers and members must belong to a team.');
-  }
-  if (input.teamId !== null) {
-    const [team] = await tx.select({ id: teams.id }).from(teams).where(eq(teams.id, input.teamId));
-    if (!team) throw badRequest("That team doesn't exist.");
-  }
+  await checkTeamRule(tx, input.role, input.teamId);
   const [created] = await tx
     .insert(users)
     .values({ email: input.email, name: input.name, role: input.role, teamId: input.teamId })

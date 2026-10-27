@@ -19,7 +19,8 @@ export interface AuditView {
 const AuditQuery = z.strictObject({
   action: z.enum(AUDIT_ACTIONS).optional(),
   actorId: z.uuid().optional(),
-  before: z.coerce.number().int().optional(),
+  // An entry id: a positive whole number small enough to be exact (anything else is a 400, never a database error).
+  before: z.coerce.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });
 

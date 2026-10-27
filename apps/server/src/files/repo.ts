@@ -35,9 +35,11 @@ export async function attachFile(tx: Tx, actor: Actor, fileId: string, parent: {
 }
 
 /**
- * Deletes unattached files older than `olderThan`, then reconciles the disk (`sweepStrayObjects`). For each file the stored object goes first and the row second,
- * so a crash leaves at worst a row whose object is gone (the next sweep removes it), never an object no row points to.
- * The row is locked and re-checked first, so a file attached a moment ago is not removed.
+ * Deletes unattached files older than `olderThan`, then reconciles the disk (`sweepStrayObjects`). The row is locked and re-checked
+ * first, so a file attached a moment ago is not removed. Here, unlike a delete someone asks for (the file route and the notes'
+ * removeDiscarded, which remove the row first so nobody is ever shown a file whose bytes are gone), the object goes first and
+ * the row second, inside the row's transaction: these files are unattached and old, so nobody is looking at them, and a
+ * failed object delete keeps the row, so the next sweep simply tries that file again.
  */
 export async function sweepOrphans(db: Db, storage: Storage, olderThan: Date, log?: { error(obj: object, msg: string): void }): Promise<number> {
   const old = await db.select({ id: files.id }).from(files).where(and(isNull(files.attachedType), lt(files.createdAt, olderThan)));

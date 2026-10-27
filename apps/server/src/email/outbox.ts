@@ -21,6 +21,8 @@ export async function processOutbox(
 ): Promise<{ sent: number; retried: number; failed: number }> {
   const now = opts.now ?? new Date();
   const batch = opts.batch ?? 20;
+  // The app always passes EMAIL_FROM (loadConfig requires it), so the noreply@ fallback is never used by the running app.
+  // It is kept only for direct callers (tests, a future script) that give no sender, so they still produce a valid address.
   const from = opts.from ?? site.from ?? `${site.appName} <noreply@${new URL(site.appOrigin).hostname}>`;
   const counts = { sent: 0, retried: 0, failed: 0 };
   // One row per transaction: a bookkeeping failure cannot roll back (and so re-send) other mails,

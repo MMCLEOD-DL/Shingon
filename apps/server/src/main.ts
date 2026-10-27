@@ -2,6 +2,7 @@ import { ConfigError, loadConfig, type Config } from './config.js';
 import { createDb, runMigrations } from './db/client.js';
 import { buildApp } from './app.js';
 import { ensureInstance, InstanceModeError } from './instance.js';
+import { startFailure } from './startup.js';
 
 let config: Config;
 try {
@@ -15,10 +16,8 @@ try {
 }
 
 const { db, close } = createDb(config.databaseUrl);
-const fail = (what: string, e: unknown): never => {
-  // One plain line, no stack trace, and never the error text itself: database messages can contain connection details.
-  const code = (e as { code?: unknown } | null)?.code;
-  console.error(`The app could not start: ${what}${typeof code === 'string' ? ` (${code})` : ''}. Check the database address and that the database is running.`);
+const fail = (stage: Parameters<typeof startFailure>[0], e: unknown): never => {
+  console.error(startFailure(stage, e));
   process.exit(1);
 };
 
@@ -34,7 +33,7 @@ try {
     console.error(e.message);
     process.exit(1);
   }
-  fail('it could not set up the database or the web server', e);
+  fail({ setup: true }, e);
   throw e;
 }
 const shutdown = async () => {
@@ -48,5 +47,5 @@ process.on('SIGINT', () => void shutdown());
 try {
   await app.listen({ host: '0.0.0.0', port: config.port });
 } catch (e) {
-  fail(`it could not listen on port ${String(config.port)}`, e);
+  fail({ listen: config.port }, e);
 }

@@ -1,5 +1,6 @@
 import { test, expect } from 'vitest';
 import { loadConfig, ConfigError } from '../src/config.js';
+import { startFailure } from '../src/startup.js';
 
 const base = {
   APP_ORIGIN: 'https://app.example.co.uk', DATABASE_URL: 'postgres://u:p@localhost/db',
@@ -62,4 +63,17 @@ test('the mail check interval defaults to 5 seconds and can be set', () => {
   expect(loadConfig(base).email.pollMs).toBe(5000);
   expect(loadConfig({ ...base, EMAIL_POLL_MS: '300' }).email.pollMs).toBe(300);
   expect(() => loadConfig({ ...base, EMAIL_POLL_MS: 'soon' })).toThrow(/EMAIL_POLL_MS must be a whole number/);
+});
+
+test('a start-up failure gives advice that fits it: a port in use, a forbidden port, or the database', () => {
+  expect(startFailure({ listen: 3000 }, Object.assign(new Error('listen EADDRINUSE: address already in use 0.0.0.0:3000'), { code: 'EADDRINUSE' })))
+    .toBe('The app could not start: port 3000 is already in use by another program. Stop that program, or set PORT to a free port.');
+  expect(startFailure({ listen: 80 }, { code: 'EACCES' })).toBe('The app could not start: it is not allowed to listen on port 80. Use a port above 1024 (set PORT), or run it the way the bundle does.');
+  expect(startFailure({ listen: 3000 }, { code: 'EADDRNOTAVAIL' })).toBe('The app could not start: it could not listen on port 3000 (EADDRNOTAVAIL). Check that PORT is a free port on this machine.');
+  const db = startFailure({ setup: true }, Object.assign(new Error('password authentication failed for user "app" at db:5432'), { code: '28P01' }));
+  expect(db).toBe('The app could not start: it could not set up the database or the web server (28P01). Check the database address and that the database is running.');
+  // never the database's own text, which can hold connection details
+  expect(db).not.toContain('password authentication');
+  // a port problem is never blamed on the database
+  expect(startFailure({ listen: 3000 }, { code: 'EADDRINUSE' })).not.toContain('database');
 });

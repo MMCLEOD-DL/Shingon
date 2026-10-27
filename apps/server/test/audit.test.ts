@@ -83,6 +83,15 @@ test('only admins can read the audit log; paging works', async () => {
   expect(p2.json.nextBefore).toBeNull();
 });
 
+test('the paging cursor must be a positive whole number within the exact range: anything else is a plain 400', async () => {
+  const a = await signInAs(t, admin);
+  for (const bad of ['0', '-1', '1.5', 'abc', '1e300', '9007199254740992']) {
+    const r = await call(t, a, 'GET', `/api/audit?before=${bad}`);
+    expect(r.status, bad).toBe(400);
+  }
+  expect((await call(t, a, 'GET', '/api/audit?before=9007199254740991')).status).toBe(200);
+});
+
 test('role, team, name, enable, team creation and sign-out are audited; nested secrets are masked', async () => {
   const adminAuth = await signInAs(t, admin);
   const S = await call(t, adminAuth, 'POST', '/api/teams', { name: 'South' });

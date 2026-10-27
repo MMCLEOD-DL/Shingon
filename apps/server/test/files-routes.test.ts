@@ -1,8 +1,10 @@
-import { test, expect, beforeAll, afterAll } from 'vitest';
+import { describe, test, expect, beforeAll, afterAll } from 'vitest';
 import { readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { eq, sql } from 'drizzle-orm';
-import { createTestApp, signInAs } from './helpers/testApp.js';
+import { createTestApp, call, signInAs, type TestApp } from './helpers/testApp.js';
+import { LocalDiskStorage } from '../src/files/storage.js';
+import { sweepStrayObjects } from '../src/files/repo.js';
 import { makeTeam, makeUser } from './helpers/factories.js';
 import { cleanName } from '../src/files/routes.js';
 import { files, auditLog } from '../src/db/schema/index.js';
@@ -187,3 +189,62 @@ test('the owner can delete a file, which removes the bytes too', async () => {
 
 const readdirCount = (dir: string) => countFiles(dir); // stored objects, ignoring in-flight .tmp files
 function countFiles(d: string): number { return readdirSync(d).reduce((n, e) => { const p = path.join(d, e); return n + (statSync(p).isDirectory() ? countFiles(p) : e.endsWith('.tmp') ? 0 : 1); }, 0); }
+
+describe('deleting a file: the row goes first, then the object', () => {
+  const send = (a: TestApp, cookie: string, name: string, bytes: Buffer) => {
+    const boundary = 'hfboundary';
+    const payload = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${name}"\r\nContent-Type: image/png\r\n\r\n`),
+      bytes, Buffer.from(`\r\n--${boundary}--\r\n`)]);
+    return a.app.inject({ method: 'POST', url: '/api/files', payload, headers: { cookie, origin: 'http://hf.test', 'content-type': `multipart/form-data; boundary=${boundary}` } });
+  };
+
+  test("a file shown on a note: the note's photo is cleared in the same change, and that is audited on the note", async () => {
+    const a = await createTestApp();
+    try {
+      const T = await makeTeam(a.db, 'T');
+      const owner = await makeUser(a.db, { role: 'member', teamId: T.id });
+      const c = await signInAs(a, owner);
+      const fileId = body(await send(a, c.cookie, 'photo.png', fx('tiny.png'))).file.id;
+      const note = await call(a, c, 'POST', '/api/notes', { title: 'With a photo', body: '', attachmentId: fileId });
+      expect(note.status).toBe(201);
+      const noteId = (note.json as { note: { id: string } }).note.id;
+      expect((await call(a, c, 'DELETE', `/api/files/${fileId}`)).status).toBe(204);
+      const after = await call(a, c, 'GET', `/api/notes/${noteId}`);
+      expect(after.status).toBe(200);
+      expect((after.json as { note: { attachment: unknown; updatedAt: string; createdAt: string } }).note.attachment).toBeNull();
+      const rows = await a.db.select().from(auditLog).orderBy(auditLog.id);
+      expect(rows.slice(-2).map((r) => [r.action, r.targetId, r.details])).toEqual([
+        ['note.updated', noteId, { fields: ['attachmentId'], fileDeleted: fileId }],
+        ['file.deleted', fileId, { name: 'photo.png' }],
+      ]);
+      expect(await a.db.select().from(files)).toEqual([]);
+    } finally {
+      await a.close();
+    }
+  });
+
+  test('when the stored object cannot be removed, the file is still gone for everyone and the sweep collects the object later', async () => {
+    const a = await createTestApp({
+      storage: (dir) => Object.assign(Object.create(new LocalDiskStorage(dir)) as LocalDiskStorage, {
+        delete: () => Promise.reject(Object.assign(new Error('/secret/disk/path denied'), { code: 'EACCES' })),
+      }),
+    });
+    try {
+      const T = await makeTeam(a.db, 'T');
+      const owner = await makeUser(a.db, { role: 'member', teamId: T.id });
+      const c = await signInAs(a, owner);
+      const fileId = body(await send(a, c.cookie, 'stuck.png', fx('tiny.png'))).file.id;
+      expect((await call(a, c, 'DELETE', `/api/files/${fileId}`)).status).toBe(204);
+      expect((await call(a, c, 'GET', `/api/files/${fileId}`)).status).toBe(404);
+      expect(await a.db.select().from(files)).toEqual([]);
+      // the object outlived its row: the disk-side sweep removes it
+      const disk = new LocalDiskStorage(a.storageDir);
+      expect(countFiles(a.storageDir)).toBe(1);
+      expect(await sweepStrayObjects(a.db, disk, new Date(Date.now() + 60e3))).toBe(1);
+      expect(countFiles(a.storageDir)).toBe(0);
+    } finally {
+      await a.close();
+    }
+  });
+});

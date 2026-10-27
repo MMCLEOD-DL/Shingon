@@ -3,13 +3,14 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { CreateTeamInput, InviteInput, UpdateMeInput, UpdateUserInput } from '@hf/shared';
 import { defineRoute } from '../http/route.js';
-import { badRequest, conflict, notFound, unauthorized } from '../http/errors.js';
+import { conflict, notFound, unauthorized } from '../http/errors.js';
 import { revokeSessions } from '../auth/sessions.js';
 import { teams, users } from '../db/schema/index.js';
 import { audit } from '../audit/audit.js';
 import { createInvite, resendInvite } from '../auth/invites.js';
 import type { Config } from '../config.js';
 import { getUser, listTeams, listUsers } from './repo.js';
+import { checkTeamRule } from './teamRule.js';
 
 const IdParams = z.strictObject({ id: z.uuid() });
 // The lists take no query parameters yet; anything sent is refused rather than ignored.
@@ -91,13 +92,7 @@ export function registerUserRoutes(app: FastifyInstance, config: Pick<Config, 'a
       }
       const role = body.role ?? target.role;
       const teamId = body.teamId === undefined ? target.teamId : body.teamId;
-      if ((body.role !== undefined || body.teamId !== undefined) && (role === 'manager' || role === 'member') && teamId === null) {
-        throw badRequest('Managers and members must belong to a team.');
-      }
-      if (body.teamId) {
-        const [team] = await db.select({ id: teams.id }).from(teams).where(eq(teams.id, body.teamId));
-        if (!team) throw badRequest("That team doesn't exist.");
-      }
+      if (body.role !== undefined || body.teamId !== undefined) await checkTeamRule(db, role, teamId);
 
       await db.transaction(async (tx) => {
         const set: Partial<typeof users.$inferInsert> = {};

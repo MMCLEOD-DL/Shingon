@@ -10,7 +10,7 @@ import { defineRoute } from '../http/route.js';
 import { HttpError, badRequest, forbidden, notFound, tooLarge, unauthorized } from '../http/errors.js';
 import { audit } from '../audit/audit.js';
 import { canEdit } from '../access/scope.js';
-import { files } from '../db/schema/index.js';
+import { files, notes } from '../db/schema/index.js';
 import type { Config } from '../config.js';
 import { eq } from 'drizzle-orm';
 import { sniffType } from './sniff.js';
@@ -199,11 +199,23 @@ export function registerFileRoutes(app: FastifyInstance, config: Pick<Config, 'u
       const row = await getVisibleFile(db, actor, req.params.id);
       if (!row) throw notFound();
       if (!canEdit(actor, row)) throw forbidden();
-      // The object goes first, then the row (the same order as the orphan sweep).
-      await storage.delete(row.storageKey);
-      await db.transaction(async (tx) => {
-        await tx.delete(files).where(eq(files.id, row.id));
+      // The row goes first, then the object (as in the notes' removeDiscarded): nobody can ever be shown a file whose bytes
+      // are gone. If the object cannot be removed after the commit, the disk-side sweep (sweepStrayObjects) collects it.
+      const gone = await db.transaction(async (tx) => {
+        // A note showing this file stops pointing at it in the same transaction, and that change is audited on the note.
+        const detached = await tx.update(notes).set({ attachmentFileId: null, updatedAt: new Date() })
+          .where(eq(notes.attachmentFileId, row.id)).returning({ id: notes.id });
+        const [deleted] = await tx.delete(files).where(eq(files.id, row.id)).returning({ storageKey: files.storageKey });
+        if (!deleted) return null;   // removed by someone else a moment ago: the update above rolls back with this
+        for (const n of detached) {
+          await audit(tx, { actor, ip: req.ip }, { action: 'note.updated', targetType: 'note', targetId: n.id, details: { fields: ['attachmentId'], fileDeleted: row.id } });
+        }
         await audit(tx, { actor, ip: req.ip }, { action: 'file.deleted', targetType: 'file', targetId: row.id, details: { name: row.originalName } });
+        return deleted;
+      });
+      if (!gone) throw notFound();
+      await storage.delete(gone.storageKey).catch((e: unknown) => {
+        req.log.error({ fileId: row.id, errName: (e as { name?: string }).name }, 'A deleted file\'s stored object could not be removed; the sweep will collect it');
       });
     },
   });
