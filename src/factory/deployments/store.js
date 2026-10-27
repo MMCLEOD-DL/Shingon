@@ -1,6 +1,7 @@
 // src/factory/deployments/store.js — the deployment record (Contract 4) at <projectDir>/deployments/<name>.json.
 // It holds only non-secret facts. saveDeployment refuses anything that looks like a secret.
-import { mkdirSync, readFileSync, readdirSync, existsSync, unlinkSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, existsSync, unlinkSync, renameSync, linkSync, rmSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { writeJsonAtomic, createFileExclusive } from '../fsAtomic.js';
 import { validateSlug } from '../projects.js';
@@ -35,7 +36,14 @@ function validOrigin(origin) {
     && !origin.endsWith('/');
 }
 
+function assertName(name) {
+  if (typeof name !== 'string' || !NAME_RE.test(name)) {
+    throw new DeploymentError(`"${name}" is not a usable deployment name: use 1-40 lower-case letters, digits and hyphens.`);
+  }
+}
+
 export function deploymentPath(projectDir, name) {
+  assertName(name);
   return path.join(projectDir, 'deployments', `${name}.json`);
 }
 
@@ -128,12 +136,14 @@ export function saveDeployment(projectDir, dep) {
 }
 
 function readRecord(file) {
+  const stem = path.basename(file, '.json');
   let dep;
   try { dep = JSON.parse(readFileSync(file, 'utf8')); } catch (err) {
     throw new DeploymentError(`The deployment record ${file} could not be read (${err.message}). Fix or remove it.`);
   }
   const r = validateDeployment(dep);
   if (!r.ok) throw new DeploymentError(`The deployment record ${file} could not be read (${r.problems[0]}). Fix or remove it.`);
+  if (dep.name !== stem) throw new DeploymentError(`The deployment record ${file} could not be read (it is named "${dep.name}" inside but "${stem}" on disk). Fix or remove it.`);
   return dep;
 }
 
@@ -183,18 +193,42 @@ export function defaultIsAlive(pid) {
   try { process.kill(pid, 0); return true; } catch (err) { return err.code !== 'ESRCH'; }
 }
 
-export function lockDeployment(projectDir, name, { pid = process.pid, isAlive = defaultIsAlive } = {}) {
+// Same shape as projectLock.js: a dead lock is renamed aside (only one taker can win the rename),
+// the moved bytes are checked against what was judged dead, then the winner creates the lock exclusively.
+export function lockDeployment(projectDir, name, { pid = process.pid, isAlive = defaultIsAlive, beforeTakeover = () => {} } = {}) {
+  assertName(name);
   mkdirSync(path.join(projectDir, 'deployments'), { recursive: true });
   const file = path.join(projectDir, 'deployments', `${name}.lock`);
-  const body = () => ({ pid, at: new Date().toISOString() });
-  try {
-    createFileExclusive(file, JSON.stringify(body()) + '\n');
-  } catch (err) {
-    if (err.code !== 'EEXIST') throw err;
-    let holder = null;
-    try { holder = JSON.parse(readFileSync(file, 'utf8')); } catch { /* unreadable: treat as dead */ }
-    if (holder && Number.isInteger(holder.pid) && isAlive(holder.pid)) return null;
-    writeJsonAtomic(file, body());
+  const body = () => JSON.stringify({ pid, at: new Date().toISOString() }) + '\n';
+  for (let attempt = 0; ; attempt++) {
+    try {
+      createFileExclusive(file, body());
+      break;
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err;
+      let seen = null;
+      try { seen = readFileSync(file, 'utf8'); } catch { /* vanished: retry */ }
+      let holder = null;
+      try { holder = JSON.parse(seen); } catch { /* unreadable or corrupt: counts as dead */ }
+      if (holder && Number.isInteger(holder.pid) && isAlive(holder.pid)) return null;
+      if (attempt >= 2) return null;
+      if (seen === null) continue;
+      beforeTakeover();
+      const aside = `${file}.stale-${pid}-${randomBytes(6).toString('hex')}`;
+      try { renameSync(file, aside); } catch (e) {
+        if (e.code === 'ENOENT') continue;
+        throw e;
+      }
+      let moved = null;
+      try { moved = readFileSync(aside, 'utf8'); } catch { /* treat as changed */ }
+      if (moved !== seen) {
+        // Another taker got in between: put their lock back and report busy.
+        try { linkSync(aside, file); } catch { /* a third starter already holds it */ }
+        rmSync(aside, { force: true });
+        return null;
+      }
+      rmSync(aside, { force: true });
+    }
   }
   return {
     release() {

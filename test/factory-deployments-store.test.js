@@ -105,3 +105,40 @@ test('origin must be a bare http(s) origin', () => {
     assert.equal(validateDeployment({ ...newDeployment(BASE), origin }).ok, false, origin);
   assert.equal(validateDeployment({ ...newDeployment(BASE), origin: 'http://10.0.0.5:8080' }).ok, true);
 });
+
+test('two takers racing for a dead lock: exactly one wins and the winner keeps it', () => {
+  const dir = tmp();
+  lockDeployment(dir, 'acme-office', { pid: 111, isAlive: () => true });
+  const alive = (pid) => pid !== 111;
+  let b = 'unset';
+  const a = lockDeployment(dir, 'acme-office', {
+    pid: 222, isAlive: alive,
+    beforeTakeover: () => { b = lockDeployment(dir, 'acme-office', { pid: 333, isAlive: alive }); },
+  });
+  assert.ok(b && typeof b.release === 'function'); // the inner taker won
+  assert.equal(a, null); // the outer one saw it had lost and reports busy
+  const file = path.join(dir, 'deployments', 'acme-office.lock');
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).pid, 333);
+  assert.deepEqual(readdirSync(path.join(dir, 'deployments')), ['acme-office.lock']);
+});
+
+test('a corrupt lock file is taken over', () => {
+  const dir = tmp();
+  mkdirSync(path.join(dir, 'deployments'));
+  writeFileSync(path.join(dir, 'deployments', 'acme-office.lock'), 'garbage');
+  assert.ok(lockDeployment(dir, 'acme-office', { pid: 5, isAlive: () => true }));
+});
+
+test('a bad deployment name never builds a path', () => {
+  const dir = tmp();
+  assert.throws(() => deploymentPath(dir, '../x'), (e) => e instanceof DeploymentError);
+  assert.throws(() => loadDeployment(dir, '../x'), DeploymentError);
+  assert.throws(() => lockDeployment(dir, '../x'), DeploymentError);
+});
+
+test('a record whose name differs from its file name is refused', () => {
+  const dir = tmp();
+  saveDeployment(dir, newDeployment(BASE));
+  writeFileSync(deploymentPath(dir, 'other'), readFileSync(deploymentPath(dir, 'acme-office')));
+  assert.throws(() => loadDeployment(dir, 'other'), (e) => /could not be read \(.*other/.test(e.message));
+});
