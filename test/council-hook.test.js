@@ -228,3 +228,27 @@ test('the machine goes away mid-smoke: released, "not proven", no throw (Review 
   assert.match(r.text, /Warnings \(\d+\):\n(?: {2}- \[\w+\] [^\n]*not proven[^\n]*\n)* {2}- \[Reliability\] Reliability was not proven: The reliability test could not run \(ssh: connection reset\)/);
   assert.doesNotMatch(r.text, /The reliability test failed at/);
 });
+
+test('the hook redacts what it hands back: an env secret in an interpreter reply never reaches text or fix', async () => {
+  const SECRET = 'hunter2-super-secret-value';
+  const before = process.env.COUNCIL_TEST_TOKEN;
+  process.env.COUNCIL_TEST_TOKEN = SECRET;
+  try {
+    const ids = ['S1', 'S2', 'L1', 'C1', 'C2', 'C3', 'D1', 'D2', 'R1'];
+    const reply = { findings: ids.map((id) => ({ id, decision: 'keep', why: `because ${SECRET}`, fix: `rotate ${SECRET}` })),
+      extra: [{ title: `The key ${SECRET} is printed`, why: `seen ${SECRET}`, grade: 'warning' }] };
+    const s = await setup({ reviewer: () => ({ text: `\`\`\`json\n${JSON.stringify(reply)}\n\`\`\`` }) });
+    const r = await runProjectCouncil(s.args, { options: s.options, deps: s.deps });
+    assert.equal(r.status, 'blocked');
+    assert.match(r.text, /\[redacted\]/);
+    for (const v of [r.text, r.fix.title, r.fix.instructions]) assert.ok(!v.includes(SECRET), v);
+    const paused = await runProjectCouncil(s.args, { options: s.options, deps: { ...s.deps, loadProject: async () => { throw new Error(`bad ${SECRET}`); } } });
+    assert.ok(!paused.reason.includes(SECRET));
+    const p2 = await setup({ reviewer: () => ({ ok: false, failure: 'no-participant', error: `no AI model is available (${SECRET})` }) });
+    const noModel = await runProjectCouncil(p2.args, { options: p2.options, deps: p2.deps });
+    assert.equal(noModel.status, 'paused');
+    assert.ok(!noModel.reason.includes(SECRET), noModel.reason);
+  } finally {
+    if (before === undefined) delete process.env.COUNCIL_TEST_TOKEN; else process.env.COUNCIL_TEST_TOKEN = before;
+  }
+});

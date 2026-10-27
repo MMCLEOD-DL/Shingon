@@ -14,6 +14,8 @@ import { openCouncilWorkspace, openCouncilLog } from './councilWorkspace.js';
 import { runCouncilRound, membersFor, validateCouncilOptions, PROJECT_COUNCIL } from './index.js';
 import { fixChunk } from './report.js';
 
+// Everything handed back to Plan 8 (text, fix, reason) goes through redact() once more on the way out:
+// Plan 8 stores it in the build state.
 // Plan 8 clips a council fix's instructions to 3000 characters (Ruling R16).
 const FIX_MAX = 3000;
 
@@ -47,18 +49,18 @@ export async function runProjectCouncil(args, { options = {}, deps = {} } = {}) 
     const diff = await ws.diffRange(ws.baseSha, project.sha);
     const r = await runCouncilRound(ctx, { files, tests: null, diff, members: membersFor(PROJECT_COUNCIL), project });
 
-    if (r.status === 'paused') return { status: 'paused', reason: r.reason, ...sticky() };
+    if (r.status === 'paused') return { status: 'paused', reason: redact(String(r.reason ?? '')), ...sticky() };
     const { report } = r;
-    const out = { status: report.verdict, text: report.text, secretSeen: state.council.secretSeen === true };
+    const out = { status: report.verdict, text: redact(String(report.text ?? '')), secretSeen: state.council.secretSeen === true };
     if (report.verdict === 'blocked') {
       const { title, instructions } = fixChunk(report, state.council.round, FIX_MAX);
-      out.fix = { title, instructions };
+      out.fix = { title: redact(String(title)), instructions: redact(String(instructions)).slice(0, FIX_MAX) };
     }
     return out;
   } catch (e) {
     return {
       status: 'paused',
-      reason: `The council hit a problem it could not get past (${plain(e)}), so the build paused. Run "conductor build ${args?.slug}" to try again.`,
+      reason: redact(`The council hit a problem it could not get past (${plain(e)}), so the build paused. Run "conductor build ${args?.slug}" to try again.`),
       ...sticky(),
     };
   } finally {
