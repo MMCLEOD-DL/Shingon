@@ -106,6 +106,16 @@ export function parseSmokeLog(text, code, { timedOut = false, stderr = '' } = {}
 const lastMatch = (text, re) => [...text.matchAll(re)].at(-1) ?? null;
 const EXIT_RE = /^COUNCIL-SMOKE-EXIT (\d+)\s*$/gm;
 const REFUSED_RE = /^COUNCIL-REFUSED (.+)$/gm;
+const START_RE = /^COUNCIL-SMOKE-START\s*$/m;
+
+// The wrapper prints COUNCIL-SMOKE-START just before it runs the app's run-smoke.sh. Only the wrapper may refuse,
+// so a COUNCIL-REFUSED line counts only before that line, and the exit line only after it (the last one wins).
+// With no start line the app's script never ran, so all the output is the wrapper's.
+export function splitSmokeOutput(out) {
+  const m = START_RE.exec(out);
+  if (!m) return { wrapper: out, app: out };
+  return { wrapper: out.slice(0, m.index), app: out.slice(m.index + m[0].length).replace(/^\r?\n/, '') };
+}
 
 export async function runSmoke({ ssh, machine, remoteDir, timeoutMs }) {
   assertSafe('path', remoteDir);
@@ -115,13 +125,14 @@ export async function runSmoke({ ssh, machine, remoteDir, timeoutMs }) {
   const r = await ssh.exec(machine, script, { timeoutMs });
   if (r.code === 255) throw unreachable(machine.host);
   const out = r.stdout ?? '';
-  const refusal = lastMatch(out, REFUSED_RE);
+  const { wrapper, app } = splitSmokeOutput(out);
+  const refusal = lastMatch(wrapper, REFUSED_RE);
   if (refusal) {
     return { ran: false, passed: false, steps: [], failedStep: null, failure: null, refused: refusal[1].trim(), timedOut: false, code: r.code, tail: clip(redact(out), 2000) };
   }
-  const m = lastMatch(out, EXIT_RE);
+  const m = lastMatch(app, EXIT_RE);
   const code = m ? Number(m[1]) : r.code;
-  return parseSmokeLog(out, code, { timedOut: r.code === -1 || code === 124, stderr: r.stderr });
+  return parseSmokeLog(app, code, { timedOut: r.code === -1 || code === 124, stderr: r.stderr });
 }
 
 export async function cleanSmoke({ ssh, machine, remoteDir }) {

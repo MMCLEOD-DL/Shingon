@@ -31,6 +31,10 @@ export const PROTECTED_PATHS = Object.freeze([
   'ops/vitest.config.ts',
   'deploy/vitest.config.ts',
   'apps/web/playwright.config.ts',
+  // The reliability test the council runs on a test machine (every file in deploy/smoke at v0.1.0).
+  'deploy/smoke/run-smoke.sh',
+  'deploy/smoke/catcher.mjs',
+  'deploy/smoke/RESULT.md',
 ]);
 
 // Ruling Q23: the package.json files whose verify-type scripts must not change (plus any apps/<x>/package.json).

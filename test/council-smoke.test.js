@@ -187,3 +187,29 @@ test('bad inputs: timeoutMs, runDir', async () => {
     await assert.rejects(cleanSmoke({ ssh, machine: fakeMachine({ runDir }), remoteDir: `${runDir}/x` }), /run folder|unsafe path/);
   }
 });
+
+test('only the wrapper can refuse: a COUNCIL-REFUSED line printed by the app\'s own smoke does not turn a failure into not proven', async () => {
+  const app = 'COUNCIL-SMOKE-START\n== Step 5: back up\n   FAILED: restore-test: 2 tables differ\nCOUNCIL-REFUSED This machine is busy\nSMOKE FAILED during: step 5 (exit 1). Cleaning up.\nCOUNCIL-SMOKE-EXIT 1\n';
+  const r = await runSmoke({ ssh: fakeSsh([{ match: 'run-smoke.sh', stdout: app, code: 0 }]).ssh, machine: fakeMachine(), remoteDir: REMOTE, timeoutMs: 900000 });
+  assert.deepEqual([r.refused, r.passed, r.failedStep, r.code], [null, false, '5', 1]);
+  // The wrapper's own refusal comes before the start line, and still counts.
+  const pre = await runSmoke({ ssh: fakeSsh([{ match: 'run-smoke.sh', stdout: 'COUNCIL-REFUSED real reason\nCOUNCIL-SMOKE-START\nCOUNCIL-REFUSED app says\n', code: 3 }]).ssh, machine: fakeMachine(), remoteDir: REMOTE, timeoutMs: 900000 });
+  assert.equal(pre.refused, 'real reason');
+  // An exit line before the start line is not the app's exit code.
+  const early = await runSmoke({ ssh: fakeSsh([{ match: 'run-smoke.sh', stdout: 'COUNCIL-SMOKE-EXIT 0\nCOUNCIL-SMOKE-START\n== Step 1: x\nSMOKE PASSED\n', code: 1 }]).ssh, machine: fakeMachine(), remoteDir: REMOTE, timeoutMs: 900000 });
+  assert.deepEqual([early.passed, early.code], [false, 1]);
+});
+
+test('the generated script, run locally: the start line comes just before the app\'s smoke, after the wrapper\'s own checks', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'smoke-app-'));
+  try {
+    mkdirSync(path.join(root, 'deploy', 'smoke'), { recursive: true });
+    writeFileSync(path.join(root, 'deploy', 'smoke', 'run-smoke.sh'), 'echo "== Step 1: x"; echo "COUNCIL-REFUSED fake"; exit 1\n');
+    const { ssh, calls } = fakeSsh([]);
+    await runSmoke({ ssh, machine: fakeMachine(), remoteDir: root, timeoutMs: 900000 });
+    const r = runLocally(calls[0].script);
+    assert.match(r.stdout, /^COUNCIL-SMOKE-START\n== Step 1: x\nCOUNCIL-REFUSED fake\nCOUNCIL-SMOKE-EXIT 1\n$/m);
+    const none = runLocally(calls[0].script.replace(/run-smoke\.sh/g, 'missing.sh'));
+    assert.doesNotMatch(none.stdout, /COUNCIL-SMOKE-START/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

@@ -121,3 +121,11 @@ test('final-fix 5: the browser gate\'s test:e2e and verify:full scripts are prot
     assert.ok(f.includes('blocking! The checks that npm run verify runs were changed in package.json'), `${Object.keys(over)[0]}: ${f.join('\n')}`);
   }
 });
+
+test('the reliability test (deploy/smoke) belongs to the foundation: a feature or fix run cannot rewrite it', async () => {
+  const f = await scenario([{ 'apps/server/test/expenses/a.test.ts': TESTS }, {
+    'deploy/smoke/run-smoke.sh': 'echo SMOKE PASSED\n', 'deploy/smoke/catcher.mjs': '// gone\n',
+  }], { extra: { 'deploy/smoke/run-smoke.sh': '#!/usr/bin/env bash\n', 'deploy/smoke/catcher.mjs': '// catcher\n' } });
+  assert.ok(f.includes('blocking! deploy/smoke/run-smoke.sh belongs to the foundation and must not be changed'), f.join('\n'));
+  assert.ok(f.includes('blocking! deploy/smoke/catcher.mjs belongs to the foundation and must not be changed'), f.join('\n'));
+});
