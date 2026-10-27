@@ -1,9 +1,9 @@
-import { test, expect } from 'vitest';
+import { describe, test, expect } from 'vitest';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { readFileSync as readReal } from 'node:fs';
-import { judgeAudit, planRelease, runRelease, AUDIT_UNAVAILABLE, type ReleaseDeps } from './release.js';
+import { judgeAudit, planRelease, runFirstRelease, runRelease, AUDIT_UNAVAILABLE, FIRST_RELEASE_HINT, type ReleaseDeps } from './release.js';
 
 test('moves Unreleased under the new version and leaves an empty Unreleased', () => {
   const r = planRelease('# Changelog\n\n## [Unreleased]\n- Added X.\n\n## [0.1.0] - 2026-11-15\n- First.\n', '0.1.0', 'minor', '2026-12-01');
@@ -44,6 +44,7 @@ function setup(over: Partial<ReleaseDeps> = {}): { deps: ReleaseDeps; calls: str
     audit: () => { calls.push('audit'); return audit({}); },
     hasGitIdentity: () => true,
     tagExists: () => false,
+    versionTags: () => ['v0.1.0'],
     commitAndTag: (v) => { calls.push(`commit+tag v${v}`); },
     ...over,
   };
@@ -111,4 +112,79 @@ test('the next release from 0.1.0 is 0.1.1 or 0.2.0 and 0.1.0 stays as released'
   const released = REAL.slice(REAL.indexOf('## [0.1.0]'));
   expect(patch.changelog.endsWith(released)).toBe(true);
   expect(patch.changelog).toContain('## [Unreleased]\n\n## [0.1.1] - 2026-12-01\n- Added Z.\n\n## [0.1.0]');
+});
+
+test('a patch, minor or major release before any release refuses and points at the first release', () => {
+  const s = setup({ versionTags: () => [] });
+  expect(() => runRelease('patch', s.deps)).toThrow(FIRST_RELEASE_HINT);
+  expect(FIRST_RELEASE_HINT).toBe('No release has been made yet. Make the first one with: npm run release -- first');
+  expect(s.calls).toEqual(['clean']);
+  expect(readFileSync(path.join(s.root, 'package.json'), 'utf8')).toContain('"0.1.0"');
+});
+
+describe('the first release (npm run release -- first)', () => {
+  const FIRST = '# Changelog\n\n## [Unreleased]\n\n## [0.1.0] - 2026-10-26\n- First foundation release.\n';
+  function first(over: Partial<ReleaseDeps> = {}) {
+    const s = setup({ versionTags: () => [], ...over });
+    writeFileSync(path.join(s.root, 'CHANGELOG.md'), FIRST);
+    return s;
+  }
+  const read = (root: string, f: string) => readFileSync(path.join(root, f), 'utf8');
+  const untouched = (root: string) => {
+    expect(JSON.parse(read(root, 'foundation.json'))).toEqual({ name: 'highland-foundation', version: '0.1.0', commit: 'unreleased' });
+    expect(read(root, 'CHANGELOG.md')).toBe(FIRST);
+  };
+
+  test('tags the version already written, stamps the tag name in foundation.json, and changes nothing else', () => {
+    const s = first();
+    const pkgBefore = read(s.root, 'package.json');
+    expect(runFirstRelease(s.deps)).toBe('0.1.0');
+    expect(JSON.parse(read(s.root, 'foundation.json'))).toEqual({ name: 'highland-foundation', version: '0.1.0', commit: 'v0.1.0' });
+    expect(read(s.root, 'package.json')).toBe(pkgBefore);
+    expect(read(s.root, 'CHANGELOG.md')).toBe(FIRST);
+    expect(s.calls).toEqual(['clean', 'audit', 'commit+tag v0.1.0']);
+  });
+  test('refuses once any release tag exists', () => {
+    const s = first({ versionTags: () => ['v0.1.0'] });
+    expect(() => runFirstRelease(s.deps)).toThrow('A release has already been made (tag v0.1.0), so this is not the first one. Use npm run release -- patch, minor or major instead.');
+    untouched(s.root);
+    expect(s.calls).toEqual(['clean']);
+  });
+  test('refuses a dirty tree before anything else', () => {
+    const s = first({ isClean: () => false, versionTags: () => { throw new Error('must not be asked'); } });
+    expect(() => runFirstRelease(s.deps)).toThrow('Commit or stash your changes first.');
+    untouched(s.root);
+  });
+  test('refuses when the versions disagree or are not version numbers', () => {
+    let s = first();
+    writeFileSync(path.join(s.root, 'foundation.json'), '{"name":"highland-foundation","version":"0.0.9","commit":"unreleased"}');
+    expect(() => runFirstRelease(s.deps)).toThrow('foundation.json says 0.0.9 but package.json says 0.1.0. They must match before a release');
+    expect(s.calls).not.toContain('commit+tag v0.1.0');
+    s = first();
+    writeFileSync(path.join(s.root, 'package.json'), '{"name":"x","version":"one"}');
+    expect(() => runFirstRelease(s.deps)).toThrow('package.json\'s version "one" is not a version number such as 0.1.0.');
+  });
+  test('refuses without a dated changelog section for the version', () => {
+    for (const log of ['# Changelog\n\n## [Unreleased]\n- First.\n', '# Changelog\n\n## [Unreleased]\n\n## [0.1.0]\n- First.\n']) {
+      const s = first();
+      writeFileSync(path.join(s.root, 'CHANGELOG.md'), log);
+      expect(() => runFirstRelease(s.deps)).toThrow('CHANGELOG.md has no dated section for 0.1.0. Add one, such as "## [0.1.0] - 2026-12-01"');
+      expect(JSON.parse(read(s.root, 'foundation.json')).commit).toBe('unreleased');
+    }
+  });
+  test('refuses on a failed audit or a missing git identity, writing nothing', () => {
+    let s = first({ audit: () => ({ code: 1, stdout: '' }) });
+    expect(() => runFirstRelease(s.deps)).toThrow(AUDIT_UNAVAILABLE);
+    untouched(s.root);
+    s = first({ hasGitIdentity: () => false });
+    expect(() => runFirstRelease(s.deps)).toThrow('Git does not know who you are');
+    untouched(s.root);
+  });
+  test('the real repository is ready for its first release: versions match and 0.1.0 is dated', () => {
+    const pkg = JSON.parse(readReal(new URL('../package.json', import.meta.url), 'utf8')) as { version: string; scripts: Record<string, string> };
+    const found = JSON.parse(readReal(new URL('../foundation.json', import.meta.url), 'utf8')) as { version: string };
+    expect([pkg.version, found.version]).toEqual(['0.1.0', '0.1.0']);
+    expect(REAL).toMatch(/^## \[0\.1\.0\] - \d{4}-\d{2}-\d{2}$/m);
+    expect(pkg.scripts['release']).toBe('tsx scripts/release.ts');
+  });
 });

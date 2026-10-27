@@ -17,7 +17,7 @@ This guide is for whoever builds the next client app: a person, or the factory. 
 
 2. **Keep `foundation.json` untouched.** It records which foundation release the app is built from (`/api/version` reports it to the health token holder), and it is how anyone can tell which `[security]` fixes an app has.
 3. The `foundation` remote is how fixes arrive later (see "Taking foundation fixes"). Do not delete it.
-4. The app's own version starts from the foundation's and is raised with `npx tsx scripts/release.ts patch|minor|major` like any release.
+4. The app's own version starts from the foundation's and is raised with `npm run release -- patch|minor|major` like any release. (`npm run release -- first` is only for the foundation's own very first release, v0.1.0: it is refused once any `v*` tag exists, and a clone made at a release tag already has one.)
 
 ## Making it theirs
 
@@ -86,6 +86,6 @@ Before merging, read the foundation's `CHANGELOG.md` for the versions in between
 
 - **`npm run verify`**: lint, type checks, the licence gate and every unit and integration test (including the role-crossing harness). It must pass at every commit.
 - **`npm run verify:full`**: `verify` plus the browser tests (Playwright: desktop Chromium, phone Chromium and phone WebKit) with a screenshot of every page. Run it before every release. It needs `TEST_DATABASE_URL` (a PostgreSQL role allowed to create databases) and the browsers (`npx playwright install chromium webkit`; on a fresh Linux machine `--with-deps`).
-- **`reports/crossing.md`** (with `reports/crossing.json`): written by the crossing test. It says in plain English how many routes and checks ran and lists every failure as a sentence. It is the evidence that no role can see or change what it should not, for the operator and later for the council.
+- **`apps/server/reports/crossing.md`** (with `apps/server/reports/crossing.json`): written by the crossing test, wherever the tests are started from. It says in plain English how many routes and checks ran and lists every failure as a sentence. It is the evidence that no role can see or change what it should not, for the operator and later for the council.
 - **`reports/screenshots/manifest.json`** (with the PNGs beside it): every page at desktop and phone width, from the browser tests. Look at the phone pages before a release: they are what staff see, and they must look finished enough to charge for.
 - **`docs/LICENCES.md`**: generated from `package-lock.json`, so it is the same on every computer. Regenerate it with `npm run licences:doc` after any package change (it refuses while the licence gate fails); a test fails while it is out of date.

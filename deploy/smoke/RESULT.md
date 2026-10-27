@@ -51,4 +51,4 @@ Also checked on the build machine the same evening (outside the script): the ful
 - Image delivery choice (private registry, or docker save/load over the tunnel).
 - Cloudflare tunnel token (or Tailscale key) per deployment.
 - Solicitor review of the §5a terms; give them docs/LICENCES.md.
-- First release: `npx tsx scripts/release.ts minor` once the smoke passes, then tell Conductor's Phase 5 plan which tag to build from.
+- First release: `npm run release -- first` once the smoke passes and the branch is merged (it tags the 0.1.0 already in `package.json`, `foundation.json` and the dated changelog section as `v0.1.0`; it does not raise the version, and is refused once any `v*` tag exists). Then tell Conductor's Phase 5 plan which tag to build from (`v0.1.0`). Later releases use `npm run release -- patch|minor|major`.

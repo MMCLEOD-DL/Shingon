@@ -20,7 +20,8 @@ The foundation every Highland client app is built from: a staff web app for one 
 | `npm run verify:full` | `verify` plus the browser tests and page screenshots (needs the Playwright browsers). Run before every release. |
 | `npm run images` | Builds the app and ops images (`highland/app:<version>`, `highland/ops:<version>`). Needs Docker. |
 | `npm run bundle` | Makes `dist/highland-bundle-<version>.tar.gz`: the files a deployment needs (`compose.yaml`, `Caddyfile`, `.env.example`, `RUNBOOK.md`). |
-| `npx tsx scripts/release.ts patch\|minor\|major` | Makes a release: moves the changelog's Unreleased entries under the new version, stamps `foundation.json`, commits and tags. Refuses on uncommitted changes or high-severity `npm audit` findings in shipped packages. Nothing is pushed. |
+| `npm run release -- first` | The very first release, once: tags the version already in `package.json`, `foundation.json` and a dated `CHANGELOG.md` section (0.1.0) as `v0.1.0`, stamping `foundation.json`'s `commit` with the tag name. Refused once any `v*` tag exists, on uncommitted changes, when the versions disagree or the section is missing or undated, and on high-severity `npm audit` findings. Nothing is pushed. |
+| `npm run release -- patch\|minor\|major` | Every later release: moves the changelog's Unreleased entries under the new version, stamps `foundation.json`, commits and tags. Refuses on uncommitted changes, before the first release, or on high-severity `npm audit` findings in shipped packages. Nothing is pushed. (`npx tsx scripts/release.ts …` is the same.) |
 | `npm run licences:doc` | Regenerates `docs/LICENCES.md` from the installed packages. |
 | `bash deploy/smoke/run-smoke.sh` | The operator's full-bundle smoke test. **Only on a throwaway Linux machine with Docker, never on a client box.** Result: `deploy/smoke/RESULT.md`. |
 
@@ -37,6 +38,6 @@ Known follow-ups, recorded so they are not forgotten:
 - **jsdom** (test-only) is pinned at 29.1.1, because 30.x needs Node 22.22.2 or later. Raise it once every machine that runs the tests has a newer Node (the build machine already has 22.23).
 - **Bundle size.** The web app ships as one script of about 665 kB; splitting it by page would make the first load on a phone faster.
 - **The updater stays root**, because it rewrites the operator's root-owned `.env` and uses the Docker socket. It runs only on demand.
-- **A separate database role for the app** (`app_rw`, allowed only to add to the activity log, not to purge it), so the activity log is protected even from a compromised app process.
+- **The app connects to PostgreSQL as its superuser** (`app`, the `POSTGRES_USER` that owns the database). So a compromised app process could do anything in the database, including purging the activity log or dropping tables. The fix is a separate database role for the app (`app_rw`, allowed only to read and write its own tables and to add to the activity log, not to purge it), with migrations, restores and ops keeping the owner role.
 - **Multi-architecture (ARM) images**: amd64 only for now.
 - **Surfacing OS and dependency security updates on live boxes automatically** (Phase 7). Until then the runbook's monthly patching routine covers it.

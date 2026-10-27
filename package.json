@@ -22,6 +22,7 @@
     "verify:full": "npm run verify && npm run test:e2e",
     "verify": "npm run lint && npm run typecheck && npm run licences && npm test",
     "bundle": "tsx scripts/bundle.ts",
+    "release": "tsx scripts/release.ts",
     "images": "docker build -f deploy/Dockerfile -t highland/app:$npm_package_version --build-arg APP_VERSION=$npm_package_version --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) . && docker build -f deploy/ops.Dockerfile -t highland/ops:$npm_package_version --build-arg APP_VERSION=$npm_package_version --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) ."
   },
   "devDependencies": {
@@ -29,7 +30,6 @@
     "@types/node": "22.20.5",
     "@types/semver": "7.8.0",
     "eslint": "10.13.0",
-    "prettier": "3.9.10",
     "semver": "7.8.5",
     "tsx": "4.23.15",
     "typescript": "6.0.3",

@@ -61,12 +61,49 @@ export interface ReleaseDeps {
   /** True when git knows who is committing (user.name and user.email). */
   hasGitIdentity(): boolean;
   tagExists(tag: string): boolean;
+  /** Every tag that looks like a release (v*). */
+  versionTags(): string[];
   commitAndTag(version: string): void;
+}
+
+export const FIRST_RELEASE_HINT = 'No release has been made yet. Make the first one with: npm run release -- first';
+
+const readJson = (root: string, f: string): JsonFile => JSON.parse(readFileSync(path.join(root, f), 'utf8')) as JsonFile;
+
+/**
+ * The very first release: tags the version already written in package.json, foundation.json and a dated CHANGELOG.md
+ * section (0.1.0), without raising it. Allowed only while no v* tag exists. Stamps foundation.json's commit with the tag
+ * name, commits and tags locally; nothing is pushed. Throws plain-English problems, and writes nothing when it refuses.
+ */
+export function runFirstRelease(deps: ReleaseDeps): string {
+  if (!deps.isClean()) throw new Error('Commit or stash your changes first.');
+  const tags = deps.versionTags();
+  if (tags.length > 0) {
+    throw new Error(`A release has already been made (tag ${[...tags].sort().join(', ')}), so this is not the first one. Use npm run release -- patch, minor or major instead.`);
+  }
+  const pkg = readJson(deps.root, 'package.json');
+  const found = readJson(deps.root, 'foundation.json');
+  const version = pkg.version ?? '';
+  if (semver.valid(version) === null) throw new Error(`package.json's version "${version}" is not a version number such as 0.1.0.`);
+  if (found.version !== version) {
+    throw new Error(`foundation.json says ${String(found.version)} but package.json says ${version}. They must match before a release; fix whichever is wrong.`);
+  }
+  const section = parseChangelog(readFileSync(path.join(deps.root, 'CHANGELOG.md'), 'utf8')).find((x) => x.version === version);
+  if (section?.date == null) {
+    throw new Error(`CHANGELOG.md has no dated section for ${version}. Add one, such as "## [${version}] - ${deps.today}" with what is in it, and commit it before the first release.`);
+  }
+  const verdict = judgeAudit(deps.audit());
+  if (!verdict.ok) throw new Error(verdict.message);
+  if (!deps.hasGitIdentity()) throw new Error('Git does not know who you are. Set it with git config user.name and git config user.email, then try again.');
+  writeFileSync(path.join(deps.root, 'foundation.json'), `${JSON.stringify({ ...found, commit: `v${version}` }, null, 2)}\n`);
+  deps.commitAndTag(version);
+  return version;
 }
 
 /** Does the whole release except pushing. Throws plain-English problems. */
 export function runRelease(bump: Bump, deps: ReleaseDeps): string {
   if (!deps.isClean()) throw new Error('Commit or stash your changes first.');
+  if (deps.versionTags().length === 0) throw new Error(FIRST_RELEASE_HINT);
   const verdict = judgeAudit(deps.audit());
   if (!verdict.ok) throw new Error(verdict.message);
   const file = (f: string): string => path.join(deps.root, f);
@@ -121,6 +158,14 @@ function realDeps(root: string): ReleaseDeps {
     tagExists(tag) {
       try { return git('tag', '--list', tag).trim() !== ''; } catch { return false; }
     },
+    versionTags() {
+      // Fails closed: if git cannot list the tags, nothing may be taken to be the first release.
+      let out: string;
+      try { out = git('tag', '--list', 'v*'); } catch {
+        throw new Error('Git could not list the tags, so the release has been stopped. Run it in the git repository, and check that git works.');
+      }
+      return out.split('\n').map((t) => t.trim()).filter((t) => t !== '');
+    },
     commitAndTag(version) {
       const step = (what: string, ...args: string[]): void => {
         try { git(...args); } catch {
@@ -137,9 +182,11 @@ function realDeps(root: string): ReleaseDeps {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const bump = process.argv[2];
-    if (bump !== 'patch' && bump !== 'minor' && bump !== 'major') throw new Error('Say which kind of release this is: patch, minor or major. For example: npx tsx scripts/release.ts minor');
+    if (bump !== 'first' && bump !== 'patch' && bump !== 'minor' && bump !== 'major') {
+      throw new Error('Say which kind of release this is: first (only once, for the very first release), patch, minor or major. For example: npm run release -- minor');
+    }
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-    const version = runRelease(bump, realDeps(root));
+    const version = bump === 'first' ? runFirstRelease(realDeps(root)) : runRelease(bump, realDeps(root));
     console.log(`Released v${version} on this machine. Nothing has been pushed: when you are happy, run "git push --follow-tags".`);
   } catch (err) {
     console.error((err as Error).message);

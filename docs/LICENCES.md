@@ -5,7 +5,7 @@ A test (`deploy/test/docs.test.ts`) fails when it no longer matches `package-loc
 
 ## npm packages
 
-Every package recorded in `package-lock.json` (direct and indirect, including build and test tools, and the platform-specific builds for every operating system and processor, such as `@esbuild/linux-x64`), one row for each package version: 493 rows. The list is the same on every computer.
+Every package recorded in `package-lock.json` (direct and indirect, including build and test tools, and the platform-specific builds for every operating system and processor, such as `@esbuild/linux-x64`), one row for each package version: 492 rows. The list is the same on every computer.
 `npm run licences` (part of `npm run verify`) fails if any installed package or any lockfile entry is not on the permissive list, unless the operator has written down a reason in `licence-exceptions.json`.
 Vite is held at 7.3.7, because Vite 8 needs `lightningcss`, which is MPL-2.0.
 
@@ -414,7 +414,6 @@ Vite is held at 7.3.7, because Vite 8 needs `lightningcss`, which is MPL-2.0.
 | postgres-date | 1.0.7 | MIT |
 | postgres-interval | 1.2.0 | MIT |
 | prelude-ls | 1.2.1 | MIT |
-| prettier | 3.9.10 | MIT |
 | pretty-format | 27.5.1 | MIT |
 | process-warning | 5.1.1 | MIT |
 | prop-types | 15.8.1 | MIT |
