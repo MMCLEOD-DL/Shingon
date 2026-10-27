@@ -1,7 +1,7 @@
 // test/exec.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runCommand, killAllChildren } from '../src/exec.js';
+import { runCommand, killAllChildren, spawnTracked } from '../src/exec.js';
 
 const node = process.execPath;
 
@@ -69,4 +69,11 @@ test('killAllChildren ends every live child; their runs resolve', async () => {
   const r = await p;
   assert.notEqual(r.code, 0);
   assert.ok(Date.now() - t0 < 5000);
+});
+
+test('spawnTracked children are killed by killAllChildren', async () => {
+  const child = spawnTracked(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], {});
+  const closed = new Promise((r) => child.on('close', (code, signal) => r(signal)));
+  killAllChildren();
+  assert.equal(await closed, 'SIGKILL');
 });
