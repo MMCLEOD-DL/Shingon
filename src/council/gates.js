@@ -134,7 +134,7 @@ function readIf(file) {
   try { return readFileSync(file, 'utf8'); } catch { return null; }
 }
 
-function readScreenshots(dir) {
+export function readScreenshots(dir) {
   const raw = readIf(path.join(dir, 'reports', 'screenshots', 'manifest.json'));
   if (raw == null) return [];
   let list;

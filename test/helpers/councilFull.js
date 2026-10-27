@@ -56,9 +56,11 @@ export function fakeMachine(over = {}) {
   return m;
 }
 
-// A fake machine provider: acquire() hands out `machine`, release errors are thrown on demand.
+// A fake machine provider: acquire() hands out `machine`, release errors are thrown on demand
+// (by machine.release() as well as provider.release(), since callers release through the Machine).
 export function fakeProvider({ machine = fakeMachine(), acquireError = null, releaseError = null } = {}) {
   const calls = [];
+  if (releaseError) machine.release = async () => { machine.released += 1; throw releaseError; };
   const provider = {
     async acquire(opts) {
       calls.push({ kind: 'acquire', opts });
