@@ -1,0 +1,18 @@
+[
+  {
+    "page": "notes",
+    "path": "/notes",
+    "project": "mobile-webkit",
+    "width": 390,
+    "height": 844,
+    "file": "notes-mobile-webkit.png"
+  },
+  {
+    "page": "people",
+    "path": "/admin/users",
+    "project": "mobile-chromium",
+    "width": 390,
+    "height": 844,
+    "file": "people-mobile-chromium.png"
+  }
+]

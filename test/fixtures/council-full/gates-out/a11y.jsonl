@@ -1,0 +1,2 @@
+{"page":"notes","project":"council-a11y-phone","violations":[{"id":"color-contrast","impact":"serious","help":"Elements must meet minimum color contrast ratio thresholds","nodes":3,"target":".mantine-Button-root"}]}
+{"page":"people","project":"council-a11y-desktop","violations":[]}

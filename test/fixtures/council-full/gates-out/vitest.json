@@ -1,0 +1,62 @@
+{
+  "numTotalTests": 4,
+  "success": false,
+  "testResults": [
+    {
+      "name": "/work/conductor-council-x/apps/server/test/claims.test.ts",
+      "status": "failed",
+      "assertionResults": [
+        {
+          "ancestorTitles": [
+            "claims"
+          ],
+          "fullName": "claims > [mileage-claims#1] 120 miles at 45p comes to £54.00",
+          "status": "failed",
+          "title": "[mileage-claims#1] 120 miles at 45p comes to £54.00",
+          "failureMessages": [
+            "AssertionError: expected 5400, got 5399"
+          ]
+        },
+        {
+          "ancestorTitles": [
+            "claims"
+          ],
+          "fullName": "claims > [mileage-claims#2] a manager sees their team only",
+          "status": "passed",
+          "title": "[mileage-claims#2] a manager sees their team only",
+          "failureMessages": []
+        }
+      ]
+    },
+    {
+      "name": "/work/conductor-council-x/apps/server/test/receipts.test.ts",
+      "status": "passed",
+      "assertionResults": [
+        {
+          "ancestorTitles": [
+            "receipts"
+          ],
+          "fullName": "receipts > [receipts#1] later",
+          "status": "skipped",
+          "title": "[receipts#1] later",
+          "failureMessages": []
+        }
+      ]
+    },
+    {
+      "name": "/work/conductor-council-x/apps/server/test/notes.test.ts",
+      "status": "passed",
+      "assertionResults": [
+        {
+          "ancestorTitles": [
+            "notes"
+          ],
+          "fullName": "notes > a partial update changes only the fields sent",
+          "status": "passed",
+          "title": "a partial update changes only the fields sent",
+          "failureMessages": []
+        }
+      ]
+    }
+  ]
+}
