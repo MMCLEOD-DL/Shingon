@@ -1,0 +1,2 @@
+This machine already has highland/app or highland/ops images (local or from a registry), so it may be a client box or someone's build machine. The smoke test builds and deletes those images, so it runs only where there are none. Stopping.
+COUNCIL-SMOKE-EXIT 2
