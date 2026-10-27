@@ -7,6 +7,7 @@ import { StatusModel } from './status.js';
 export const NO_TTY_ESCALATION = 'There is no terminal to ask you, so Conductor answered "reject" to stay safe. Run Conductor in a terminal to answer questions.';
 export const NO_TTY_GATE = 'There is no terminal to ask you, so the result was not approved and nothing was added to your repository. Run Conductor in a terminal to approve results.';
 export const NO_TTY_LOCAL = 'There is no terminal to ask you, so Conductor did not use your subscription in place of the local model. Start the local model, or run Conductor in a terminal to choose.';
+export const NO_TTY_BUILD = "There is no terminal to ask you, so the build was not approved and the app's main branch is unchanged. Run Conductor in a terminal to approve it.";
 export const NO_TTY_BRIEF = 'There is no terminal to ask you, so the brief was not approved. Run Conductor in a terminal to answer its questions and approve the brief.';
 
 // [w] must not promise a wake that will not happen: with warn-only, Conductor can only check again.
@@ -201,6 +202,18 @@ export function createTerminal({ input = process.stdin, output = process.stdout,
     return note ? { decision: 'change', note } : { decision: 'stop' };
   });
 
+  // The whole build at its final gate (Contract 7 §7.11). Fails closed: only [a] answers exactly true.
+  const approveBuild = prompt(async ({ summary }) => {
+    say(`\n=== The finished app is ready for your approval ===\n${summary ?? ''}\n`);
+    if (!isTTY) { say(NO_TTY_BUILD); return false; }
+    const a = await ask('[a] approve: mark the app ready · [f] send feedback to fix · [r] reject > ', ['a', 'f', 'r']);
+    if (a === 'a') return true;
+    if (a !== 'f') return false;
+    write('Your feedback (one line): ');
+    const note = (await nextLine())?.trim();
+    return note ? { note } : false;
+  });
+
   const confirmDiscard = prompt(async ({ slug }) => {
     say(`\nThis throws away the unfinished brief for ${slug}. Your notes are kept.`);
     if (!isTTY) { say('There is no terminal to ask you, so nothing was thrown away.'); return false; }
@@ -215,7 +228,7 @@ export function createTerminal({ input = process.stdin, output = process.stdout,
   }
 
   return {
-    onEvent, escalate, approveResult, approveChunk, approvePlan, confirmLocalFallback, askBriefQuestion, approveBrief, confirmDiscard, say, model,
+    onEvent, escalate, approveResult, approveChunk, approvePlan, confirmLocalFallback, askBriefQuestion, approveBrief, approveBuild, confirmDiscard, say, model,
     close: () => { closed = true; reader?.close(); reader = null; },
   };
 }

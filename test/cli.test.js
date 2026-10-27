@@ -19,8 +19,8 @@ test('parseCli: a request, subcommands and flags', () => {
   assert.equal(parseCli([]).command, 'help');
   assert.equal(parseCli(['--version']).command, 'version');
   const f = parseCli(['fix it', '--config', 'c.json', '--test', 'npm test', '--approve-plan', '--approve-each-chunk', '--watch-diffs', '--keep-workspace', '--no-bell', '--council']).flags;
-  assert.deepEqual(f, { config: 'c.json', testCommand: 'npm test', approvePlan: true, approveEachChunk: true, watchDiffs: true, keepWorkspace: true, bell: false, council: true });
-  assert.deepEqual(parseCli(['x']).flags, { config: null, testCommand: null, approvePlan: false, approveEachChunk: false, watchDiffs: false, keepWorkspace: false, bell: true, council: false });
+  assert.deepEqual(f, { config: 'c.json', testCommand: 'npm test', approvePlan: true, approveEachChunk: true, watchDiffs: true, keepWorkspace: true, bell: false, council: true, stop: false, newBuild: false });
+  assert.deepEqual(parseCli(['x']).flags, { config: null, testCommand: null, approvePlan: false, approveEachChunk: false, watchDiffs: false, keepWorkspace: false, bell: true, council: false, stop: false, newBuild: false });
 });
 
 test('parseCli: bad usage is an error, never a run', () => {

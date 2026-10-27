@@ -115,3 +115,11 @@ test('a step that has started but has no editor yet says starting, not "?"', () 
   const lines = run([...PLAN, { type: 'chunk', index: 0, title: 'export util' }]);
   assert.equal(lines[1], '  ⟳ Step 1/2   export util            starting…');
 });
+
+test('a new build feature starts a fresh step list', () => {
+  const m = new StatusModel();
+  m.apply({ type: 'plan-agreed', chunks: ['Acceptance tests', 'Build it'] });
+  m.apply({ type: 'build-feature', index: 1, total: 2, id: 'report', title: 'Monthly report', attempt: 1 });
+  assert.deepEqual(m.chunks, []);
+  assert.equal(m.plan.status, 'drafting');
+});

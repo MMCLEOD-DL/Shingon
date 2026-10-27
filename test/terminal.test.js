@@ -261,3 +261,15 @@ test('brief prompts fail closed without a terminal; confirmDiscard needs a clear
   assert.equal(await term({ answers: [] }).t.confirmDiscard({ slug: 'thistle' }), false);
   assert.equal(await term({ answers: ['y'], isTTY: false }).t.confirmDiscard({ slug: 'thistle' }), false);
 });
+
+test('approveBuild: approve, feedback, and no terminal', async () => {
+  const a = term({ answers: ['a'] });
+  assert.equal(await a.t.approveBuild({ summary: 'Build r1' }), true);
+  assert.match(a.text(), /=== The finished app is ready for your approval ===\nBuild r1/);
+  const f = term({ answers: ['f', 'Make the totals bold.'] });
+  assert.deepEqual(await f.t.approveBuild({ summary: 's' }), { note: 'Make the totals bold.' });
+  const n = term({ isTTY: false });
+  assert.equal(await n.t.approveBuild({ summary: 's' }), false);
+  assert.match(n.text(), /There is no terminal to ask you, so the build was not approved and the app's main branch is unchanged/);
+  for (const x of [a, f, n]) x.t.close();
+});

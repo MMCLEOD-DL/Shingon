@@ -26,6 +26,11 @@ const line = (icon, label, detail) => `  ${icon} ${label} ${detail}`.trimEnd();
 
 export class StatusModel {
   constructor() {
+    this.reset();
+  }
+
+  // Back to the starting state: each feature of a build is a fresh run with its own plan and steps.
+  reset() {
     this.plan = { status: 'drafting', activity: '', author: null, reviewer: null, rounds: 0, earlier: false };
     this.chunks = [];
     this.current = null;
@@ -47,6 +52,9 @@ export class StatusModel {
     const who = e.servedBy ?? e.participant;
     const c = this.current == null ? null : this.chunks[this.current];
     switch (e.type) {
+      case 'build-feature':
+        this.reset();
+        break;
       case 'phase':
         if (e.name === 'final') this.final = { status: 'reviewing', reviewer: null };
         break;
