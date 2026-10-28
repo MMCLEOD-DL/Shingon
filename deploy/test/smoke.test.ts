@@ -6,7 +6,8 @@ import { join } from 'node:path';
 
 const script = new URL('../smoke/run-smoke.sh', import.meta.url).pathname;
 const text = readFileSync(script, 'utf8');
-// PATH holds only bash's own folder, so if a check were reached after the settings, "docker" would be missing.
+// The bad-setting cases must be refused by the settings check itself (exit 2 with its own message), before any Docker
+// check runs; on a machine without Docker on this PATH, reaching that check would give a different message.
 const run = (env: Record<string, string>) => spawnSync('bash', [script], { env: { PATH: '/usr/bin:/bin', ...env }, encoding: 'utf8' });
 
 test('a bad HF_SMOKE_DIR is refused before anything else', () => {
@@ -64,19 +65,37 @@ test('the left-behind guard and the tear-down use the chosen names, and the REST
   expect(text).toContain('REST_NAME="$PROJECT-rest"');
   expect(text).toContain('--name "$REST_NAME"');
   expect(text).toContain('docker rm -f "$REST_NAME"');
-  expect(text).toMatch(/if \[ -e "\$DIR" \] .*name=\^\$REST_NAME\\\$.*com\.docker\.compose\.project=\$PROJECT/);
+  const guard = text.slice(text.indexOf('if [ -e "$DIR" ]'), text.indexOf('A previous smoke run was left behind'));
+  for (const part of ['[ -L "$DIR" ]', '[ -e "$COOKIES" ]', '[ -L "$COOKIES" ]', '"$DIR-catcher.out"', 'compgen -G "$DIR-images-*.tar"',
+    '"name=^$REST_NAME\\$"', 'docker ps -aq --filter "label=com.docker.compose.project=$PROJECT"',
+    'docker volume ls -q --filter "label=com.docker.compose.project=$PROJECT"', 'docker network ls -q --filter "label=com.docker.compose.project=$PROJECT"']) {
+    expect(guard, part).toContain(part);
+  }
+  expect(text).toContain('mkdir "$DIR"\n');
+  expect(text).not.toContain('mkdir -p "$DIR"');
   // The settings are checked before the first Docker command and before the trap that tears down.
   const settings = text.indexOf('HF_SMOKE_PROJECT must be');
   expect(settings).toBeGreaterThan(0);
   expect(settings).toBeLessThan(text.indexOf('command -v docker'));
   expect(settings).toBeLessThan(text.indexOf('trap teardown EXIT'));
 });
-test('the hard-kill step also proves ops started again and no scheduled job ran twice', () => {
+test('the hard-kill step also proves ops started again, the photo and job runs survived, and no alert was left open', () => {
   const step = text.split('STEP="step 7a (hard kill)"')[1]?.split('STEP="step 8')[0] ?? '';
   expect(step).toMatch(/ops_starts_since "\$KILLED_AT"/);
-  expect(step).toMatch(/job_runs_count/);
-  expect(step).toMatch(/job_runs_duplicates\)" = 0/);
-  expect(step).toContain('ok "hard kill of db, app and ops: back healthy in $((SECONDS - T0)) s, $NOTES_BEFORE notes kept, every check ✓"');
-  // Every wait is bounded.
+  expect(step).toMatch(/RUNS_AFTER" -ge "\$RUNS_BEFORE"/);
+  expect(step).toContain('Vacuous in the foundation (no jobs); meaningful only for client');
+  expect(text).not.toContain('job_runs_duplicates');   // job_runs' primary key makes a duplicate impossible, so no check claims it
+  expect(step).toContain('"$BASE/api/files/$UPLOAD_ID/content"');
+  expect(step).toMatch(/cmp -s "\$DIR\/after-kill\.png"/);
+  expect(step).toContain('OPS_CLI_LIMIT=60 ops_cli check');
+  // The alert mark is taken before the kill, and an "app is not answering" alert since then must be followed by Fixed.
+  expect(step.indexOf('MARK="$(alert_lines)"')).toBeGreaterThan(-1);
+  expect(step.indexOf('MARK="$(alert_lines)"')).toBeLessThan(step.indexOf('kill -s SIGKILL'));
+  expect(step).toMatch(/down_since 'Fixed: The app is not answering\.'.*down_since 'problem: The app is not answering\.'/);
+  expect(step).toContain('ok "hard kill of db, app and ops: back healthy in $BACK_IN s, $NOTES_BEFORE notes kept, every check ✓"');
+  // Every wait is bounded, and the short docker calls are held to 60 s.
   expect(step.match(/-ge 180/g)?.length).toBe(2);
+  expect(step).toMatch(/-ge 240/);
+  expect(text).toMatch(/notes_count\(\) \{ dc60 exec/);
+  expect(text).toMatch(/job_runs_count\(\) \{ dc60 exec/);
 });

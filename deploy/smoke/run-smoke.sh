@@ -13,7 +13,7 @@
 # Settings (checked before anything else; a bad value is refused with exit 2):
 #   HF_SMOKE_DIR      the folder the bundle is installed in (default /tmp/hf-smoke). The alert log, cookie jar, image
 #                     file and catcher output sit next to it as <dir>-alerts.log, <dir>-cookies, <dir>-images-<v>.tar
-#                     and <dir>-catcher.out. It must not exist yet.
+#                     and <dir>-catcher.out. None of these may exist yet, and the folder's parent must exist.
 #   HF_SMOKE_PROJECT  the Compose project name (default hfsmoke, never "highland"). The REST server container is
 #                     <project>-rest.
 #   HF_SMOKE_BIND     the address the front door is published on (default 127.0.0.1).
@@ -46,11 +46,16 @@ say() { echo "== $*"; }
 ok() { echo "   ok: $*"; }
 fail() { echo "   FAILED: $*" >&2; exit 1; }
 dc() { (cd "$DIR" && docker compose -p "$PROJECT" "$@"); }
-ops_cli() { dc exec -T ops node ops/dist/cli.js "$@"; }
-notes_count() { dc exec -T db psql -U app -d app -tAc 'select count(*) from notes' | tr -d '[:space:]'; }
-# Scheduled-job runs (Task 9's job_runs, one row per job and due time): how many, and how many due times appear twice.
-job_runs_count() { dc exec -T db psql -U app -d app -tAc 'select count(*) from job_runs' | tr -d '[:space:]'; }
-job_runs_duplicates() { dc exec -T db psql -U app -d app -tAc 'select count(*) - count(distinct (job, due_at)) from job_runs' | tr -d '[:space:]'; }
+# A short docker compose call (a query, a check), held to 60 s so a hung container fails the step instead of the run hanging.
+dc60() { (cd "$DIR" && timeout 60 docker compose -p "$PROJECT" "$@"); }
+# An ops command; with OPS_CLI_LIMIT=<seconds> it is held to that long (backups and restore tests are not limited).
+ops_cli() {
+  if [ -n "${OPS_CLI_LIMIT:-}" ]; then (cd "$DIR" && timeout "$OPS_CLI_LIMIT" docker compose -p "$PROJECT" exec -T ops node ops/dist/cli.js "$@")
+  else dc exec -T ops node ops/dist/cli.js "$@"; fi
+}
+notes_count() { dc60 exec -T db psql -U app -d app -tAc 'select count(*) from notes' | tr -d '[:space:]'; }
+# Scheduled-job runs recorded in Task 9's job_runs table.
+job_runs_count() { dc60 exec -T db psql -U app -d app -tAc 'select count(*) from job_runs' | tr -d '[:space:]'; }
 # How many times the ops daemon has started since time $1 (its start-up line in the ops container's log).
 ops_starts_since() { dc logs --no-color --since "$1" ops 2>/dev/null | grep -cF 'Health checks run every minute' || true; }
 alert_lines() { [ -f "$ALERTS" ] && wc -l < "$ALERTS" | tr -d ' ' || echo 0; }
@@ -91,6 +96,7 @@ teardown() {
   [ -n "$CATCHER_PID" ] && kill "$CATCHER_PID" >/dev/null 2>&1
   for img in "${CREATED_IMAGES[@]}"; do docker rmi "$img" >/dev/null 2>&1; done
   rm -rf "$DIR" "$COOKIES" "$DIR-images-${V1:-x}.tar"
+  if [ "$PASSED" = true ]; then rm -f "$DIR-catcher.out"; fi   # kept after a failure, to see what the catcher said
   echo "   Removed the containers, volumes, network and the highland images this run built. The alert log is kept at $ALERTS."
   echo "   Pulled third-party images (postgres, caddy, $REST_IMAGE, $MAILPIT_IMAGE) are left; remove them with docker rmi if you like."
   if [ "$PASSED" = true ]; then echo "SMOKE PASSED in $(( (SECONDS - START) / 60 )) min $(( (SECONDS - START) % 60 )) s"; fi
@@ -107,8 +113,14 @@ fi
 if docker images --format '{{.Repository}}' | grep -qE '(^|/)highland/(app|ops)$'; then
   echo "This machine already has highland/app or highland/ops images (local or from a registry), so it may be a client box or someone's build machine. The smoke test builds and deletes those images, so it runs only where there are none. Stopping." >&2; exit 2
 fi
-if [ -e "$DIR" ] || [ -e "$COOKIES" ] || [ -n "$(docker ps -aq --filter "name=^$REST_NAME\$")" ] || [ -n "$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT")" ]; then
-  echo "A previous smoke run was left behind ($DIR, $COOKIES, the $REST_NAME container or the $PROJECT project). Remove it first." >&2; exit 2
+# Volumes and networks count too: a project with leftover volumes would be adopted (stale data) and torn down with them.
+if [ -e "$DIR" ] || [ -L "$DIR" ] || [ -e "$COOKIES" ] || [ -L "$COOKIES" ] || [ -e "$DIR-catcher.out" ] || [ -L "$DIR-catcher.out" ] \
+  || compgen -G "$DIR-images-*.tar" >/dev/null \
+  || [ -n "$(docker ps -aq --filter "name=^$REST_NAME\$")" ] \
+  || [ -n "$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT")" ] \
+  || [ -n "$(docker volume ls -q --filter "label=com.docker.compose.project=$PROJECT")" ] \
+  || [ -n "$(docker network ls -q --filter "label=com.docker.compose.project=$PROJECT")" ]; then
+  echo "A previous smoke run was left behind ($DIR, $COOKIES, $DIR-catcher.out, $DIR-images-*.tar, the $REST_NAME container, or containers, volumes or networks of the $PROJECT project). Remove it first." >&2; exit 2
 fi
 trap teardown EXIT
 
@@ -152,7 +164,7 @@ STEP="step 3 (bundle and ops init)"
 say "Step 3: make $DIR from the bundle and run ops init"
 [ -d node_modules ] || npm ci --no-audit --no-fund >/dev/null
 npm run -s bundle >/dev/null
-mkdir -p "$DIR"
+mkdir "$DIR"
 tar -xzf "dist/highland-bundle-$V.tar.gz" -C "$DIR"
 mv "$DIR-images-$V1.tar" "$DIR/images-$V1.tar"
 docker run --rm -u "$(id -u):$(id -g)" -v "$DIR:/out" "highland/ops:$V" \
@@ -216,9 +228,11 @@ wait_healthy
 [ "$(notes_count)" = "$NOTES_BEFORE" ] || fail "the notes count changed across the restore"
 curl -fsS -c "$COOKIES" -H "origin: $BASE" -H 'content-type: application/json' \
   -d '{"email":"admin@demo.test","password":"demo-password-1"}' "$BASE/api/auth/sign-in" >/dev/null
-curl -fsS -b "$COOKIES" -H "origin: $BASE" \
-  -F "file=@$ROOT/apps/server/test/fixtures/files/tiny.png" "$BASE/api/files" | grep -q '"contentType":"image/png"' && echo "   UPLOAD-AFTER-RESTORE-OK" \
+UPLOAD="$(curl -fsS -b "$COOKIES" -H "origin: $BASE" -F "file=@$ROOT/apps/server/test/fixtures/files/tiny.png" "$BASE/api/files")" \
   || fail "upload after restore failed"
+echo "$UPLOAD" | grep -q '"contentType":"image/png"' && echo "   UPLOAD-AFTER-RESTORE-OK" || fail "upload after restore failed"
+UPLOAD_ID="$(printf '%s' "$UPLOAD" | sed -n 's/.*"id":"\([A-Za-z0-9-]*\)".*/\1/p' | head -1)"
+[ -n "$UPLOAD_ID" ] || fail "the upload after restore returned no file id"
 ok "restored ($NOTES_BEFORE notes kept); upload after restore works"
 
 # ---- 7. The app dies: an alert, then Fixed.
@@ -243,24 +257,37 @@ STEP="step 7a (hard kill)"
 say "Step 7a: SIGKILL db, app and ops, start them again, check the data and every check"
 NOTES_BEFORE="$(notes_count)"
 RUNS_BEFORE="$(job_runs_count)"
+MARK="$(alert_lines)"
 KILLED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 T0=$SECONDS
 dc kill -s SIGKILL db app ops >/dev/null 2>&1 || fail "docker compose kill failed"
 dc up -d >/dev/null 2>&1 || { dc ps; fail "docker compose up -d failed after the hard kill"; }
 wait_healthy
 [ "$(notes_count)" = "$NOTES_BEFORE" ] || fail "the notes count changed across the hard kill"
+# The photo uploaded in step 6a still downloads, byte for byte.
+curl -fsS -b "$COOKIES" -H "origin: $BASE" -o "$DIR/after-kill.png" "$BASE/api/files/$UPLOAD_ID/content" \
+  && cmp -s "$DIR/after-kill.png" "$ROOT/apps/server/test/fixtures/files/tiny.png" || fail "the photo uploaded in step 6a did not come back intact after the hard kill"
 # Ops has started again: its daemon wrote its start-up line after the kill and its container is running, not restarting.
 t=0; until [ "$(ops_starts_since "$KILLED_AT")" -gt 0 ] && dc ps --status running --services 2>/dev/null | grep -qx ops; do
   t=$((t + 5)); [ "$t" -ge 180 ] && fail "ops did not start again within 3 minutes of the hard kill"; sleep 5
 done
-t=0; until OUT="$(ops_cli check 2>&1)" && ! echo "$OUT" | grep -q '^✗'; do
+OPS_BACK=$SECONDS
+t=0; until OUT="$(OPS_CLI_LIMIT=60 ops_cli check 2>&1)" && ! echo "$OUT" | grep -q '^✗'; do
   t=$((t + 5)); [ "$t" -ge 180 ] && { echo "$OUT"; fail "ops check still reports a problem 3 minutes after the hard kill"; }; sleep 5
 done
-# Scheduled jobs: no recorded run was lost and no due time was run twice.
+BACK_IN=$((SECONDS - T0))
+# Scheduled jobs: no run recorded before the kill is lost. Vacuous in the foundation (no jobs); meaningful only for client
+# builds with jobs.
 RUNS_AFTER="$(job_runs_count)"
 [ "$RUNS_AFTER" -ge "$RUNS_BEFORE" ] || fail "scheduled-job runs recorded before the hard kill are missing ($RUNS_BEFORE before, $RUNS_AFTER after)"
-[ "$(job_runs_duplicates)" = 0 ] || fail "a scheduled job ran twice for the same due time after the hard kill"
-ok "hard kill of db, app and ops: back healthy in $((SECONDS - T0)) s, $NOTES_BEFORE notes kept, every check ✓"
+# Give the monitor two ticks (it checks every minute) after ops came back, then: no "app is not answering" alert since the
+# kill, or every one of them followed by its Fixed (waiting up to 4 more minutes for it).
+while [ $((SECONDS - OPS_BACK)) -lt 130 ]; do sleep 5; done
+down_since() { if [ -f "$ALERTS" ]; then tail -n +"$((MARK + 1))" "$ALERTS" | grep -ciF "$1" || true; else echo 0; fi; }
+t=0; until [ "$(down_since 'Fixed: The app is not answering.')" -ge "$(down_since 'problem: The app is not answering.')" ]; do
+  t=$((t + 5)); [ "$t" -ge 240 ] && fail "an 'app is not answering' alert after the hard kill was not followed by Fixed within 4 minutes"; sleep 5
+done
+ok "hard kill of db, app and ops: back healthy in $BACK_IN s, $NOTES_BEFORE notes kept, every check ✓"
 
 # ---- 8. One good update (from a docker save file), one broken one that must undo itself.
 STEP="step 8 (updates)"
