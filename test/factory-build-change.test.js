@@ -284,3 +284,56 @@ test('in change mode a stop tells the operator to carry on with conductor change
   assert.equal(again.status, 'approved', again.reason);
   assert.equal(again.runId, RUN_ID);
 });
+
+test('fix round: an approved change build re-called after its base branch is deleted and the brief changed returns the same outcome with zero asks', async () => {
+  const s = await live();
+  await sideBranch(s.appDir);
+  const first = await run(s, { change: change({ baseRef: 'side' }) });
+  assert.equal(first.status, 'approved', first.reason);
+  assert.ok(first.sha);
+  await git(s.appDir, ['branch', '-D', 'side']);
+  let asked = 0;
+  const again = await run(s, {
+    change: change({ baseRef: 'side', units: [] }),
+    hooks: { approveBuild: async () => { asked++; return false; }, council: async () => { asked++; return { status: 'blocked', text: 'x' }; } },
+    deps: { runAppChecks: async () => { asked++; return green; }, loadBrief: () => ({ ...sampleBrief(), purpose: 'Something else entirely.' }) },
+  });
+  assert.deepEqual(again, first);
+  assert.equal(asked, 0);
+});
+
+// A change build stopped at its baseline, then left as a crash between writing app-profile.json and committing it would.
+async function crashedBeforeProfileCommit(profile) {
+  const s = await live();
+  const red = { ...green, verify: { status: 'failed', summary: 'red', output: '' } };
+  const stopped = await run(s, { change: change({ profile }), deps: { runAppChecks: async () => red } });
+  assert.equal(stopped.status, 'failed');
+  await git(s.appDir, ['checkout', '-q', '-b', `build/${RUN_ID}`, 'main']);
+  writeFileSync(path.join(s.appDir, 'app-profile.json'), JSON.stringify(profile) + '\n');   // the wanted content, other formatting
+  return s;
+}
+
+test('fix round: a resume after a crash before the profile commit commits the written profile instead of stopping', async () => {
+  const profile = { schema: 1, modules: [], policy: { outbound: ['postmark'], residency: 'uk-eu' } };
+  const s = await crashedBeforeProfileCommit(profile);
+  const start = await rev(s.appDir, 'main');
+  const out = await run(s, { change: change({ profile }) });
+  assert.equal(out.status, 'approved', out.reason);
+  const commits = (await git(s.appDir, ['rev-list', '--reverse', `${start}..build/${RUN_ID}`])).stdout.trim().split('\n');
+  assert.equal((await git(s.appDir, ['log', '-1', '--format=%s', commits[0]])).stdout.trim(), 'Update the app profile from the brief');
+  assert.deepEqual((await git(s.appDir, ['diff-tree', '--no-commit-id', '--name-only', '-r', commits[0]])).stdout.trim().split('\n'), ['app-profile.json']);
+  assert.equal((await git(s.appDir, ['show', `${commits[0]}:app-profile.json`])).stdout, JSON.stringify(profile, null, 2) + '\n');
+});
+
+test('fix round: any other change in the app folder at that point still stops the build', async () => {
+  const profile = { schema: 1, modules: [], policy: { outbound: ['postmark'], residency: 'uk-eu' } };
+  for (const extra of ['other-file', 'wrong-profile']) {
+    const s = await crashedBeforeProfileCommit(profile);
+    if (extra === 'other-file') writeFileSync(path.join(s.appDir, 'stray.txt'), 'x\n');
+    else writeFileSync(path.join(s.appDir, 'app-profile.json'), JSON.stringify({ ...profile, modules: ['payments'] }) + '\n');
+    const out = await run(s, { change: change({ profile }) });
+    assert.equal(out.status, 'failed', extra);
+    assert.match(out.reason, /^The app folder has changes Conductor did not make, so it stopped\./, extra);
+    assert.match(out.reason, /conductor change acme-ltd --resume/);
+  }
+});

@@ -152,6 +152,20 @@ export async function runBuild({ factory, slug, team, hooks, options = {}, baseD
     await finishApprovedBuild(projectDir, project);
     return refuse(`${project.client} is already built and approved. Changes to a finished app go through "conductor change ${slug}".`);
   }
+  // A change build lives at builds/<change.runId>; calling again with the same run id carries it on.
+  // An approved one returns the same outcome before anything else is checked: its base branch or the brief may
+  // have moved on since, and none of that matters to work already approved.
+  let saved = null;
+  if (change) {
+    const dir = buildDirOf(projectDir, change.runId);
+    try { saved = loadBuild(dir); } catch {
+      return refuse(`The saved state of change build ${change.runId} cannot be read, so Conductor stopped rather than guess. It is kept in ${path.join(dir, 'build.json')}.`);
+    }
+    if (saved && saved.kind !== 'change') return refuse(`Build ${change.runId} is not a change build, so Conductor will not carry it on as one.`);
+    if (saved?.status === 'approved' && saved.approvedSha) {
+      return { status: 'approved', runId: saved.runId, buildDir: dir, sha: saved.approvedSha, branch: saved.branch };
+    }
+  }
   let brief;
   try { brief = d.loadBrief(projectDir); } catch (e) { return refuse(e.message); }
   const problems = briefProblems(brief);
@@ -178,15 +192,6 @@ export async function runBuild({ factory, slug, team, hooks, options = {}, baseD
   }
   const unfinished = latest && UNFINISHED.has(latest.status) ? latest : null;
   if (change) {
-    // A change build lives at builds/<change.runId>; calling again with the same run id carries it on.
-    const dir = buildDirOf(projectDir, change.runId);
-    let saved;
-    try { saved = loadBuild(dir); } catch {
-      return refuse(`The saved state of change build ${change.runId} cannot be read, so Conductor stopped rather than guess. It is kept in ${path.join(dir, 'build.json')}.`);
-    }
-    if (saved && saved.kind !== 'change') return refuse(`Build ${change.runId} is not a change build, so Conductor will not carry it on as one.`);
-    // Approved before (a crash after the gate): the same outcome, without asking again.
-    if (saved?.status === 'approved') return { status: 'approved', runId: saved.runId, buildDir: dir, sha: saved.approvedSha, branch: saved.branch };
     if (saved) {
       if (saved.briefHash !== briefHash) {
         return refuse(`The brief has changed since change build ${saved.runId} started, so Conductor will not mix the two. Run "conductor change ${slug} --abandon", then start the change again.`);
@@ -305,7 +310,9 @@ export async function runBuild({ factory, slug, team, hooks, options = {}, baseD
   async function changeSetupPhase() {
     const r = await baselinePhase();
     if (r) return r;
-    await assertClean();
+    // A crash between writing app-profile.json and committing it leaves just that file changed, holding the
+    // wanted profile: commitProfile finishes it. Any other change stops the build as usual.
+    if (!(await onlyProfileWritten())) await assertClean();
     if (!build.startSha) {
       // Recorded before the branch exists: a secret squash goes back onto this commit (Ruling C6).
       build.startSha = await gitOut(appDir, ['rev-parse', '--verify', `refs/heads/${build.baseRef}^{commit}`]);
@@ -322,12 +329,27 @@ export async function runBuild({ factory, slug, team, hooks, options = {}, baseD
     return null;
   }
 
+  // The profile as committed at the build branch's tip (canonical JSON), or null when missing or unreadable.
+  async function committedProfile() {
+    const r = await git(appDir, ['show', `HEAD:${APP_PROFILE_FILE}`]);
+    try { return r.code === 0 ? canonicalJson(JSON.parse(r.stdout)) : null; } catch { return null; }
+  }
+
+  async function onlyProfileWritten() {
+    if (!change.profile || (await currentBranch()) !== build.branch) return false;
+    const st = await git(appDir, ['status', '--porcelain', '--untracked-files=all']);
+    const lines = st.stdout.split('\n').filter(Boolean);
+    if (st.code !== 0 || lines.length !== 1 || lines[0].slice(3) !== APP_PROFILE_FILE) return false;
+    let onDisk = null;
+    try { onDisk = canonicalJson(JSON.parse(readFileSync(path.join(appDir, APP_PROFILE_FILE), 'utf8'))); } catch { return false; }
+    const wanted = canonicalJson(change.profile);
+    return onDisk === wanted && (await committedProfile()) !== wanted;
+  }
+
   // The brief's app profile, committed alone on the build branch when it differs (in content, not key order).
   async function commitProfile(profile) {
     const file = path.join(appDir, APP_PROFILE_FILE);
-    let current = null;
-    try { current = canonicalJson(JSON.parse(readFileSync(file, 'utf8'))); } catch { /* missing or unreadable: written below */ }
-    if (current === canonicalJson(profile)) return;
+    if ((await committedProfile()) === canonicalJson(profile)) return;
     writeFileSync(file, JSON.stringify(profile, null, 2) + '\n');
     await gitOut(appDir, ['add', '--', APP_PROFILE_FILE]);
     await gitOut(appDir, ['commit', '-q', '-m', PROFILE_MESSAGE, '--', APP_PROFILE_FILE]);
