@@ -1,8 +1,10 @@
-import { readFile, stat } from 'node:fs/promises';
+import { lstat, readFile } from 'node:fs/promises';
+import { hostname } from 'node:os';
 import path from 'node:path';
 import { durableWrite, plainFsError, realFs, type DurableFs } from './durable.js';
 import { dotenvValue } from './init.js';
 import { USAGE } from './init-cli.js';
+import { fileLock, pidAlive, type LockHolder } from './lock.js';
 
 /**
  * The settings `ops set-env` may write: every key `ops init` writes except the generated ones, plus COMPOSE_PROFILES and
@@ -54,15 +56,21 @@ export const GENERATED_ENV_KEYS = ['DB_PASSWORD', 'HEALTH_TOKEN', 'BACKUP_PASSWO
 const EXAMPLE = 'docker compose run --rm -T updater set-env < settings.txt';
 const KEY_VALUE = /^([A-Z][A-Z0-9_]*)=(.*)$/s;
 
+/** Settings that may not be emptied: the updater picks its own image by APP_TAG. */
+const NEVER_EMPTY = ['APP_TAG'];
+
+export const BUSY = 'An update or another set-env is running, so nothing was changed. Try again when it has finished.';
+
 /**
- * Reads `KEY=value` lines. Blank lines and `#` comments are skipped. The value is everything after the first `=`, exactly
- * as given (no quotes are removed). Problems name the line and the key, never the value.
+ * Reads `KEY=value` lines. Blank lines and `#` comments are skipped, as is a leading UTF-8 byte-order mark. The value is
+ * everything after the first `=`, exactly as given (no quotes are removed); `KEY=` empties a setting (never APP_TAG).
+ * Problems name the line and the key, never the value.
  */
 export function parseSettings(input: string): { settings: { key: string; value: string }[]; problems: string[] } {
   const settings: { key: string; value: string }[] = [];
   const problems: string[] = [];
   const seen = new Set<string>();
-  input.split('\n').forEach((line, i) => {
+  input.replace(/^\uFEFF/, '').split('\n').forEach((line, i) => {
     const n = String(i + 1);
     if (line.trim() === '' || line.trimStart().startsWith('#')) return;
     const m = KEY_VALUE.exec(line);
@@ -77,6 +85,7 @@ export function parseSettings(input: string): { settings: { key: string; value: 
       problems.push(`Line ${n}: ${key} has a carriage return or NUL character in its value. Values must be plain text on one line (save the file with Unix line endings).`);
       return;
     }
+    if (value === '' && NEVER_EMPTY.includes(key)) { problems.push(`Line ${n}: ${key} cannot be empty; the updater needs it.`); return; }
     settings.push({ key, value });
   });
   return { settings, problems };
@@ -85,10 +94,13 @@ export function parseSettings(input: string): { settings: { key: string; value: 
 /**
  * The .env text with each setting written in: every `KEY=` line is replaced, or else the first `# KEY=` line (the commented
  * form `ops init` writes), or else the setting is appended at the end. Every other line stays byte for byte the same.
- * Values are written the way `ops init` writes them (dotenvValue).
+ * Values are written the way `ops init` writes them (dotenvValue). A file with Windows line endings keeps them, and a
+ * leading byte-order mark stays where it is.
  */
 export function applySettings(envText: string, settings: { key: string; value: string }[]): string {
-  const lines = envText.split('\n');
+  const bom = envText.startsWith('\uFEFF') ? '\uFEFF' : '';
+  const eol = envText.includes('\r\n') ? '\r\n' : '\n';
+  const lines = envText.slice(bom.length).split(eol);
   const endsWithNewline = lines.length > 0 && lines[lines.length - 1] === '';
   if (endsWithNewline) lines.pop();
   for (const { key, value } of settings) {
@@ -99,25 +111,49 @@ export function applySettings(envText: string, settings: { key: string; value: s
     if (commented >= 0) lines[commented] = line;
     else lines.push(line);
   }
-  return `${lines.join('\n')}\n`;
+  return `${bom}${lines.join(eol)}${eol}`;
 }
 
-export type SetEnvResult = { ok: true; keys: string[] } | { ok: false; problems: string[]; maybeChanged?: true };
+export type SetEnvResult = { ok: true; keys: string[] } | { ok: false; problems: string[]; maybeChanged?: true; busy?: true };
+
+/** The update lock (fileLock): held around the read-modify-write so set-env never races an update's APP_TAG or another set-env. */
+export interface EnvLock { acquire(): Promise<boolean>; release(): Promise<void> }
 
 /**
  * Writes the settings from `input` into `file` (the bundle's .env), keeping its mode and owner, through durableWrite (temp
  * file in the same folder, flushed, renamed). Any problem with the input means nothing is written. `keys` is sorted and
- * never comes with a value. `maybeChanged` is set when the write failed after the new file may already be in place.
+ * never comes with a value. `maybeChanged` is set when the write failed after the new file may already be in place. With
+ * `lock`, the read, change and write happen while holding it; if it is held elsewhere nothing is read or written (`busy`).
  */
-export async function setEnvFile(file: string, input: string, fs: DurableFs = realFs): Promise<SetEnvResult> {
+export async function setEnvFile(file: string, input: string, fs: DurableFs = realFs, opts: { lock?: EnvLock } = {}): Promise<SetEnvResult> {
   const { settings, problems } = parseSettings(input);
   if (problems.length > 0) return { ok: false, problems };
   if (settings.length === 0) return { ok: false, problems: ['No settings were given: standard input had no KEY=value lines.'] };
+  const { lock } = opts;
+  if (lock !== undefined) {
+    let got: boolean;
+    try {
+      got = await lock.acquire();
+    } catch (e) {
+      return { ok: false, problems: [(e as Error).message] };
+    }
+    if (!got) return { ok: false, problems: [BUSY], busy: true };
+  }
+  try {
+    return await writeSettings(file, settings, fs);
+  } finally {
+    await lock?.release().catch(() => undefined);
+  }
+}
+
+async function writeSettings(file: string, settings: { key: string; value: string }[], fs: DurableFs): Promise<SetEnvResult> {
   let text: string;
   let st;
   try {
+    st = await lstat(file);
+    if (st.isSymbolicLink()) return { ok: false, problems: [`The .env in ${path.dirname(file)} is a link to another file, so set-env will not rewrite it (that would replace the link with a plain file).`] };
+    if (!st.isFile()) return { ok: false, problems: [`The .env in ${path.dirname(file)} is not a plain file.`] };
     text = await readFile(file, 'utf8');
-    st = await stat(file);
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { ok: false, problems: [`There is no .env in ${path.dirname(file)}. Run ops init first.`] };
     return { ok: false, problems: [`The deployment settings (.env) could not be read: ${plainFsError(e)}.`] };
@@ -144,6 +180,8 @@ export interface SetEnvCliIo {
   stdinIsTTY: boolean | undefined;
   readStdin: () => Promise<string>;
   fs?: DurableFs;
+  /** Whether an update-lock holder on another host (container) is still running; without it such a holder counts as running. */
+  isAlive?: (h: LockHolder) => Promise<boolean>;
 }
 
 /**
@@ -159,10 +197,17 @@ export async function setEnvCli(rest: string[], io: SetEnvCliIo): Promise<number
     io.err(`set-env runs in the updater service, which knows where the bundle is (HF_BUNDLE_DIR): ${EXAMPLE}`);
     return 2;
   }
-  const r = await setEnvFile(path.join(bundleDir, '.env'), await io.readStdin(), io.fs);
+  // The same lock as `ops update` (/state/update.lock), so an update's APP_TAG and another set-env are never overwritten.
+  const stateDir = path.dirname(io.env['OPS_WORK_DIR']?.trim() || '/state/work');
+  const isAlive = io.isAlive;
+  const lock = fileLock(path.join(stateDir, 'update.lock'), () => new Date(), {
+    isAlive: async (h) => (h.host === hostname() ? pidAlive(h.pid) : isAlive !== undefined ? isAlive(h) : true),
+  });
+  const r = await setEnvFile(path.join(bundleDir, '.env'), await io.readStdin(), io.fs, { lock });
   if (!r.ok) {
     io.err(r.problems.join('\n'));
     if (r.maybeChanged === true) return 1;
+    if (r.busy === true) return 2;
     io.err('Nothing was changed.');
     return 2;
   }

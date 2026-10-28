@@ -52,7 +52,8 @@ describe('collectStatus', () => {
       expect(s.problems).toEqual([]);
       expect(s.ok).toBe(false);   // the tunnel check fails
       const fine = await collectStatus({ cfg: deps.cfg, db: deps.db, now: () => at('10:00'), checks: async () => allOk });
-      expect(fine.ok).toBe(true);
+      expect(fine.ok).toBe(false);   // every check passes, but the latest restore test failed (Ruling, Task 9b)
+      expect(fine.problems).toEqual([]);
     });
   });
 
@@ -62,6 +63,32 @@ describe('collectStatus', () => {
       const s = await collectStatus({ cfg: deps.cfg, db: deps.db, now: () => at('10:00'), checks: async () => allOk });
       expect(s.outstandingUpdate).toEqual({ at: '2026-10-27T04:00:00.000Z', snapshotId: 'c323c601' });
       expect(s.runs?.update?.ok).toBe(false);
+      expect(s.ok).toBe(false);   // the checks all pass, but a failed undo is never "ok"
+      expect(statusLines(s).some((l) => l.includes('failed and could not be undone'))).toBe(true);
+    });
+  });
+
+  test('a latest backup or restore test that failed makes ok false, even with every check passing', async () => {
+    await withDeps({}, async (deps) => {
+      await deps.db.insert(opsRuns).values({ kind: 'backup', ok: false, detail: 'The backup failed: the destination could not be reached.', at: at('02:00') });
+      const s = await collectStatus({ cfg: deps.cfg, db: deps.db, now: () => at('10:00'), checks: async () => allOk });
+      expect(s.ok).toBe(false);
+      await deps.db.insert(opsRuns).values({ kind: 'backup', ok: true, detail: 'Backup done.', at: at('03:00') });
+      expect((await collectStatus({ cfg: deps.cfg, db: deps.db, now: () => at('10:00'), checks: async () => allOk })).ok).toBe(true);
+      await deps.db.insert(opsRuns).values({ kind: 'restore-test', ok: false, detail: 'The restore test failed.', at: at('04:00') });
+      const r = await collectStatus({ cfg: deps.cfg, db: deps.db, now: () => at('10:00'), checks: async () => allOk });
+      expect(r.ok).toBe(false);
+      expect(r.runs?.backup?.ok).toBe(true);
+    });
+  });
+
+  test('a busy (not started) backup after a good one does not make ok false', async () => {
+    await withDeps({}, async (deps) => {
+      await deps.db.insert(opsRuns).values([
+        { kind: 'backup', ok: true, detail: 'Backup done.', at: at('01:00') },
+        { kind: 'backup', ok: false, busy: true, detail: 'Backup not started: another run holds the lock.', at: at('02:00') },
+      ]);
+      expect((await collectStatus({ cfg: deps.cfg, db: deps.db, now: () => at('10:00'), checks: async () => allOk })).ok).toBe(true);
     });
   });
 

@@ -14,6 +14,7 @@ import { crashJsonLine, updateCli } from './update-cli.js';
 import { statusCli, statusCrashLine } from './status.js';
 import { setEnvCli } from './setEnv.js';
 import { testAlertCli } from './testAlert.js';
+import { holderFromInspect } from './lock.js';
 
 const say = (line: string): void => { console.log(line); };
 const MANUAL_BACKUP_LOCK_WAIT = 2 * 60e3;
@@ -126,7 +127,8 @@ async function main(argv: string[]): Promise<number> {
     case 'status':
       return statusCli(rest, { out, err: complain, withDeps, checks: (cfg) => monitorChecks({ cfg, opsLockHeld: () => opsLockHeld({ cfg }) }) });
     case 'set-env':
-      return setEnvCli(rest, { out: say, err: complain, env: process.env, stdinIsTTY: process.stdin.isTTY, readStdin });
+      return setEnvCli(rest, { out: say, err: complain, env: process.env, stdinIsTTY: process.stdin.isTTY, readStdin,
+        isAlive: async (h) => holderFromInspect(await execRunner.run('docker', ['inspect', '--format', '{{.State.Running}}', h.host], { timeoutMs: 60e3 })) });
     case 'test-alert':
       return testAlertCli(rest, { out: say, err: complain, config, now: () => new Date() });
     case 'check-edge': {

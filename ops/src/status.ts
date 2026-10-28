@@ -32,7 +32,8 @@ const ONLY_JSON = 'status takes only --json.';
 
 /**
  * The health checks and the latest backup, restore-test and update runs. Never throws: checks that cannot be run or an ops
- * log that cannot be read become `problems`, and `ok` is false. Every detail has the settings' secrets hidden.
+ * log that cannot be read become `problems`, and `ok` is false. `ok` is also false while an update that could not be undone
+ * is outstanding, or the latest backup or restore test failed. Every detail has the settings' secrets hidden.
  */
 export async function collectStatus(d: { cfg: OpsConfig; db: Db; now: () => Date; checks: () => Promise<Check[]> }): Promise<OpsStatus> {
   const secrets = alertSecrets(d.cfg);
@@ -68,7 +69,8 @@ export async function collectStatus(d: { cfg: OpsConfig; db: Db; now: () => Date
     schema: 1,
     client: d.cfg.client,
     at: d.now().toISOString(),
-    ok: problems.length === 0 && checks.every((c) => c.ok),
+    // A failed undo, or a latest backup or restore test that failed, is never "ok", whatever the checks say.
+    ok: problems.length === 0 && checks.every((c) => c.ok) && outstanding === null && runs?.backup?.ok !== false && runs?.restoreTest?.ok !== false,
     checks,
     runs,
     outstandingUpdate: outstanding,

@@ -5,11 +5,13 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { BACKEND_ENV_KEYS } from '../src/config.js';
 import type { DurableFs } from '../src/durable.js';
 import { generateEnv } from '../src/init.js';
-import { applySettings, GENERATED_ENV_KEYS, parseSettings, setEnvCli, setEnvFile, SETTABLE_ENV_KEYS, type SetEnvCliIo } from '../src/setEnv.js';
+import { fileLock } from '../src/lock.js';
+import { applySettings, BUSY, GENERATED_ENV_KEYS, parseSettings, setEnvCli, setEnvFile, SETTABLE_ENV_KEYS, type SetEnvCliIo } from '../src/setEnv.js';
 
 let dir = '';
-beforeEach(async () => { dir = await mkdtemp(path.join(tmpdir(), 'hf-set-env-')); });
-afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
+let state = '';
+beforeEach(async () => { dir = await mkdtemp(path.join(tmpdir(), 'hf-set-env-')); state = await mkdtemp(path.join(tmpdir(), 'hf-set-env-state-')); });
+afterEach(async () => { await rm(dir, { recursive: true, force: true }); await rm(state, { recursive: true, force: true }); });
 
 const ENV = [
   '# Highland deployment settings for Acme.',
@@ -184,7 +186,7 @@ describe('setEnvFile', () => {
 });
 
 describe('ops set-env', () => {
-  function io(input: string, env: Record<string, string | undefined> = { HF_BUNDLE_DIR: dir }, stdinIsTTY = false) {
+  function io(input: string, env: Record<string, string | undefined> = { HF_BUNDLE_DIR: dir, OPS_WORK_DIR: path.join(state, 'work') }, stdinIsTTY = false) {
     const out: string[] = [];
     const err: string[] = [];
     const o: SetEnvCliIo = { out: (l) => { out.push(...l.split('\n')); }, err: (l) => { err.push(...l.split('\n')); }, env, stdinIsTTY, readStdin: async () => input };
@@ -220,7 +222,7 @@ describe('ops set-env', () => {
     const a = io('SMTP_URL=x\n');
     expect(await setEnvCli(['--force'], a.o)).toBe(2);
     expect(a.err[0]).toBe('set-env takes no options.');
-    const b = io('', { HF_BUNDLE_DIR: dir }, true);
+    const b = io('', { HF_BUNDLE_DIR: dir, OPS_WORK_DIR: path.join(state, 'work') }, true);
     expect(await setEnvCli([], b.o)).toBe(2);
     expect(b.err).toEqual(['set-env reads KEY=value lines from standard input, for example: docker compose run --rm -T updater set-env < settings.txt']);
     const c = io('SMTP_URL=x\n', {});
@@ -239,7 +241,75 @@ test('a failure after the new file is in place (flushing the folder) is never re
     problems: ['The settings could not be written into .env: the disk reported a read or write error. The new settings may already be in .env; check it before restarting anything.'],
   });
   const err: string[] = [];
-  const code = await setEnvCli([], { out: () => undefined, err: (l) => err.push(l), env: { HF_BUNDLE_DIR: dir }, stdinIsTTY: false, readStdin: async () => 'SMTP_URL=smtp://newer\n', fs });
+  const code = await setEnvCli([], { out: () => undefined, err: (l) => err.push(l), env: { HF_BUNDLE_DIR: dir, OPS_WORK_DIR: path.join(state, 'work') }, stdinIsTTY: false, readStdin: async () => 'SMTP_URL=smtp://newer\n', fs });
   expect(code).toBe(1);
   expect(err.join('\n')).not.toContain('Nothing was changed.');
+});
+
+describe('the update lock', () => {
+  test('while an update (or another set-env) holds the lock: refused with exit 2, nothing read or written', async () => {
+    await writeFile(path.join(dir, '.env'), ENV, { mode: 0o600 });
+    const held = fileLock(path.join(state, 'update.lock'));
+    expect(await held.acquire()).toBe(true);
+    try {
+      const err: string[] = [];
+      const fs = recordingFs();
+      const code = await setEnvCli([], { out: () => undefined, err: (l) => err.push(l), env: { HF_BUNDLE_DIR: dir, OPS_WORK_DIR: path.join(state, 'work') }, stdinIsTTY: false, readStdin: async () => 'SMTP_URL=smtp://new\n', fs });
+      expect(code).toBe(2);
+      expect(err).toEqual([BUSY]);
+      expect(BUSY).toBe('An update or another set-env is running, so nothing was changed. Try again when it has finished.');
+      expect(fs.ops).toEqual([]);
+      expect(await readFile(path.join(dir, '.env'), 'utf8')).toBe(ENV);
+    } finally {
+      await held.release();
+    }
+    expect(await readdir(state)).toEqual([]);   // set-env never took (or removed) the update's lock
+  });
+
+  test('concurrent set-env runs no longer lose settings: every run that says it set a key really did', async () => {
+    const file = path.join(dir, '.env');
+    await writeFile(file, ENV, { mode: 0o600 });
+    const keys = ['SMTP_URL', 'EMAIL_FROM', 'MATRIX_ROOM_ID', 'HEARTBEAT_URL', 'TUNNEL_TOKEN'];
+    const results = await Promise.all(keys.map((k) => setEnvFile(file, `${k}=v-${k}\n`, undefined, { lock: fileLock(path.join(state, 'update.lock')) })));
+    const text = await readFile(file, 'utf8');
+    expect(results.some((r) => r.ok)).toBe(true);
+    results.forEach((r, i) => {
+      if (r.ok) expect(text).toContain(`\n${keys[i]!}=v-${keys[i]!}\n`);
+      else expect(r).toEqual({ ok: false, problems: [BUSY], busy: true });
+    });
+    expect(await readdir(state)).toEqual([]);   // the lock is always released
+    expect(await readdir(dir)).toEqual(['.env']);
+  });
+
+  test('without the lock folder the run is refused plainly and nothing is written', async () => {
+    await writeFile(path.join(dir, '.env'), ENV, { mode: 0o600 });
+    const err: string[] = [];
+    const code = await setEnvCli([], { out: () => undefined, err: (l) => err.push(l), env: { HF_BUNDLE_DIR: dir, OPS_WORK_DIR: path.join(state, 'missing', 'work') }, stdinIsTTY: false, readStdin: async () => 'SMTP_URL=x\n' });
+    expect(code).toBe(2);
+    expect(err[0]).toMatch(/^The update lock \(.*update\.lock\) could not be taken: the file or folder does not exist\.$/);
+    expect(err[1]).toBe('Nothing was changed.');
+    expect(await readFile(path.join(dir, '.env'), 'utf8')).toBe(ENV);
+  });
+});
+
+describe('awkward files and input', () => {
+  test('APP_TAG cannot be emptied; other settings can', () => {
+    expect(parseSettings('APP_TAG=\nSMTP_URL=\n')).toEqual({ settings: [{ key: 'SMTP_URL', value: '' }], problems: ['Line 1: APP_TAG cannot be empty; the updater needs it.'] });
+  });
+
+  test('a .env that is a link is refused, and the file it points to is untouched', async () => {
+    const { symlink } = await import('node:fs/promises');
+    const real = path.join(state, 'real.env');
+    await writeFile(real, ENV);
+    await symlink(real, path.join(dir, '.env'));
+    expect(await setEnvFile(path.join(dir, '.env'), 'SMTP_URL=x\n')).toEqual({ ok: false, problems: [`The .env in ${dir} is a link to another file, so set-env will not rewrite it (that would replace the link with a plain file).`] });
+    expect(await readFile(real, 'utf8')).toBe(ENV);
+  });
+
+  test('a .env with Windows line endings keeps them; a byte-order mark on the input or the file is no problem', async () => {
+    const crlf = ENV.replace(/\n/g, '\r\n');
+    expect(applySettings(crlf, [{ key: 'SMTP_URL', value: 'new' }, { key: 'APP_TAG', value: '0.2.0' }])).toBe(crlf.replace('SMTP_URL=old', 'SMTP_URL=new') + 'APP_TAG=0.2.0\r\n');
+    expect(parseSettings('\uFEFFSMTP_URL=x\n')).toEqual({ settings: [{ key: 'SMTP_URL', value: 'x' }], problems: [] });
+    expect(applySettings('\uFEFFSMTP_URL=old\n', [{ key: 'SMTP_URL', value: 'new' }])).toBe('\uFEFFSMTP_URL=new\n');
+  });
 });
