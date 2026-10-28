@@ -3,28 +3,35 @@
  * system when it exits. It takes the PDF on stdin and writes one JSON reply (a PdfWorkerReply) on stdout.
  *
  * The reading itself runs in a worker thread (pdfWorker.ts), so this main thread stays free to watch the memory: it
- * checks the whole process's resident memory every 20 ms and exits with OVER_CEILING as soon as it is over the
- * ceiling, however busy the reading thread is. pdfText.ts watches it from outside too.
+ * checks the whole process's resident memory every 20 ms and kills itself (SIGKILL) as soon as it is over the
+ * ceiling, however busy the reading thread is. A plain exit would first wait for the reading thread's current copy to
+ * finish, which can be hundreds of megabytes. It also kills itself at its own deadline, so it never outlives a parent
+ * that died. pdfText.ts watches it from outside too.
  *
- * Arguments: the ceiling in bytes, then "pre-scan" or "no-pre-scan" (the latter only in tests of the watchdogs).
+ * Arguments: the ceiling in bytes, "pre-scan" or "no-pre-scan" (the latter only in tests of the watchdogs), then the
+ * deadline in milliseconds.
  * Self-contained on purpose (Node built-ins, type-only imports): in the tests it runs from the TypeScript source
  * with Node's type stripping, in the app from dist/.
  */
 import { Worker } from 'node:worker_threads';
 import type { PdfWorkerInput, PdfWorkerReply } from './pdfWorker.js';
 
-/** Exit codes (pdfText.ts knows them too): over the memory ceiling; the reading thread failed or never answered. */
-const OVER_CEILING = 3;
+/** Exit code (pdfText.ts knows it too): the reading thread failed or never answered. Over the ceiling is a SIGKILL. */
 const READER_FAILED = 4;
 const WATCH_MS = 20;
 
 const ceiling = Number(process.argv[2]);
 const preScan = process.argv[3] !== 'no-pre-scan';
-if (!(ceiling > 0)) process.exit(READER_FAILED);
+const deadlineMs = Number(process.argv[4]);
+if (!(ceiling > 0) || !(deadlineMs > 0)) process.exit(READER_FAILED);
 
+const killSelf = (): void => {
+  process.kill(process.pid, 'SIGKILL');
+};
 setInterval(() => {
-  if (process.memoryUsage.rss() > ceiling) process.exit(OVER_CEILING);
+  if (process.memoryUsage.rss() > ceiling) killSelf();
 }, WATCH_MS);
+setTimeout(killSelf, deadlineMs).unref();
 
 const chunks: Buffer[] = [];
 process.stdin.on('data', (c: Buffer) => chunks.push(c));

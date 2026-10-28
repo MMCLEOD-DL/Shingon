@@ -45,7 +45,7 @@ function zerosBomb(gib: number): Buffer {
  * A one-page PDF whose page content stream (object 4) is written exactly as `head` (its dictionary), `afterDict`
  * (the "stream" keyword and its end of line), then `data` and "endstream". For building awkward constructions.
  */
-export function pdfWithRawStream(head: string, afterDict: string, data: Buffer): Buffer {
+export function pdfWithRawStream(head: string, afterDict: string, data: Buffer, contents = '4 0 R'): Buffer {
   const parts: Buffer[] = [];
   const offsets: number[] = [];
   let at = 0;
@@ -58,7 +58,7 @@ export function pdfWithRawStream(head: string, afterDict: string, data: Buffer):
   const objects: (string | Buffer[])[] = [
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 226 600] /Contents 4 0 R >>',
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 226 600] /Contents ${contents} >>`,
     [Buffer.from(head + afterDict, 'latin1'), data, Buffer.from('\nendstream', 'latin1')],
   ];
   objects.forEach((o, i) => {
@@ -73,6 +73,16 @@ export function pdfWithRawStream(head: string, afterDict: string, data: Buffer):
   for (const o of offsets) add(`${String(o).padStart(10, '0')} 00000 n \n`);
   add(`trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`);
   return Buffer.concat(parts);
+}
+
+/**
+ * Predictor amplification (Task 3 re-review 4, "P9"): a 2-byte deflate whose PNG predictor rows are 250 MB wide,
+ * named 20 times as the page content. Small enough to pass the pre-scan; pdfjs builds each row in memory.
+ */
+export function predictorBomb(): Buffer {
+  const data = deflateSync(Buffer.from([0x00, 0x20]));
+  const dict = `<< /Length ${String(data.length)} /Filter /FlateDecode /DecodeParms << /Predictor 12 /Colors 1 /BitsPerComponent 8 /Columns 250000000 >> >>`;
+  return pdfWithRawStream(dict, '\nstream\n', data, `[${Array(20).fill('4 0 R').join(' ')}]`);
 }
 
 /** A one-page PDF whose page content is `data` with the stream dictionary entries `dict` (e.g. "/Filter /FlateDecode"). */

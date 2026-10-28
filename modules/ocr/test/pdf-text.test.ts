@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { Worker } from 'node:worker_threads';
 import { createLocalEngine, UnreadableError, type OcrEngine } from '../src/index.js';
 import { readPdfText, PDF_MEMORY_CEILING, type PdfReadOptions } from '../src/pdfText.js';
-import { bypassBombs, formFeedPdf, modernPdf, n4Bomb, pdfBomb, pdfWithContent, trickyBombs } from './helpers.js';
+import { bypassBombs, formFeedPdf, modernPdf, n4Bomb, pdfBomb, pdfWithContent, predictorBomb, trickyBombs } from './helpers.js';
 
 let engine: OcrEngine;
 const fx = (p: string) => readFileSync(new URL(`./fixtures/receipts/${p}`, import.meta.url));
@@ -164,13 +164,14 @@ async function readWatched(bytes: Buffer, opts: PdfReadOptions = {}): Promise<Wa
 const CEILING_MB = PDF_MEMORY_CEILING / 1e6;
 /** How far past the ceiling memory may get between two checks (20 ms of inflating). */
 const OVERSHOOT_MB = 80;
-const OVER_CEILING = 3;
+/** The reader process ends itself with SIGKILL when its own watchdog fires, so the app's kill and its own look alike. */
+const KILLED = { code: null, signal: 'SIGKILL' };
 
 describe('the reader process is held to its memory ceiling, whatever the pre-scan says', () => {
   test('by its own watchdog', async () => {
     const r = await readWatched(n4Bomb(), { preScan: false, ceilingBytes: 64 * PDF_MEMORY_CEILING });
     expect(r.error).toMatchObject({ userMessage: UNOPENABLE });
-    expect(r.exit).toEqual({ code: OVER_CEILING, signal: null });
+    expect(r.exit).toEqual(KILLED);
     expect(r.peakMb).toBeGreaterThan(CEILING_MB);
     expect(r.peakMb).toBeLessThan(CEILING_MB + OVERSHOOT_MB);
   }, 30_000);
@@ -184,7 +185,7 @@ describe('the reader process is held to its memory ceiling, whatever the pre-sca
 
   test('each watchdog stops even a harmless PDF that goes over its ceiling', async () => {
     const own = await readWatched(fx('pdf/e-ticket.pdf'), { childCeilingBytes: 1 });
-    expect(own.exit).toEqual({ code: OVER_CEILING, signal: null });
+    expect(own.exit).toEqual(KILLED);
     expect(own.error).toMatchObject({ userMessage: UNOPENABLE });
     const app = await readWatched(fx('pdf/e-ticket.pdf'), { ceilingBytes: 1 });
     expect(app.exit).toEqual({ code: null, signal: 'SIGKILL' });
@@ -203,7 +204,21 @@ describe('the reader process is held to its memory ceiling, whatever the pre-sca
       },
     });
     expect(r.error).toMatchObject({ userMessage: UNOPENABLE });
-    expect(r.exit).toEqual({ code: OVER_CEILING, signal: null });
+    expect(r.exit).toEqual(KILLED);
+    expect(r.peakMb).toBeLessThan(CEILING_MB + OVERSHOOT_MB);
+  }, 30_000);
+
+  test('a stalled app still sees the process stop near the ceiling on wide predictor rows (its stop is immediate)', async () => {
+    const r = await readWatched(predictorBomb(), {
+      onChild: (child) => {
+        child.stdin?.once('finish', () => {
+          const end = performance.now() + 2000;
+          while (performance.now() < end);
+        });
+      },
+    });
+    expect(r.error).toMatchObject({ userMessage: UNOPENABLE });
+    expect(r.exit).toEqual(KILLED);
     expect(r.peakMb).toBeLessThan(CEILING_MB + OVERSHOOT_MB);
   }, 30_000);
 
@@ -219,7 +234,7 @@ describe('the reader process is held to its memory ceiling, whatever the pre-sca
       for (let i = 0; i < 20; i += 1) {
         const r = await readWatched(bomb, { preScan: false });
         expect(r.error).toMatchObject({ userMessage: UNOPENABLE });
-        expect(r.exit?.code === OVER_CEILING || r.exit?.signal === 'SIGKILL').toBe(true);
+        expect(r.exit).toEqual(KILLED);
         expect(r.peakMb).toBeLessThan(CEILING_MB + OVERSHOOT_MB);
         pids.push(r.pid);
       }

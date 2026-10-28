@@ -17,8 +17,8 @@ const WATCHDOG_MS = 20;
 const PDF_MAX_BYTES = 20 * 1024 * 1024;
 /** The largest reply taken from the reader process (three pages of text need far less). */
 const MAX_REPLY_BYTES = 4 * 1024 * 1024;
-/** pdfChild.ts's exit code when its own watchdog stopped it (not logged: a refused PDF is not a fault). */
-const OVER_CEILING = 3;
+/** A little past the app's own timeout: the reader process's own deadline, should the app be stuck or gone. */
+const CHILD_DEADLINE_MARGIN_MS = 1_000;
 
 // dist/pdfChild.js in the app; src/pdfChild.ts (run with Node's type stripping) in the tests.
 const compiled = new URL('./pdfChild.js', import.meta.url);
@@ -83,7 +83,7 @@ function isReply(v: unknown): v is PdfWorkerReply {
  */
 function runReader(bytes: Buffer, ms: number, opts: PdfReadOptions): Promise<PdfWorkerReply | null> {
   const ceiling = opts.ceilingBytes ?? PDF_MEMORY_CEILING;
-  const args = [...NODE_FLAGS, CHILD_FILE, String(opts.childCeilingBytes ?? PDF_MEMORY_CEILING), opts.preScan === false ? 'no-pre-scan' : 'pre-scan'];
+  const args = [...NODE_FLAGS, CHILD_FILE, String(opts.childCeilingBytes ?? PDF_MEMORY_CEILING), opts.preScan === false ? 'no-pre-scan' : 'pre-scan', String(ms + CHILD_DEADLINE_MARGIN_MS)];
   return new Promise((resolve) => {
     let child: ChildProcess;
     try {
@@ -134,7 +134,8 @@ function runReader(bytes: Buffer, ms: number, opts: PdfReadOptions): Promise<Pdf
     // 'close' comes once the process has exited (and been reaped) and its output is complete.
     child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
       if (stopped || code !== 0) {
-        if (!stopped && code !== OVER_CEILING) process.stderr.write(`The PDF reader process stopped: ${signal ?? `exit code ${String(code)}`}\n`);
+        // Its own watchdog ends it with SIGKILL (a refused PDF is not a fault, so not logged); anything else is.
+        if (!stopped && signal !== 'SIGKILL') process.stderr.write(`The PDF reader process stopped: ${signal ?? `exit code ${String(code)}`}\n`);
         settle(null);
         return;
       }
