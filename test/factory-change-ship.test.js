@@ -59,12 +59,16 @@ test('updates every deployment of this project one at a time, in name order, thr
   assert.equal(first.args[1].factory, factory);
   assert.equal(first.args[1].say, say);
   assert.equal(first.args[1].state, state);
-  assert.equal(saves.length, 3);
-  assert.deepEqual(Object.keys(saves[0]), ['acme-cloud']);
-  assert.deepEqual(saves[0]['acme-cloud'], {
+  // a 'started' marker before each box, then its result
+  assert.equal(saves.length, 6);
+  assert.deepEqual(saves[0], { 'acme-cloud': { outcome: 'started', at: '2026-10-27T14:32:05.000Z', from: '0.2.0' } });
+  assert.deepEqual(Object.keys(saves[1]), ['acme-cloud']);
+  assert.deepEqual(saves[1]['acme-cloud'], {
     outcome: 'updated', message: 'Updated from 0.2.0 to 0.3.0. A backup (1a2b3c4d) was taken first.', at: '2026-10-27T14:32:05.000Z', from: '0.2.0',
   });
-  assert.deepEqual(Object.keys(saves[2]), ['acme-cloud', 'acme-office', 'beta-office']);
+  assert.deepEqual(Object.keys(saves[5]), ['acme-cloud', 'acme-office', 'beta-office']);
+  // the deployments are read again before each box
+  assert.equal(deps.calls.filter((c) => c.name === 'listDeployments').length, 4);
 });
 
 test('the deployments are read through listDeployments for this projects root, and other projects are left out', async () => {
@@ -99,7 +103,7 @@ test('the outcome sentences are the exact ones, with names and versions filled i
     'settings-error': "acme-cloud: the box's settings are not right, so the update did not start: m",
     urgent: 'acme-cloud: URGENT. The update failed and the automatic undo also failed. Follow "Recovering from a failed update" in the foundation runbook now. m',
     'lost-contact': 'acme-cloud: Conductor lost contact with the box during the update, so it does not know how it ended. Check it with "conductor deployments status" before trying again. m',
-    refused: 'acme-cloud: Conductor did not start the update there, and nothing was changed: m',
+    refused: 'acme-cloud: Conductor did not start the update there: m',
     'something-new': 'acme-cloud: the update ended in a way Conductor does not recognise (something-new), so it is treated as failed.',
   };
   const list = [dep('acme-cloud')];
@@ -181,12 +185,93 @@ test('a box message is redacted and clipped before it is saved', async () => {
   }
 });
 
-test('a result that cannot be saved stops the ship before the next deployment', async () => {
+test('a start marker that cannot be saved stops the ship before the box is touched', async () => {
   const deps = stubDeps({ listDeployments: () => entries, updateDeployment: updated });
   const r = await ship(deps, { save: () => { throw new Error('ENOSPC'); } });
   assert.equal(r.status, 'stopped');
+  assert.match(r.reason, /could not record that it was starting on acme-cloud, so nothing was done there/);
+  assert.deepEqual(calledNames(deps), []);
+});
+
+test('a result that cannot be saved stops the ship before the next deployment', async () => {
+  const deps = stubDeps({ listDeployments: () => entries, updateDeployment: updated });
+  let n = 0;
+  const r = await ship(deps, { save: () => { n += 1; if (n === 2) throw new Error('ENOSPC'); } });
+  assert.equal(r.status, 'stopped');
   assert.match(r.reason, /could not record what happened on acme-cloud/);
   assert.deepEqual(calledNames(deps), ['acme-cloud']);
+});
+
+test('a deployment with an unchecked earlier update stops the ship before any version check, never shown calmer than Plan 10 left it', async () => {
+  const saves = [];
+  const list = [dep('acme-cloud', { currentVersion: '0.3.0', pendingCheck: { since: '2026-10-26T10:00:00.000Z', version: '0.4.0', foundation: 'v0.1.0', why: 'urgent', runId: RUN_ID } }), dep('acme-office')];
+  const deps = stubDeps({ listDeployments: () => list, updateDeployment: updated });
+  const r = await ship(deps, { save: (x) => saves.push(structuredClone(x.deployments)) });
+  assert.equal(r.status, 'stopped');
+  assert.match(r.reason, /^acme-cloud: URGENT\. /);
+  assert.match(r.reason, /conductor deployments status acme-cloud/);
+  assert.doesNotMatch(r.reason, /already on/);
+  assert.deepEqual(calledNames(deps), []);
+  const saved = saves.at(-1);
+  assert.equal(saved['acme-cloud'].outcome, 'pending-check');
+  assert.equal(saved['acme-office'], undefined);
+  const text = shipReport({ release: { version: '0.3.0' }, deployments: saved }, list);
+  assert.match(text, /acme-cloud: URGENT\./);
+  assert.doesNotMatch(text, /already on/);
+
+  // lost-contact / interrupted: not known, check first
+  const lost = stubDeps({ listDeployments: () => [dep('acme-cloud', { pendingCheck: { version: '0.3.0', why: 'interrupted' } }), dep('acme-office')], updateDeployment: updated });
+  const r2 = await ship(lost);
+  assert.equal(r2.reason, 'acme-cloud: Conductor did not see how an earlier update there (0.3.0) ended, so nothing was done there. Check it with "conductor deployments status acme-cloud" before trying again.');
+  assert.deepEqual(calledNames(lost), []);
+});
+
+test('a deployment whose record changes during the ship is read again before it is touched', async () => {
+  let pending = null;
+  const deps = stubDeps({
+    listDeployments: () => [dep('acme-cloud'), dep('acme-office', pending ? { pendingCheck: pending } : {})],
+    updateDeployment: async () => { pending = { version: '0.3.0', why: 'lost-contact' }; return updated(); },
+  });
+  const r = await ship(deps);
+  assert.equal(r.status, 'stopped');
+  assert.match(r.reason, /^acme-office: Conductor did not see how an earlier update there/);
+  assert.deepEqual(calledNames(deps), ['acme-cloud']);
+});
+
+test('a saved start marker (a crash during an update) is asked about on resume; no leaves every box alone', async () => {
+  const questions = [];
+  const deps = stubDeps({ listDeployments: () => entries, updateDeployment: updated });
+  const r = await ship(deps, {
+    run: run({ deployments: { 'acme-cloud': { outcome: 'started', at: '2026-10-27T14:00:00.000Z', from: '0.2.0' } } }),
+    ask: async (q) => { questions.push(q); return false; },
+  });
+  assert.equal(r.status, 'stopped');
+  assert.match(r.reason, /You chose not to try acme-cloud again/);
+  assert.deepEqual(questions, ['acme-cloud did not update last time (Conductor did not see how the last attempt ended). Try it again now?']);
+  assert.deepEqual(calledNames(deps), []);
+  assert.match(shipReport({ release: { version: '0.3.0' }, deployments: { 'acme-cloud': { outcome: 'started', from: '0.2.0' } } }, [dep('acme-cloud')]),
+    /acme-cloud: Conductor did not see how the last attempt ended, so it may have stopped part-way\. Check it with "conductor deployments status acme-cloud"/);
+});
+
+test('a saved stopping outcome is asked about before the setup check', async () => {
+  const questions = [];
+  const deps = stubDeps({ listDeployments: () => [dep('acme-cloud', { setup: { step: 'configured' } })], updateDeployment: updated });
+  const r = await ship(deps, { run: run({ deployments: { 'acme-cloud': { outcome: 'busy', message: 'm', from: '0.2.0' } } }), ask: async (q) => { questions.push(q); return false; } });
+  assert.equal(r.status, 'stopped');
+  assert.equal(questions.length, 1);
+});
+
+test('on resume a deployment saved as newer is checked again without asking', async () => {
+  const saved = { 'acme-cloud': { outcome: 'newer', message: '', from: '0.4.0' } };
+  const still = stubDeps({ listDeployments: () => [dep('acme-cloud', { currentVersion: '0.4.0' })], updateDeployment: updated });
+  const r1 = await ship(still, { run: run({ deployments: structuredClone(saved) }), ask: async () => { throw new Error('asked'); } });
+  assert.equal(r1.status, 'stopped');
+  assert.match(r1.reason, /newer than 0\.3\.0, so it was left alone\. This release is older than what the box runs.*conductor deployments status acme-cloud/);
+  assert.deepEqual(calledNames(still), []);
+  const now = stubDeps({ listDeployments: () => [dep('acme-cloud')], updateDeployment: updated });
+  const r2 = await ship(now, { run: run({ deployments: structuredClone(saved) }), ask: async () => { throw new Error('asked'); } });
+  assert.deepEqual(r2, { status: 'done', reason: null });
+  assert.deepEqual(calledNames(now), ['acme-cloud']);
 });
 
 test('the ship guard is checked before each deployment: a run without approval updates nothing', async () => {

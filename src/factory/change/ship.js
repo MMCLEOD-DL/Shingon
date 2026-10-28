@@ -15,8 +15,21 @@ import { clip } from '../../text.js';
 
 export const NO_DEPLOYMENTS = 'This project has no deployments yet, so nothing was updated. When you are ready, ship it with "conductor ship <slug> --to <deployment>".';
 
+const CHECK_NEXT = (name) => `Check it with "conductor deployments status ${name}" before trying again.`;
+const NEWER_NEXT = (name) => `This release is older than what the box runs, so there is nothing to ship there; check it with "conductor deployments status ${name}".`;
+
+// Plan 10's pendingCheck: never shown calmer than Plan 10 left it (ruling S13).
+function pendingSentence(name, r) {
+  const v = r?.pendingVersion ?? 'an unknown version';
+  if (r?.pendingWhy === 'urgent') {
+    return `${name}: URGENT. An earlier update there (${v}) failed and its automatic undo also failed, so nothing was done there. Follow "Recovering from a failed update" in the foundation runbook now, then check it with "conductor deployments status ${name}".`;
+  }
+  return `${name}: Conductor did not see how an earlier update there (${v}) ended, so nothing was done there. ${CHECK_NEXT(name)}`;
+}
+
 // Outcomes this module records itself that are looked at again on resume without asking (nothing reached the box).
-const RECHECK = new Set(['not-set-up', 'newer']);
+// A Plan 10 pendingCheck is read again from the record each time, so it is re-checked too.
+const RECHECK = new Set(['not-set-up', 'newer', 'pending-check']);
 const isObject = (o) => o !== null && typeof o === 'object' && !Array.isArray(o);
 const MESSAGE_MAX = 1000;
 const OUTCOME_MAX = 60;
@@ -34,9 +47,12 @@ function outcomeSentence(name, r, { version, slug = '<slug>' } = {}) {
     case 'settings-error': return `${name}: the box's settings are not right, so the update did not start: ${message}`;
     case 'urgent': return `${name}: URGENT. The update failed and the automatic undo also failed. Follow "Recovering from a failed update" in the foundation runbook now. ${message}`;
     case 'lost-contact': return `${name}: Conductor lost contact with the box during the update, so it does not know how it ended. Check it with "conductor deployments status" before trying again. ${message}`;
-    case 'refused': return `${name}: Conductor did not start the update there, and nothing was changed: ${message}`;
+    // Not "nothing was changed" (Ruling Task 8): after an interrupt Plan 10's message may describe an earlier attempt.
+    case 'refused': return `${name}: Conductor did not start the update there: ${message}`;
     case 'not-set-up': return `${name}: not set up yet, so it was not updated. Finish it with "conductor ship ${slug} --to ${name}".`;
-    case 'newer': return `${name}: on ${from}, newer than ${version}, so it was left alone.`;
+    case 'newer': return `${name}: on ${from}, newer than ${version}, so it was left alone. ${NEWER_NEXT(name)}`;
+    case 'started': return `${name}: Conductor did not see how the last attempt ended, so it may have stopped part-way. ${CHECK_NEXT(name)}`;
+    case 'pending-check': return pendingSentence(name, r);
     default: return `${name}: the update ended in a way Conductor does not recognise (${r?.outcome}), so it is treated as failed.`;
   }
 }
@@ -51,6 +67,7 @@ function lastTimeReason(r) {
     case 'urgent': return 'the update failed and the automatic undo also failed';
     case 'lost-contact': return 'Conductor lost contact with the box during the update';
     case 'refused': return 'Conductor did not start the update there';
+    case 'started': return 'Conductor did not see how the last attempt ended';
     default: return `it ended in a way Conductor does not recognise (${r?.outcome})`;
   }
 }
@@ -95,9 +112,21 @@ export async function shipUpdate({ projectDir, projectsRoot, slug, run, version,
     }
   };
 
-  for (const { name, deployment: d } of list) {
+  for (const { name } of list) {
+    // Read again before each box (Ruling Task 8): Plan 10 may have changed a record since the last one.
+    const fresh = projectDeployments(deps, { projectsRoot, slug });
+    if (fresh.problem) return stopped(fresh.problem);
+    const d = fresh.list.find((e) => e.name === name)?.deployment;
+    if (!d) return stopped(`The deployment ${name} is no longer listed for this project, so it and the deployments after it were not updated.`);
+
     const before = run.deployments[name];
     if (CONTINUE_OUTCOMES.includes(before?.outcome)) continue;
+
+    if (isObject(before) && !RECHECK.has(before.outcome)) {
+      let answer = false;
+      try { answer = await ask(`${name} did not update last time (${lastTimeReason(before)}). Try it again now?`); } catch { answer = false; }
+      if (answer !== true) return stopped(`You chose not to try ${name} again, so it and the deployments after it were not updated.`);
+    }
 
     if (d.setup?.step !== 'done') {
       const unsaved = record(name, { outcome: 'not-set-up', at: at() });
@@ -105,10 +134,15 @@ export async function shipUpdate({ projectDir, projectsRoot, slug, run, version,
       continue;
     }
 
-    if (isObject(before) && !RECHECK.has(before.outcome)) {
-      let answer = false;
-      try { answer = await ask(`${name} did not update last time (${lastTimeReason(before)}). Try it again now?`); } catch { answer = false; }
-      if (answer !== true) return stopped(`You chose not to try ${name} again, so it and the deployments after it were not updated.`);
+    // Before any version check: a box whose last update was never checked is not "already on" anything.
+    if (d.pendingCheck) {
+      const pc = isObject(d.pendingCheck) ? d.pendingCheck : {};
+      const result = {
+        outcome: 'pending-check', at: at(), from: d.currentVersion,
+        pendingWhy: typeof pc.why === 'string' ? clip(pc.why, OUTCOME_MAX) : 'unknown',
+        pendingVersion: typeof pc.version === 'string' ? clip(redact(pc.version), OUTCOME_MAX) : 'an unknown version',
+      };
+      return stopped(record(name, result) ?? pendingSentence(name, result));
     }
 
     const guard = await shipProblem(run, { appDir: path.join(projectDir, 'app') });
@@ -125,8 +159,12 @@ export async function shipUpdate({ projectDir, projectsRoot, slug, run, version,
     }
     if (order > 0) {
       const unsaved = record(name, { outcome: 'newer', message: '', at: at(), from: d.currentVersion });
-      return stopped(unsaved ?? `${name} is on ${d.currentVersion}, newer than ${version}, so it was left alone.`);
+      return stopped(unsaved ?? `${name} is on ${d.currentVersion}, newer than ${version}, so it was left alone. ${NEWER_NEXT(name)}`);
     }
+
+    // Saved before the box is touched, so a crash during the update is asked about on resume.
+    const marked = record(name, { outcome: 'started', at: at(), from: d.currentVersion });
+    if (marked) return stopped(`Conductor could not record that it was starting on ${name}, so nothing was done there.`);
 
     let outcome, message;
     try {
