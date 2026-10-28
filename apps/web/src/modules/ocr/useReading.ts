@@ -9,7 +9,7 @@ export const TAKING_LONG = 'Reading is taking longer than usual. You can type th
 /**
  * A reading, looked at again every 1.5 seconds while it is pending. After 90 seconds it stops and `error` says the
  * details can be typed now (the reading stays pending). A refusal from the server (not found) stops it too; a dropped
- * connection does not.
+ * connection or a server fault (5xx) does not.
  */
 export function useReading(id: string): { reading: ReadingView | undefined; error: unknown } {
   const [state, setState] = useState<{ id: string; reading: ReadingView | undefined; error: unknown }>({ id, reading: undefined, error: null });
@@ -34,7 +34,8 @@ export function useReading(id: string): { reading: ReadingView | undefined; erro
         if (reading.status === 'pending') again();
       } catch (e) {
         if (stopped) return;
-        if (e instanceof ApiError && e.status === 0) again();
+        // A dropped connection or a server fault (a restart, a proxy) may pass: keep looking, within the 90 seconds.
+        if (e instanceof ApiError && (e.status === 0 || e.status >= 500)) again();
         else setState((s) => ({ ...s, error: e }));
       }
     };

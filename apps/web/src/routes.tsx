@@ -1,5 +1,6 @@
+import { lazy, Suspense, type ReactNode } from 'react';
 import { Link, Navigate, createBrowserRouter, type RouteObject } from 'react-router';
-import { Button, Container } from '@mantine/core';
+import { Button, Center, Container, Loader } from '@mantine/core';
 import { RequireAuth, RequirePermission } from './auth.js';
 import { Shell } from './Shell.js';
 import { SignIn } from './pages/account/SignIn.js';
@@ -14,11 +15,15 @@ import { NotesList } from './pages/notes/NotesList.js';
 import { NoteNew } from './pages/notes/NoteNew.js';
 import { NoteView } from './pages/notes/NoteView.js';
 import { EmptyState } from './ui/index.js';
-import { ReceiptCheck, ReceiptNew } from './modules/ocr/index.js';
 import { BUILT_MODULES } from './appPaths.js';
 import type { ModuleName } from '@hf/shared';
 
 export { APP_PATHS, type AppPath } from './appPaths.js';
+
+// A module's pages are a chunk of their own, fetched only when one of them is opened (never when the module is off).
+const ReceiptNew = lazy(async () => ({ default: (await import('./modules/ocr/index.js')).ReceiptNew }));
+const ReceiptCheck = lazy(async () => ({ default: (await import('./modules/ocr/index.js')).ReceiptCheck }));
+const loading = (page: ReactNode) => <Suspense fallback={<Center py="xl"><Loader aria-label="Loading" /></Center>}>{page}</Suspense>;
 
 function NotFound() {
   return (
@@ -38,8 +43,8 @@ export function routeObjectsFor(modules: readonly ModuleName[]): RouteObject[] {
     { path: '/notes/new', element: <NoteNew /> },
     { path: '/notes/:id', element: <NoteView /> },
     ...(modules.includes('ocr') ? [
-      { path: '/receipts/new', element: <ReceiptNew /> },
-      { path: '/receipts/:id', element: <ReceiptCheck /> },
+      { path: '/receipts/new', element: loading(<ReceiptNew />) },
+      { path: '/receipts/:id', element: loading(<ReceiptCheck />) },
     ] : []),
     { path: '/admin/users', element: <RequirePermission perm="users:list"><Users /></RequirePermission> },
     { path: '/admin/teams', element: <RequirePermission perm="teams:manage"><Teams /></RequirePermission> },

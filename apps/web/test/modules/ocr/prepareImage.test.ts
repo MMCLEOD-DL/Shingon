@@ -7,14 +7,20 @@ const photo = (name = 'IMG_0042.HEIC', type = 'image/heic') => new File([new Uin
 
 /** A browser that can decode the picture: a bitmap of the given size and an OffscreenCanvas that records what it was asked. */
 function fakeBrowser(width: number, height: number, opts: { failEncode?: boolean } = {}) {
-  const seen = { bitmapOptions: undefined as unknown, canvas: [0, 0], drawn: [] as number[], encode: undefined as unknown, closed: false };
+  const seen = { bitmapOptions: undefined as unknown, canvas: [0, 0], drawn: [] as number[], filled: [] as unknown[], encode: undefined as unknown, closed: false };
   vi.stubGlobal('createImageBitmap', vi.fn(async (_f: Blob, o: unknown) => {
     seen.bitmapOptions = o;
     return { width, height, close: () => { seen.closed = true; } };
   }));
   vi.stubGlobal('OffscreenCanvas', class {
     constructor(w: number, h: number) { seen.canvas = [w, h]; }
-    getContext() { return { drawImage: (_b: unknown, x: number, y: number, w: number, h: number) => { seen.drawn = [x, y, w, h]; } }; }
+    getContext() {
+      return {
+        fillStyle: '',
+        fillRect(x: number, y: number, w: number, h: number) { seen.filled = [this.fillStyle, x, y, w, h]; },
+        drawImage: (_b: unknown, x: number, y: number, w: number, h: number) => { seen.drawn = [x, y, w, h]; },
+      };
+    }
     async convertToBlob(o: unknown) {
       seen.encode = o;
       if (opts.failEncode) throw new Error('encoder broke');
@@ -30,6 +36,8 @@ test('a big photo is turned upright, shrunk to the longest side and sent as JPEG
   expect(seen.bitmapOptions).toEqual({ imageOrientation: 'from-image' });
   expect(seen.canvas).toEqual([2000, 1500]);
   expect(seen.drawn).toEqual([0, 0, 2000, 1500]);
+  // White underneath, so a transparent PNG does not turn black in the JPEG.
+  expect(seen.filled).toEqual(['#ffffff', 0, 0, 2000, 1500]);
   expect(seen.encode).toEqual({ type: 'image/jpeg', quality: 0.85 });
   expect(seen.closed).toBe(true);
   expect(out.name).toBe('IMG_0042.jpg');

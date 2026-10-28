@@ -65,3 +65,14 @@ test('a prepare step runs before the checks and the upload, and its file is the 
   const body = f.mock.calls[0]?.[1]?.body as FormData;
   expect(body.get('file')).toBe(small);
 });
+
+test('a file over 40 MB is not prepared in the browser; the size check refuses it', async () => {
+  const f = mockFetch({});
+  const prepare = vi.fn(async (file: File) => file);
+  render(<Wrap><FileDropzone onUploaded={() => undefined} prepare={prepare} /></Wrap>);
+  const huge = new File([new Uint8Array(40 * 1024 * 1024 + 1)], 'huge.jpg', { type: 'image/jpeg' });
+  await user.upload(screen.getByTestId('file-input'), huge);
+  expect(await screen.findByText('That file is too large. The limit is 15 MB.')).toBeInTheDocument();
+  expect(prepare).not.toHaveBeenCalled();
+  expect(f).not.toHaveBeenCalled();
+});

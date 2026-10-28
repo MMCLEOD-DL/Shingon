@@ -76,3 +76,16 @@ test('stops polling when the page is left', async () => {
   await advance(10_000);
   expect(get).toHaveBeenCalledTimes(1);
 });
+
+test('a server fault while waiting keeps polling, as a dropped connection does', async () => {
+  const read = readWith({ amount: [1240, 0.97] });
+  const get = mockApi('getReading', read);
+  get.mockReturnValueOnce(pendingView()).mockReturnValueOnce(new Refusal(503, 'Something went wrong. Please try again.'));
+  const { result } = renderHook(() => useReading('r1'));
+  await advance(0);
+  await advance(1500);
+  expect(result.current.error).toBeNull();
+  await advance(1500);
+  expect(result.current.reading).toEqual(read);
+  expect(get).toHaveBeenCalledTimes(3);
+});

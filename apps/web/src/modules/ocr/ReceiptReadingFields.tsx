@@ -1,4 +1,4 @@
-import { useState, type ReactNode, type SyntheticEvent } from 'react';
+import { useRef, useState, type ReactNode, type SyntheticEvent } from 'react';
 import { Alert, Button, Checkbox, Group, Stack, Text, TextInput } from '@mantine/core';
 import { IconAlertTriangle, IconCircleCheck, IconInfoCircle } from '@tabler/icons-react';
 import { CONFIDENT, ConfirmReadingInput, formatPounds, toPence, type Pence, type ReadingView, type Scored } from '@hf/shared';
@@ -8,10 +8,12 @@ import { ErrorNotice } from '../../ui/index.js';
 const AMOUNT_HELP = 'Enter an amount like 12.40.';
 const VAT_HELP = 'Enter the VAT, like 2.07, or tick "No VAT shown".';
 const TOO_LARGE = 'That amount is too large.';
+const NOT_NEGATIVE = 'Enter the total as a positive amount.';
 const MERCHANT_HELP = 'Enter the shop or supplier.';
 const MERCHANT_LONG = 'Use at most 120 characters.';
 
 type Field = 'amount' | 'vat' | 'date' | 'merchant';
+const FIELD_ORDER: readonly Field[] = ['amount', 'vat', 'date', 'merchant'];
 type Errors = Partial<Record<Field, string>>;
 
 /** Pence as typed in a field: 1240 → "12.40" (the shared formatter, without the pound sign). */
@@ -54,7 +56,8 @@ function check(v: ReturnType<typeof startingValues>): { input: ConfirmReadingInp
   if (parsed.success) return { input: parsed.data };
   for (const issue of parsed.error.issues) {
     const at = issue.path[0];
-    if (at === 'amountPence') errors.amount ??= issue.code === 'too_big' ? TOO_LARGE : AMOUNT_HELP;
+    // A refund typed as a minus amount gets its own sentence; zero is not an amount.
+    if (at === 'amountPence') errors.amount ??= issue.code === 'too_big' ? TOO_LARGE : amountPence !== undefined && amountPence < 0 ? NOT_NEGATIVE : AMOUNT_HELP;
     else if (at === 'vatPence') errors.vat ??= issue.code === 'custom' ? issue.message : AMOUNT_HELP;
     else if (at === 'date') errors.date ??= issue.message;
     else if (at === 'merchant') errors.merchant ??= issue.code === 'too_big' ? MERCHANT_LONG : MERCHANT_HELP;
@@ -87,6 +90,7 @@ export function ReceiptReadingFields({ reading, canConfirm, onConfirmed }: {
   const shown = done ?? reading;
   const [values, setValues] = useState(() => startingValues(reading));
   const [errors, setErrors] = useState<Errors>({});
+  const formRef = useRef<HTMLFormElement>(null);
   const [failure, setFailure] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
 
@@ -104,7 +108,13 @@ export function ReceiptReadingFields({ reading, canConfirm, onConfirmed }: {
   const submit = async (e: SyntheticEvent) => {
     e.preventDefault();
     const result = check(values);
-    if ('errors' in result) { setErrors(result.errors); return; }
+    if ('errors' in result) {
+      setErrors(result.errors);
+      // Take the person to the first field that needs fixing (on a phone it may be off the screen).
+      const first = FIELD_ORDER.find((f) => result.errors[f] !== undefined);
+      if (first) formRef.current?.querySelector<HTMLInputElement>(`[data-field="${first}"] input`)?.focus();
+      return;
+    }
     setBusy(true);
     setFailure(null);
     try {
@@ -138,7 +148,7 @@ export function ReceiptReadingFields({ reading, canConfirm, onConfirmed }: {
   );
 
   return (
-    <form onSubmit={(e) => { void submit(e); }} noValidate>
+    <form ref={formRef} onSubmit={(e) => { void submit(e); }} noValidate>
       <Stack gap="md" maw={560}>
         {confirmed ? (
           <Alert color="green" variant="light" icon={<IconCircleCheck size={18} />} role="status">Receipt confirmed.</Alert>
@@ -159,7 +169,8 @@ export function ReceiptReadingFields({ reading, canConfirm, onConfirmed }: {
         ) : null}
         {field('Total', 'amount', { needsCheck: unsure(proposal?.amountPence), money: true })}
         <Stack gap="xs">
-          {field('VAT', 'vat', { needsCheck: !values.noVat && unsure(proposal?.vatPence), money: true, disabled: values.noVat && !readOnly })}
+          {/* The badge stays whatever the box says: a "no VAT shown" proposal is a guess too (Ruling 1). */}
+          {field('VAT', 'vat', { needsCheck: unsure(proposal?.vatPence), money: true, disabled: values.noVat && !readOnly })}
           <Checkbox
             label="No VAT shown"
             size="xl"

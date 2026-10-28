@@ -16,6 +16,7 @@ const DROP_ACCEPT: Record<string, string[]> = Object.fromEntries(
 const PICK_ACCEPT = 'image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf,.heic,.heif';
 const RASTER = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const DEFAULT_MAX = 15 * 1024 * 1024;
+const PREPARE_MAX_BYTES = 40 * 1024 * 1024;
 
 // The same sentences the server uses, so a refusal reads the same wherever it comes from.
 const NOT_ACCEPTED = "That kind of file isn't accepted. Use a photo (JPEG, PNG, WebP, HEIC) or a PDF.";
@@ -70,7 +71,8 @@ export function FileDropzone({ onUploaded, onRemoved, value = null, maxBytes = D
     setError(null);
     setBusy(chosen.name);
     let f = chosen;
-    if (prepare) {
+    // A huge file is not decoded in the browser (it could exhaust a phone's memory): it goes as it is and the size check refuses it.
+    if (prepare && chosen.size <= PREPARE_MAX_BYTES) {
       try {
         f = await prepare(chosen);
       } catch {

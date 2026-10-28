@@ -5,9 +5,10 @@
  * browser decodes the picture turned the way it is meant to be seen, shrinks it so its longest side is at most
  * RECEIPT_MAX_SIDE, and sends it as a JPEG. Safari decodes HEIC itself, so iPhone photos arrive as JPEG too.
  *
- * Why 2000 px: the server refuses pictures over 25 megapixels (Task 3); 2000 × 1500 is 3 MP, so an ordinary phone
- * photo never comes near that. An 80 mm till roll photographed whole still has well over 1000 px across the text,
- * more than the 1500 px corpus photos Task 3 reads correctly, and the file is a few hundred KB on mobile data.
+ * Why 2000 px: it is the plan's value. The server refuses pictures over 25 megapixels (Task 3); 2000 × 1500 is 3 MP, so
+ * an ordinary phone photo never comes near that, and the file is a few hundred KB on mobile data. The cost: a long till
+ * roll photographed whole fills the 2000 px along its length, leaving only about 500–800 px across the text. Task 3's
+ * corpus photos (1500 px long side) read correctly, but a very long receipt may come back with more "Please check".
  *
  * When the browser can't (an old browser, HEIC on Chrome, a PDF), the original file goes up unchanged and the server
  * says plainly if it couldn't be read. It never throws.
@@ -53,12 +54,19 @@ async function decodeUpright(file: File): Promise<{ picture: Picture; width: num
   }
 }
 
+/** White first: JPEG has no transparency, and a transparent PNG would otherwise turn black. */
+function paint(ctx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D, picture: Picture, width: number, height: number): void {
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, width, height);
+  ctx.drawImage(picture, 0, 0, width, height);
+}
+
 async function encode(bitmap: Picture, width: number, height: number, quality: number): Promise<Blob | null> {
   if (typeof OffscreenCanvas === 'function') {
     const canvas = new OffscreenCanvas(width, height);
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
-    ctx.drawImage(bitmap, 0, 0, width, height);
+    paint(ctx, bitmap, width, height);
     return canvas.convertToBlob({ type: 'image/jpeg', quality });
   }
   const canvas = document.createElement('canvas');
@@ -66,7 +74,7 @@ async function encode(bitmap: Picture, width: number, height: number, quality: n
   canvas.height = height;
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
-  ctx.drawImage(bitmap, 0, 0, width, height);
+  paint(ctx, bitmap, width, height);
   return new Promise((resolve) => { canvas.toBlob(resolve, 'image/jpeg', quality); });
 }
 

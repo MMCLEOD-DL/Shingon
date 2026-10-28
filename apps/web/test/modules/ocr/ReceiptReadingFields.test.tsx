@@ -53,10 +53,12 @@ test('"No VAT shown" sends no VAT', async () => {
   expect(confirm).toHaveBeenCalledWith('r1', expect.objectContaining({ amountPence: 320, vatPence: null }));
 });
 
-test('a reading that found "no VAT" arrives with the box ticked', () => {
-  show(<ReceiptReadingFields reading={readWith({ amount: [320, 0.97], vat: [null, 0.9], date: ['2026-03-02', 0.95], merchant: ['Fictional Rail', 0.9] })} canConfirm onConfirmed={vi.fn()} />);
+test('a reading that found "no VAT" arrives with the box ticked and still says Please check', () => {
+  // The extractor scores "no VAT shown" at 0.7 (NO_VAT_SHOWN), below CONFIDENT: a guess the person must check (Ruling 1).
+  show(<ReceiptReadingFields reading={readWith({ amount: [320, 0.97], vat: [null, 0.7], date: ['2026-03-02', 0.95], merchant: ['Fictional Rail', 0.9] })} canConfirm onConfirmed={vi.fn()} />);
   expect(screen.getByLabelText('No VAT shown')).toBeChecked();
   expect(screen.getByLabelText('VAT')).toBeDisabled();
+  expect(within(fieldOf('VAT')).getByText('Please check')).toBeVisible();
 });
 
 test('the reading\'s warnings are shown above the fields', () => {
@@ -93,6 +95,21 @@ test('an amount that is not pounds and pence is caught before sending', async ()
   await user.type(screen.getByLabelText('Total'), '12,4o');
   await user.click(screen.getByRole('button', { name: 'Confirm' }));
   expect(within(fieldOf('Total')).getByText('Enter an amount like 12.40.')).toBeVisible();
+  // The person is taken to the field to fix.
+  expect(screen.getByLabelText('Total')).toHaveFocus();
+  expect(confirm).not.toHaveBeenCalled();
+});
+
+test('a minus total asks for a positive amount; focus goes to the first field with a problem', async () => {
+  const confirm = mockApi('confirmReading', confirmedView());
+  show(<ReceiptReadingFields reading={readWith({ amount: [1240, 0.97], vat: [207, 0.9], date: ['2026-03-12', 0.95], merchant: ['Northside Taxis', 0.9] })} canConfirm onConfirmed={vi.fn()} />);
+  await user.clear(screen.getByLabelText('Total'));
+  await user.type(screen.getByLabelText('Total'), '-5.00');
+  await user.clear(screen.getByLabelText('Shop or supplier'));
+  await user.click(screen.getByRole('button', { name: 'Confirm' }));
+  expect(within(fieldOf('Total')).getByText('Enter the total as a positive amount.')).toBeVisible();
+  expect(within(fieldOf('Shop or supplier')).getByText('Enter the shop or supplier.')).toBeVisible();
+  expect(screen.getByLabelText('Total')).toHaveFocus();
   expect(confirm).not.toHaveBeenCalled();
 });
 
@@ -103,6 +120,7 @@ test('VAT above the total is caught before sending, with the server\'s sentence'
   await user.type(screen.getByLabelText('VAT'), '13.00');
   await user.click(screen.getByRole('button', { name: 'Confirm' }));
   expect(within(fieldOf('VAT')).getByText("The VAT can't be more than the total.")).toBeVisible();
+  expect(screen.getByLabelText('VAT')).toHaveFocus();
   expect(confirm).not.toHaveBeenCalled();
 });
 
