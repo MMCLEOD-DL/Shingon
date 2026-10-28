@@ -2,6 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
+import { DEFAULT_PROFILE } from '@hf/shared';
 import type { Config } from '../../src/config.js';
 import type { Db } from '../../src/db/client.js';
 import { buildApp } from '../../src/app.js';
@@ -43,6 +44,8 @@ export async function createTestApp(
       email: { transport: 'memory', from: 'Test <t@hf.test>', pollMs: 5000 },
       appVersion: '0.0.0-test',
       commit: 'test',
+      profile: structuredClone(DEFAULT_PROFILE),
+      ocr: { engine: 'local', concurrency: 1, timeoutMs: 60000 },
       ...configOverrides,
     };
     const mail = memoryTransport();

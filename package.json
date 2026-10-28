@@ -5,16 +5,17 @@
   "type": "module",
   "license": "UNLICENSED",
   "engines": {
-    "node": ">=22.12"
+    "node": ">=22.13"
   },
   "workspaces": [
     "packages/*",
+    "modules/*",
     "apps/*",
     "ops"
   ],
   "scripts": {
     "lint": "eslint .",
-    "typecheck": "tsc -b packages/shared apps/server ops scripts deploy && npm -w @hf/web run typecheck --if-present",
+    "typecheck": "tsc -b packages/shared modules/ocr modules/pdf-export modules/xlsx-export apps/server ops scripts deploy && npm -w @hf/web run typecheck --if-present",
     "licences": "tsx scripts/check-licences.ts",
     "licences:doc": "tsx scripts/check-licences.ts --markdown docs/LICENCES.md",
     "test": "vitest run",

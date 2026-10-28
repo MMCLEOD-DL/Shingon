@@ -14,6 +14,8 @@ The foundation every Highland client app is built from: a staff web app for one 
 
 ## Commands
 
+The commands need Node 22.13 or later (`engines.node` in `package.json`; `.npmrc` sets `engine-strict`, so an older Node refuses to install).
+
 | Command | What it does |
 |---|---|
 | `npm run verify` | Lint, type checks, licence gate and every unit and integration test. Must pass at every commit. Needs `TEST_DATABASE_URL` (a PostgreSQL role allowed to create databases). |

@@ -8,6 +8,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./app-profile-file": {
+      "types": "./dist/appProfileFile.d.ts",
+      "default": "./dist/appProfileFile.js"
     }
   },
   "types": "./dist/index.d.ts",

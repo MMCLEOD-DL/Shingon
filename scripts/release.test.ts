@@ -105,12 +105,14 @@ test('a lock file that is present but unreadable is reported, not skipped', () =
 });
 
 const REAL = readReal(new URL('../CHANGELOG.md', import.meta.url), 'utf8');
-test('the real changelog has a dated 0.1.0 under an empty Unreleased, which refuses an empty release', () => {
-  expect(REAL).toMatch(/^## \[Unreleased\]\n\n## \[0\.1\.0\] - \d{4}-\d{2}-\d{2}\n- First foundation release/m);
-  expect(() => planRelease(REAL, '0.1.0', 'patch', '2026-12-01')).toThrow('There is nothing under "Unreleased"');
+// Work in progress adds lines under Unreleased; these checks are about the released history beneath it.
+const RELEASED_ONLY = REAL.replace(/^## \[Unreleased\]\n(?:- .*\n)*/m, '## [Unreleased]\n');
+test('the real changelog has a dated 0.1.0 under Unreleased, and an empty Unreleased refuses an empty release', () => {
+  expect(RELEASED_ONLY).toMatch(/^## \[Unreleased\]\n\n## \[0\.1\.0\] - \d{4}-\d{2}-\d{2}\n- First foundation release/m);
+  expect(() => planRelease(RELEASED_ONLY, '0.1.0', 'patch', '2026-12-01')).toThrow('There is nothing under "Unreleased"');
 });
 test('the next release from 0.1.0 is 0.1.1 or 0.2.0 and 0.1.0 stays as released', () => {
-  const withEntry = REAL.replace('## [Unreleased]\n', '## [Unreleased]\n- Added Z.\n');
+  const withEntry = RELEASED_ONLY.replace('## [Unreleased]\n', '## [Unreleased]\n- Added Z.\n');
   const patch = planRelease(withEntry, '0.1.0', 'patch', '2026-12-01');
   const minor = planRelease(withEntry, '0.1.0', 'minor', '2026-12-01');
   expect([patch.version, minor.version]).toEqual(['0.1.1', '0.2.0']);

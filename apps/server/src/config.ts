@@ -1,4 +1,11 @@
+import { fileURLToPath } from 'node:url';
+import type { AppProfile } from '@hf/shared';
+import { readAppProfile } from '@hf/shared/app-profile-file';
+
 export type InstanceMode = 'demo' | 'production' | 'test';
+
+/** app-profile.json at the repo root (/app/app-profile.json in the image); APP_PROFILE overrides it. */
+const DEFAULT_PROFILE_FILE = fileURLToPath(new URL('../../../app-profile.json', import.meta.url));
 
 export interface Config {
   instanceMode: InstanceMode;
@@ -16,6 +23,15 @@ export interface Config {
   appVersion: string;
   commit: string;
   webDistDir?: string;
+  /** Which optional modules are on and what the data policy allows (app-profile.json). */
+  profile: AppProfile;
+  /** Receipt reading. The Azure settings are read only when the engine is azure. */
+  ocr: {
+    engine: 'local' | 'azure';
+    concurrency: number;
+    timeoutMs: number;
+    azure?: { endpoint: string; key: string; region: string };
+  };
 }
 
 export class ConfigError extends Error {
@@ -132,15 +148,59 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     problems.push('HEALTH_TOKEN must be at least 24 characters when it is set.');
   }
 
-  if (problems.length > 0) throw new ConfigError(problems);
+  const profileRead = readAppProfile(get('APP_PROFILE') ?? DEFAULT_PROFILE_FILE);
+  if (!profileRead.ok) problems.push(...profileRead.problems);
+
+  const ocrEngine = oneOf<'local' | 'azure'>('OCR_ENGINE', ['local', 'azure'], 'local');
+  const ocrConcurrencyRaw = get('OCR_CONCURRENCY');
+  let ocrConcurrency = 1;
+  if (ocrConcurrencyRaw !== undefined) {
+    if (/^[1-4]$/.test(ocrConcurrencyRaw)) ocrConcurrency = Number(ocrConcurrencyRaw);
+    else problems.push('OCR_CONCURRENCY must be a whole number from 1 to 4.');
+  }
+  const ocr: Config['ocr'] = {
+    engine: ocrEngine, concurrency: ocrConcurrency,
+    timeoutMs: int('OCR_TIMEOUT_MS', 1000, 600000, 60000, 'of milliseconds from 1000 to 600000'),
+  };
+  if (ocrEngine === 'azure') {
+    const needed = (k: string): string => {
+      const v = get(k);
+      if (v === undefined) problems.push(`${k} is needed when OCR_ENGINE is azure.`);
+      return v ?? '';
+    };
+    const endpoint = needed('OCR_AZURE_ENDPOINT');
+    const key = needed('OCR_AZURE_KEY');
+    const region = needed('OCR_AZURE_REGION');
+    if (endpoint && !azureEndpointOk(endpoint, instanceMode)) {
+      // The address may carry a key, so it is never repeated back.
+      problems.push('OCR_AZURE_ENDPOINT must be a web address starting with https:// (the value is hidden here for safety).');
+    }
+    if (region && !/^[a-z0-9]+$/.test(region)) problems.push(`OCR_AZURE_REGION must be an Azure region name like uksouth (got "${region}").`);
+    ocr.azure = { endpoint, key, region };
+  }
+
+  if (problems.length > 0 || !profileRead.ok) throw new ConfigError(problems);
 
   const cfg: Config = {
     instanceMode, appName, appOrigin, port, databaseUrl, cookieSecure, trustProxyHops,
-    uploadDir: uploadDirRaw, uploadMaxBytes, email,
+    uploadDir: uploadDirRaw, uploadMaxBytes, email, profile: profileRead.profile, ocr,
     appVersion: get('APP_VERSION') ?? '0.0.0-dev', commit: get('GIT_COMMIT') ?? 'unknown',
   };
   if (healthToken !== undefined) cfg.healthToken = healthToken;
   const web = get('WEB_DIST_DIR');
   if (web !== undefined) cfg.webDistDir = web;
   return cfg;
+}
+
+/** https:// with no username or password; a plain-http loopback stub is allowed only in test mode. */
+function azureEndpointOk(raw: string, mode: InstanceMode): boolean {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (u.username !== '' || u.password !== '') return false;
+  if (u.protocol === 'https:') return true;
+  return mode === 'test' && u.protocol === 'http:' && u.hostname === '127.0.0.1' && /^http:\/\/127\.0\.0\.1:\d+\/?$/.test(raw);
 }
