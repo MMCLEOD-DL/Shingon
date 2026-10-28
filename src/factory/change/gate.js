@@ -18,6 +18,7 @@ export const MARKERS_LEFT = (files) => `The foundation merge is not finished: th
 export const NOT_APPROVED_COMMIT = 'What reached the app is not exactly what you approved, so nothing was shipped. The approved work is still on its own branch in the app.';
 export const NO_APPROVAL = 'There is no record that you approved this change, so nothing was shipped.';
 export const APPROVAL_NOT_SAVED = 'Conductor could not record your approval, so the change was not added to the app. Resume the change to try again.';
+export const CHECK_FAILED = 'Conductor could not finish checking this change before asking you, so nothing was added to the app. Resume the change to try again.';
 
 const OVERRIDE_NOTE = 'You chose to ship although the council still found problems.';
 // A full commit id (sha-1 or sha-256): never anything git could read as an option or a branch name.
@@ -56,6 +57,7 @@ function squashedShaOf(projectDir, runId) {
 }
 
 // council = build.council; report = readCouncilReport's answer; sha = the commit waiting for approval.
+// runId is required (Ruling C3): a call without it refuses.
 export function councilPassed(council, { sha, runId, report, squashedSha = null } = {}) {
   if (!isObject(council) || !isObject(report)) return { ok: false, reason: COUNCIL_MISSING };
   // The report must be this run's finished one, with the same verdict the council hook gave.
@@ -82,10 +84,15 @@ export function makeChangeGate({ projectDir, approveBuild, extraText, check, onA
     const verdict = councilPassed(arg?.council, { sha: arg?.sha, runId: arg?.runId, report, squashedSha: squashedShaOf(projectDir, arg?.runId) });
     if (!verdict.ok) return refuse(verdict.reason);
 
-    const problem = await check(arg);
-    if (problem) return refuse(problem);
-
-    let summary = `${arg.summary}\n\nIf you approve:\n  ${String(extraText(arg)).split('\n').join('\n  ')}`;
+    // A check or text that throws is never asked about: the change is refused with a plain reason.
+    let summary;
+    try {
+      const problem = await check(arg);
+      if (problem) return refuse(problem);
+      summary = `${arg.summary}\n\nIf you approve:\n  ${String(extraText(arg)).split('\n').join('\n  ')}`;
+    } catch {
+      return refuse(CHECK_FAILED);
+    }
     if (verdict.overridden) summary += `\n${OVERRIDE_NOTE}`;
 
     const answer = await approveBuild({ ...arg, summary });

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   councilPassed, readCouncilReport, conflictMarkers, makeChangeGate, shipProblem,
-  COUNCIL_MISSING, COUNCIL_NOT_PASSED, COUNCIL_OLDER_COMMIT, MARKERS_LEFT, NOT_APPROVED_COMMIT, NO_APPROVAL, APPROVAL_NOT_SAVED,
+  COUNCIL_MISSING, COUNCIL_NOT_PASSED, COUNCIL_OLDER_COMMIT, MARKERS_LEFT, NOT_APPROVED_COMMIT, NO_APPROVAL, APPROVAL_NOT_SAVED, CHECK_FAILED,
 } from '../src/factory/change/gate.js';
 import { git } from '../src/workspace.js';
 import { makeRepo } from './helpers/gitRepo.js';
@@ -139,6 +139,26 @@ test('the gate refuses without asking when the pipeline check fails (conflict ma
   assert.equal(seen.approved.length, 0);
   assert.deepEqual(seen.refused, [why]);
   assert.equal(why, 'The foundation merge is not finished: these files still contain both versions side by side: apps/server/src/app.ts. Nothing was added to the app.');
+});
+
+test('a check or the extra text that throws is refused with CHECK_FAILED and never asked', async () => {
+  for (const over of [{ check: async () => { throw new Error('git broke'); } }, { extraText: () => { throw new Error('no text'); } },
+    { check: async () => { throw new Error('x'); }, onRefused: () => { throw new Error('also broken'); } }]) {
+    const { gate, seen } = gateWith(projectWith(), over);
+    assert.equal(await gate(arg()), false);
+    assert.equal(seen.asked.length, 0);
+    assert.equal(seen.approved.length, 0);
+    if (!over.onRefused) assert.deepEqual(seen.refused, [CHECK_FAILED]);
+  }
+  assert.equal(CHECK_FAILED, 'Conductor could not finish checking this change before asking you, so nothing was added to the app. Resume the change to try again.');
+});
+
+test('the gate waits for a slow approval save to finish before it returns true', async () => {
+  let saved = false;
+  const { gate } = gateWith(projectWith(), { onApproved: () => new Promise((resolve) => setTimeout(() => { saved = true; resolve(); }, 30)) });
+  const out = await gate(arg());
+  assert.equal(saved, true);
+  assert.equal(out, true);
 });
 
 test('passing checks: the operator sees the summary plus what happens next, and the approval is saved before true is returned', async () => {
