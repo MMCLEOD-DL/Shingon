@@ -27,7 +27,11 @@ export const RELEASE_TAG_ELSEWHERE = (version) => `The release tag v${version} i
 
 const APP_UNREADABLE = 'Conductor could not check the app folder, so it did not touch it.';
 const NOT_IN_APP = 'The approved work is not in the app, so the app\'s main line was not moved.';
-const FILES_NOT_UPDATED = 'Conductor could not bring the files in the app folder up to date with the approved work, so the app\'s main line was not moved. Nothing was changed.';
+export const FILES_NOT_UPDATED = 'Conductor could not bring the files in the app folder up to date with the approved work, so it put the app\'s main line back where it was. Some files may have been partly updated: check that no other program is using the app folder and that it shows no edits, then resume.';
+export const MAIN_NOT_PUT_BACK = 'Conductor could not bring the files in the app folder up to date with the approved work, and could not put the app\'s main line back either. The main line may now have the approved change while the files on disk do not, so the folder can look as if the change were being undone: do not commit anything in the app folder. Check that no other program is using it, then resume.';
+export const FILES_BEHIND = 'The app\'s main line already has the approved change, but Conductor could not bring the files in the app folder up to date, so the folder looks as if the change were being undone. Do not commit those edits. Check that no other program is using the app folder and that no ignored files stand where the change adds files, then resume.';
+export const IGNORED_IN_THE_WAY = 'The app folder has files that are set to be ignored where the approved work adds or changes files, so Conductor did not touch it. Move or remove them, then resume.';
+const IGNORED_UNCHECKED = 'Conductor could not check the app folder for files in the way of the approved work, so it did not touch it.';
 const RELEASE_UNCHECKABLE = 'Conductor could not check the release, so nothing was shipped.';
 const NO_RELEASE_GIVEN = 'Conductor was not given a release it can check, so nothing was shipped.';
 const CHANGELOG_FAILED = 'Conductor could not add the changelog lines to the approved work, so it stopped. The app\'s main line was not moved.';
@@ -214,7 +218,7 @@ export async function advanceMain({ appDir, from, to }) {
   if (!isSha(to)) return no(notACommit(to, 'the app\'s main line was not moved'));
   let now;
   try { now = await appMain(appDir); } catch { return no(NO_MAIN); }
-  if (now === to) return { ok: true };
+  if (now === to) return repairAfterCrash(appDir, from, to);
   if (now !== from) return no(MAIN_MOVED);
   const anc = await g(appDir, ['merge-base', '--is-ancestor', from, to]);
   if (anc.code === 1) return no(MAIN_MOVED);
@@ -222,29 +226,65 @@ export async function advanceMain({ appDir, from, to }) {
   const problem = await appCheckoutProblem(appDir);
   if (problem) return no(problem);
 
-  const head = await g(appDir, ['symbolic-ref', '-q', 'HEAD']);
-  const mainCheckedOut = head.code === 0 && head.stdout.trim() === MAIN;
   const reflog = ['-m', 'conductor: add the approved change'];
-  if (!mainCheckedOut) {
+  if (!(await mainIsCheckedOut(appDir))) {
     return (await g(appDir, ['update-ref', ...reflog, MAIN, to, from])).code === 0 ? { ok: true } : no(MAIN_MOVED);
   }
   // main is checked out and clean: move it by compare-and-swap, then bring the index and files from `from` to `to`
-  // (a two-tree read-tree, which refuses to overwrite anything). If the files cannot follow, main goes back.
-  // git treats ignored files as expendable; Conductor does not overwrite one the approved work also has.
-  const changed = await g(appDir, [...DIFF_NAMES, from, to]);
-  if (changed.code !== 0) return no(FILES_NOT_UPDATED);
-  const paths = changed.stdout.split('\0').filter((f) => f !== '');
-  if (paths.length) {
-    const ignored = await g(appDir, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--', ...paths.map((f) => `:(literal)${f}`)]);
-    if (ignored.code !== 0 || ignored.stdout !== '') return no(FILES_NOT_UPDATED);
-  }
+  // (a two-tree read-tree). If the files cannot follow, main goes back.
+  const blocked = await ignoredInTheWay(appDir, from, to);
+  if (blocked) return no(blocked);
   await g(appDir, ['update-index', '-q', '--refresh']);
   if ((await g(appDir, ['update-ref', ...reflog, MAIN, to, from])).code !== 0) return no(MAIN_MOVED);
   const files = await g(appDir, ['read-tree', '-m', '-u', from, to]);
   if (files.code !== 0) {
-    await g(appDir, ['update-ref', '-m', 'conductor: put main back', MAIN, from, to]);
-    return no(FILES_NOT_UPDATED);
+    const back = await g(appDir, ['update-ref', '-m', 'conductor: put main back', MAIN, from, to]);
+    return no(back.code === 0 ? FILES_NOT_UPDATED : MAIN_NOT_PUT_BACK);
   }
+  return { ok: true };
+}
+
+async function mainIsCheckedOut(appDir) {
+  const head = await g(appDir, ['symbolic-ref', '-q', 'HEAD']);
+  return head.code === 0 && head.stdout.trim() === MAIN;
+}
+
+// git treats ignored files as expendable; Conductor does not overwrite or delete one where the approved work changes
+// a file, nor one standing where the work needs a folder (an ignored file "apps" when it adds apps/s/m.ts).
+async function ignoredInTheWay(appDir, from, to) {
+  const changed = await g(appDir, [...DIFF_NAMES, from, to]);
+  if (changed.code !== 0) return IGNORED_UNCHECKED;
+  const wanted = new Set();
+  for (const f of changed.stdout.split('\0').filter((x) => x !== '')) {
+    const parts = f.split('/');
+    for (let i = 1; i <= parts.length; i += 1) wanted.add(parts.slice(0, i).join('/'));
+  }
+  if (wanted.size === 0) return null;
+  const ignored = await g(appDir, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--', ...[...wanted].map((f) => `:(literal)${f}`)]);
+  if (ignored.code !== 0) return IGNORED_UNCHECKED;
+  return ignored.stdout.split('\0').some((f) => wanted.has(f)) ? IGNORED_IN_THE_WAY : null;
+}
+
+// main is already at `to` (a repeat, or a crash between moving main and updating the files). With main checked out,
+// files and index that still match `from` exactly are brought up to `to`; files that match `to` are fine; anything
+// else is the operator's edits.
+async function repairAfterCrash(appDir, from, to) {
+  const no = (reason) => ({ ok: false, reason });
+  if (!(await mainIsCheckedOut(appDir))) return { ok: true };
+  await g(appDir, ['update-index', '-q', '--refresh']);
+  const status = await g(appDir, ['status', '--porcelain', '--untracked-files=all']);
+  if (status.code !== 0) return no(APP_UNREADABLE);
+  if (status.stdout.trim() === '') return { ok: true };
+  const untracked = await g(appDir, ['ls-files', '-z', '--others', '--exclude-standard']);
+  if (untracked.code !== 0) return no(APP_UNREADABLE);
+  if (untracked.stdout !== '') return no(APP_FOLDER_EDITED);
+  if ((await g(appDir, ['merge-base', '--is-ancestor', from, to])).code !== 0) return no(APP_FOLDER_EDITED);
+  const filesAtFrom = (await g(appDir, ['diff', '--no-ext-diff', '--no-textconv', '--quiet', from])).code === 0;
+  const indexAtFrom = (await g(appDir, ['diff', '--no-ext-diff', '--no-textconv', '--cached', '--quiet', from])).code === 0;
+  if (!filesAtFrom || !indexAtFrom) return no(APP_FOLDER_EDITED);
+  const blocked = await ignoredInTheWay(appDir, from, to);
+  if (blocked) return no(FILES_BEHIND);
+  if ((await g(appDir, ['read-tree', '-m', '-u', from, to])).code !== 0) return no(FILES_BEHIND);
   return { ok: true };
 }
 

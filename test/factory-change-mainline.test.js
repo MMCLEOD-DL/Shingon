@@ -9,7 +9,7 @@ import { makeProject, makeFoundation } from './helpers/changeFixtures.js';
 import { refsOf } from './helpers/gitRepo.js';
 import {
   RELEASE_FILES, nextVersion, appMain, appCheckoutProblem, appVersionAt, addChangelogLines, commitChangelog, advanceMain, releaseProblem,
-  MAIN_MOVED, APP_FOLDER_EDITED, NO_MAIN, RELEASE_TOUCHED_CODE, RELEASE_VERSION_DIFFERS, RELEASE_NOT_ON_MAIN,
+  MAIN_MOVED, APP_FOLDER_EDITED, NO_MAIN, FILES_NOT_UPDATED, FILES_BEHIND, IGNORED_IN_THE_WAY, MAIN_NOT_PUT_BACK, RELEASE_TOUCHED_CODE, RELEASE_VERSION_DIFFERS, RELEASE_NOT_ON_MAIN,
 } from '../src/factory/change/mainline.js';
 
 const ID = ['-c', 'user.name=Test', '-c', 'user.email=test@example.com'];
@@ -229,15 +229,13 @@ test('advanceMain refuses uncommitted edits with main checked out, and changes n
   assert.equal(readFileSync(path.join(appDir, 'README.md'), 'utf8'), 'edited\n');
 });
 
-test('advanceMain with main checked out: if the files cannot follow (an ignored file in the way), main goes back and nothing changes', async () => {
+test('advanceMain with main checked out: an ignored file in the way of the approved work is refused before anything moves', async () => {
   const { appDir, mainAtStart, sha } = await changelogApp();
   writeFileSync(path.join(appDir, '.git', 'info', 'exclude'), 'apps/\n');
   mkdirSync(path.join(appDir, 'apps/server/src'), { recursive: true });
   writeFileSync(path.join(appDir, 'apps/server/src/mileage.ts'), 'mine\n');
   const r = await advanceMain({ appDir, from: mainAtStart, to: sha });
-  assert.equal(r.ok, false);
-  assert.match(r.reason, /could not bring the files in the app folder up to date/);
-  assert.doesNotMatch(r.reason, /fatal|error:|overwritten/);
+  assert.deepEqual(r, { ok: false, reason: IGNORED_IN_THE_WAY });
   assert.equal(await appMain(appDir), mainAtStart);
   assert.equal(readFileSync(path.join(appDir, 'apps/server/src/mileage.ts'), 'utf8'), 'mine\n');
   assert.equal(readFileSync(path.join(appDir, 'CHANGELOG.md'), 'utf8'), await out(appDir, ['show', `${mainAtStart}:CHANGELOG.md`]) + '\n');
@@ -249,13 +247,78 @@ test('advanceMain with main checked out: if updating the files fails after main 
   const lock = path.join(appDir, '.git', 'index.lock');
   writeFileSync(lock, ''); // another git process holds the index
   const r = await advanceMain({ appDir, from: mainAtStart, to: sha });
-  assert.equal(r.ok, false);
-  assert.match(r.reason, /could not bring the files in the app folder up to date/);
+  assert.deepEqual(r, { ok: false, reason: FILES_NOT_UPDATED });
+  assert.match(r.reason, /put the app's main line back/);
+  assert.doesNotMatch(r.reason, /Nothing was changed/);
   assert.equal(await appMain(appDir), mainAtStart);
   assert.match(await out(appDir, ['log', '-g', '--format=%gs', 'refs/heads/main']), /conductor: put main back\nconductor: add the approved change/);
   rmSync(lock);
   assert.equal((await git(appDir, ['status', '--porcelain'])).stdout, '');
   assert.deepEqual(await advanceMain({ appDir, from: mainAtStart, to: sha }), { ok: true });
+});
+
+test('advanceMain: an ignored FILE standing where the approved work needs a folder is refused, and kept', async () => {
+  const { appDir, mainAtStart, sha } = await changelogApp();
+  writeFileSync(path.join(appDir, '.git', 'info', 'exclude'), 'apps\n');
+  writeFileSync(path.join(appDir, 'apps'), 'my notes\n');
+  assert.deepEqual(await advanceMain({ appDir, from: mainAtStart, to: sha }), { ok: false, reason: IGNORED_IN_THE_WAY });
+  assert.equal(await appMain(appDir), mainAtStart);
+  assert.equal(readFileSync(path.join(appDir, 'apps'), 'utf8'), 'my notes\n');
+});
+
+test('advanceMain: an ignored file elsewhere under a folder the work adds to does not block it', async () => {
+  const { appDir, mainAtStart, sha } = await changelogApp();
+  writeFileSync(path.join(appDir, '.git', 'info', 'exclude'), '*.log\n');
+  mkdirSync(path.join(appDir, 'apps/server'), { recursive: true });
+  writeFileSync(path.join(appDir, 'apps/server/debug.log'), 'x\n');
+  assert.deepEqual(await advanceMain({ appDir, from: mainAtStart, to: sha }), { ok: true });
+  assert.equal(readFileSync(path.join(appDir, 'apps/server/debug.log'), 'utf8'), 'x\n');
+  assert.equal(readFileSync(path.join(appDir, 'apps/server/src/mileage.ts'), 'utf8'), 'export const mileage = 1;\n');
+});
+
+test('advanceMain repairs a crash between moving main and updating the files: files still at the recorded commit follow', async () => {
+  const { appDir, mainAtStart, sha } = await changelogApp();
+  await out(appDir, ['update-ref', 'refs/heads/main', sha, mainAtStart]); // main moved, index and files did not
+  assert.notEqual((await git(appDir, ['status', '--porcelain'])).stdout, '', 'the folder shows the change as if undone');
+  assert.deepEqual(await advanceMain({ appDir, from: mainAtStart, to: sha }), { ok: true });
+  assert.equal(await appMain(appDir), sha);
+  assert.equal((await git(appDir, ['status', '--porcelain'])).stdout, '');
+  assert.match(readFileSync(path.join(appDir, 'CHANGELOG.md'), 'utf8'), /Mileage claims/);
+});
+
+test('advanceMain after that crash refuses mixed edits, untracked files, and a repair that cannot run', async () => {
+  {
+    const { appDir, mainAtStart, sha } = await changelogApp();
+    await out(appDir, ['update-ref', 'refs/heads/main', sha, mainAtStart]);
+    writeFileSync(path.join(appDir, 'README.md'), 'edited\n'); // matches neither commit
+    assert.deepEqual(await advanceMain({ appDir, from: mainAtStart, to: sha }), { ok: false, reason: APP_FOLDER_EDITED });
+    assert.equal(readFileSync(path.join(appDir, 'README.md'), 'utf8'), 'edited\n');
+    assert.equal(await appMain(appDir), sha);
+  }
+  {
+    const { appDir, mainAtStart, sha } = await changelogApp();
+    await out(appDir, ['update-ref', 'refs/heads/main', sha, mainAtStart]);
+    writeFileSync(path.join(appDir, 'stray.txt'), 'x\n');
+    assert.deepEqual(await advanceMain({ appDir, from: mainAtStart, to: sha }), { ok: false, reason: APP_FOLDER_EDITED });
+  }
+  {
+    const { appDir, mainAtStart, sha } = await changelogApp();
+    await out(appDir, ['update-ref', 'refs/heads/main', sha, mainAtStart]);
+    const lock = path.join(appDir, '.git', 'index.lock');
+    writeFileSync(lock, '');
+    const r = await advanceMain({ appDir, from: mainAtStart, to: sha });
+    assert.deepEqual(r, { ok: false, reason: FILES_BEHIND });
+    assert.match(r.reason, /Do not commit those edits/);
+    rmSync(lock);
+    assert.deepEqual(await advanceMain({ appDir, from: mainAtStart, to: sha }), { ok: true }, 'a later resume repairs it');
+    assert.equal((await git(appDir, ['status', '--porcelain'])).stdout, '');
+  }
+});
+
+test('the reason when main cannot be put back says the main line may have the change and not to commit', () => {
+  assert.match(MAIN_NOT_PUT_BACK, /could not put the app's main line back/);
+  assert.match(MAIN_NOT_PUT_BACK, /do not commit anything in the app folder/);
+  assert.doesNotMatch(MAIN_NOT_PUT_BACK, /Nothing was changed/);
 });
 
 test('advanceMain refuses bad commits without running git on them', async () => {
