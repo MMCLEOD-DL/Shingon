@@ -1,0 +1,104 @@
+{
+  "cafe-clean.png": {
+    "amountPence": 875,
+    "vatPence": 146,
+    "date": "2026-03-05",
+    "merchant": "Corner Café"
+  },
+  "cafe-photo.jpg": {
+    "amountPence": 875,
+    "vatPence": 146,
+    "date": "2026-03-05",
+    "merchant": "Corner Café"
+  },
+  "taxi-clean.png": {
+    "amountPence": 1240,
+    "vatPence": 207,
+    "date": "2026-03-12",
+    "merchant": "Northside Taxis"
+  },
+  "taxi-photo.jpg": {
+    "amountPence": 1240,
+    "vatPence": 207,
+    "date": "2026-03-12",
+    "merchant": "Northside Taxis"
+  },
+  "supermarket-clean.png": {
+    "amountPence": 2349,
+    "vatPence": 333,
+    "date": "2026-03-19",
+    "merchant": "Harbour Foods"
+  },
+  "supermarket-photo.jpg": {
+    "amountPence": 2349,
+    "vatPence": 333,
+    "date": "2026-03-19",
+    "merchant": "Harbour Foods"
+  },
+  "fuel-clean.png": {
+    "amountPence": 4500,
+    "vatPence": 750,
+    "date": "2026-03-23",
+    "merchant": "Fuel Stop"
+  },
+  "fuel-photo.jpg": {
+    "amountPence": 4500,
+    "vatPence": 750,
+    "date": "2026-03-23",
+    "merchant": "Fuel Stop"
+  },
+  "train-clean.png": {
+    "amountPence": 320,
+    "vatPence": null,
+    "date": "2026-03-02",
+    "merchant": "Fictional Rail"
+  },
+  "train-photo.jpg": {
+    "amountPence": 320,
+    "vatPence": null,
+    "date": "2026-03-02",
+    "merchant": "Fictional Rail"
+  },
+  "hotel-clean.png": {
+    "amountPence": 24000,
+    "vatPence": 4000,
+    "date": "2026-03-11",
+    "merchant": "Glen Lodge"
+  },
+  "hotel-photo.jpg": {
+    "amountPence": 24000,
+    "vatPence": 4000,
+    "date": "2026-03-11",
+    "merchant": "Glen Lodge"
+  },
+  "restaurant-clean.png": {
+    "amountPence": 2399,
+    "vatPence": 400,
+    "date": "2026-03-19",
+    "merchant": "Harbour Deli"
+  },
+  "restaurant-photo.jpg": {
+    "amountPence": 2399,
+    "vatPence": 400,
+    "date": "2026-03-19",
+    "merchant": "Harbour Deli"
+  },
+  "smudged-clean.png": {
+    "amountPence": 875,
+    "vatPence": 146,
+    "date": "2026-03-05",
+    "merchant": "Corner Café"
+  },
+  "smudged-photo.jpg": {
+    "amountPence": 875,
+    "vatPence": 146,
+    "date": "2026-03-05",
+    "merchant": "Corner Café"
+  },
+  "e-ticket.pdf": {
+    "amountPence": 320,
+    "vatPence": null,
+    "date": "2026-03-02",
+    "merchant": "Fictional Rail"
+  }
+}

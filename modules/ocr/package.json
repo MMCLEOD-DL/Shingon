@@ -12,6 +12,9 @@
   },
   "types": "./dist/index.d.ts",
   "dependencies": {
-    "@hf/shared": "0.1.0"
+    "@hf/shared": "0.1.0",
+    "@tesseract.js-data/eng": "1.0.0",
+    "pdfjs-dist": "6.4.299",
+    "tesseract.js": "7.0.0"
   }
 }

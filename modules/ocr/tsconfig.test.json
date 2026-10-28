@@ -1,1 +1,1 @@
-{ "extends": "../../tsconfig.base.json", "compilerOptions": { "rootDir": ".", "noEmit": true, "types": ["node"] }, "include": ["test", "vitest.config.ts"], "references": [{ "path": "./tsconfig.build.json" }] }
+{ "extends": "../../tsconfig.base.json", "compilerOptions": { "rootDir": ".", "noEmit": true, "types": ["node"] }, "include": ["test", "vitest.config.ts", "vitest.accuracy.config.ts"], "references": [{ "path": "./tsconfig.build.json" }] }

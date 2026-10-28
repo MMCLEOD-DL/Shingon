@@ -1,0 +1,11 @@
+/* A fictional thermal receipt: 80 mm paper, monospace print, black on white. */
+@page { margin: 0; }
+html, body { margin: 0; padding: 0; background: #fff; }
+body { width: 80mm; }
+.receipt { box-sizing: border-box; width: 80mm; padding: 5mm 4mm 7mm; color: #111; font: 8pt/1.45 "DejaVu Sans Mono", "Liberation Mono", monospace; }
+.c { text-align: center; }
+.big { font-size: 12pt; font-weight: bold; letter-spacing: 0.04em; margin-bottom: 1mm; }
+.b { font-weight: bold; }
+.row { display: flex; justify-content: space-between; gap: 3mm; }
+.rule { border-top: 1px dashed #111; margin: 2mm 0; }
+.gap { height: 2.5mm; }

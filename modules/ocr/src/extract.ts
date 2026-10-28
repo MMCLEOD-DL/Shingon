@@ -21,6 +21,8 @@ export const VAT_MISMATCH_WARNING = "The VAT doesn't match the usual rates for t
 /** The most an unsure field may score: always below CONFIDENT. */
 const UNSURE = 0.6;
 const DOUBTFUL = 0.5;
+/** "No VAT shown" is offered, never as certain: the VAT line may simply have been missed. */
+const NO_VAT_SHOWN = 0.7;
 
 const TOTAL_WORD = /total|balance due|amount due|to pay|grand total|payable|\bpay\b|amount\b|charged|due/i;
 // Lines that mention a total but are not the amount paid: subtotals, savings, money handed over, tips, points.
@@ -212,33 +214,39 @@ function vatRows(lines: readonly Line[]): { rows: VatRow[]; unreadable: boolean 
   return { rows, unreadable };
 }
 
-function findVat(lines: readonly Line[], amount: Scored<Pence> | null, warnings: string[]): ReceiptProposal['vatPence'] {
-  if (!amount) return null;
+/** What the lines say about the VAT: the summary rows, whether a row-like line was unreadable, and the VAT figures. */
+interface VatEvidence {
+  rows: VatRow[];
+  unreadable: boolean;
+  /** Every amount on a VAT line, except a total line ("Total incl. VAT £8.75") and the summary rows. */
+  candidates: MoneyToken[];
+}
+
+function vatEvidence(lines: readonly Line[]): VatEvidence {
   const { rows, unreadable } = vatRows(lines);
-  // Every amount on a VAT line, except a total line ("Total incl. VAT £8.75") and the summary rows.
   const candidates = lines
     .filter((l) => VAT_WORD.test(l.words) && !NET_OF_VAT.test(l.words) && !VAT_ROW.test(l.text) && !isTotalLine(l))
     .flatMap((l) => l.money);
+  return { rows, unreadable, candidates };
+}
 
-  let vat: Scored<Pence>;
+/**
+ * The VAT cross-check, shared by the lines' own VAT and a VAT an engine read directly: the VAT keeps its confidence
+ * only when it fits the total (the summary table adds up and each row fits its rate, or it is 20% or 5% of the total,
+ * or 0 as the only VAT figure) and nothing on the receipt disagrees with it. Otherwise it is capped below CONFIDENT,
+ * with the mismatch warning when it does not fit.
+ */
+function crossCheckVat(amount: Scored<Pence>, vat: Scored<Pence>, evidence: VatEvidence, warnings: string[]): Scored<Pence> {
+  const { rows, unreadable, candidates } = evidence;
   let fits: boolean;
-  let ambiguous = unreadable;
+  // Some row could not be read, or a separate VAT figure disagrees with this one.
+  const ambiguous = unreadable || candidates.some((t) => t.pence !== vat.value);
   if (rows.length > 0) {
-    vat = scored(
-      rows.reduce((sum, r) => sum + r.vat.pence, 0),
-      Math.min(...rows.map((r) => r.vat.confidence)),
-    );
     const eachRowFits = rows.every((r) => Math.abs(r.vat.pence - vatOnNet(r.net.pence, r.basisPoints)) <= 1);
     const addsUp = rows.reduce((sum, r) => sum + r.net.pence + r.vat.pence, 0) === amount.value;
-    fits = eachRowFits && addsUp;
-    // A separate VAT figure that disagrees with the table.
-    if (candidates.some((t) => t.pence !== vat.value)) ambiguous = true;
+    const isTheTable = rows.reduce((sum, r) => sum + r.vat.pence, 0) === vat.value;
+    fits = eachRowFits && addsUp && isTheTable;
   } else {
-    const token = candidates.at(-1);
-    // "No VAT shown" is never confident: the VAT line may simply have been missed.
-    if (!token) return unreadable ? null : { value: null, confidence: 0.7 };
-    vat = scored(token.pence, token.confidence);
-    if (new Set(candidates.map((t) => t.pence)).size > 1 || token.signed) ambiguous = true;
     // A VAT of 0 fits only when it is the only VAT figure on the receipt.
     const allowed = [vatFromGross(amount.value, 2000), vatFromGross(amount.value, 500), ...(candidates.length === 1 ? [0] : [])];
     fits = allowed.some((v) => Math.abs(vat.value - v) <= 1);
@@ -251,6 +259,45 @@ function findVat(lines: readonly Line[], amount: Scored<Pence> | null, warnings:
   // The cross-check is only as good as the total it was checked against.
   if (amount.confidence < CONFIDENT) return capped(vat, 0.8);
   return vat;
+}
+
+function findVat(lines: readonly Line[], amount: Scored<Pence> | null, warnings: string[]): ReceiptProposal['vatPence'] {
+  if (!amount) return null;
+  const evidence = vatEvidence(lines);
+  const { rows, unreadable, candidates } = evidence;
+  if (rows.length > 0) {
+    const vat = scored(
+      rows.reduce((sum, r) => sum + r.vat.pence, 0),
+      Math.min(...rows.map((r) => r.vat.confidence)),
+    );
+    return crossCheckVat(amount, vat, evidence, warnings);
+  }
+  const token = candidates.at(-1);
+  // "No VAT shown" is never confident: the VAT line may simply have been missed.
+  if (!token) return unreadable ? null : { value: null, confidence: NO_VAT_SHOWN };
+  const vat = crossCheckVat(amount, scored(token.pence, token.confidence), evidence, warnings);
+  // A VAT shown as a refund or credit ("-£1.46") is never certain.
+  return token.signed ? capped(vat, DOUBTFUL) : vat;
+}
+
+/**
+ * The VAT cross-check on its own, for a VAT that did not come from these lines (an engine's own field) or a total
+ * that did not (readReceipt). The lines give the evidence: the VAT summary table and any VAT figures. A VAT that
+ * cannot be checked (no total) is never certain, and neither is "no VAT shown". Returns the VAT with its confidence
+ * capped where needed, and the mismatch warning when it does not fit the total.
+ */
+export function checkVat(
+  amount: Scored<Pence> | null,
+  vat: Scored<Pence | null> | null,
+  lines: readonly OcrLine[],
+): { vatPence: ReceiptProposal['vatPence']; warnings: string[] } {
+  const warnings: string[] = [];
+  if (!vat) return { vatPence: null, warnings };
+  const own = scored(vat.value, vat.confidence);
+  if (own.value === null) return { vatPence: capped(own, NO_VAT_SHOWN), warnings };
+  if (!amount) return { vatPence: capped(own, DOUBTFUL), warnings };
+  const checked = crossCheckVat(scored(amount.value, amount.confidence), { value: own.value, confidence: own.confidence }, vatEvidence(prepare(lines).lines), warnings);
+  return { vatPence: checked, warnings };
 }
 
 /**
@@ -322,7 +369,8 @@ function findMerchant(lines: readonly Line[]): Scored<string> | null {
   return line ? scored(line.text.trim().replace(/\s+/g, ' '), Math.min(line.confidence, MERCHANT_CAP)) : null;
 }
 
-export function extractReceipt(input: readonly OcrLine[], opts: { today: string }): ReceiptProposal {
+/** The recognised lines with VAT spellings normalised, the currency, and each line's amounts and keyword text. */
+function prepare(input: readonly OcrLine[]): { recognised: OcrLine[]; currency: ReceiptProposal['currency']; lines: Line[] } {
   const recognised = input.filter((l) => l.text.trim() !== '').map((l) => ({ ...l, text: l.text.replace(SPELLED_VAT, 'VAT') }));
   const currency = currencyOf(recognised);
   const lines: Line[] = recognised.map((l) => ({
@@ -331,6 +379,11 @@ export function extractReceipt(input: readonly OcrLine[], opts: { today: string 
     cardMoney: findCardLineMoney(l.text, l.confidence, { commaDecimals: currency === 'other' }),
     words: asWords(l.text),
   }));
+  return { recognised, currency, lines };
+}
+
+export function extractReceipt(input: readonly OcrLine[], opts: { today: string }): ReceiptProposal {
+  const { recognised, currency, lines } = prepare(input);
   const warnings: string[] = [];
 
   let amountPence = findTotal(lines);

@@ -5,7 +5,7 @@ A test (`deploy/test/docs.test.ts`) fails when it no longer matches `package-loc
 
 ## npm packages
 
-Every package recorded in `package-lock.json` (direct and indirect, including build and test tools, and the platform-specific builds for every operating system and processor, such as `@esbuild/linux-x64`), one row for each package version: 492 rows. The list is the same on every computer.
+Every package recorded in `package-lock.json` (direct and indirect, including build and test tools, and the platform-specific builds for every operating system and processor, such as `@esbuild/linux-x64`), one row for each package version: 519 rows. The list is the same on every computer.
 `npm run licences` (part of `npm run verify`) fails if any installed package or any lockfile entry is not on the permissive list, unless the operator has written down a reason in `licence-exceptions.json`.
 Vite is held at 7.3.7, because Vite 8 needs `lightningcss`, which is MPL-2.0.
 
@@ -171,6 +171,18 @@ Vite is held at 7.3.7, because Vite 8 needs `lightningcss`, which is MPL-2.0.
 | @mantine/hooks | 9.7.4 | MIT |
 | @mantine/notifications | 9.7.4 | MIT |
 | @mantine/store | 9.7.4 | MIT |
+| @napi-rs/canvas | 1.0.13 | MIT |
+| @napi-rs/canvas-android-arm64 | 1.0.13 | MIT |
+| @napi-rs/canvas-darwin-arm64 | 1.0.13 | MIT |
+| @napi-rs/canvas-darwin-x64 | 1.0.13 | MIT |
+| @napi-rs/canvas-linux-arm-gnueabihf | 1.0.13 | MIT |
+| @napi-rs/canvas-linux-arm64-gnu | 1.0.13 | MIT |
+| @napi-rs/canvas-linux-arm64-musl | 1.0.13 | MIT |
+| @napi-rs/canvas-linux-riscv64-gnu | 1.0.13 | MIT |
+| @napi-rs/canvas-linux-x64-gnu | 1.0.13 | MIT |
+| @napi-rs/canvas-linux-x64-musl | 1.0.13 | MIT |
+| @napi-rs/canvas-win32-arm64-msvc | 1.0.13 | MIT |
+| @napi-rs/canvas-win32-x64-msvc | 1.0.13 | MIT |
 | @napi-rs/lzma-linux-x64-gnu | 1.5.1 | MIT |
 | @pinojs/redact | 0.4.0 | MIT |
 | @playwright/test | 1.64.1 | Apache-2.0 |
@@ -206,6 +218,7 @@ Vite is held at 7.3.7, because Vite 8 needs `lightningcss`, which is MPL-2.0.
 | @tabler/icons-react | 3.49.0 | MIT |
 | @tanstack/query-core | 5.104.5 | MIT |
 | @tanstack/react-query | 5.104.5 | MIT |
+| @tesseract.js-data/eng | 1.0.0 | MIT |
 | @testing-library/dom | 10.4.2 | MIT |
 | @testing-library/jest-dom | 7.0.1 | MIT |
 | @testing-library/react | 16.3.3 | MIT |
@@ -255,6 +268,7 @@ Vite is held at 7.3.7, because Vite 8 needs `lightningcss`, which is MPL-2.0.
 | balanced-match | 4.0.4 | MIT |
 | baseline-browser-mapping | 2.11.33 | Apache-2.0 |
 | bidi-js | 1.1.0 | MIT |
+| bmp-js | 0.1.0 | MIT |
 | brace-expansion | 5.0.12 | MIT |
 | browserslist | 4.29.4 | MIT |
 | buffer-from | 1.1.2 | MIT |
@@ -336,6 +350,7 @@ Vite is held at 7.3.7, because Vite 8 needs `lightningcss`, which is MPL-2.0.
 | hookified | 2.2.0 | MIT |
 | html-encoding-sniffer | 6.0.0 | MIT |
 | http-errors | 2.0.1 | MIT |
+| idb-keyval | 6.3.0 | Apache-2.0 |
 | ignore | 5.3.2 | MIT |
 | ignore | 7.0.14 | MIT |
 | imurmurhash | 0.1.4 | MIT |
@@ -346,6 +361,7 @@ Vite is held at 7.3.7, because Vite 8 needs `lightningcss`, which is MPL-2.0.
 | is-extglob | 2.1.1 | MIT |
 | is-glob | 4.0.3 | MIT |
 | is-potential-custom-element-name | 1.0.1 | MIT |
+| is-url | 1.2.4 | MIT |
 | isexe | 2.0.0 | ISC |
 | js-tokens | 4.0.0 | MIT |
 | jsdom | 29.1.1 | MIT |
@@ -374,12 +390,14 @@ Vite is held at 7.3.7, because Vite 8 needs `lightningcss`, which is MPL-2.0.
 | ms | 2.1.3 | MIT |
 | nanoid | 3.3.20 | MIT |
 | natural-compare | 1.4.0 | MIT |
+| node-fetch | 2.7.0 | MIT |
 | node-releases | 2.0.60 | MIT |
 | nodemailer | 10.2.1 | MIT-0 |
 | object-assign | 4.1.1 | MIT |
 | obug | 3.0.0 | MIT |
 | on-exit-leak-free | 2.1.2 | MIT |
 | openapi-types | 12.1.3 | MIT |
+| opencollective-postinstall | 2.0.3 | MIT |
 | optionator | 0.9.4 | MIT |
 | p-limit | 3.1.0 | MIT |
 | p-locate | 5.0.0 | MIT |
@@ -387,6 +405,7 @@ Vite is held at 7.3.7, because Vite 8 needs `lightningcss`, which is MPL-2.0.
 | path-exists | 4.0.0 | MIT |
 | path-key | 3.1.1 | MIT |
 | path-scurry | 2.0.2 | BlueOak-1.0.0 |
+| pdfjs-dist | 6.4.299 | Apache-2.0 |
 | pg | 8.23.1 | MIT |
 | pg-cloudflare | 1.4.1 | MIT |
 | pg-connection-string | 2.14.1 | MIT |
@@ -434,6 +453,7 @@ Vite is held at 7.3.7, because Vite 8 needs `lightningcss`, which is MPL-2.0.
 | react-transition-group | 4.4.5 | BSD-3-Clause |
 | real-require | 1.0.0 | MIT |
 | redent | 3.0.0 | MIT |
+| regenerator-runtime | 0.13.11 | MIT |
 | require-from-string | 2.0.2 | MIT |
 | resolve-pkg-maps | 1.0.0 | MIT |
 | ret | 0.5.1 | MIT |
@@ -463,6 +483,8 @@ Vite is held at 7.3.7, because Vite 8 needs `lightningcss`, which is MPL-2.0.
 | symbol-tree | 3.2.4 | MIT |
 | tabbable | 6.5.1 | MIT |
 | tagged-tag | 1.0.0 | MIT |
+| tesseract.js | 7.0.0 | Apache-2.0 |
+| tesseract.js-core | 7.0.0 | Apache-2.0 |
 | thread-stream | 4.2.0 | MIT |
 | tinybench | 6.2.2 | MIT |
 | tinyexec | 1.3.1 | MIT |
@@ -472,6 +494,7 @@ Vite is held at 7.3.7, because Vite 8 needs `lightningcss`, which is MPL-2.0.
 | toad-cache | 3.7.4 | MIT |
 | toidentifier | 1.0.1 | MIT |
 | tough-cookie | 6.0.2 | BSD-3-Clause |
+| tr46 | 0.0.3 | MIT |
 | tr46 | 6.0.0 | MIT |
 | ts-api-utils | 2.5.0 | MIT |
 | tslib | 2.8.1 | 0BSD |
@@ -490,9 +513,12 @@ Vite is held at 7.3.7, because Vite 8 needs `lightningcss`, which is MPL-2.0.
 | vite | 7.3.7 | MIT |
 | vitest | 5.0.5 | MIT |
 | w3c-xmlserializer | 5.0.0 | MIT |
+| wasm-feature-detect | 1.9.0 | Apache-2.0 |
+| webidl-conversions | 3.0.1 | BSD-2-Clause |
 | webidl-conversions | 8.0.1 | BSD-2-Clause |
 | whatwg-mimetype | 5.0.0 | MIT |
 | whatwg-url | 16.0.1 | MIT |
+| whatwg-url | 5.0.0 | MIT |
 | which | 2.0.2 | ISC |
 | why-is-node-running | 3.2.1 | MIT |
 | word-wrap | 1.2.5 | MIT |
@@ -502,6 +528,7 @@ Vite is held at 7.3.7, because Vite 8 needs `lightningcss`, which is MPL-2.0.
 | yallist | 3.1.1 | ISC |
 | yaml | 2.9.1 | ISC |
 | yocto-queue | 0.1.0 | MIT |
+| zlibjs | 0.3.1 | MIT |
 | zod | 4.6.7 | MIT |
 
 ## Container images
