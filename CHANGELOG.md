@@ -15,6 +15,7 @@
 - An app's release no longer overwrites foundation.json; only the foundation's own release stamps it.
 - ops update --json prints the outcome as one line of JSON, for scripts.
 - New ops commands: status [--json], set-env (from standard input, known settings only) and test-alert.
+- The smoke test takes HF_SMOKE_DIR and HF_SMOKE_PROJECT, and kills the database, app and ops without warning to prove they recover.
 
 ## [0.1.0] - 2026-10-26
 - First foundation release: accounts, roles, role-crossing harness, files, email, audit, visual system, backups, monitoring, safe update.

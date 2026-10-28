@@ -4,17 +4,34 @@
 # ONLY on a disposable Linux machine with Docker (a throwaway VM). NEVER on a client box: it builds images, starts and
 # stops containers, and deletes everything it made at the end.
 #
-# It builds the images, installs the bundle in /tmp/hf-smoke (demo mode), backs up to a separate restic REST server,
-# proves a restore test and a real restore (then an upload), stops the app to check an alert fires and clears, runs one
-# good update and one deliberately broken one (which must undo itself), and checks the data survived it all. Nothing
-# leaves the machine: alerts go to a local catcher, mail to a local Mailpit, backups to a local REST server.
+# It builds the images, installs the bundle in $HF_SMOKE_DIR (demo mode), backs up to a separate restic REST server,
+# proves a restore test and a real restore (then an upload), stops the app to check an alert fires and clears, kills the
+# database, app and ops without warning to check they come back with their data, runs one good update and one
+# deliberately broken one (which must undo itself), and checks the data survived it all. Nothing leaves the machine:
+# alerts go to a local catcher, mail to a local Mailpit, backups to a local REST server.
+#
+# Settings (checked before anything else; a bad value is refused with exit 2):
+#   HF_SMOKE_DIR      the folder the bundle is installed in (default /tmp/hf-smoke). The alert log, cookie jar, image
+#                     file and catcher output sit next to it as <dir>-alerts.log, <dir>-cookies, <dir>-images-<v>.tar
+#                     and <dir>-catcher.out. It must not exist yet.
+#   HF_SMOKE_PROJECT  the Compose project name (default hfsmoke, never "highland"). The REST server container is
+#                     <project>-rest.
+#   HF_SMOKE_BIND     the address the front door is published on (default 127.0.0.1).
+# The ports stay fixed (8080, 8000, 8099), so two smoke runs cannot share one machine.
 set -euo pipefail
 
+DIR="${HF_SMOKE_DIR:-/tmp/hf-smoke}"
+PROJECT="${HF_SMOKE_PROJECT:-hfsmoke}"
+# No "..", no "." component and no trailing slash, so <dir>-alerts.log and the rest land beside the folder, not in it.
+if ! [[ "$DIR" =~ ^/[A-Za-z0-9._/-]+$ ]] || [[ "$DIR" == *..* ]] || [ "$DIR" = / ] || [[ "$DIR" == */ ]] || [[ "$DIR/" == */./* ]]; then
+  echo "HF_SMOKE_DIR must be an absolute folder path such as /tmp/hf-smoke-acme-r1 (letters, digits, dot, dash, underscore and slash only)." >&2; exit 2
+fi
+if ! [[ "$PROJECT" =~ ^[a-z0-9][a-z0-9_-]{0,62}$ ]] || [ "$PROJECT" = highland ]; then
+  echo "HF_SMOKE_PROJECT must be a Compose project name such as hf-acme-r1 (lower-case letters, digits, dash and underscore), and never \"highland\"." >&2; exit 2
+fi
+ALERTS="$DIR-alerts.log"; COOKIES="$DIR-cookies"; REST_NAME="$PROJECT-rest"
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-DIR=/tmp/hf-smoke
-PROJECT=hfsmoke
-ALERTS=/tmp/hf-smoke-alerts.log
-COOKIES=/tmp/hf-smoke-cookies
 REST_IMAGE=restic/rest-server:0.14.0      # BSD-2-Clause
 MAILPIT_IMAGE=axllent/mailpit:v1.21.8     # MIT
 BIND="${HF_SMOKE_BIND:-127.0.0.1}"        # the front door is published on this address only
@@ -31,6 +48,11 @@ fail() { echo "   FAILED: $*" >&2; exit 1; }
 dc() { (cd "$DIR" && docker compose -p "$PROJECT" "$@"); }
 ops_cli() { dc exec -T ops node ops/dist/cli.js "$@"; }
 notes_count() { dc exec -T db psql -U app -d app -tAc 'select count(*) from notes' | tr -d '[:space:]'; }
+# Scheduled-job runs (Task 9's job_runs, one row per job and due time): how many, and how many due times appear twice.
+job_runs_count() { dc exec -T db psql -U app -d app -tAc 'select count(*) from job_runs' | tr -d '[:space:]'; }
+job_runs_duplicates() { dc exec -T db psql -U app -d app -tAc 'select count(*) - count(distinct (job, due_at)) from job_runs' | tr -d '[:space:]'; }
+# How many times the ops daemon has started since time $1 (its start-up line in the ops container's log).
+ops_starts_since() { dc logs --no-color --since "$1" ops 2>/dev/null | grep -cF 'Health checks run every minute' || true; }
 alert_lines() { [ -f "$ALERTS" ] && wc -l < "$ALERTS" | tr -d ' ' || echo 0; }
 # Waits up to $2 seconds for text $1 in the alert log, after line $3.
 wait_alert() {
@@ -65,10 +87,10 @@ teardown() {
   if [ "$PASSED" != true ]; then echo "SMOKE FAILED during: $STEP (exit $code). Cleaning up." >&2; fi
   say "Step 10: tear down"
   if [ -f "$DIR/compose.yaml" ]; then dc --profile tools --profile tunnel down -v --remove-orphans >/dev/null 2>&1; fi
-  docker rm -f hf-smoke-rest >/dev/null 2>&1
+  docker rm -f "$REST_NAME" >/dev/null 2>&1
   [ -n "$CATCHER_PID" ] && kill "$CATCHER_PID" >/dev/null 2>&1
   for img in "${CREATED_IMAGES[@]}"; do docker rmi "$img" >/dev/null 2>&1; done
-  rm -rf "$DIR" "$COOKIES" "/tmp/hf-smoke-images-${V1:-x}.tar"
+  rm -rf "$DIR" "$COOKIES" "$DIR-images-${V1:-x}.tar"
   echo "   Removed the containers, volumes, network and the highland images this run built. The alert log is kept at $ALERTS."
   echo "   Pulled third-party images (postgres, caddy, $REST_IMAGE, $MAILPIT_IMAGE) are left; remove them with docker rmi if you like."
   if [ "$PASSED" = true ]; then echo "SMOKE PASSED in $(( (SECONDS - START) / 60 )) min $(( (SECONDS - START) % 60 )) s"; fi
@@ -85,8 +107,8 @@ fi
 if docker images --format '{{.Repository}}' | grep -qE '(^|/)highland/(app|ops)$'; then
   echo "This machine already has highland/app or highland/ops images (local or from a registry), so it may be a client box or someone's build machine. The smoke test builds and deletes those images, so it runs only where there are none. Stopping." >&2; exit 2
 fi
-if [ -e "$DIR" ] || [ -n "$(docker ps -aq --filter name='^hf-smoke-rest$')" ] || [ -n "$(docker ps -aq --filter label=com.docker.compose.project=$PROJECT)" ]; then
-  echo "A previous smoke run was left behind ($DIR, the hf-smoke-rest container or the $PROJECT project). Remove it first." >&2; exit 2
+if [ -e "$DIR" ] || [ -e "$COOKIES" ] || [ -n "$(docker ps -aq --filter "name=^$REST_NAME\$")" ] || [ -n "$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT")" ]; then
+  echo "A previous smoke run was left behind ($DIR, $COOKIES, the $REST_NAME container or the $PROJECT project). Remove it first." >&2; exit 2
 fi
 trap teardown EXIT
 
@@ -105,7 +127,7 @@ docker build -q -f deploy/ops.Dockerfile -t "highland/ops:$V" --build-arg "APP_V
 CREATED_IMAGES+=("highland/app:$V1" "highland/ops:$V1")   # loaded back from the file by the update in step 8
 docker tag "highland/app:$V" "highland/app:$V1"
 docker tag "highland/ops:$V" "highland/ops:$V1"
-docker save "highland/app:$V1" "highland/ops:$V1" -o "/tmp/hf-smoke-images-$V1.tar"
+docker save "highland/app:$V1" "highland/ops:$V1" -o "$DIR-images-$V1.tar"
 docker rmi "highland/app:$V1" "highland/ops:$V1" >/dev/null   # so the update has to load them from the file
 CREATED_IMAGES+=("highland/app:$V2" "highland/ops:$V2")
 docker build -q -f deploy/test/broken-image.Dockerfile --build-arg "BASE=highland/app:$V" -t "highland/app:$V2" deploy/test >/dev/null
@@ -116,9 +138,9 @@ ok "highland/app and highland/ops $V built; $V1 saved to a file; broken $V2 buil
 STEP="step 2 (backup server and alert catcher)"
 GW="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')"
 say "Step 2: start the restic REST server and the alert catcher on $GW"
-docker run -d --quiet --name hf-smoke-rest -p "$GW:8000:8000" -e DISABLE_AUTHENTICATION=1 "$REST_IMAGE" >/dev/null
+docker run -d --quiet --name "$REST_NAME" -p "$GW:8000:8000" -e DISABLE_AUTHENTICATION=1 "$REST_IMAGE" >/dev/null
 rm -f "$ALERTS"
-HF_SMOKE_ALERT_LOG="$ALERTS" HF_SMOKE_CATCHER_HOST="$GW" node deploy/smoke/catcher.mjs >/tmp/hf-smoke-catcher.out 2>&1 &
+HF_SMOKE_ALERT_LOG="$ALERTS" HF_SMOKE_CATCHER_HOST="$GW" node deploy/smoke/catcher.mjs >"$DIR-catcher.out" 2>&1 &
 CATCHER_PID=$!
 t=0; until curl -s -o /dev/null "http://$GW:8000/" && curl -s -o /dev/null "http://$GW:8099/"; do
   t=$((t + 1)); [ "$t" -ge 30 ] && fail "the REST server or the catcher did not start"; sleep 1
@@ -132,7 +154,7 @@ say "Step 3: make $DIR from the bundle and run ops init"
 npm run -s bundle >/dev/null
 mkdir -p "$DIR"
 tar -xzf "dist/highland-bundle-$V.tar.gz" -C "$DIR"
-mv "/tmp/hf-smoke-images-$V1.tar" "$DIR/images-$V1.tar"
+mv "$DIR-images-$V1.tar" "$DIR/images-$V1.tar"
 docker run --rm -u "$(id -u):$(id -g)" -v "$DIR:/out" "highland/ops:$V" \
   init --client Smoke --origin http://localhost:8080 --site :80 --dir "$DIR" --demo --out /out/.env 2>/dev/null
 [ "$(stat -c %a "$DIR/.env")" = 600 ] || fail ".env is not mode 600"
@@ -215,6 +237,30 @@ dc start app >/dev/null 2>&1
 wait_healthy
 wait_alert 'Fixed: The app is not answering.' 240 "$MARK" || fail "no Fixed alert within 240 s"
 ok "alert received: Fixed: The app is not answering. (now back to normal)."
+
+# ---- 7a. Hard kill: no clean shutdown for the database, the app or ops; everything must come back with its data.
+STEP="step 7a (hard kill)"
+say "Step 7a: SIGKILL db, app and ops, start them again, check the data and every check"
+NOTES_BEFORE="$(notes_count)"
+RUNS_BEFORE="$(job_runs_count)"
+KILLED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+T0=$SECONDS
+dc kill -s SIGKILL db app ops >/dev/null 2>&1 || fail "docker compose kill failed"
+dc up -d >/dev/null 2>&1 || { dc ps; fail "docker compose up -d failed after the hard kill"; }
+wait_healthy
+[ "$(notes_count)" = "$NOTES_BEFORE" ] || fail "the notes count changed across the hard kill"
+# Ops has started again: its daemon wrote its start-up line after the kill and its container is running, not restarting.
+t=0; until [ "$(ops_starts_since "$KILLED_AT")" -gt 0 ] && dc ps --status running --services 2>/dev/null | grep -qx ops; do
+  t=$((t + 5)); [ "$t" -ge 180 ] && fail "ops did not start again within 3 minutes of the hard kill"; sleep 5
+done
+t=0; until OUT="$(ops_cli check 2>&1)" && ! echo "$OUT" | grep -q '^✗'; do
+  t=$((t + 5)); [ "$t" -ge 180 ] && { echo "$OUT"; fail "ops check still reports a problem 3 minutes after the hard kill"; }; sleep 5
+done
+# Scheduled jobs: no recorded run was lost and no due time was run twice.
+RUNS_AFTER="$(job_runs_count)"
+[ "$RUNS_AFTER" -ge "$RUNS_BEFORE" ] || fail "scheduled-job runs recorded before the hard kill are missing ($RUNS_BEFORE before, $RUNS_AFTER after)"
+[ "$(job_runs_duplicates)" = 0 ] || fail "a scheduled job ran twice for the same due time after the hard kill"
+ok "hard kill of db, app and ops: back healthy in $((SECONDS - T0)) s, $NOTES_BEFORE notes kept, every check ✓"
 
 # ---- 8. One good update (from a docker save file), one broken one that must undo itself.
 STEP="step 8 (updates)"
