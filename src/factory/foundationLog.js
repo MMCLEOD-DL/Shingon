@@ -81,11 +81,13 @@ export function securityFixesSince(text, version) {
 export function changesBetween(text, from, to) {
   for (const v of [from, to]) if (parseVersion(v) === null) throw new Error(`"${v}" is not a version number such as 1.2.3.`);
   return parseChangelog(text)
-    .filter((s) => s.version !== 'Unreleased' && compareVersions(s.version, from) > 0 && compareVersions(s.version, to) <= 0)
+    // Pre-release sections are skipped: releaseTags never offers a pre-release, so an upgrade never lands on one.
+    .filter((s) => s.version !== 'Unreleased' && parseVersion(s.version).pre.length === 0
+      && compareVersions(s.version, from) > 0 && compareVersions(s.version, to) <= 0)
     .sort((a, b) => compareVersions(a.version, b.version));
 }
 
-const RELEASE_TAG = /^v\d+\.\d+\.\d+$/;
+const RELEASE_TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 // Reads of the foundation never follow a GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE left in Conductor's own environment.
 const CLEAN_GIT_ENV = { GIT_DIR: undefined, GIT_WORK_TREE: undefined, GIT_INDEX_FILE: undefined };
 

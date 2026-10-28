@@ -28,6 +28,8 @@ test('changesBetween returns the sections after from, up to and including to, ol
   assert.deepEqual(changesBetween(LOG, '0.1.0', '0.2.0').map((s) => s.version), ['0.1.1', '0.2.0']);
   assert.deepEqual(changesBetween(LOG, '0.1.1', '0.1.1'), []);
   assert.deepEqual(changesBetween(LOG, '0.0.1', '0.1.0').map((s) => s.version), ['0.1.0']);
+  const rc = '## [0.2.0] - 2026-03-01\n- Final.\n\n## [0.2.0-rc.1] - 2026-02-01\n- Candidate.\n\n## [0.1.0] - 2026-01-01\n- First.\n';
+  assert.deepEqual(changesBetween(rc, '0.1.0', '0.2.0').map((s) => s.version), ['0.2.0']);
 });
 
 test('changesBetween throws Plan 10\'s message on a heading that is not understood', () => {
@@ -44,6 +46,7 @@ test('releaseTags lists only vX.Y.Z tags in version order; readChangelogAt reads
   try {
     await git(f.dir, ['tag', 'v0.2.0-rc.1']);
     await git(f.dir, ['tag', 'nightly']);
+    await git(f.dir, ['tag', 'v01.0.0']);
     const before = await refsOf(f.dir);
     assert.deepEqual(await releaseTags(f.dir), ['v0.1.0', 'v0.1.1', 'v0.1.10']);
     assert.match(await readChangelogAt(f.dir, 'v0.1.1'), /\[security\]\*\* Sessions now expire/);
