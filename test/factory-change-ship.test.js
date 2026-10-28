@@ -247,7 +247,7 @@ test('a saved start marker (a crash during an update) is asked about on resume; 
   });
   assert.equal(r.status, 'stopped');
   assert.match(r.reason, /You chose not to try acme-cloud again/);
-  assert.deepEqual(questions, ['acme-cloud did not update last time (Conductor did not see how the last attempt ended). Try it again now?']);
+  assert.deepEqual(questions, ['acme-cloud may not have finished updating last time (Conductor started an update there but did not see how it ended). Try it again now?']);
   assert.deepEqual(calledNames(deps), []);
   assert.match(shipReport({ release: { version: '0.3.0' }, deployments: { 'acme-cloud': { outcome: 'started', from: '0.2.0' } } }, [dep('acme-cloud')]),
     /acme-cloud: Conductor did not see how the last attempt ended, so it may have stopped part-way\. Check it with "conductor deployments status acme-cloud"/);
@@ -358,4 +358,17 @@ test('shipReport lists every deployment with what happened and the version it is
     '  acme-office: the new version failed its health check, so the box undid the update by itself. It is back on 0.2.0 with its data as before.',
     '  beta-office: not updated (still on 0.2.0), because an earlier deployment did not update.',
   ].join('\n'));
+});
+
+test('a record that becomes unreadable after the first box says only that it and the rest were not updated', async () => {
+  let broken = false;
+  const deps = stubDeps({
+    listDeployments: () => [dep('acme-cloud'), broken ? { ...dep('acme-office'), problem: 'deployments/acme-office.json could not be read. Fix or remove it.' } : dep('acme-office')],
+    updateDeployment: async () => { broken = true; return updated(); },
+  });
+  const r = await ship(deps);
+  assert.equal(r.status, 'stopped');
+  assert.doesNotMatch(r.reason, /No deployment was updated/);
+  assert.match(r.reason, /acme-office and the deployments after it were not updated\./);
+  assert.deepEqual(calledNames(deps), ['acme-cloud']);
 });

@@ -67,7 +67,7 @@ function lastTimeReason(r) {
     case 'urgent': return 'the update failed and the automatic undo also failed';
     case 'lost-contact': return 'Conductor lost contact with the box during the update';
     case 'refused': return 'Conductor did not start the update there';
-    case 'started': return 'Conductor did not see how the last attempt ended';
+    case 'started': return 'Conductor started an update there but did not see how it ended';
     default: return `it ended in a way Conductor does not recognise (${r?.outcome})`;
   }
 }
@@ -112,10 +112,13 @@ export async function shipUpdate({ projectDir, projectsRoot, slug, run, version,
     }
   };
 
-  for (const { name } of list) {
+  for (const [i, { name }] of list.entries()) {
     // Read again before each box (Ruling Task 8): Plan 10 may have changed a record since the last one.
     const fresh = projectDeployments(deps, { projectsRoot, slug });
-    if (fresh.problem) return stopped(fresh.problem);
+    // After the first box, earlier ones may already be updated: say only that the rest were not.
+    if (fresh.problem) return stopped(i === 0 ? fresh.problem : fresh.problem
+      .replace('No deployment was updated.', `${name} and the deployments after it were not updated.`)
+      .replace(', so nothing was updated.', `, so ${name} and the deployments after it were not updated.`));
     const d = fresh.list.find((e) => e.name === name)?.deployment;
     if (!d) return stopped(`The deployment ${name} is no longer listed for this project, so it and the deployments after it were not updated.`);
 
@@ -124,7 +127,9 @@ export async function shipUpdate({ projectDir, projectsRoot, slug, run, version,
 
     if (isObject(before) && !RECHECK.has(before.outcome)) {
       let answer = false;
-      try { answer = await ask(`${name} did not update last time (${lastTimeReason(before)}). Try it again now?`); } catch { answer = false; }
+      try { answer = await ask(before.outcome === 'started'
+        ? `${name} may not have finished updating last time (${lastTimeReason(before)}). Try it again now?`
+        : `${name} did not update last time (${lastTimeReason(before)}). Try it again now?`); } catch { answer = false; }
       if (answer !== true) return stopped(`You chose not to try ${name} again, so it and the deployments after it were not updated.`);
     }
 
