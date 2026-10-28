@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createChangeRun, loadChangeRun, saveChangeRun, findUnfinishedRun, STAGES, RUN_UNREADABLE } from '../src/factory/change/run.js';
+import { createChangeRun, loadChangeRun, saveChangeRun, findUnfinishedRun, STAGES, RUN_UNREADABLE, RUN_FOLDER_UNREADABLE } from '../src/factory/change/run.js';
 import {
   realDeps, missingSeams, DEP_NAMES, CONTINUE_OUTCOMES, loadBriefVersion, currentBriefVersion, makeReviseBrief,
   NO_BRIEF_VERSION, NO_APPROVED_BRIEF,
@@ -102,11 +102,18 @@ test('loadChangeRun refuses a wrong schema', () => {
   assert.throws(() => loadChangeRun(dir, run.runId), /could not be read/);
 });
 
-test('findUnfinishedRun on a damaged change.json throws RUN_UNREADABLE (a run we cannot read might be unfinished)', () => {
+test('findUnfinishedRun on a damaged change.json names the folder and says to move it aside (final review item 11)', () => {
   const dir = emptyProject();
-  const run = createChangeRun(dir, FIELDS, { now: NOW });
-  writeFileSync(path.join(dir, 'builds', run.runId, 'change.json'), '');
-  assert.throws(() => findUnfinishedRun(dir), (e) => e.message === RUN_UNREADABLE(run.runId));
+  const done = createChangeRun(dir, FIELDS, { now: NOW, newId: () => '20261027-100000-0001' });
+  saveChangeRun(dir, { ...done, status: 'done', stage: 'done' });
+  writeFileSync(path.join(dir, 'builds', done.runId, 'change.json'), '{ not json');
+  const folder = path.join(dir, 'builds', done.runId);
+  assert.throws(() => findUnfinishedRun(dir), (e) => e.message === RUN_FOLDER_UNREADABLE(done.runId, folder));
+  assert.equal(RUN_FOLDER_UNREADABLE('20261027-100000-0001', '/p/acme/builds/20261027-100000-0001'),
+    'The record of change 20261027-100000-0001 could not be read, so Conductor cannot tell whether it is finished. If you no longer need it, move the folder /p/acme/builds/20261027-100000-0001 out of the builds folder, then try again. Nothing was changed.');
+  // Moved aside, it no longer blocks.
+  renameSync(folder, path.join(path.dirname(dir), 'old-change'));
+  assert.equal(findUnfinishedRun(dir), null);
 });
 
 test('loadBriefVersion reads brief-v<n>.json; a missing or invalid one throws NO_BRIEF_VERSION(n)', async () => {

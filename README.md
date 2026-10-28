@@ -422,6 +422,8 @@ Nothing ships unless the council passed, or you chose to ship anyway after readi
 
 Two things are not changes. A feature you remove from the brief is taken out of the app but **keeps its data**: deleting client data is always a separate, manual decision. And moving the app to different hosting is not a change either; Conductor refuses it before building anything, so use `conductor ship` for a new box.
 
+`conductor change` on its own, or with one word after it (`conductor change acme`), is now this command and prints how to use it, rather than being sent to the AI team as an ordinary request; a longer request such as `conductor change the button colour` still is one. The same goes for `conductor foundation-upgrade`.
+
 You need a terminal for `--notes`, `--to` and `--resume`, because Conductor asks you questions and waits for your approval; without one it refuses to start. `--abandon` and `--check` need no terminal.
 
 ### Taking a foundation fix

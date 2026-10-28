@@ -449,6 +449,8 @@ export async function runBuild({ factory, slug, team, hooks, options = {}, baseD
       council: true,
       councilMembers: [...FEATURE_COUNCIL],
       // The member gets ws.baseSha from the run (ruling Q27 b); a change unit also names the tags it retires.
+      // No council member reads factoryFeature.retire yet: it is kept because the unit's instructions name the same
+      // tags (the authority to change or remove those tests), so a member can check against it later.
       factoryFeature: { id: unit.id, tags: [...(unit.acceptance ?? [])], ...(change ? { retire: [...(unit.retire ?? [])] } : {}) },
       firstChunk: acceptanceStep({ brief, unit }),
     };

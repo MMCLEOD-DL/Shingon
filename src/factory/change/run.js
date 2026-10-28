@@ -13,6 +13,7 @@ export const RUN_STATUSES = Object.freeze(['running', 'paused', 'failed', 'stopp
 const UNFINISHED = ['running', 'paused', 'failed'];
 const MAX_ID_TRIES = 5;
 
+export const RUN_FOLDER_UNREADABLE = (runId, folder) => `The record of change ${runId} could not be read, so Conductor cannot tell whether it is finished. If you no longer need it, move the folder ${folder} out of the builds folder, then try again. Nothing was changed.`;
 export const RUN_UNREADABLE = (runId) => `The record of change ${runId} could not be read, so Conductor stopped rather than guess where it was. Nothing was changed.`;
 
 const changeFile = (projectDir, runId) => path.join(projectDir, 'builds', runId, 'change.json');
@@ -59,7 +60,8 @@ export function saveChangeRun(projectDir, run, { now = new Date() } = {}) {
   writeJsonAtomic(changeFile(projectDir, run.runId), run);
 }
 
-// The newest change run that is still running, paused or failed. Plan 8 build folders (no change.json) are skipped.
+// The newest change run that is still running, paused or failed. Plan 8 build folders (no change.json) are skipped;
+// an unreadable change.json stops with RUN_FOLDER_UNREADABLE.
 export function findUnfinishedRun(projectDir) {
   let names;
   try { names = readdirSync(path.join(projectDir, 'builds')); } catch (err) {
@@ -69,7 +71,12 @@ export function findUnfinishedRun(projectDir) {
   let newest = null;
   for (const name of names.filter((n) => RUN_ID_RE.test(n)).sort()) {
     if (!existsSync(changeFile(projectDir, name))) continue;
-    const run = loadChangeRun(projectDir, name);
+    // A record that cannot be read might be unfinished, so it is never skipped; the operator is told which folder it
+    // is and how to clear it (final review item 11).
+    let run;
+    try { run = loadChangeRun(projectDir, name); } catch {
+      throw new Error(RUN_FOLDER_UNREADABLE(name, path.join(projectDir, 'builds', name)));
+    }
     if (!UNFINISHED.includes(run.status)) continue;
     if (newest === null || run.createdAt >= newest.createdAt) newest = run;
   }
