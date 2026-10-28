@@ -6,6 +6,8 @@ export interface MoneyToken {
   confidence: number;
   /** How many letters were read as digits (O→0, S→5 …) to make the amount. */
   repairs: number;
+  /** True when a minus sign comes before the amount ("-£8.75", "£-8.75"): a refund or a discount. */
+  signed: boolean;
 }
 
 // Letters that OCR often returns in place of digits. Repaired only inside a money token, never elsewhere.
@@ -54,7 +56,8 @@ export function findMoney(text: string, lineConfidence: number, opts: { commaDec
         return REPAIR[c] ?? c;
       });
     const pence = toPence(`${fix(whole)}.${fix(decimals)}`);
-    out.push({ pence, confidence: Math.max(0, lineConfidence - 0.3 * repairs), repairs });
+    const signed = /[-−]\s*(?:£|GBP\s?)?\s*$/.test(text.slice(0, m.index));
+    out.push({ pence, confidence: Math.max(0, lineConfidence - 0.3 * repairs), repairs, signed });
   }
   return out;
 }

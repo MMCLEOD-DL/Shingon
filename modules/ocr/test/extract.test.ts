@@ -1,6 +1,6 @@
 import { test, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { CONFIDENT } from '@hf/shared';
+import { CONFIDENT, type Scored } from '@hf/shared';
 import { extractReceipt, type OcrLine } from '../src/index.js';
 
 /** One recognised line per line, optionally followed by a TAB and the line's confidence (default 0.95). */
@@ -36,12 +36,12 @@ test.each(CASES)('%s: every field right and confident', (file, amount, vat, date
   expect(p.currency).toBe('GBP');
 });
 
-test.each(CASES)('%s: the VAT, date and merchant are confident too, except "no VAT shown"', (file, _amount, vat) => {
+test.each(CASES)('%s: the VAT and date are confident too, except "no VAT shown"; the merchant is a guess by position, never certain', (file, _amount, vat) => {
   const p = extractReceipt(lines(file), { today: '2026-03-31' });
   if (vat === null) expect(p.vatPence).toEqual({ value: null, confidence: 0.7 });
   else expect(p.vatPence!.confidence).toBeGreaterThanOrEqual(CONFIDENT);
   expect(p.date!.confidence).toBeGreaterThanOrEqual(CONFIDENT);
-  expect(p.merchant!.confidence).toBeGreaterThanOrEqual(CONFIDENT);
+  expect(p.merchant!.confidence).toBe(0.8);
   expect(p.warnings).toEqual([]);
 });
 
@@ -124,10 +124,10 @@ test('without £ or GBP anywhere the currency is unknown and the total is never 
   expect(p.amountPence!.confidence).toBeLessThan(CONFIDENT);
 });
 
-test('"Total incl. VAT" is never confidently a VAT amount', () => {
+test('"Total incl. VAT" is the total, never a VAT amount', () => {
   const p = extractReceipt([{ text: 'Shop Name', confidence: 0.99 }, { text: 'Total incl. VAT £12.40', confidence: 0.99 }], { today: '2026-03-31' });
-  expect(p.vatPence === null || p.vatPence.confidence < CONFIDENT).toBe(true);
-  expect(p.amountPence === null || p.amountPence.confidence < CONFIDENT).toBe(true);
+  expect(p.amountPence).toEqual({ value: 1240, confidence: 0.99 });
+  expect(p.vatPence).toEqual({ value: null, confidence: 0.7 });
 });
 
 test('a VAT summary table whose rows do not add up to the total is marked for checking', () => {
@@ -160,7 +160,7 @@ test('a merchant line is never a total, a date or an address', () => {
 test('confidences are rounded to two decimals', () => {
   const p = extractReceipt([{ text: 'Corner Café', confidence: 0.876543 }, { text: 'TOTAL £8.75', confidence: 0.876543 }], { today: '2026-03-31' });
   expect(p.amountPence!.confidence).toBe(0.88);
-  expect(p.merchant!.confidence).toBe(0.88);
+  expect(p.merchant!.confidence).toBe(0.8); // merchants are capped at 0.8 (Ruling (Task 2))
 });
 
 test('odd text never throws, and an over-long number is not money', () => {
@@ -174,4 +174,75 @@ test('odd text never throws, and an over-long number is not money', () => {
   );
   expect(p.amountPence).toBeNull();
   expect(p.date).toBeNull();
+});
+
+// Ruling (Task 2): Ruling 2 overrides the brief's selection rules. Every receipt below is constructed to tempt the
+// rules into a wrong answer; each field must be right, or marked "Please check".
+interface Truth { amount: number | null; vat: number | null; date: string | null; merchant: string | null }
+const CAFE_TOP = ['Corner Café', '12 Mill Lane, Anytown AB1 2CD', '05/03/2026 12:41', 'Flat white 2.95', 'Cheese toastie 5.80'];
+const CAFE: Truth = { amount: 875, vat: 146, date: '2026-03-05', merchant: 'Corner Café' };
+const HOTEL_TOP = ['Glen Lodge', 'Glen Road, Anyglen AB9 1LM', 'Invoice date 11/03/2026', '2 nights bed and breakfast 240.00'];
+const HOTEL: Truth = { amount: 24000, vat: 4000, date: '2026-03-11', merchant: 'Glen Lodge' };
+const DELI_TOP = ['Harbour Deli', '3 Quay Street, Anytown AB5 6GJ', '19/03/2026 20:15', 'Food 19.99', 'Service charge (optional) 4.00'];
+const DELI: Truth = { amount: 2399, vat: 400, date: '2026-03-19', merchant: 'Harbour Deli' };
+const MIXED_TOP = ['Harbour Foods', '1 Quay Street, Anytown AB5 6GH', '19/03/26 14:02', 'SUBTOTAL 23.49', 'BALANCE DUE £23.49'];
+const MIXED: Truth = { amount: 2349, vat: 333, date: '2026-03-19', merchant: 'Harbour Foods' };
+
+const ADVERSARIAL: [string, string[], Truth][] = [
+  ['singular TOTAL SAVING', [...CAFE_TOP, 'TOTAL £8.75', 'TOTAL SAVING £1.00', 'VAT @ 20% 1.46'], CAFE],
+  ['Total saved today', [...CAFE_TOP, 'TOTAL £8.75', 'VAT @ 20% 1.46', 'Total saved today £2.50'], CAFE],
+  ['TOTAL REDUCTIONS', [...CAFE_TOP, 'TOTAL £8.75', 'TOTAL REDUCTIONS £1.20', 'VAT @ 20% 1.46'], CAFE],
+  ['hotel Payment received / Balance due 0.00', [...HOTEL_TOP, 'Total GBP 240.00', 'VAT 40.00', 'Payment received 240.00', 'Balance due 0.00'], HOTEL],
+  ['Deposit paid / Balance due', [...HOTEL_TOP, 'Total GBP 240.00', 'VAT 40.00', 'Deposit paid 50.00', 'Balance due 190.00'], HOTEL],
+  ['AMOUNT DUE £0.00', [...CAFE_TOP, 'TOTAL £8.75', 'VAT @ 20% 1.46', 'Paid by card 8.75', 'AMOUNT DUE £0.00'], CAFE],
+  ['Total tendered', [...CAFE_TOP, 'TOTAL £8.75', 'VAT @ 20% 1.46', 'Total tendered £10.00', 'Change due £1.25'], CAFE],
+  ['CASH TOTAL', [...CAFE_TOP, 'TOTAL £8.75', 'VAT @ 20% 1.46', 'CASH TOTAL £10.00', 'CHANGE £1.25'], CAFE],
+  ['suggested tip', [...DELI_TOP, 'Total £23.99', 'VAT 4.00', 'Suggested tip 10% £2.40', 'Total with suggested tip £26.39'], DELI],
+  ['a time printed on the total line', [...CAFE_TOP, 'TOTAL £8.75 at 12.41', 'VAT @ 20% 1.46'], CAFE],
+  ['T0TAL then a saving', [...CAFE_TOP, 'T0TAL £8.75', 'T0TAL SAVING £1.00', 'VAT @ 20% 1.46'], CAFE],
+  ['T0TAL then tendered', [...CAFE_TOP, 'T0TAL £8.75', 'VAT @ 20% 1.46', 'T0TAL TENDERED £10.00'], CAFE],
+  ['mixed-rate VAT lines 20% and 0%', [...MIXED_TOP, 'VAT 20% £3.33', 'VAT 0% £0.00'], MIXED],
+  ['4-column VAT table with VAT TOTAL 0.00', [...MIXED_TOP, 'CODE RATE NET VAT GROSS', 'A 20% 16.66 3.33 19.99', 'B 0% 3.50 0.00 3.50', 'VAT TOTAL 0.00'], MIXED],
+  ['4-column VAT table with VAT TOTAL 3.33', [...MIXED_TOP, 'CODE RATE NET VAT GROSS', 'A 20% 16.66 3.33 19.99', 'B 0% 3.50 0.00 3.50', 'VAT TOTAL 3.33'], MIXED],
+  ['4-column VAT table whose row does not add up', [...MIXED_TOP, 'A 20% 16.66 3.33 19.90', 'B 0% 3.50 0.00 3.50'], MIXED],
+  ['Incl. gratuity 0.00', [...DELI_TOP, 'Total £23.99', 'VAT 4.00', 'Incl. gratuity 0.00'], DELI],
+  ['REPRINT date', [...CAFE_TOP, 'TOTAL £8.75', 'VAT @ 20% 1.46', 'Reprint date 07/03/2026 10:02'], CAFE],
+  ['Due date above Invoice date', ['Glen Lodge', 'Glen Road, Anyglen AB9 1LM', 'Due date 30/03/2026', 'Invoice date 11/03/2026', 'Total GBP 240.00', 'VAT 40.00'], HOTEL],
+  ['two plain dates', ['Corner Café', 'Order placed 01/03/2026', '05/03/2026 12:41', '06/03/2026', 'TOTAL £8.75', 'VAT @ 20% 1.46'], CAFE],
+  ['CUSTOMER COPY above the merchant', ['CUSTOMER COPY', ...CAFE_TOP, 'TOTAL £8.75', 'VAT @ 20% 1.46'], CAFE],
+  ['Welcome line', ['Welcome to', ...CAFE_TOP, 'TOTAL £8.75', 'VAT @ 20% 1.46'], CAFE],
+  ['Table 4 first', ['Table 4', ...DELI_TOP, 'Total £23.99', 'VAT 4.00'], DELI],
+  ['street address first', ['12 Mill Lane', 'Corner Café', '05/03/2026 12:41', 'TOTAL £8.75', 'VAT @ 20% 1.46'], CAFE],
+  ['Server and till lines first', ['Server: Sam', 'Till 2', 'Corner Café', '05/03/2026 12:41', 'TOTAL £8.75', 'VAT @ 20% 1.46'], CAFE],
+  ['REFUND TOTAL -£8.75', ['Corner Café', '05/03/2026 12:41', 'REFUND', 'Flat white -2.95', 'Cheese toastie -5.80', 'REFUND TOTAL -£8.75', 'VAT -1.46'], { ...CAFE, amount: -875, vat: -146 }],
+  ['Total incl. VAT', [...CAFE_TOP, 'Total incl. VAT £8.75', 'VAT £1.46'], CAFE],
+  ['Total including VAT and Total excl. VAT', [...CAFE_TOP, 'Total excl. VAT £7.29', 'Total including VAT £8.75', 'VAT £1.46'], CAFE],
+  ['Total ex VAT last', [...CAFE_TOP, 'Total incl. VAT £8.75', 'VAT £1.46', 'Total ex VAT £7.29'], CAFE],
+  ['net line', [...CAFE_TOP, 'Net total £7.29', 'VAT £1.46', 'Total £8.75'], CAFE],
+  ['zero total', [...CAFE_TOP, 'TOTAL £0.00', 'VAT 0.00'], CAFE],
+];
+
+test.each(ADVERSARIAL)('adversarial: %s is right or marked "Please check" on every field', (_name, texts, truth) => {
+  const p = extractReceipt(texts.map((text) => ({ text, confidence: 0.95 })), { today: '2026-03-31' });
+  const fields: [Scored<unknown> | null, unknown][] = [
+    [p.amountPence, truth.amount],
+    [p.vatPence, truth.vat],
+    [p.date, truth.date],
+    [p.merchant, truth.merchant],
+  ];
+  for (const [field, right] of fields) {
+    if (field && field.value !== right) expect(field.confidence, `${String(field.value)} instead of ${String(right)}`).toBeLessThan(CONFIDENT);
+  }
+});
+
+test('"Total incl. VAT £8.75" with "VAT £1.46" is now confident and correct', () => {
+  const p = extractReceipt([...CAFE_TOP, 'Total incl. VAT £8.75', 'VAT £1.46'].map((text) => ({ text, confidence: 0.95 })), { today: '2026-03-31' });
+  expect(p.amountPence).toEqual({ value: 875, confidence: 0.95 });
+  expect(p.vatPence).toEqual({ value: 146, confidence: 0.95 });
+  expect(p.warnings).toEqual([]);
+});
+
+test('a 4-column VAT table that adds up is read confidently', () => {
+  const p = extractReceipt([...MIXED_TOP, 'A 20% 16.66 3.33 19.99', 'B 0% 3.50 0.00 3.50', 'VAT TOTAL 3.33'].map((text) => ({ text, confidence: 0.95 })), { today: '2026-03-31' });
+  expect(p.vatPence).toEqual({ value: 333, confidence: 0.95 });
 });
