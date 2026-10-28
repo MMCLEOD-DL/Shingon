@@ -1,5 +1,5 @@
 import { existsSync, readdirSync } from 'node:fs';
-import { constants, createDeflate, deflateRawSync } from 'node:zlib';
+import { constants, createDeflate, deflateRawSync, deflateSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
 /** An absolute path inside `modules/ocr/test/fixtures`. */
@@ -41,8 +41,11 @@ function zerosBomb(gib: number): Buffer {
   return Buffer.concat([Buffer.from([0x78, 0xda]), ...Array<Buffer>(repeats).fill(block), deflateRawSync(Buffer.alloc(0)), adler]);
 }
 
-/** A one-page PDF whose page content is `data` with the stream dictionary entries `dict` (e.g. "/Filter /FlateDecode"). */
-export function pdfWithContent(dict: string, data: Buffer): Buffer {
+/**
+ * A one-page PDF whose page content stream (object 4) is written exactly as `head` (its dictionary), `afterDict`
+ * (the "stream" keyword and its end of line), then `data` and "endstream". For building awkward constructions.
+ */
+export function pdfWithRawStream(head: string, afterDict: string, data: Buffer): Buffer {
   const parts: Buffer[] = [];
   const offsets: number[] = [];
   let at = 0;
@@ -56,7 +59,7 @@ export function pdfWithContent(dict: string, data: Buffer): Buffer {
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
     '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 226 600] /Contents 4 0 R >>',
-    [Buffer.from(`<< /Length ${String(data.length)} ${dict} >>\nstream\n`, 'latin1'), data, Buffer.from('\nendstream', 'latin1')],
+    [Buffer.from(head + afterDict, 'latin1'), data, Buffer.from('\nendstream', 'latin1')],
   ];
   objects.forEach((o, i) => {
     offsets.push(at);
@@ -69,6 +72,103 @@ export function pdfWithContent(dict: string, data: Buffer): Buffer {
   add(`xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`);
   for (const o of offsets) add(`${String(o).padStart(10, '0')} 00000 n \n`);
   add(`trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`);
+  return Buffer.concat(parts);
+}
+
+/** A one-page PDF whose page content is `data` with the stream dictionary entries `dict` (e.g. "/Filter /FlateDecode"). */
+export function pdfWithContent(dict: string, data: Buffer): Buffer {
+  return pdfWithRawStream(`<< /Length ${String(data.length)} ${dict} >>`, '\nstream\n', data);
+}
+
+/** Five ways of writing a FlateDecode bomb's dictionary that a naive scan misreads but pdfjs accepts (Task 3 review). */
+export function trickyBombs(): [string, Buffer][] {
+  const bomb = zerosBomb(1);
+  const n = String(bomb.length);
+  const raw = (head: string, after = '\nstream\n'): Buffer => pdfWithRawStream(head, after, bomb);
+  return [
+    ['C1 "(obj)" string after the filter', raw(`<< /Filter /FlateDecode /X (obj) /Length ${n} >>`)],
+    ['C1 a /Xobj key after the filter', raw(`<< /Filter /FlateDecode /Xobj 1 /Length ${n} >>`)],
+    ['C2 a nested /Filter /DCTDecode first', raw(`<< /X << /Filter /DCTDecode >> /Filter /FlateDecode /Length ${n} >>`)],
+    ['C2 a /Filter inside a string first', raw(`<< /X (/Filter /DCTDecode) /Filter /FlateDecode /Length ${n} >>`)],
+    ['C3 a #-escaped name', raw(`<< /Fil#74er /FlateDecode /Length ${n} >>`)],
+    ['C4 a comment as whitespace', raw(`<< /Filter%c\n/FlateDecode /Length ${n} >>`)],
+    ['C4 a NUL as whitespace', raw(`<< /Filter\u0000/FlateDecode /Length ${n} >>`)],
+    ['C5 spaces before the end of line after "stream"', raw(`<< /Filter /FlateDecode /Length ${n} >>`, '\nstream  \n')],
+  ];
+}
+
+/**
+ * An ordinary PDF in the compact modern layout: its catalog, page tree, page and font sit in a compressed object
+ * stream, and its cross-reference table is a compressed stream with PNG "Up" prediction (/Predictor 12). The
+ * dictionaries are written without spaces ("/Filter/FlateDecode"). The page says "Total 3.20".
+ */
+export function modernPdf(): Buffer {
+  const objs: [number, string][] = [
+    [1, '<</Type/Catalog/Pages 2 0 R>>'],
+    [2, '<</Type/Pages/Kids[3 0 R]/Count 1>>'],
+    [3, '<</Type/Page/Parent 2 0 R/MediaBox[0 0 226 600]/Resources<</Font<</F1 5 0 R>>>>/Contents 4 0 R>>'],
+    [5, '<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>'],
+  ];
+  let body = '';
+  const index: string[] = [];
+  for (const [num, text] of objs) {
+    index.push(`${String(num)} ${String(body.length)}`);
+    body += `${text}\n`;
+  }
+  const header = `${index.join(' ')}\n`;
+  const objStm = deflateSync(Buffer.from(header + body, 'latin1'));
+  const content = deflateSync(Buffer.from('BT /F1 12 Tf 10 500 Td (Total 3.20) Tj ET', 'latin1'));
+
+  const parts: Buffer[] = [];
+  let at = 0;
+  const add = (b: Buffer | string): void => {
+    const buf = typeof b === 'string' ? Buffer.from(b, 'latin1') : b;
+    parts.push(buf);
+    at += buf.length;
+  };
+  const offsets = new Map<number, number>();
+  add('%PDF-1.7\n');
+  offsets.set(4, at);
+  add(`4 0 obj\n<</Length ${String(content.length)}/Filter/FlateDecode>>stream\n`);
+  add(content);
+  add('\nendstream\nendobj\n');
+  offsets.set(6, at);
+  add(`6 0 obj\n<</Type/ObjStm/N ${String(objs.length)}/First ${String(header.length)}/Length ${String(objStm.length)}/Filter/FlateDecode>>stream\n`);
+  add(objStm);
+  add('\nendstream\nendobj\n');
+  const xrefAt = at;
+  offsets.set(7, xrefAt);
+  // Rows of [type (1 byte), field 2 (4 bytes), field 3 (2 bytes)] for objects 0..7.
+  const row = (type: number, f2: number, f3: number): Buffer => {
+    const b = Buffer.alloc(7);
+    b[0] = type;
+    b.writeUInt32BE(f2, 1);
+    b.writeUInt16BE(f3, 5);
+    return b;
+  };
+  const rows = [
+    row(0, 0, 65535),
+    row(2, 6, 0),
+    row(2, 6, 1),
+    row(2, 6, 2),
+    row(1, offsets.get(4) ?? 0, 0),
+    row(2, 6, 3),
+    row(1, offsets.get(6) ?? 0, 0),
+    row(1, xrefAt, 0),
+  ];
+  // PNG "Up" prediction: each row is the filter byte 2, then each byte minus the byte above it.
+  let prev: Buffer = Buffer.alloc(7);
+  const predicted = rows.map((r) => {
+    const out = Buffer.alloc(8);
+    out[0] = 2;
+    for (let i = 0; i < 7; i += 1) out[i + 1] = ((r[i] ?? 0) - (prev[i] ?? 0) + 256) % 256;
+    prev = r;
+    return out;
+  });
+  const xref = deflateSync(Buffer.concat(predicted));
+  add(`7 0 obj\n<</Type/XRef/Size 8/W[1 4 2]/Root 1 0 R/Filter/FlateDecode/DecodeParms<</Predictor 12/Columns 7>>/Length ${String(xref.length)}>>stream\n`);
+  add(xref);
+  add(`\nendstream\nendobj\nstartxref\n${String(xrefAt)}\n%%EOF\n`);
   return Buffer.concat(parts);
 }
 

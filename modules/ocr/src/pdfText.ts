@@ -10,6 +10,9 @@ export const UNOPENABLE_PDF = "This PDF couldn't be opened. Please type the deta
 
 /** The longest a PDF may take, whatever the engine's own timeout. */
 const PDF_MAX_MS = 3_000;
+/** How much the process may grow while a PDF is read before its thread is stopped, and how often that is checked. */
+const PDF_MAX_GROWTH = 192 * 1024 * 1024;
+const WATCHDOG_MS = 20;
 /** The largest PDF read at all. The engine has no size limit of its own (the reading queue's maxBytes comes later). */
 const PDF_MAX_BYTES = 20 * 1024 * 1024;
 
@@ -30,17 +33,19 @@ let queue: Promise<unknown> = Promise.resolve();
  *
  * The PDF is read in its own worker thread, one at a time, with a heap limit and a timeout of min(timeoutMs, 3 s).
  * Before pdfjs runs, the thread checks the raw file (pdfWorker.ts): only unfiltered, FlateDecode and DCTDecode
- * streams, inflating to at most 32 MB in all, so a compression bomb is refused without being inflated (inflated
- * streams are outside the heap limit). Files over 20 MB are refused outright.
+ * streams, inflating to at most 32 MB in all, so a compression bomb is refused without being inflated. That check
+ * is a first line only: while the thread runs, a watchdog stops it as soon as the process's memory (RSS or
+ * ArrayBuffers, where inflated streams live, outside the heap limit) has grown more than 192 MB. Files over 20 MB
+ * are refused outright.
  */
-export function readPdfText(bytes: Buffer, timeoutMs: number): Promise<OcrLine[]> {
+export function readPdfText(bytes: Buffer, timeoutMs: number, limits: { maxGrowthBytes?: number } = {}): Promise<OcrLine[]> {
   if (bytes.length > PDF_MAX_BYTES) return Promise.reject(new UnreadableError(UNOPENABLE_PDF));
-  const turn = queue.then(() => readInThread(bytes, timeoutMs));
+  const turn = queue.then(() => readInThread(bytes, timeoutMs, limits.maxGrowthBytes ?? PDF_MAX_GROWTH));
   queue = turn.catch(() => undefined);
   return turn;
 }
 
-async function readInThread(bytes: Buffer, timeoutMs: number): Promise<OcrLine[]> {
+async function readInThread(bytes: Buffer, timeoutMs: number, maxGrowth: number): Promise<OcrLine[]> {
   const worker = new Worker(WORKER_FILE, {
     execArgv: EXEC_ARGV,
     workerData: new Uint8Array(bytes),
@@ -49,10 +54,18 @@ async function readInThread(bytes: Buffer, timeoutMs: number): Promise<OcrLine[]
     stderr: true,
   });
   let timer: NodeJS.Timeout | undefined;
+  let watchdog: NodeJS.Timeout | undefined;
+  const baseline = process.memoryUsage();
   const reply = await new Promise<PdfWorkerReply | null>((resolve) => {
     timer = setTimeout(() => {
       resolve(null);
     }, Math.min(timeoutMs, PDF_MAX_MS));
+    // The memory watchdog: pdfjs's inflated streams are outside the thread's heap limit, and the pre-scan in the
+    // thread is only a first line, so the thread is stopped as soon as the process has grown too much.
+    watchdog = setInterval(() => {
+      const now = process.memoryUsage();
+      if (now.rss - baseline.rss > maxGrowth || now.arrayBuffers - baseline.arrayBuffers > maxGrowth) resolve(null);
+    }, WATCHDOG_MS);
     worker.once('message', (m: PdfWorkerReply) => {
       resolve(m);
     });
@@ -67,6 +80,7 @@ async function readInThread(bytes: Buffer, timeoutMs: number): Promise<OcrLine[]
     });
   });
   clearTimeout(timer);
+  clearInterval(watchdog);
   worker.removeAllListeners('error');
   worker.on('error', () => undefined);
   await worker.terminate();

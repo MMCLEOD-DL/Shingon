@@ -1,7 +1,8 @@
 import { describe, test, expect, beforeAll, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { createLocalEngine, UnreadableError, type OcrEngine } from '../src/index.js';
-import { pdfBomb, pdfWithContent } from './helpers.js';
+import { readPdfText } from '../src/pdfText.js';
+import { modernPdf, pdfBomb, pdfWithContent, trickyBombs } from './helpers.js';
 
 let engine: OcrEngine;
 const fx = (p: string) => readFileSync(new URL(`./fixtures/receipts/${p}`, import.meta.url));
@@ -78,6 +79,22 @@ describe('compression bombs are refused before they are inflated (default engine
     for (const dict of ['/Filter /LZWDecode', '/Filter /ASCII85Decode', '/Filter [/ASCII85Decode /FlateDecode]', '/Filter 9 0 R']) {
       await expect(engine.read({ bytes: pdfWithContent(dict, Buffer.from('BT /F1 12 Tf (Total 3.20) Tj ET')), type: 'application/pdf' })).rejects.toMatchObject({ userMessage: UNOPENABLE });
     }
+  });
+
+  test.each(trickyBombs())('%s', async (_label, bomb) => {
+    const growth = await peakGrowthMb(() => expect(engine.read({ bytes: bomb, type: 'application/pdf' })).rejects.toMatchObject({ userMessage: UNOPENABLE }));
+    expect(growth.rss).toBeLessThan(300);
+    expect(growth.arrayBuffers).toBeLessThan(300);
+  }, 30_000);
+
+  test('the memory watchdog stops the thread on its own, whatever the pre-scan said', async () => {
+    // The e-ticket passes the pre-scan; with a 1-byte allowance the watchdog must stop the thread.
+    await expect(readPdfText(fx('pdf/e-ticket.pdf'), 60_000, { maxGrowthBytes: 1 })).rejects.toMatchObject({ userMessage: UNOPENABLE });
+  });
+
+  test('a PDF with an object stream and a predicted cross-reference stream still reads', async () => {
+    const r = await engine.read({ bytes: modernPdf(), type: 'application/pdf' });
+    expect(r.lines.map((l) => l.text)).toContain('Total 3.20');
   });
 
   test('after all that, the e-ticket still reads', async () => {

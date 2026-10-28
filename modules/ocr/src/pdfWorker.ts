@@ -11,37 +11,173 @@ export type PdfWorkerReply = { ok: true; lines: string[] } | { ok: false; proble
 const MAX_PAGES = 3;
 /** The most all the compressed streams of one PDF may inflate to, together. A receipt needs far less. */
 const INFLATE_BUDGET = 32 * 1024 * 1024;
-// A stream's dictionary and the start of its data: "<< … >>" then "stream" and its end-of-line.
-const STREAM_START = /stream(?:\r\n|\n|\r)/g;
-const FILTER = /\/Filter\s*(\/[A-Za-z0-9]+|\[[^\]]*\]|\d+\s+\d+\s+R)/;
+
+// PDF whitespace (NUL counts) and delimiters.
+const WS = new Set(['\0', '\t', '\n', '\f', '\r', ' ']);
+const DELIM = new Set(['(', ')', '<', '>', '[', ']', '{', '}', '/', '%']);
+const OBJ_HEADER = /(\d+)[\0\t\n\f\r ]+(\d+)[\0\t\n\f\r ]+obj(?![^\0\t\n\f\r ()<>[\]{}/%])/g;
+// "stream" opening a stream's data: optional spaces or tabs, then the end of line. Not "endstream".
+const STREAM_KEYWORD = /(?<!end)stream[ \t\0]*(?:\r\n|\n|\r)/g;
 // An inline image ("BI … ID") whose data names a filter: pdfjs would decode it outside the budget.
 const INLINE_IMAGE_FILTER = /\bBI\b[^]{0,4096}?\/(?:F|Filter)\b[^]{0,4096}?\bID\b/;
 
+type Value = { kind: 'name'; name: string } | { kind: 'array'; items: Value[] } | { kind: 'ref' } | { kind: 'other' };
+
+/** A minimal reader for one PDF object's dictionary: names (with #xx escapes), strings, nested dictionaries, arrays. */
+class Reader {
+  // Plain fields, not constructor parameter properties: this file also runs with Node's type stripping.
+  private readonly text: string;
+  at: number;
+
+  constructor(text: string, at: number) {
+    this.text = text;
+    this.at = at;
+  }
+
+  skipSpace(): void {
+    for (;;) {
+      const c = this.text[this.at];
+      if (c === undefined) return;
+      if (WS.has(c)) this.at += 1;
+      else if (c === '%') {
+        while (this.at < this.text.length && this.text[this.at] !== '\n' && this.text[this.at] !== '\r') this.at += 1;
+      } else return;
+    }
+  }
+
+  private regular(): string {
+    const start = this.at;
+    while (this.at < this.text.length && !WS.has(this.text[this.at] ?? '') && !DELIM.has(this.text[this.at] ?? '')) this.at += 1;
+    return this.text.slice(start, this.at);
+  }
+
+  private literalString(): void {
+    let depth = 0;
+    for (; this.at < this.text.length; this.at += 1) {
+      const c = this.text[this.at];
+      if (c === '\\') this.at += 1;
+      else if (c === '(') depth += 1;
+      else if (c === ')' && --depth === 0) {
+        this.at += 1;
+        return;
+      }
+    }
+  }
+
+  /** One value; a number followed by "G R" is a reference. Throws on anything malformed. */
+  value(): Value {
+    this.skipSpace();
+    const c = this.text[this.at];
+    if (c === undefined) throw new Error('end');
+    if (c === '/') {
+      this.at += 1;
+      return { kind: 'name', name: '/' + this.regular().replace(/#([0-9A-Fa-f]{2})/g, (_m, h: string) => String.fromCharCode(parseInt(h, 16))) };
+    }
+    if (c === '<' && this.text[this.at + 1] === '<') {
+      this.dict();
+      return { kind: 'other' };
+    }
+    if (c === '<') {
+      const end = this.text.indexOf('>', this.at);
+      if (end < 0) throw new Error('hex');
+      this.at = end + 1;
+      return { kind: 'other' };
+    }
+    if (c === '(') {
+      this.literalString();
+      return { kind: 'other' };
+    }
+    if (c === '[') {
+      this.at += 1;
+      const items: Value[] = [];
+      for (;;) {
+        this.skipSpace();
+        if (this.text[this.at] === ']') {
+          this.at += 1;
+          return { kind: 'array', items };
+        }
+        items.push(this.value());
+      }
+    }
+    if (c === ')' || c === '>' || c === ']' || c === '{' || c === '}') throw new Error('delimiter');
+    const token = this.regular();
+    if (token === '') throw new Error('token');
+    if (/^\d+$/.test(token)) {
+      const save = this.at;
+      this.skipSpace();
+      const gen = this.regular();
+      this.skipSpace();
+      if (/^\d+$/.test(gen) && this.text[this.at] === 'R' && (WS.has(this.text[this.at + 1] ?? ' ') || DELIM.has(this.text[this.at + 1] ?? ''))) {
+        this.at += 1;
+        return { kind: 'ref' };
+      }
+      this.at = save;
+    }
+    return { kind: 'other' };
+  }
+
+  /** A dictionary starting at "<<"; returns its top-level entries. */
+  dict(): Map<string, Value> {
+    const entries = new Map<string, Value>();
+    this.skipSpace();
+    if (!this.text.startsWith('<<', this.at)) throw new Error('dict');
+    this.at += 2;
+    for (;;) {
+      this.skipSpace();
+      if (this.text.startsWith('>>', this.at)) {
+        this.at += 2;
+        return entries;
+      }
+      const key = this.value();
+      if (key.kind !== 'name') throw new Error('key');
+      entries.set(key.name, this.value());
+    }
+  }
+}
+
+/** The filter names of a /Filter entry, or null when it is anything else (a reference, a string …). */
+function filterNames(v: Value | undefined): string[] | null {
+  if (v === undefined) return [];
+  if (v.kind === 'name') return [v.name];
+  if (v.kind === 'array' && v.items.every((i) => i.kind === 'name')) return v.items.map((i) => (i as { name: string }).name);
+  return null;
+}
+
 /**
- * Checks the raw PDF before pdfjs sees it, so a compression bomb is refused without being inflated: every stream
- * must be unfiltered, FlateDecode or DCTDecode (JPEG pictures, which reading text never decodes), and all the
- * FlateDecode streams together must inflate to at most INFLATE_BUDGET. Each stream's data runs to the next
- * "endstream" and must inflate completely, so a stream cut short by a stray "endstream" is refused too.
+ * Checks the raw PDF before pdfjs sees it — a cheap first line; the memory watchdog in pdfText.ts is the backstop.
+ * Every object is read from its header ("4 0 obj"); a stream's top-level dictionary must have no /Filter,
+ * /FlateDecode, /DCTDecode (JPEG pictures, which reading text never decodes) or [/FlateDecode /DCTDecode], and all
+ * the FlateDecode streams together must inflate to at most INFLATE_BUDGET. Each stream's data runs to the next
+ * "endstream" and must inflate completely. A "stream" keyword outside every object read this way is refused, as is
+ * any dictionary this reader can't follow.
  */
 function withinBudget(data: Uint8Array): boolean {
   const bytes = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
   const text = bytes.toString('latin1');
   let budget = INFLATE_BUDGET;
-  let past = 0; // the end of the last stream's data: a "stream" inside binary data is not a keyword
-  for (const m of text.matchAll(STREAM_START)) {
-    const at = m.index;
-    if (at < past) continue;
-    // "endstream" contains "stream"; only the keyword that opens a stream counts.
-    if (text.slice(Math.max(0, at - 3), at) === 'end') continue;
-    const dictStart = text.lastIndexOf('obj', at);
-    const dict = dictStart < 0 ? '' : text.slice(dictStart, at);
-    const dataStart = at + m[0].length;
+  const streams: { start: number; end: number }[] = [];
+  OBJ_HEADER.lastIndex = 0;
+  for (let m = OBJ_HEADER.exec(text); m !== null; m = OBJ_HEADER.exec(text)) {
+    const reader = new Reader(text, m.index + m[0].length);
+    reader.skipSpace();
+    if (!text.startsWith('<<', reader.at)) continue; // not a dictionary, so not a stream
+    let dict: Map<string, Value>;
+    try {
+      dict = reader.dict();
+    } catch {
+      return false;
+    }
+    reader.skipSpace();
+    STREAM_KEYWORD.lastIndex = reader.at;
+    const kw = STREAM_KEYWORD.exec(text);
+    if (!kw || kw.index !== reader.at) continue; // a dictionary object without a stream
+    const dataStart = kw.index + kw[0].length;
     const dataEnd = text.indexOf('endstream', dataStart);
     if (dataEnd < 0) return false;
-    past = dataEnd;
-    const found = FILTER.exec(dict)?.[1];
-    const filters = found === undefined ? [] : (found.match(/\/[A-Za-z0-9]+/g) ?? ['?']);
-    if (/R$/.test(found ?? '')) return false; // a filter given by reference
+    streams.push({ start: kw.index, end: dataEnd });
+    OBJ_HEADER.lastIndex = dataEnd; // an "obj" inside the data is not a header
+    const filters = filterNames(dict.get('/Filter'));
+    if (filters === null) return false;
     if (filters.some((f) => f !== '/FlateDecode' && f !== '/DCTDecode')) return false;
     if (filters.length > 1 && !(filters.length === 2 && filters[0] === '/FlateDecode' && filters[1] === '/DCTDecode')) return false;
     let decoded: Buffer | null = null;
@@ -57,6 +193,11 @@ function withinBudget(data: Uint8Array): boolean {
       decoded = bytes.subarray(dataStart, dataEnd);
     }
     if (decoded && filters.length < 2 && INLINE_IMAGE_FILTER.test(decoded.toString('latin1'))) return false;
+  }
+  // Any "stream" keyword this reading did not account for: pdfjs might find a stream we did not check.
+  STREAM_KEYWORD.lastIndex = 0;
+  for (const kw of text.matchAll(STREAM_KEYWORD)) {
+    if (!streams.some((st) => kw.index >= st.start && kw.index < st.end)) return false;
   }
   return true;
 }
