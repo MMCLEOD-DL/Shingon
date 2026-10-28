@@ -62,6 +62,9 @@ export function startReadingQueue(opts: ReadingQueueOptions): ReadingQueue {
   const now = opts.now ?? (() => new Date());
   const waiting: string[] = [];
   const running = new Set<Promise<void>>();
+  /** Ids being read now, and those asked for again while being read (read again afterwards, if still pending). */
+  const inFlight = new Set<string>();
+  const askedAgain = new Set<string>();
   let idleWaiters: (() => void)[] = [];
   let stopped = false;
   /** True until the readings left pending before this start have been loaded. */
@@ -82,6 +85,12 @@ export function startReadingQueue(opts: ReadingQueueOptions): ReadingQueue {
     try {
       if (file.size > opts.maxBytes) throw new TooLarge();
       const bytes = await readAll(storage.get(file.storageKey), opts.maxBytes);
+      // Marked as started just before the engine runs. If the reading takes the whole process down (an out-of-memory kill,
+      // a native crash), the next start finds it pending with an engine set and gives up on it instead of reading it
+      // again, so one bad upload cannot keep the app down.
+      const started = await db.update(receiptReadings).set({ engine: engine.id })
+        .where(and(eq(receiptReadings.id, id), eq(receiptReadings.status, 'pending'))).returning({ id: receiptReadings.id });
+      if (started.length === 0) return;
       const result = await engine.read({ bytes, type: file.contentType as OcrInputType });
       const proposal = readReceipt(result, londonToday(now()));
       await finish(id, { status: 'read', engine: result.engine, proposal, problem: null, readAt: now() });
@@ -108,6 +117,7 @@ export function startReadingQueue(opts: ReadingQueueOptions): ReadingQueue {
   const pump = (): void => {
     while (!stopped && running.size < concurrency && waiting.length > 0) {
       const id = waiting.shift() as string;
+      inFlight.add(id);
       const p: Promise<void> = readOne(id)
         .catch((e: unknown) => {
           // A database failure while saving: the row stays pending and is read again after the next start.
@@ -115,6 +125,9 @@ export function startReadingQueue(opts: ReadingQueueOptions): ReadingQueue {
         })
         .finally(() => {
           running.delete(p);
+          inFlight.delete(id);
+          // Asked for again while it was being read (started afresh): it is looked at once more, and read only if still pending.
+          if (askedAgain.delete(id) && !stopped && !waiting.includes(id)) waiting.push(id);
           pump();
           settleIdle();
         });
@@ -122,13 +135,18 @@ export function startReadingQueue(opts: ReadingQueueOptions): ReadingQueue {
     }
   };
 
-  const loaded: Promise<void> = db.select({ id: receiptReadings.id }).from(receiptReadings).where(eq(receiptReadings.status, 'pending'))
+  const loaded: Promise<void> = db.select({ id: receiptReadings.id, engine: receiptReadings.engine }).from(receiptReadings).where(eq(receiptReadings.status, 'pending'))
     .orderBy(asc(receiptReadings.createdAt), asc(receiptReadings.id))
-    .then((rows) => {
+    .then(async (rows) => {
+      // A reading that was started before the last stop but never finished may be what stopped the process: it is not read again.
+      for (const r of rows.filter((x) => x.engine !== null)) {
+        log.error({ readingId: r.id }, 'A receipt reading was interrupted, so it will not be tried again; staff will type the details');
+        await finish(r.id, { status: 'unreadable', proposal: null, problem: GENERAL_PROBLEM, readAt: now() });
+      }
       if (stopped) return;
       // Readings left from before go first (they are older); any enqueued while loading follow.
       const early = waiting.splice(0);
-      const ids = rows.map((r) => r.id);
+      const ids = rows.filter((x) => x.engine === null).map((r) => r.id);
       waiting.push(...ids, ...early.filter((id) => !ids.includes(id)));
     })
     .catch((e: unknown) => { log.error({ errName: (e as { name?: string } | null)?.name ?? 'unknown' }, 'The waiting receipt readings could not be loaded'); })
@@ -141,6 +159,10 @@ export function startReadingQueue(opts: ReadingQueueOptions): ReadingQueue {
   return {
     enqueue(id) {
       if (stopped || waiting.includes(id)) return;
+      if (inFlight.has(id)) {
+        askedAgain.add(id);
+        return;
+      }
       waiting.push(id);
       // While the start-up load is running the order is settled by it; afterwards a new reading starts straight away.
       if (!loading) pump();

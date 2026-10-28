@@ -24,7 +24,7 @@ export interface TestApp {
   storageDir: string;
   /** The reading queue (every module is on unless `profile` was overridden). Reading it throws when ocr is off. */
   readings: ReadingQueue;
-  /** The default receipt reader: answers with taxi.txt unless told otherwise. */
+  /** The default receipt reader: answers with taxi.txt unless told otherwise. Reading it throws when the test passed its own `ocrEngine` (use that handle). */
   fakeOcr: FakeOcr;
   close(): Promise<void>;
 }
@@ -64,7 +64,12 @@ export async function createTestApp(
     const dir = storageDir;
     const builtApp = app;
     return {
-      app: builtApp, db: testDb.db, config, mail, storageDir: dir, fakeOcr,
+      app: builtApp, db: testDb.db, config, mail, storageDir: dir,
+      // With an ocrEngine override the default fake is not connected to the app, so handing it back would be a trap.
+      get fakeOcr(): FakeOcr {
+        if (ocrEngine) throw new Error('This test app was given its own ocrEngine, so t.fakeOcr is not used. Use the engine you passed.');
+        return fakeOcr;
+      },
       // Only read when ocr is on; a test that switched it off never touches it.
       get readings(): ReadingQueue {
         const q = builtApp.hf.readings;

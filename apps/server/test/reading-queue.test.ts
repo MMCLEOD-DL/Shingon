@@ -38,14 +38,14 @@ afterEach(async () => {
 
 let n = 0;
 /** A stored file holding `label` as its bytes, and a pending reading for it created at `createdAt`. */
-async function pending(label: string, createdAt: Date): Promise<string> {
+async function pending(label: string, createdAt: Date, engine: string | null = null): Promise<string> {
   const key = `ab${String(++n).padStart(10, '0')}`;
   const put = await storage.put(key, Readable.from([Buffer.from(label)]));
   const [f] = await db.db.insert(files).values({
     ownerId: owner.id, teamId: owner.teamId, storageKey: key, originalName: `${label.slice(0, 20)}.png`, contentType: 'image/png', size: put.size, sha256: put.sha256,
     attachedType: 'receipt-reading',
   }).returning();
-  const [r] = await db.db.insert(receiptReadings).values({ fileId: f!.id, ownerId: owner.id, teamId: owner.teamId, status: 'pending', createdAt, updatedAt: createdAt }).returning();
+  const [r] = await db.db.insert(receiptReadings).values({ fileId: f!.id, ownerId: owner.id, teamId: owner.teamId, status: 'pending', engine, createdAt, updatedAt: createdAt }).returning();
   await db.db.update(files).set({ attachedId: r!.id }).where(eq(files.id, f!.id));
   return r!.id;
 }
@@ -154,4 +154,47 @@ test('stop waits for the current reading and starts no more', async () => {
   q.enqueue(second);
   await q.idle();
   expect(rec.order).toEqual(['first']);
+});
+
+test('a reading that was started but never finished (the process died) is not read again at the next start', async () => {
+  // As left by an out-of-memory kill: still pending, but marked as started by an engine.
+  const crashed = await pending('crashed', new Date('2026-03-01T10:00:00Z'), 'local-tesseract');
+  const fresh = await pending('fresh', new Date('2026-03-02T10:00:00Z'));
+  const rec = recordingEngine();
+  await start(rec.engine).idle();
+  expect(rec.order).toEqual(['fresh']);
+  const [c] = await db.db.select().from(receiptReadings).where(eq(receiptReadings.id, crashed));
+  expect(c).toMatchObject({ status: 'unreadable', problem: "This receipt couldn't be read automatically. Please type the details.", proposal: null });
+  expect(await statuses()).toEqual([{ id: crashed, status: 'unreadable' }, { id: fresh, status: 'read' }]);
+  // Only the reading's id is logged.
+  expect(errors).toEqual([[{ readingId: crashed }, expect.any(String)]]);
+});
+
+test('a reading is marked as started (engine set) just before the engine runs, and a normal finish keeps it right', async () => {
+  const id = await pending('marked', new Date());
+  const seen: (string | null)[] = [];
+  const rec = recordingEngine({ gate: async () => {
+    const [r] = await db.db.select().from(receiptReadings).where(eq(receiptReadings.id, id));
+    seen.push(r!.engine);
+  } });
+  await start(rec.engine).idle();
+  expect(seen).toEqual(['recording']);
+  const [r] = await db.db.select().from(receiptReadings).where(eq(receiptReadings.id, id));
+  expect(r).toMatchObject({ status: 'read', engine: 'recording', problem: null });
+});
+
+test('asking again for a reading that is being read does not read it a second time', async () => {
+  const id = await pending('once', new Date());
+  let release: () => void = () => undefined;
+  let started: () => void = () => undefined;
+  const isStarted = new Promise<void>((r) => { started = r; });
+  const rec = recordingEngine({ gate: () => new Promise<void>((r) => { release = r; started(); }) });
+  const q = start(rec.engine);
+  await isStarted;
+  q.enqueue(id);
+  q.enqueue(id);
+  release();
+  await q.idle();
+  expect(rec.order).toEqual(['once']);
+  expect(await statuses()).toEqual([{ id, status: 'read' }]);
 });

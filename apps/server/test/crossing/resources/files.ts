@@ -12,7 +12,7 @@ type UserKey = Exclude<keyof (typeof IDS)['users'], 'pendingPat' | 'disabledPenn
 const OWNERS: { key: UserKey; team: 'north' | 'south' | null }[] = [
   { key: 'admin', team: null },
   { key: 'northManager', team: 'north' },
-  { key: 'northAlice', team: 'north' },
+  { key: 'northAlice', team: 'north' },   // also her second note's photo (resources/notes.ts), so asking for a reading of it answers 409 in cases.ts
   { key: 'northBob', team: 'north' },
   { key: 'southManager', team: 'south' },
   { key: 'southCarol', team: 'south' },
