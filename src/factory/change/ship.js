@@ -148,6 +148,8 @@ export async function shipUpdate({ projectDir, projectsRoot, slug, run, version,
         pendingWhy: typeof pc.why === 'string' ? clip(pc.why, OUTCOME_MAX) : 'unknown',
         pendingVersion: typeof pc.version === 'string' ? clip(redact(pc.version), OUTCOME_MAX) : 'an unknown version',
       };
+      // Keep a saved stopping outcome ('started', 'rolled-back', …): once the check clears, resume must still ask.
+      if (isObject(before) && !RECHECK.has(before.outcome)) return stopped(pendingSentence(name, result));
       return stopped(record(name, result) ?? pendingSentence(name, result));
     }
 

@@ -657,7 +657,7 @@ test('abandon is refused once main has the change but before the release (stage 
   const projectBefore = h.project();
   const dropped = await abandonChange({ factory: h.factory, slug: 'acme', deps: h.deps });
   assert.deepEqual(dropped, { status: 'stopped', runId: null, reason: RELEASE_STILL_TO_MAKE('acme') });
-  assert.equal(RELEASE_STILL_TO_MAKE('acme'), 'The change is already on the app\'s main line, so it cannot be dropped. Resume it to make the release (conductor change acme --resume); nothing more ships until you do.');
+  assert.equal(RELEASE_STILL_TO_MAKE('acme'), 'The change is already on the app\'s main line, so it cannot be dropped. Resume it to make the release and update the deployments (conductor change acme --resume); nothing more ships until you do.');
   assert.equal(loadChangeRun(h.projectDir, runId).status, 'failed');
   assert.deepEqual(h.project(), projectBefore);
   assert.equal((await h.resume()).status, 'done');

@@ -415,3 +415,24 @@ test('item 14: on resume a box with an unchecked update stops before the retry q
   assert.deepEqual(questions, []);
   assert.deepEqual(calledNames(deps), []);
 });
+
+test('a box that stopped the ship and then got a pendingCheck is still asked about once the check clears', async () => {
+  let pending = { version: '0.3.0', why: 'interrupted' };
+  const deps = stubDeps({
+    listDeployments: () => [dep('acme-cloud', pending ? { pendingCheck: pending } : {})],
+    updateDeployment: updated,
+  });
+  const saved = { 'acme-cloud': { outcome: 'started', at: '2026-10-27T14:00:00.000Z', from: '0.2.0' } };
+  const questions = [];
+  const ask = async (q) => { questions.push(q); return false; };
+  const again = run({ deployments: structuredClone(saved) }); // the same saved run carries over to the resume
+  const r1 = await ship(deps, { run: again, ask });
+  assert.equal(r1.status, 'stopped');
+  pending = null; // conductor deployments status cleared it; the box rolled back and is still on 0.2.0
+  const r2 = await ship(deps, { run: again, ask });
+  assert.equal(r2.status, 'stopped');
+  assert.equal(questions.length, 1);
+  assert.match(questions[0], /Try it again now\?/);
+  assert.deepEqual(calledNames(deps), []);
+  assert.equal(again.deployments['acme-cloud'].outcome, 'started');
+});

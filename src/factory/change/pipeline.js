@@ -39,7 +39,9 @@ export const NO_BUILT_FROM = 'This project does not record which brief version t
 export const UNFINISHED = (runId, kind) => `An earlier ${kind === 'change' ? 'change' : 'foundation upgrade'} (${runId}) is not finished. Continue it with --resume, or drop it with --abandon, before starting another.`;
 export const NOTHING_TO_RESUME = 'There is no unfinished change for this project.';
 export const BRIEF_CHANGED_WHILE_PAUSED = ({ kind, slug, current, built }) => `The approved brief changed while this ${kind === 'change' ? 'change' : 'foundation upgrade'} was paused (it is now version ${current}; the ${kind === 'change' ? 'change' : 'upgrade'} was being built for version ${built}), so nothing was built. Drop this ${kind === 'change' ? 'change' : 'foundation upgrade'} with "conductor change ${slug} --abandon", then start it again.`;
-export const RELEASE_STILL_TO_MAKE = (slug) => `The change is already on the app's main line, so it cannot be dropped. Resume it to make the release (conductor change ${slug} --resume); nothing more ships until you do.`;
+export const RELEASE_STILL_TO_MAKE = (slug, what = 'change', firstRelease = false) => (firstRelease
+  ? `The ${what} is already on the app's main line, so it cannot be dropped. Resume it to finish (conductor change ${slug} --resume); this app has not had its first release yet, so after that ship it with "conductor ship ${slug} --to <deployment>".`
+  : `The ${what} is already on the app's main line, so it cannot be dropped. Resume it to make the release and update the deployments (conductor change ${slug} --resume); nothing more ships until you do.`);
 export const TOO_MANY_CONFLICTS = (n, files) => ({
   title: 'the foundation upgrade',
   message: `Merging the foundation release left ${n} files with both versions side by side (${files.slice(0, 10).join(', ')}${n > 10 ? ', …' : ''}). Conductor can try to resolve them, which uses your subscription, or you can stop and merge by hand. Approve to let Conductor try.`,
@@ -204,7 +206,8 @@ export async function abandonChange(args) {
   }
   // Main has the change but the release is not made yet: a drop here would leave no way forward (the next change
   // would start from a main nobody released), so only resume can carry it on.
-  if (reached && (run.stage === 'approved' || run.stage === 'merged')) return refuse('stopped', RELEASE_STILL_TO_MAKE(args.slug));
+  if (reached && (run.stage === 'approved' || run.stage === 'merged')) return refuse('stopped', RELEASE_STILL_TO_MAKE(args.slug,
+    run.kind === 'change' ? 'change' : 'foundation upgrade', !run.approval?.expectedVersion));
   run.status = 'stopped';
   run.reason = 'You dropped this change.';
   saveChangeRun(o.projectDir, run);
