@@ -21,6 +21,7 @@ import {
   mergeFeature as realMergeFeature,
 } from './buildState.js';
 import { newRunId, RUN_ID_RE } from './ids.js';
+import { SHA_RE, RELEASE_TAG_RE } from './change/gitSafe.js';
 
 const UNFINISHED = new Set(['running', 'paused', 'failed', 'stopped']);
 const RESUMABLE_RUN = new Set(['running', 'failed', 'paused']);
@@ -148,6 +149,13 @@ export async function runBuild({ factory, slug, team, hooks, options = {}, baseD
     if (change.profile != null && (typeof change.profile !== 'object' || Array.isArray(change.profile))) {
       return refuse('The app profile for the change cannot be read, so the change build did not start.');
     }
+    // A foundation upgrade names the foundation release it brings in: the council reviews against it and the gate
+    // summary names it. project.json keeps the old one until Plan 11 records the upgrade.
+    const f = change.foundation;
+    if (f != null && (typeof f !== 'object' || Array.isArray(f) || typeof f.tag !== 'string' || !RELEASE_TAG_RE.test(f.tag)
+      || typeof f.commit !== 'string' || !SHA_RE.test(f.commit))) {
+      return refuse('The foundation release for the change was not passed in a form Conductor can read, so the change build did not start.');
+    }
   } else if (project.status === 'ready' || project.status === 'shipped') {
     await finishApprovedBuild(projectDir, project);
     return refuse(`${project.client} is already built and approved. Changes to a finished app go through "conductor change ${slug}".`);
@@ -198,8 +206,10 @@ export async function runBuild({ factory, slug, team, hooks, options = {}, baseD
       }
       build = saved;
       resumed = true;
+      if (change.foundation) build.foundation = { ...build.foundation, tag: change.foundation.tag, commit: change.foundation.commit };
     } else {
-      const foundation = project.foundation?.tag ? { ...project.foundation } : null;
+      const pinned = project.foundation?.tag ? { ...project.foundation } : null;
+      const foundation = change.foundation ? { ...pinned, tag: change.foundation.tag, commit: change.foundation.commit } : pinned;
       build = newBuild({ runId: change.runId, slug, client: brief.client, briefHash, briefVersion: brief.version ?? null, foundation, now: d.now(), kind: 'change' });
       build.baseRef = change.baseRef;
       build.startSha = null;

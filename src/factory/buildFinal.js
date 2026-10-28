@@ -164,6 +164,8 @@ export async function runFinal(bctx) {
       progress('The council is reviewing the whole app');
       const r = await hooks.council({
         projectDir, appDir, sha, brief, policy: brief.policy, runId: build.runId, slug, team, factory, onEvent: councilEvent, checks: build.checks,
+        // Change mode: a foundation upgrade is reviewed against the release it brings in (Plan 11).
+        ...(changeMode && bctx.change.foundation ? { foundation: { tag: bctx.change.foundation.tag, commit: bctx.change.foundation.commit } } : {}),
       });
       // Fail closed: an answer that is not one of the four statuses counts as blocked, with nothing to fix.
       const known = r && typeof r === 'object' && COUNCIL_STATUSES.has(r.status);

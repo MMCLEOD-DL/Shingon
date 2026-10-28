@@ -337,3 +337,34 @@ test('fix round: any other change in the app folder at that point still stops th
     assert.match(out.reason, /conductor change acme-ltd --resume/);
   }
 });
+
+// Final review item 3: a foundation upgrade's council base and gate summary use the foundation it brings in.
+test('change.foundation: the council is handed the target foundation and the gate summary names its tag; project.json is not written', async () => {
+  const s = await live();
+  const projectBefore = readFileSync(s.projectJson, 'utf8');
+  const target = { tag: 'v0.1.1', commit: 'a'.repeat(40) };
+  let councilArgs;
+  let seen;
+  const out = await run(s, {
+    change: change({ foundation: target }),
+    hooks: { council: async (a) => { councilArgs = a; return { status: 'approved', text: 'ok' }; }, approveBuild: async (a) => { seen = a; return true; } },
+  });
+  assert.equal(out.status, 'approved', out.reason);
+  assert.deepEqual(councilArgs.foundation, target);
+  assert.match(seen.summary, /on foundation v0\.1\.1$/m);
+  assert.equal(readFileSync(s.projectJson, 'utf8'), projectBefore);
+  // Without it (a change request, or a normal build) nothing is added to the council's arguments.
+  const s2 = await live();
+  let plain;
+  await run(s2, { hooks: { council: async (a) => { plain = a; return { status: 'approved', text: 'ok' }; }, approveBuild: async () => true } });
+  assert.equal('foundation' in plain, false);
+});
+
+test('change.foundation must name a release tag and a full commit', async () => {
+  const s = await live();
+  for (const foundation of [{ tag: 'v0.1.1' }, { tag: '--x', commit: 'a'.repeat(40) }, { tag: 'v0.1.1', commit: 'HEAD' }, 'v0.1.1']) {
+    const out = await run(s, { change: change({ foundation }) });
+    assert.equal(out.status, 'failed');
+    assert.equal(out.reason, 'The foundation release for the change was not passed in a form Conductor can read, so the change build did not start.');
+  }
+});

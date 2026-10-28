@@ -40,3 +40,12 @@ test('projectContext: refuses an unsafe project name; defaults to the real id pa
   const c = await projectContext({ ...ARGS, runId: '20261027-101500-ab12' }, { loadProject: async () => PROJECT });
   assert.equal(c.buildDir, path.join('/p/acme', 'builds', '20261027-101500-ab12'));
 });
+
+// Final review item 3: in change mode (a foundation upgrade) the review base is the foundation release being brought
+// in, passed by Plan 8, not the one project.json still records; the repo still comes from project.json.
+test('projectContext: a foundation passed in the arguments overrides project.json\'s tag and commit', async () => {
+  const c = await projectContext({ ...ARGS, foundation: { tag: 'v0.1.1', commit: 'beef' } }, { ids: IDS, loadProject: async () => PROJECT });
+  assert.deepEqual(c.foundation, { repo: '/root/highland-foundation', tag: 'v0.1.1', commit: 'beef' });
+  const bad = await projectContext({ ...ARGS, foundation: 'v0.1.1' }, { ids: IDS, loadProject: async () => PROJECT });
+  assert.deepEqual(bad.foundation, PROJECT.foundation);
+});
