@@ -50,6 +50,30 @@ export interface UpdateDeps {
 /** `urgent`: refused because an earlier update stopped part-way (the CLI exits 3, as for rollback-failed). */
 export type UpdateOutcome = { outcome: 'updated' | 'cancelled' | 'rolled-back' | 'rollback-failed'; message: string; urgent?: true };
 
+/** update's exit codes (also in USAGE): 2 is kept for a usage or settings error, as for every ops command. */
+export const UPDATE_EXIT = { updated: 0, cancelled: 1, 'rolled-back': 1, 'rollback-failed': 3 } as const;
+
+/** The exit code for an outcome: an urgent refusal exits 3, as a failed undo does. */
+export function updateExitCode(o: UpdateOutcome): 0 | 1 | 3 {
+  return o.urgent === true ? 3 : UPDATE_EXIT[o.outcome];
+}
+
+/** What `update --to <version> --json` prints on standard output, for scripts. */
+export interface UpdateJson { schema: 1; outcome: UpdateOutcome['outcome'] | 'refused'; to: string | null; message: string; urgent: boolean; exitCode: number }
+
+/**
+ * The outcome as one line of JSON, with no trailing newline. A refusal is a problem found before the update started (a
+ * usage or settings error, exit 2). The message must already be redacted by the caller; nothing is added to it here except
+ * that its line breaks become spaces.
+ */
+export function updateOutcomeJson(o: UpdateOutcome | { refused: string; exitCode: 2 }, to: string | null): string {
+  const oneLine = (t: string): string => t.replace(/\r?\n/g, ' ');
+  const j: UpdateJson = 'refused' in o
+    ? { schema: 1, outcome: 'refused', to, message: oneLine(o.refused), urgent: false, exitCode: o.exitCode }
+    : { schema: 1, outcome: o.outcome, to, message: oneLine(o.message), urgent: o.urgent === true, exitCode: updateExitCode(o) };
+  return JSON.stringify(j);
+}
+
 interface Result extends UpdateOutcome { alert: boolean; busy?: boolean; snapshotId?: string }
 
 

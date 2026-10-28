@@ -1,36 +1,20 @@
-import { existsSync } from 'node:fs';
-import { hostname } from 'node:os';
-import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { desc, eq } from 'drizzle-orm';
-import { opsRuns } from '@hf/server/db/schema';
 import { appJobs } from '@hf/server/jobs';
 import { realIo, runHelp, runInit, USAGE } from './init-cli.js';
 import { checkEdgePair, loadOpsConfig, OpsConfigError, type OpsConfig } from './config.js';
-import { BackupError, runBackup, firstLine } from './backup.js';
-import { RestoreError, restoreDataFrom, restoreLive, verifyLatestRestore } from './restore.js';
-import { ukDate } from './time.js';
+import { BackupError, firstLine } from './backup.js';
+import { RestoreError, restoreLive, verifyLatestRestore } from './restore.js';
 import { createOpsDeps, manualBackup, runDaemon } from './daemon.js';
 import { execRunner, redact } from './runner.js';
 import { formatChecks, monitorChecks } from './checks.js';
-import { alertSecrets, channelFromConfig, redactAlert, redactingChannel } from './alerts.js';
-import { dockerCompose, imageFileInBundle, loadImageFile, readEnvValue } from './compose.js';
-import { fileJournal, UPDATE_RECORD } from './journal.js';
-import { fileLock, holderFromInspect, pidAlive, type LockHolder } from './lock.js';
-import { opsLockHeld, withOpsLock } from './opsLock.js';
-import { outstandingUpdate, recordRun } from './runs.js';
+import { alertSecrets, redactAlert } from './alerts.js';
+import { opsLockHeld } from './opsLock.js';
 import { jobsCommand } from './appJobs.js';
-import { frontDoorCheck, httpWaitReady, markRecovered, runUpdate } from './update.js';
+import { updateCli } from './update-cli.js';
 
 const say = (line: string): void => { console.log(line); };
 const MANUAL_BACKUP_LOCK_WAIT = 2 * 60e3;
 const complain = (line: string): void => { console.error(line); };
-/** How long an update waits for a running backup, restore test or restore to finish before giving up. */
-const UPDATE_LOCK_WAIT = 15 * 60e3;
-/** The app's user (uid/gid 1000): the ops daemon runs as it, so everything the root updater leaves in /state is given to it. */
-const OPS_UID_GID = '1000:1000';
-/** update's exit codes (also in USAGE): 2 is kept for a usage or settings error, as for every ops command. */
-const EXIT = { updated: 0, cancelled: 1, 'rolled-back': 1, 'rollback-failed': 3 } as const;
 
 /** The last line of defence: a plain sentence, never a stack trace, and never a secret from the environment. */
 function plain(e: unknown): string {
@@ -50,10 +34,11 @@ function config(): OpsConfig | undefined {
   }
 }
 
-async function withDeps(fn: (deps: ReturnType<typeof createOpsDeps>['deps']) => Promise<number>): Promise<number> {
+/** Opens the ops deps, runs fn and closes them. `log` is where their progress lines go (update --json sends them to standard error). */
+async function withDeps(fn: (deps: ReturnType<typeof createOpsDeps>['deps']) => Promise<number>, log: (line: string) => void = say): Promise<number> {
   const cfg = config();
   if (cfg === undefined) return 2;
-  const { deps, close } = createOpsDeps(cfg, say);
+  const { deps, close } = createOpsDeps(cfg, log);
   try {
     return await fn(deps);
   } catch (e) {
@@ -63,108 +48,6 @@ async function withDeps(fn: (deps: ReturnType<typeof createOpsDeps>['deps']) => 
   } finally {
     await close().catch(() => undefined);
   }
-}
-
-/**
- * `ops update --to <version> [--image-file <file>]`, `update --status`, `update --mark-recovered`. Runs in the on-demand
- * updater service, the only container with the Docker socket (Ruling 7): docker compose run --rm updater update --to 0.1.1
- */
-async function updateCli(rest: string[]): Promise<number> {
-  let v;
-  try {
-    v = parseArgs({ args: rest, strict: true, options: { to: { type: 'string' }, 'image-file': { type: 'string' }, status: { type: 'boolean' }, 'mark-recovered': { type: 'boolean' } } }).values;
-  } catch {
-    complain(USAGE);
-    return 2;
-  }
-  const modes = [v.to !== undefined, v.status === true, v['mark-recovered'] === true].filter(Boolean).length;
-  if (modes !== 1 || (v['image-file'] !== undefined && v.to === undefined)) {
-    complain(`update needs exactly one of --to <version>, --status or --mark-recovered.\n\n${USAGE}`);
-    return 2;
-  }
-  if (v.status === true) {
-    return withDeps(async (deps) => {
-      const rows = await deps.db.select({ at: opsRuns.at, ok: opsRuns.ok, detail: opsRuns.detail }).from(opsRuns)
-        .where(eq(opsRuns.kind, 'update')).orderBy(desc(opsRuns.at), desc(opsRuns.id)).limit(5);
-      if (rows.length === 0) say('No update has been run on this box yet.');
-      for (const r of rows) say(`${ukDate(r.at)}  ${r.ok ? 'done' : 'not done'}  ${r.detail}`);
-      return 0;
-    });
-  }
-  const bundleDir = process.env['HF_BUNDLE_DIR']?.trim();
-  if (bundleDir === undefined || bundleDir === '' || !bundleDir.startsWith('/')) {
-    complain('update runs in the updater service, which knows where the bundle is (HF_BUNDLE_DIR): docker compose run --rm updater update --to <version>');
-    return 2;
-  }
-  let imageFile: string | undefined;
-  if (v['image-file'] !== undefined) {
-    try {
-      imageFile = await imageFileInBundle(bundleDir, v['image-file']);
-    } catch (e) {
-      complain(`${(e as Error).message} Nothing was changed.`);
-      return 2;
-    }
-  }
-  return withDeps(async (deps) => {
-    const { cfg } = deps;
-    const stateDir = path.dirname(cfg.workDir);
-    const isRoot = process.getuid?.() === 0;
-    // A registry sign-in made with `docker --config <bundle>/.docker login <registry>`; never on a command line.
-    const dockerEnv: Record<string, string> = existsSync(path.join(bundleDir, '.docker')) ? { DOCKER_CONFIG: path.join(bundleDir, '.docker') } : {};
-    // The updater runs as root (it needs the Docker socket and writes the root-owned .env); the ops daemon runs as uid 1000
-    // with no extra powers. So whatever the updater leaves in /state (restic cache, work folder, update record) is handed
-    // over: at the start (after an update that crashed), before every start of the monitor, and at the end.
-    const handOver = async (): Promise<void> => {
-      if (!isRoot) return;
-      const r = await execRunner.run('chown', ['-R', OPS_UID_GID, stateDir], { timeoutMs: 30 * 60e3 });
-      if (r.code !== 0) say(`Warning: the ops work folder (${stateDir}) could not be handed back to the ops service, so its next backup may fail. Run: docker compose run --rm --entrypoint chown updater -R ${OPS_UID_GID} ${stateDir}`);
-    };
-    // The lock names its holder (this container); it is taken over only when that container is no longer running.
-    const isAlive = async (h: LockHolder): Promise<boolean> => {
-      if (h.host === hostname()) return pidAlive(h.pid);
-      return holderFromInspect(await execRunner.run('docker', ['inspect', '--format', '{{.State.Running}}', h.host], { env: dockerEnv, timeoutMs: 60e3 }));
-    };
-    const lock = fileLock(path.join(stateDir, 'update.lock'), () => new Date(), { isAlive });
-    const journal = fileJournal(path.join(stateDir, UPDATE_RECORD), isRoot ? { owner: { uid: 1000, gid: 1000 } } : {});
-    const outstanding = () => outstandingUpdate(deps.db);
-    const compose = dockerCompose({ run: execRunner, bundleDir, project: cfg.composeProject, env: dockerEnv });
-    const waitReady = httpWaitReady({ appUrl: cfg.appInternalUrl, healthToken: cfg.healthToken ?? '' });
-    await handOver();
-    try {
-      if (v['mark-recovered'] === true) {
-        const r = await markRecovered({ lock, journal, outstanding, readTag: () => compose.readTag(), waitReady, record: (ok, d) => recordRun(deps, 'update', ok, d) });
-        if (!r.ok) complain(r.message);
-        return r.ok ? 0 : 1;
-      }
-      const to = v.to ?? '';
-      const images = { app: (await readEnvValue(bundleDir, 'APP_IMAGE')) ?? 'highland/app', ops: (await readEnvValue(bundleDir, 'OPS_IMAGE')) ?? 'highland/ops' };
-      const secrets = alertSecrets(cfg);
-      const outcome = await runUpdate({
-        compose,
-        backup: (kind) => runBackup(deps, kind),
-        // The database and the uploads from the pre-update backup, through Task 18's swap-in restore. The update holds the ops lock.
-        restoreDb: (id, progress) => restoreDataFrom(deps, { id, short: id.slice(0, 8) }, { lockWaitMs: 0, ...(progress !== undefined ? { onStep: progress } : {}) }),
-        waitReady,
-        alert: redactingChannel(channelFromConfig(cfg, say), secrets),
-        // recordRun prints the outcome too.
-        record: (ok, detail, o) => recordRun(deps, 'update', ok, redactAlert(detail, secrets), o?.snapshotId, o?.busy === true ? { busy: true } : {}),
-        client: cfg.client,
-        images,
-        lock,
-        journal,
-        outstanding,
-        exclusive: (fn) => withOpsLock(deps, { waitMs: UPDATE_LOCK_WAIT, busyMessage: 'busy' }, fn),
-        frontDoor: frontDoorCheck(compose),
-        ...(imageFile !== undefined ? { loadImages: () => loadImageFile(execRunner, imageFile, dockerEnv) } : {}),
-        beforeStartOps: handOver,
-        when: ukDate,
-        log: say,
-      }, { to });
-      return outcome.urgent === true ? 3 : EXIT[outcome.outcome];
-    } finally {
-      await handOver();
-    }
-  });
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -231,7 +114,7 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     case 'update':
-      return updateCli(rest);
+      return updateCli(rest, { out: say, err: complain, env: process.env, runner: execRunner, withDeps });
     case 'jobs':
       return jobsCommand(rest, appJobs(), withDeps, { say, complain });
     case 'daemon': {

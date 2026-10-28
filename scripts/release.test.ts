@@ -36,12 +36,16 @@ test('the audit check fails closed when the audit could not run', () => {
 const roots: string[] = [];
 afterAll(() => { for (const r of roots) rmSync(r, { recursive: true, force: true }); });
 
-function setup(over: Partial<ReleaseDeps> = {}): { deps: ReleaseDeps; calls: string[]; root: string } {
+/** By default this is the foundation's own repository; `name` and `foundation` describe an app built on it. */
+function setup(
+  over: Partial<ReleaseDeps> = {},
+  { name = 'highland-foundation', foundation = '{\n  "name": "highland-foundation",\n  "version": "0.1.0",\n  "commit": "unreleased"\n}\n' }: { name?: string; foundation?: string } = {},
+): { deps: ReleaseDeps; calls: string[]; root: string } {
   const root = mkdtempSync(path.join(tmpdir(), 'hf-release-'));
   roots.push(root);
   writeFileSync(path.join(root, 'CHANGELOG.md'), '# Changelog\n\n## [Unreleased]\n- **[security]** Fixed a thing.\n\n## [0.1.0] - 2026-11-15\n- First.\n');
-  writeFileSync(path.join(root, 'package.json'), '{\n  "name": "x",\n  "version": "0.1.0"\n}\n');
-  writeFileSync(path.join(root, 'foundation.json'), '{\n  "name": "highland-foundation",\n  "version": "0.1.0",\n  "commit": "unreleased"\n}\n');
+  writeFileSync(path.join(root, 'package.json'), `{\n  "name": ${JSON.stringify(name)},\n  "version": "0.1.0"\n}\n`);
+  writeFileSync(path.join(root, 'foundation.json'), foundation);
   const calls: string[] = [];
   const deps: ReleaseDeps = {
     root, today: '2026-12-01',
@@ -92,6 +96,19 @@ test('refuses before writing anything when the tag exists, git has no identity, 
   writeFileSync(path.join(s.root, 'foundation.json'), '{"name":"highland-foundation","version":"0.0.9","commit":"unreleased"}');
   expect(() => runRelease('minor', s.deps)).toThrow('foundation.json says 0.0.9 but package.json says 0.1.0');
   expect(s.calls).not.toContain('commit+tag v0.2.0');
+});
+const INHERITED = '{\n  "name": "highland-foundation",\n  "version": "0.2.0",\n  "commit": "v0.2.0"\n}\n';
+
+test('an app release leaves foundation.json exactly as inherited', () => {
+  const { deps, calls, root } = setup({}, { name: 'acme-expenses', foundation: INHERITED });
+  expect(runRelease('minor', deps)).toBe('0.2.0');
+  expect(readFileSync(path.join(root, 'foundation.json'), 'utf8')).toBe(INHERITED);
+  expect(JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')).version).toBe('0.2.0');
+  expect(calls).toContain('commit+tag v0.2.0');
+});
+test('an app release does not need its version to match foundation.json', () => {
+  const { deps } = setup({}, { name: 'acme-expenses', foundation: INHERITED.replace('0.2.0', '0.1.0') });
+  expect(() => runRelease('patch', deps)).not.toThrow();
 });
 test('refuses when the changelog already has the new version', () => {
   const s = setup();
@@ -149,6 +166,13 @@ describe('the first release (npm run release -- first)', () => {
     expect(JSON.parse(read(s.root, 'foundation.json'))).toEqual({ name: 'highland-foundation', version: '0.1.0', commit: 'v0.1.0' });
     expect(read(s.root, 'package.json')).toBe(pkgBefore);
     expect(read(s.root, 'CHANGELOG.md')).toBe(FIRST);
+    expect(s.calls).toEqual(['clean', 'audit', 'commit+tag v0.1.0']);
+  });
+  test('an app\'s first release tags package.json\'s version and leaves foundation.json alone', () => {
+    const s = setup({ versionTags: () => [] }, { name: 'acme-expenses', foundation: INHERITED });
+    writeFileSync(path.join(s.root, 'CHANGELOG.md'), FIRST);
+    expect(runFirstRelease(s.deps)).toBe('0.1.0');
+    expect(read(s.root, 'foundation.json')).toBe(INHERITED);
     expect(s.calls).toEqual(['clean', 'audit', 'commit+tag v0.1.0']);
   });
   test('refuses once any release tag exists', () => {

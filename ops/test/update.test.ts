@@ -1,5 +1,6 @@
 import { test, expect } from 'vitest';
 import { runUpdate, httpWaitReady, frontDoorCheck, type UpdateDeps } from '../src/update.js';
+import { updateExitCode, updateOutcomeJson, UPDATE_EXIT } from '../src/update.js';
 import { OpsBusyError } from '../src/opsLock.js';
 import { ROLLBACK_FAILED_MARK } from '@hf/server/db/schema';
 
@@ -549,4 +550,20 @@ test('item 8: a leftover-record refusal is flagged urgent (the CLI exits 3); oth
   expect((await runUpdate(f.deps, { to: '1.1.0' })).urgent).toBe(true);
   const g = fakes({ images: false });
   expect((await runUpdate(g.deps, { to: '1.1.0' })).urgent).toBeUndefined();
+});
+
+// ── update --json (Task 9a): one line of JSON on standard output, progress on standard error ─────────────────────────
+test('update exit codes are unchanged and urgent wins', () => {
+  expect(UPDATE_EXIT).toEqual({ updated: 0, cancelled: 1, 'rolled-back': 1, 'rollback-failed': 3 });
+  expect(updateExitCode({ outcome: 'updated', message: 'x' })).toBe(0);
+  expect(updateExitCode({ outcome: 'cancelled', message: 'x', urgent: true })).toBe(3);
+});
+test('the JSON outcome is one line with every field', () => {
+  const line = updateOutcomeJson({ outcome: 'rolled-back', message: '[Acme] Update to 0.2.1 failed …\nsecond line' }, '0.2.1');
+  expect(line).not.toContain('\n');
+  expect(JSON.parse(line)).toEqual({ schema: 1, outcome: 'rolled-back', to: '0.2.1', message: '[Acme] Update to 0.2.1 failed … second line', urgent: false, exitCode: 1 });
+});
+test('a refusal before the update starts is JSON too, with exit code 2', () => {
+  expect(JSON.parse(updateOutcomeJson({ refused: 'update needs exactly one of --to <version>, --status or --mark-recovered.', exitCode: 2 }, null)))
+    .toEqual({ schema: 1, outcome: 'refused', to: null, message: 'update needs exactly one of --to <version>, --status or --mark-recovered.', urgent: false, exitCode: 2 });
 });

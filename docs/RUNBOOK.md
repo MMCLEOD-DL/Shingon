@@ -280,6 +280,8 @@ What it does, in order: stops the app **and the monitor (ops)**, takes an encryp
 
 `docker compose run --rm updater update --status` shows the last 5 updates.
 
+**For scripts:** add `--json` (`docker compose run --rm -T updater update --to 0.1.1 --json`) and standard output gets exactly one line of JSON with the outcome, such as `{"schema":1,"outcome":"updated","to":"0.1.1","message":"[Acme] Updated from 0.1.0 to 0.1.1. …","urgent":false,"exitCode":0}`; the progress lines go to standard error instead. `outcome` is `updated`, `cancelled`, `rolled-back`, `rollback-failed`, or `refused` for a usage or settings problem found before the update started (exit 2). The message is the same one the alert carries, on one line, with no secrets. The exit codes are the same as in the table above. `--json` goes only with `--to`.
+
 **Things that keep updates safe:**
 - **Keep the previous version's images.** The undo needs them, and an update refuses to start if they are gone. Never schedule `docker image prune -a` (or `docker system prune -a`) on a box. Remove an old version's images by hand only once a newer update has been running happily for a while.
 - **The updater is the current version's ops image** (`UPDATER_TAG` defaults to `APP_TAG`). So a fix to the update process itself takes effect from the update *after* the one that installs it. If a release note tells you to use the new updater straight away: load the new images first (`docker load -i images-0.1.1.tar`), set `UPDATER_TAG=0.1.1` in `.env`, run the update, then remove the `UPDATER_TAG` line again.

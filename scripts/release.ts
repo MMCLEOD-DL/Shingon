@@ -51,7 +51,7 @@ export function judgeAudit(res: AuditResult): AuditOutcome {
   };
 }
 
-interface JsonFile { version?: string; commit?: string; packages?: Record<string, { version?: string } | undefined> }
+interface JsonFile { name?: string; version?: string; commit?: string; packages?: Record<string, { version?: string } | undefined> }
 
 export interface ReleaseDeps {
   root: string;
@@ -66,14 +66,19 @@ export interface ReleaseDeps {
   commitAndTag(version: string): void;
 }
 
+/** package.json's name in the foundation's own repository. An app built on it has its own name. */
+export const FOUNDATION_PACKAGE = 'highland-foundation';
+
 export const FIRST_RELEASE_HINT = 'No release has been made yet. Make the first one with: npm run release -- first';
 
 const readJson = (root: string, f: string): JsonFile => JSON.parse(readFileSync(path.join(root, f), 'utf8')) as JsonFile;
 
 /**
  * The very first release: tags the version already written in package.json, foundation.json and a dated CHANGELOG.md
- * section (0.1.0), without raising it. Allowed only while no v* tag exists. Stamps foundation.json's commit with the tag
- * name, commits and tags locally; nothing is pushed. Throws plain-English problems, and writes nothing when it refuses.
+ * section (0.1.0), without raising it. Allowed only while no v* tag exists. Commits and tags locally; nothing is pushed.
+ * Throws plain-English problems, and writes nothing when it refuses.
+ * Only the foundation's own release checks foundation.json against package.json and stamps its commit with the tag name:
+ * an app keeps the stamp it inherited (docs/BUILDING-ON.md), so for an app foundation.json is neither read nor written.
  */
 export function runFirstRelease(deps: ReleaseDeps): string {
   if (!deps.isClean()) throw new Error('Commit or stash your changes first.');
@@ -82,10 +87,11 @@ export function runFirstRelease(deps: ReleaseDeps): string {
     throw new Error(`A release has already been made (tag ${[...tags].sort().join(', ')}), so this is not the first one. Use npm run release -- patch, minor or major instead.`);
   }
   const pkg = readJson(deps.root, 'package.json');
-  const found = readJson(deps.root, 'foundation.json');
+  const isFoundation = pkg.name === FOUNDATION_PACKAGE;
   const version = pkg.version ?? '';
   if (semver.valid(version) === null) throw new Error(`package.json's version "${version}" is not a version number such as 0.1.0.`);
-  if (found.version !== version) {
+  const found = isFoundation ? readJson(deps.root, 'foundation.json') : null;
+  if (found && found.version !== version) {
     throw new Error(`foundation.json says ${String(found.version)} but package.json says ${version}. They must match before a release; fix whichever is wrong.`);
   }
   const section = parseChangelog(readFileSync(path.join(deps.root, 'CHANGELOG.md'), 'utf8')).find((x) => x.version === version);
@@ -95,21 +101,26 @@ export function runFirstRelease(deps: ReleaseDeps): string {
   const verdict = judgeAudit(deps.audit());
   if (!verdict.ok) throw new Error(verdict.message);
   if (!deps.hasGitIdentity()) throw new Error('Git does not know who you are. Set it with git config user.name and git config user.email, then try again.');
-  writeFileSync(path.join(deps.root, 'foundation.json'), `${JSON.stringify({ ...found, commit: `v${version}` }, null, 2)}\n`);
+  if (found) writeFileSync(path.join(deps.root, 'foundation.json'), `${JSON.stringify({ ...found, commit: `v${version}` }, null, 2)}\n`);
   deps.commitAndTag(version);
   return version;
 }
 
-/** Does the whole release except pushing. Throws plain-English problems. */
+/**
+ * Does the whole release except pushing. Throws plain-English problems.
+ * Only the foundation's own release checks foundation.json against package.json and stamps it: an app keeps the stamp it
+ * inherited (docs/BUILDING-ON.md), so for an app foundation.json is neither read nor written.
+ */
 export function runRelease(bump: Bump, deps: ReleaseDeps): string {
   if (!deps.isClean()) throw new Error('Commit or stash your changes first.');
   if (deps.versionTags().length === 0) throw new Error(FIRST_RELEASE_HINT);
   const verdict = judgeAudit(deps.audit());
   if (!verdict.ok) throw new Error(verdict.message);
   const file = (f: string): string => path.join(deps.root, f);
-  const pkg = JSON.parse(readFileSync(file('package.json'), 'utf8')) as { version: string };
-  const found = JSON.parse(readFileSync(file('foundation.json'), 'utf8')) as JsonFile;
-  if (found.version !== pkg.version) {
+  const pkg = JSON.parse(readFileSync(file('package.json'), 'utf8')) as { name?: string; version: string };
+  const isFoundation = pkg.name === FOUNDATION_PACKAGE;
+  const found = isFoundation ? (JSON.parse(readFileSync(file('foundation.json'), 'utf8')) as JsonFile) : null;
+  if (found && found.version !== pkg.version) {
     throw new Error(`foundation.json says ${String(found.version)} but package.json says ${pkg.version}. They must match before a release; fix whichever is wrong.`);
   }
   const changelog = readFileSync(file('CHANGELOG.md'), 'utf8');
@@ -137,7 +148,7 @@ export function runRelease(bump: Bump, deps: ReleaseDeps): string {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
   }
   // The release commit's own sha cannot be known before the commit exists, so the stamp records the tag name.
-  setVersion('foundation.json', (j) => { j.version = plan.version; j.commit = `v${plan.version}`; });
+  if (isFoundation) setVersion('foundation.json', (j) => { j.version = plan.version; j.commit = `v${plan.version}`; });
   deps.commitAndTag(plan.version);
   return plan.version;
 }
