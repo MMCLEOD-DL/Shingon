@@ -42,7 +42,8 @@ async function run(cwd, args, opts = {}) {
 // <projectDir>/builds/<runId>/merge, or null when the project folder is unusable or builds/ or builds/<runId>
 // is a link (or resolves elsewhere), so the delete below can never reach outside the project.
 function scratchFolder(projectDir, runId) {
-  if (typeof projectDir !== 'string' || projectDir.trim() === '') return null;
+  // Only an absolute project folder: a relative one ('.') would put the scratch folder under wherever Conductor runs.
+  if (typeof projectDir !== 'string' || projectDir.trim() === '' || !path.isAbsolute(projectDir)) return null;
   let root;
   try { root = realpathSync(path.resolve(projectDir)); } catch { return null; }
   if (!lstatSync(root).isDirectory()) return null;

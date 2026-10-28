@@ -225,11 +225,11 @@ test('a run id that is not valid stops before any folder is touched', async () =
   assert.equal(await refsOf(p.appDir), refs);
 });
 
-test('an empty or missing project folder stops and deletes nothing', async () => {
+test('an empty, relative or missing project folder stops and deletes nothing', async () => {
   const f = await makeFoundation({ versions: ['0.1.0', '0.1.1'] });
   const p = await appWithHistory(f);
   const cwdBefore = readdirSync(process.cwd()).sort();
-  for (const projectDir of ['', undefined, path.join(p.projectsRoot, 'missing')]) {
+  for (const projectDir of ['', undefined, '.', 'builds/..', path.join(p.projectsRoot, 'missing')]) {
     const r = await prepare(f, p, { projectDir });
     assert.equal(r.status, 'stopped');
     assert.match(r.reason, /could not set up its scratch folder/);
