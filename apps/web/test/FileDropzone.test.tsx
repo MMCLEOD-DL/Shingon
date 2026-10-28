@@ -51,3 +51,17 @@ test('the server refusal text is shown when an upload fails', async () => {
   await user.upload(screen.getByTestId('file-input'), new File([new Uint8Array([1, 2, 3])], 'a.jpg', { type: 'image/jpeg' }));
   expect(await screen.findByText('That file is too large. The limit is 15 MB.')).toBeInTheDocument();
 });
+
+test('a prepare step runs before the checks and the upload, and its file is the one sent', async () => {
+  const f = mockFetch({ 'POST /api/files': [201, { file: { id: 'f3', name: 'big.jpg', contentType: 'image/jpeg', size: 4, createdAt: '2026-10-01T10:00:00.000Z', ownerId: 'u1' } }] });
+  const small = new File([new Uint8Array(4)], 'big.jpg', { type: 'image/jpeg' });
+  const prepare = vi.fn(async () => small);
+  render(<Wrap><FileDropzone onUploaded={() => undefined} maxBytes={10} prepare={prepare} /></Wrap>);
+  // Over the limit as chosen, under it once prepared.
+  const chosen = new File([new Uint8Array(11)], 'big.heic', { type: 'image/heic' });
+  await user.upload(screen.getByTestId('file-input'), chosen);
+  expect(await screen.findByText('big.jpg')).toBeInTheDocument();
+  expect(prepare).toHaveBeenCalledWith(chosen);
+  const body = f.mock.calls[0]?.[1]?.body as FormData;
+  expect(body.get('file')).toBe(small);
+});

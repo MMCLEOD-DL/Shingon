@@ -14,6 +14,9 @@ import { NotesList } from './pages/notes/NotesList.js';
 import { NoteNew } from './pages/notes/NoteNew.js';
 import { NoteView } from './pages/notes/NoteView.js';
 import { EmptyState } from './ui/index.js';
+import { ReceiptCheck, ReceiptNew } from './modules/ocr/index.js';
+import { BUILT_MODULES } from './appPaths.js';
+import type { ModuleName } from '@hf/shared';
 
 export { APP_PATHS, type AppPath } from './appPaths.js';
 
@@ -25,26 +28,36 @@ function NotFound() {
   );
 }
 
-// Signed-in pages live inside the shell; public pages (sign in, reset password) sit outside it. Later tasks add their routes here.
-export const routeObjects: RouteObject[] = [
-  {
-    element: <RequireAuth><Shell /></RequireAuth>,
-    children: [
-      { path: '/', element: <Navigate to="/notes" replace /> },
-      { path: '/profile', element: <Profile /> },
-      { path: '/notes', element: <NotesList /> },
-      { path: '/notes/new', element: <NoteNew /> },
-      { path: '/notes/:id', element: <NoteView /> },
-      { path: '/admin/users', element: <RequirePermission perm="users:list"><Users /></RequirePermission> },
-      { path: '/admin/teams', element: <RequirePermission perm="teams:manage"><Teams /></RequirePermission> },
-      { path: '/admin/audit', element: <RequirePermission perm="audit:read"><Audit /></RequirePermission> },
-    ],
-  },
-  { path: '/sign-in', element: <SignIn /> },
-  { path: '/forgot-password', element: <ForgotPassword /> },
-  { path: '/reset-password', element: <ResetPassword /> },
-  { path: '/accept-invite', element: <AcceptInvite /> },
-  { path: '*', element: <NotFound /> },
-];
+/** Signed-in pages live inside the shell; public pages (sign in, reset password) sit outside it. Later tasks add their routes here. */
+export function routeObjectsFor(modules: readonly ModuleName[]): RouteObject[] {
+  // A module's pages are routed only when the module is built in (Plan 12 Ruling 7).
+  const signedIn: RouteObject[] = [
+    { path: '/', element: <Navigate to="/notes" replace /> },
+    { path: '/profile', element: <Profile /> },
+    { path: '/notes', element: <NotesList /> },
+    { path: '/notes/new', element: <NoteNew /> },
+    { path: '/notes/:id', element: <NoteView /> },
+    ...(modules.includes('ocr') ? [
+      { path: '/receipts/new', element: <ReceiptNew /> },
+      { path: '/receipts/:id', element: <ReceiptCheck /> },
+    ] : []),
+    { path: '/admin/users', element: <RequirePermission perm="users:list"><Users /></RequirePermission> },
+    { path: '/admin/teams', element: <RequirePermission perm="teams:manage"><Teams /></RequirePermission> },
+    { path: '/admin/audit', element: <RequirePermission perm="audit:read"><Audit /></RequirePermission> },
+  ];
+  return [
+    {
+      element: <RequireAuth><Shell /></RequireAuth>,
+      children: signedIn,
+    },
+    { path: '/sign-in', element: <SignIn /> },
+    { path: '/forgot-password', element: <ForgotPassword /> },
+    { path: '/reset-password', element: <ResetPassword /> },
+    { path: '/accept-invite', element: <AcceptInvite /> },
+    { path: '*', element: <NotFound /> },
+  ];
+}
+
+export const routeObjects: RouteObject[] = routeObjectsFor(BUILT_MODULES);
 
 export const router = createBrowserRouter(routeObjects);

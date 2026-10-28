@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { test, expect, type Browser, type Page, type TestInfo } from '@playwright/test';
 import { DEMO_PASSWORD, authFile, loadFixtures, type Fixtures, type Role } from './fixtures.js';
@@ -8,6 +10,9 @@ import { latestMailTo } from './mail.js';
 test.describe.configure({ mode: 'serial' });
 
 const PHOTO = path.resolve(import.meta.dirname, '../../server/test/fixtures/files/tiny.jpg');
+const RECEIPTS = path.resolve(import.meta.dirname, '../../../modules/ocr/test/fixtures/receipts');
+const TAXI_PHOTO = path.join(RECEIPTS, 'rendered/taxi-photo.jpg');
+const E_TICKET = path.join(RECEIPTS, 'pdf/e-ticket.pdf');
 const NEW_PASSWORD = 'a fresh long password';
 const flowEmail = (info: TestInfo): string => `flow.${info.project.name}@demo.test`;
 const inviteeEmail = (info: TestInfo): string => `invitee+${info.project.name}@demo.test`;
@@ -59,6 +64,77 @@ test('a member creates a note with a photo', async ({ page }, info) => {
   await page.getByRole('menuitem', { name: 'Sign out' }).click();
   await expect(page).toHaveURL(/\/sign-in$/);
   await expect(page.getByRole('heading', { name: 'Sign in', exact: true })).toBeVisible();
+});
+
+/**
+ * The stand-in reader answers at once, so the first look at a new reading is held back as "pending": the page must
+ * say it is reading, then show the fields when the next poll finds the reading done.
+ */
+async function holdFirstLookAsPending(page: Page): Promise<void> {
+  let held = false;
+  await page.route(/\/api\/readings\/[0-9a-f-]{36}$/, async (route) => {
+    if (held || route.request().method() !== 'GET') { await route.fallback(); return; }
+    held = true;
+    const res = await route.fetch();
+    const { reading } = (await res.json()) as { reading: Record<string, unknown> };
+    await route.fulfill({ response: res, json: { reading: { ...reading, status: 'pending', proposal: null } } });
+  });
+}
+
+/** From "Check the details": waits for the fields, changes the merchant, confirms, and checks what the server kept. */
+async function correctAndConfirm(page: Page, merchant: string): Promise<void> {
+  await expect(page.getByText('Reading your receipt…')).toBeVisible();
+  await expect(page.getByLabel('Total')).toHaveValue('12.40');
+  await page.getByLabel('Shop or supplier').fill(merchant);
+  await page.getByRole('button', { name: 'Confirm' }).click();
+  await expect(page.getByText('Receipt confirmed.')).toBeVisible();
+  await expect(page.getByLabel('Shop or supplier')).toHaveJSProperty('readOnly', true);
+  const id = /\/receipts\/([0-9a-f-]{36})$/.exec(page.url())?.[1] ?? '';
+  const { reading } = (await (await page.request.get(`/api/readings/${id}`)).json()) as { reading: { status: string; confirmed: { merchant: string; amountPence: number }; corrected: string[] } };
+  expect(reading.status).toBe('confirmed');
+  expect(reading.confirmed).toMatchObject({ merchant, amountPence: 1240 });
+  expect(reading.corrected).toContain('merchant');
+}
+
+async function openReadAReceipt(page: Page, info: TestInfo): Promise<void> {
+  await signInThroughForm(page, flowEmail(info), DEMO_PASSWORD);
+  await page.goto('/receipts/new');
+  await expect(page.getByRole('heading', { name: 'Read a receipt', exact: true })).toBeVisible();
+  await holdFirstLookAsPending(page);
+}
+
+test('receipt: choose a file, read, correct, confirm', async ({ page }, info) => {
+  await openReadAReceipt(page, info);
+  if (info.project.use.isMobile) await expect(page.getByRole('button', { name: 'Choose a file' })).toBeVisible();
+  await page.getByTestId('file-input').setInputFiles(TAXI_PHOTO);
+  await expect(page).toHaveURL(/\/receipts\/[0-9a-f-]{36}$/);
+  await expect(page.getByRole('heading', { name: 'Check the details', exact: true })).toBeVisible();
+  await correctAndConfirm(page, `Northside Taxis Ltd (${info.project.name})`);
+});
+
+test('receipt: take a photo uses the camera input', async ({ page }, info) => {
+  test.skip(!info.project.use.isMobile, 'The camera button is offered on a phone.');
+  await openReadAReceipt(page, info);
+  await expect(page.getByRole('button', { name: 'Take a photo' })).toBeVisible();
+  const camera = page.locator('input[type=file][capture=environment]');
+  await expect(camera).toHaveCount(1);
+  const accept = (await camera.getAttribute('accept')) ?? '';
+  expect(accept.split(',').every((t) => t.trim().startsWith('image/')), `accept="${accept}" lets in more than pictures`).toBe(true);
+  await camera.setInputFiles(TAXI_PHOTO);
+  await expect(page).toHaveURL(/\/receipts\/[0-9a-f-]{36}$/);
+  await correctAndConfirm(page, `Northside Cabs (${info.project.name})`);
+});
+
+test('receipt: a PDF goes up unchanged', async ({ page }, info) => {
+  await openReadAReceipt(page, info);
+  await page.getByTestId('file-input').setInputFiles(E_TICKET);
+  await expect(page).toHaveURL(/\/receipts\/[0-9a-f-]{36}$/);
+  const id = /\/receipts\/([0-9a-f-]{36})$/.exec(page.url())?.[1] ?? '';
+  const { reading } = (await (await page.request.get(`/api/readings/${id}`)).json()) as { reading: { fileId: string } };
+  const stored = await page.request.get(`/api/files/${reading.fileId}/content`);
+  expect(stored.headers()['content-type']).toBe('application/pdf');
+  const sha = (b: Buffer): string => createHash('sha256').update(b).digest('hex');
+  expect(sha(await stored.body())).toBe(sha(readFileSync(E_TICKET)));
 });
 
 test('forgot and reset the password', async ({ page }, info) => {

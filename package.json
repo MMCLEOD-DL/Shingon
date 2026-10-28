@@ -19,7 +19,7 @@
     "licences": "tsx scripts/check-licences.ts",
     "licences:doc": "tsx scripts/check-licences.ts --markdown docs/LICENCES.md",
     "test": "vitest run",
-    "test:e2e": "tsc -b packages/shared && npm -w @hf/web run build && playwright test -c apps/web/playwright.config.ts",
+    "test:e2e": "tsc -b packages/shared && HF_ALL_MODULES=1 npm -w @hf/web run build && playwright test -c apps/web/playwright.config.ts",
     "test:ocr": "vitest run -c modules/ocr/vitest.accuracy.config.ts",
     "verify:full": "npm run verify && npm run test:e2e && npm run test:ocr",
     "verify": "npm run lint && npm run typecheck && npm run licences && npm test",

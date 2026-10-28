@@ -1,4 +1,4 @@
-import type { FileView } from '@hf/shared';
+import type { ConfirmReadingInput, FileView, ReadingView } from '@hf/shared';
 
 export interface ApiIssue { path: string; message: string }
 
@@ -71,4 +71,24 @@ export async function uploadFile(file: File): Promise<FileView> {
   form.append('file', file);
   const res = await send('/api/files', { method: 'POST', body: form, headers: { accept: 'application/json' } });
   return ((await readJson(res)) as { file: FileView }).file;
+}
+
+const readingPath = (id: string): string => `/api/readings/${encodeURIComponent(id)}`;
+
+/** Asks for an uploaded file to be read as a receipt. The server wants an empty JSON body. */
+export async function requestReading(fileId: string): Promise<ReadingView> {
+  return (await api<{ reading: ReadingView }>('POST', `/api/files/${encodeURIComponent(fileId)}/reading`, {})).reading;
+}
+
+export async function getReading(id: string): Promise<ReadingView> {
+  return (await api<{ reading: ReadingView }>('GET', readingPath(id))).reading;
+}
+
+/** The only call that saves a receipt's values: made when the person presses Confirm. */
+export async function confirmReading(id: string, input: ConfirmReadingInput): Promise<ReadingView> {
+  return (await api<{ reading: ReadingView }>('POST', `${readingPath(id)}/confirm`, input)).reading;
+}
+
+export async function getFile(id: string): Promise<FileView> {
+  return (await api<{ file: FileView }>('GET', `/api/files/${encodeURIComponent(id)}`)).file;
 }

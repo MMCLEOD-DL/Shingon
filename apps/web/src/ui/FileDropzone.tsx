@@ -43,12 +43,14 @@ export function FilePreview({ file, onRemove }: { file: FileView; onRemove?: () 
 }
 
 /** Choose or drop one file and upload it at once. On a phone, one big button opens the camera or the photo library. */
-export function FileDropzone({ onUploaded, onRemoved, value = null, maxBytes = DEFAULT_MAX }: {
+export function FileDropzone({ onUploaded, onRemoved, value = null, maxBytes = DEFAULT_MAX, prepare }: {
   onUploaded: (file: FileView) => void;
   onRemoved?: () => void;
   /** A file already attached, shown in place of the chooser. */
   value?: FileView | null;
   maxBytes?: number;
+  /** Runs on the chosen file before the checks and the upload (receipts: turn the photo upright, JPEG, smaller). */
+  prepare?: (file: File) => Promise<File>;
 }) {
   const mobile = useMediaQuery('(max-width: 48em)', false, { getInitialValueInEffect: false });
   const [current, setCurrent] = useState<FileView | null>(value);
@@ -63,12 +65,20 @@ export function FileDropzone({ onUploaded, onRemoved, value = null, maxBytes = D
     return null;
   };
 
-  const send = async (f: File | undefined) => {
-    if (!f) return;
-    const refusal = problem(f);
-    if (refusal) { setError(new Error(refusal)); return; }
+  const send = async (chosen: File | undefined) => {
+    if (!chosen) return;
     setError(null);
-    setBusy(f.name);
+    setBusy(chosen.name);
+    let f = chosen;
+    if (prepare) {
+      try {
+        f = await prepare(chosen);
+      } catch {
+        f = chosen; // preparing is a nicety: the original still goes up
+      }
+    }
+    const refusal = problem(f);
+    if (refusal) { setBusy(null); setError(new Error(refusal)); return; }
     try {
       const file = await uploadFile(f);
       setCurrent(file);
@@ -119,7 +129,8 @@ export function FileDropzone({ onUploaded, onRemoved, value = null, maxBytes = D
           onDrop={(files) => { void send(files[0]); }}
           onReject={rejected}
           accept={DROP_ACCEPT}
-          maxSize={maxBytes}
+          // With a prepare step the size is checked on the prepared file (a big phone photo shrinks), not here.
+          maxSize={prepare ? Infinity : maxBytes}
           multiple={false}
           inputProps={{ 'data-testid': 'file-input' } as React.InputHTMLAttributes<HTMLInputElement>}
         >

@@ -21,10 +21,10 @@ export default defineConfig({
   reporter: [['list']],
   use: { baseURL: 'http://localhost:4319', trace: 'retain-on-failure' },
   projects: [
-    { name: 'desktop-chromium', testMatch: /(responsive|flows|registry)\.spec\.ts/, use: { browserName: 'chromium', viewport: { width: 1280, height: 800 } } },
-    { name: 'mobile-chromium', testMatch: /(responsive|flows)\.spec\.ts/, use: { browserName: 'chromium', ...phone } },
-    // WebKit is the closest thing to iPhone Safari that runs here; it only runs the page gate.
-    { name: 'mobile-webkit', testMatch: /responsive\.spec\.ts/, use: { browserName: 'webkit', ...phone } },
+    { name: 'desktop-chromium', testMatch: /(responsive|flows|registry|receipt-photo)\.spec\.ts/, use: { browserName: 'chromium', viewport: { width: 1280, height: 800 } } },
+    { name: 'mobile-chromium', testMatch: /(responsive|flows|receipt-photo)\.spec\.ts/, use: { browserName: 'chromium', ...phone } },
+    // WebKit is the closest thing to iPhone Safari that runs here; it runs the page gate and the sideways-photo journey.
+    { name: 'mobile-webkit', testMatch: /(responsive|receipt-photo)\.spec\.ts/, use: { browserName: 'webkit', ...phone } },
   ],
   webServer: {
     command: 'node --import tsx apps/server/src/e2e-server.ts',
