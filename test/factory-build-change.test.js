@@ -11,6 +11,9 @@ import { appProfileOf } from '../src/factory/app.js';
 import { runTask as realRunTask } from '../src/conductor.js';
 import { git } from '../src/workspace.js';
 import { sampleBrief } from './helpers/factoryFixtures.js';
+import { makeChangeGate } from '../src/factory/change/gate.js';
+import { buildReport } from '../src/council/report.js';
+import { writeCouncilReport } from '../src/council/reportFile.js';
 import { team, setup } from './helpers/buildHarness.js';
 
 const RUN_ID = '20261027-143205-a1b2';
@@ -368,3 +371,49 @@ test('change.foundation must name a release tag and a full commit', async () => 
     assert.equal(out.reason, 'The foundation release for the change was not passed in a form Conductor can read, so the change build did not start.');
   }
 });
+
+// Final review item 16: one test across the Plan 8 / Plan 9 / Plan 11 seam. Plan 8's real change-mode runBuild and
+// runFinal, Plan 11's real makeChangeGate, and a council report written by Plan 9's real buildReport and
+// writeCouncilReport, as a council round writes it. Only the council members are stubbed: they find nothing.
+async function councilWritingReport(a, { secretSeen = false } = {}) {
+  const report = buildReport({ round: 1, findings: [], toolRuns: [], by: 'fake members' });
+  await writeCouncilReport(path.join(a.projectDir, 'builds', a.runId), report, { sha: a.sha, runId: a.runId, secretSeen });
+  return { status: report.verdict, text: report.text, secretSeen };
+}
+
+for (const secretSeen of [false, true]) {
+  test(`seam: real runFinal + real makeChangeGate + a real council report — the gate asks once and approves the same sha and run${secretSeen ? ' (after a secret squash)' : ''}`, async () => {
+    const s = await live();
+    const asks = [];
+    const refused = [];
+    let approved = null;
+    const gate = makeChangeGate({
+      projectDir: s.projectDir,
+      approveBuild: async (arg) => { asks.push(arg); return true; },
+      extraText: () => 'The app becomes version 0.3.0.',
+      check: async () => null,
+      onApproved: (record) => { approved = record; },
+      onRefused: (reason) => { refused.push(reason); },
+    });
+    const out = await run(s, { change: change({ units: [UNIT_ADDED, UNIT_CHANGED] }), hooks: { council: (a) => councilWritingReport(a, { secretSeen }), approveBuild: gate } });
+    assert.equal(out.status, 'approved', out.reason ?? refused.join(' '));
+    assert.deepEqual(refused, []);
+    assert.equal(asks.length, 1);
+    assert.equal(asks[0].runId, RUN_ID);
+    assert.equal(asks[0].sha, out.sha);
+    assert.match(asks[0].summary, /If you approve:\n {2}The app becomes version 0\.3\.0\./);
+    assert.equal(approved.sha, out.sha);
+    assert.equal(approved.branch, out.branch);
+    assert.deepEqual(approved.council, { status: 'approved', overridden: false, verdict: 'approved', round: 1 });
+    const saved = JSON.parse(readFileSync(path.join(s.projectDir, 'builds', RUN_ID, 'council-report.json'), 'utf8'));
+    assert.equal(saved.runId, RUN_ID);
+    const build = loadBuild(buildDirOf(s.projectDir, RUN_ID));
+    if (secretSeen) {
+      // The report names the commit the council reviewed; Plan 8 squashed it into the approved one (Ruling C3).
+      assert.equal(build.squashedSha, out.sha);
+      assert.notEqual(saved.sha, out.sha);
+    } else {
+      assert.equal(saved.sha, out.sha);
+    }
+  });
+}
