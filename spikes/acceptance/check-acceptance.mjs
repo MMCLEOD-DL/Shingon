@@ -88,7 +88,7 @@ function runOf(projectDir, runId, kind) {
 }
 
 // The app's own files at a commit (read-only git), and whether they differ in the working tree (a hand edit).
-const gitEnv = () => { const env = { ...process.env }; delete env.GIT_DIR; delete env.GIT_WORK_TREE; delete env.GIT_INDEX_FILE; return env; };
+const gitEnv = () => { const env = { ...process.env }; delete env.GIT_DIR; delete env.GIT_WORK_TREE; delete env.GIT_INDEX_FILE; env.GIT_OPTIONAL_LOCKS = '0'; return env; }; // read-only: git status must not refresh the index
 function appGit(projectDir, args) {
   const r = spawnSync('git', ['-C', path.join(projectDir, 'app'), ...args], { encoding: 'utf8', env: gitEnv(), maxBuffer: 16 * 1024 * 1024 });
   return { code: r.status ?? 1, stdout: r.stdout ?? '' };
