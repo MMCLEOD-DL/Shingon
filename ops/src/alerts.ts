@@ -63,6 +63,9 @@ export function webhookChannel(url: string, fetchImpl?: typeof fetch): AlertChan
   };
 }
 
+/** How allChannels starts the line it logs for a channel that failed while another succeeded. */
+export const PARTIAL_ALERT = 'An alert went out, but not to';
+
 /**
  * Sends to every channel at once. Rejects only if all of them fail, naming each failure. A channel that fails while another
  * succeeds is still logged (its name and plain error, never an address or token), so a broken route does not go unnoticed.
@@ -77,7 +80,7 @@ export function allChannels(channels: AlertChannel[], log?: (line: string) => vo
         throw new Error(`No alert could be sent: ${[...new Set(reasons)].join(' ')}`);
       }
       reasons.forEach((r, i) => {
-        if (r !== null) log?.(`An alert went out, but not to ${channels[i]?.name ?? 'one of the alert channels'}: ${r}`);
+        if (r !== null) log?.(`${PARTIAL_ALERT} ${channels[i]?.name ?? 'one of the alert channels'}: ${r}`);
       });
     },
   };

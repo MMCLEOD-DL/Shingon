@@ -16,8 +16,8 @@ interface Entry { key: string; comment: string; value?: string; example?: string
 
 const defaultRandom = (n: number): string => randomBytes(n).toString('base64url');
 
-/** A value Compose reads back exactly as written, whatever the client's name contains. */
-function dotenvValue(key: string, v: string): string {
+/** A value Compose reads back exactly as written, whatever the client's name contains. Throws on a line break. */
+export function dotenvValue(key: string, v: string): string {
   if (/[\r\n]/.test(v)) throw new Error(`${key} must be on one line.`);
   if (/^[A-Za-z0-9_@%+=:,./ -]*$/.test(v) && v === v.trim()) return v;
   // Double quotes keep spaces and # and ' as they are; \ and " are escaped and $ is doubled so Compose does not expand it.

@@ -11,6 +11,9 @@ import { alertSecrets, redactAlert } from './alerts.js';
 import { opsLockHeld } from './opsLock.js';
 import { jobsCommand } from './appJobs.js';
 import { crashJsonLine, updateCli } from './update-cli.js';
+import { statusCli, statusCrashLine } from './status.js';
+import { setEnvCli } from './setEnv.js';
+import { testAlertCli } from './testAlert.js';
 
 const say = (line: string): void => { console.log(line); };
 const MANUAL_BACKUP_LOCK_WAIT = 2 * 60e3;
@@ -22,18 +25,25 @@ function plain(e: unknown): string {
   const text = e instanceof Error ? e.message : String(e);
   return `Ops stopped because of an unexpected problem: ${firstLine(redact(text, process.env as Record<string, string>))}.`;
 }
-/** update --json promises exactly one line on standard output: set once it has been written. */
+/** update --json and status --json promise exactly one line on standard output: set once it has been written. */
 let jsonWritten = false;
 const out = (line: string): void => { jsonWritten = true; say(line); };
-/** A crash that escapes everything: a plain sentence on standard error, and under update --json the `unknown` line. */
+/** A crash that escapes everything: a plain sentence on standard error, and under update/status --json a line that says nothing is known. */
 function crash(e: unknown): never {
   complain(plain(e));
-  const line = crashJsonLine(process.argv.slice(2));
+  const line = crashJsonLine(process.argv.slice(2)) ?? statusCrashLine(process.argv.slice(2));
   if (line !== undefined && !jsonWritten) process.stdout.write(`${line}\n`);
   process.exit(1);
 }
 process.on('uncaughtException', crash);
 process.on('unhandledRejection', crash);
+
+/** All of standard input as text (set-env). */
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const c of process.stdin) chunks.push(c as Buffer);
+  return Buffer.concat(chunks).toString('utf8');
+}
 
 function config(): OpsConfig | undefined {
   try {
@@ -113,6 +123,12 @@ async function main(argv: string[]): Promise<number> {
       for (const l of lines) say(redactAlert(l, secrets));
       return ok ? 0 : 1;
     }
+    case 'status':
+      return statusCli(rest, { out, err: complain, withDeps, checks: (cfg) => monitorChecks({ cfg, opsLockHeld: () => opsLockHeld({ cfg }) }) });
+    case 'set-env':
+      return setEnvCli(rest, { out: say, err: complain, env: process.env, stdinIsTTY: process.stdin.isTTY, readStdin });
+    case 'test-alert':
+      return testAlertCli(rest, { out: say, err: complain, config, now: () => new Date() });
     case 'check-edge': {
       // Run by the one-shot edge-check service: the front door does not start until this passes.
       const problems = checkEdgePair(process.env['TUNNEL_IP']?.trim() || '172.30.250.10', process.env['EDGE_SUBNET']?.trim() || '172.30.250.0/28');

@@ -53,11 +53,15 @@ export async function outstandingUpdate(db: Db): Promise<{ at: Date; snapshotId?
   return { at: new Date(row.at), ...(row.snapshot_id !== null ? { snapshotId: row.snapshot_id } : {}) };
 }
 
-export async function lastRun(db: Db, kind: OpsRunKind, opts: { okOnly: boolean }): Promise<{ at: Date; ok: boolean; detail: string } | null> {
+/**
+ * The newest run of a kind. okOnly: only runs that worked. notBusy: leave out runs that did not start because another run
+ * held the ops lock (they say nothing about whether the last real run worked).
+ */
+export async function lastRun(db: Db, kind: OpsRunKind, opts: { okOnly: boolean; notBusy?: boolean }): Promise<{ at: Date; ok: boolean; detail: string } | null> {
   const rows = await db
     .select({ at: opsRuns.at, ok: opsRuns.ok, detail: opsRuns.detail })
     .from(opsRuns)
-    .where(opts.okOnly ? and(eq(opsRuns.kind, kind), eq(opsRuns.ok, true)) : eq(opsRuns.kind, kind))
+    .where(and(eq(opsRuns.kind, kind), opts.okOnly ? eq(opsRuns.ok, true) : undefined, opts.notBusy === true ? eq(opsRuns.busy, false) : undefined))
     .orderBy(desc(opsRuns.at), desc(opsRuns.id))
     .limit(1);
   return rows[0] ?? null;

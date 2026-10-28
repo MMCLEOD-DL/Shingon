@@ -81,7 +81,7 @@ test('ops help prints every command and exits 0; extra words are a usage error',
   expect(runHelp([], (t) => { out += t; }, (t) => { err += t; })).toBe(0);
   expect(out).toBe(`${USAGE}\n`);
   expect(err).toBe('');
-  for (const cmd of ['help', 'init', 'backup', 'restore-test', 'restore', 'check', 'check-edge', 'update', 'jobs', 'daemon']) expect(out).toContain(`\n  ${cmd}`);
+  for (const cmd of ['help', 'init', 'backup', 'restore-test', 'restore', 'check', 'check-edge', 'status', 'set-env', 'test-alert', 'update', 'jobs', 'daemon']) expect(out).toContain(`\n  ${cmd}`);
   expect(out).toContain('docker compose run --rm ops <command>');
   expect(runHelp(['now'], () => undefined, (t) => { err += t; })).toBe(2);
   expect(err).toContain('help takes no options');

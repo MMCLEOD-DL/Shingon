@@ -76,6 +76,8 @@ You need: a Linux machine with Docker Engine and the Compose plugin; the release
    - For the tunnel, `TUNNEL_TOKEN` (see "Remote access").
    - Never commit `.env` or copy it to a shared drive.
 
+   Once `APP_TAG` is in `.env` (the updater's image is chosen by it), the other values can be filled in by a script instead of an editor: put `KEY=value` lines in a file (values exactly as they should be, no quotes) and run `docker compose run --rm -T updater set-env < settings.txt`. It accepts only settings ops knows, never the secrets `ops init` made (`DB_PASSWORD`, `HEALTH_TOKEN`, `BACKUP_PASSWORD`) or `HF_BUNDLE_DIR` and `COMPOSE_PROJECT_NAME`; any problem (an unknown or repeated key, a Windows line ending) is listed and nothing is changed. Every other line of `.env`, its owner and its mode stay as they were, and no value is ever printed. Delete `settings.txt` afterwards if it holds secrets.
+
 5. **Start it:**
 
    ```bash
@@ -134,6 +136,8 @@ Ops checks the box every minute. A problem is sent on the **second** failed chec
 - `[Acme Ltd] Fixed: … (now back to normal).` It quotes the problem **as first alerted**, numbers included (a disk alert that first said 1.2 GB free says 1.2 GB in its Fixed message, even if it got worse in between).
 
 To see the current state at any time: `docker compose run --rm ops check`. The ops log is `docker compose logs --tail 200 ops`.
+
+To check that alerts reach you (after setting up a box, or after changing the Matrix or webhook settings): `docker compose run --rm ops test-alert`. It sends `[Acme Ltd] Test alert from ops … Nothing is wrong` through every alert channel and says whether each got it.
 
 ### The box and the app
 
@@ -199,6 +203,8 @@ To see the current state at any time: `docker compose run --rm ops check`. The o
 **The destination is per client and set by the client's data policy.** Ops refuses a folder on the box or a `localhost` address (`BACKUP_ALLOW_LOCAL=true` exists for development only and raises a standing critical alert). Supported destinations include `sftp:user@host:/path`, `rest:https://host:8000/repo`, `s3:…` and `b2:…`.
 
 **`BACKUP_PASSWORD` is stored off the box**, in your password manager, under the client's name. If the box is lost, the password from your password manager plus the destination are everything needed to get the data back. If the password is lost, the backups are unreadable: no one, including us, can open them.
+
+**To see how backups are going:** `docker compose exec ops node ops/dist/cli.js status` shows the health checks, the last backup and restore test (and the last ones that worked, if the latest failed) and the last update. With `--json` it prints the same as one line of JSON, for scripts.
 
 **Schedule** (UK time, set in `.env`):
 
