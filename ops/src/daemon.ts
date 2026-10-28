@@ -17,13 +17,15 @@ import { alertSecrets, channelFromConfig, logChannel, redactAlert, redactingChan
 import { Monitor } from './monitor.js';
 import { monitorChecks } from './checks.js';
 import { readRecord, recordIsLeftover, UPDATE_RECORD } from './journal.js';
+import { appJobs } from '@hf/server/jobs';
+import { AppJobError, scheduleAppJobs } from './appJobs.js';
 
 export const AUDIT_PURGE_SCHEDULE = '15 3 * * *';
 export const SCHEDULED_BACKUP_LOCK_WAIT = 60 * 60e3;
 /** The monitor checks every minute. It is its own croner job, so a backup waiting for the ops lock never holds it up. */
 export const MONITOR_SCHEDULE = '* * * * *';
 
-/** The job names as the operator reads them in an alert. */
+/** Ops' own job names as the operator reads them in an alert. An app job is named by its own label (AppJobError). */
 const JOB_LABEL: Record<string, string> = { backup: 'backup', 'restore-test': 'restore test', 'audit-purge': 'audit-log tidy-up', monitor: 'health check' };
 
 /**
@@ -155,6 +157,13 @@ export function daemonJobs(deps: OpsDeps, channel: AlertChannel = logChannel(dep
  */
 export function onJobFailure(deps: OpsDeps, monitor?: Monitor): (name: string, err: Error) => Promise<void> {
   return async (name, err) => {
+    if (err instanceof AppJobError) {
+      // An app job: its label, and the failure's first line with secrets removed (already cleaned when it was recorded).
+      const line = scrub(deps, err.message);
+      deps.log(`The scheduled job "${err.label}" did not work: ${line}`);
+      if (monitor !== undefined) await monitor.jobFailed(`job "${err.label}"`, line);
+      return;
+    }
     const reported = (err as { reported?: unknown }).reported === true;
     if (!reported) deps.log(`The scheduled ${name} did not work: ${scrub(deps, err.message)}`);
     if (monitor === undefined) return;
@@ -274,7 +283,10 @@ export async function runDaemon(deps: OpsDeps, close: () => Promise<void>): Prom
   const where = [cfg.alerts.matrix ? 'Matrix' : '', cfg.alerts.webhookUrl !== undefined ? 'the alert webhook' : ''].filter(Boolean).join(' and ') || 'the ops log only';
   deps.log(`Health checks run every minute; alerts go to ${where}${cfg.heartbeatUrl !== undefined ? ', with a heartbeat to the outside watcher' : ''}.`);
   await sweepLeftovers(deps);
-  const scheduler = startScheduler(daemonJobs(deps, channel, monitor), onJobFailure(deps, monitor));
+  const onFailure = onJobFailure(deps, monitor);
+  // The app's scheduled jobs, when "scheduled-jobs" is on: missed runs are caught up once before the timers start.
+  const appScheduled = await scheduleAppJobs(deps, appJobs(), onFailure);
+  const scheduler = startScheduler([...daemonJobs(deps, channel, monitor), ...appScheduled], onFailure);
   await new Promise<void>((resolve) => {
     const stop = (): void => { resolve(); };
     process.once('SIGTERM', stop);

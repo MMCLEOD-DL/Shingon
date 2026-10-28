@@ -28,6 +28,8 @@ export const USAGE = [
   '      Runs the health checks now (the app, disk space, the tunnel, backup and settings problems): one line each, exit 1 if any fail.',
   '  check-edge',
   '      Checks that TUNNEL_IP is a usable address inside EDGE_SUBNET (the edge-check service runs this before the front door starts).',
+  '  jobs',
+  '      Lists the app\'s scheduled jobs: each one\'s schedule (UK time), when it last ran and how that went.',
   '  update --to <version> [--image-file <file>]',
   '      Updates the app safely (run it in the updater: docker compose run --rm updater update --to 0.1.1). Stops the app and',
   '      the monitor, takes a backup, switches version, updates the database and checks health; undoes it all if anything fails.',
@@ -42,7 +44,8 @@ export const USAGE = [
   '      After recovering by hand from an update that could not be undone (or stopped part-way), clears the standing alert and',
   '      the backup pause. Refuses unless the app is healthy on the version in .env. Exit 0 marked; 1 refused.',
   '  daemon',
-  '      Runs the scheduled backups, restore tests, audit-log tidy-up and health checks with alerts (the ops service does this).',
+  '      Runs the scheduled backups, restore tests, audit-log tidy-up and health checks with alerts, and the app\'s scheduled jobs',
+  '      when "scheduled-jobs" is in app-profile.json (the ops service does this).',
 ].join('\n');
 
 /** `ops help` (also -h and --help): the command list on standard output, exit 0. */

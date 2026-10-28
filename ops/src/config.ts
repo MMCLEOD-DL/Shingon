@@ -1,4 +1,10 @@
+import { fileURLToPath } from 'node:url';
 import { Cron } from 'croner';
+import { DEFAULT_PROFILE, type AppProfile } from '@hf/shared';
+import { readAppProfile } from '@hf/shared/app-profile-file';
+
+/** app-profile.json at the repo root (/app/app-profile.json in the image), as the server reads it; APP_PROFILE overrides it. */
+const DEFAULT_PROFILE_FILE = fileURLToPath(new URL('../../app-profile.json', import.meta.url));
 
 export type InstanceMode = 'demo' | 'production' | 'test';
 
@@ -31,6 +37,8 @@ export interface OpsConfig {
    * is held back by the edge-check service instead). Logged at start-up; Task 19 raises them as a standing alert.
    */
   warnings: string[];
+  /** The app profile: which optional modules are on. Ops runs the app's scheduled jobs only with "scheduled-jobs" (Ruling 8). */
+  profile: AppProfile;
 }
 
 export class OpsConfigError extends Error {
@@ -261,6 +269,9 @@ export function loadOpsConfig(env: NodeJS.ProcessEnv = process.env): OpsConfig {
     problems.push('No alert channel is set. Set MATRIX_HOMESERVER, MATRIX_ACCESS_TOKEN and MATRIX_ROOM_ID, or ALERT_WEBHOOK_URL.');
   }
 
+  const profileRead = readAppProfile(get('APP_PROFILE') ?? DEFAULT_PROFILE_FILE);
+  if (!profileRead.ok) problems.push(...profileRead.problems);
+
   const healthToken = get('HEALTH_TOKEN');
   const cfg: OpsConfig = {
     instanceMode,
@@ -275,6 +286,7 @@ export function loadOpsConfig(env: NodeJS.ProcessEnv = process.env): OpsConfig {
     tunnelEnabled: bool('TUNNEL_ENABLED', false),
     alerts,
     warnings,
+    profile: profileRead.ok ? profileRead.profile : DEFAULT_PROFILE,
   };
   if (problems.length > 0) throw new OpsConfigError(problems);
   if (healthToken !== undefined) cfg.healthToken = healthToken;

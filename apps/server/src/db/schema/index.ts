@@ -10,3 +10,4 @@ export * from './notes.js';
 export * from './instance.js';
 export * from './opsRuns.js';
 export * from './receiptReadings.js';
+export * from './jobRuns.js';

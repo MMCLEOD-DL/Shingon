@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@hf/server": "0.1.0",
+    "@hf/shared": "0.1.0",
     "croner": "10.0.1",
     "drizzle-orm": "0.45.4",
     "pg": "8.23.1"

@@ -123,3 +123,23 @@ test('alert settings: Matrix needs all three values, and production refuses to s
   ]);
   expect(badUrls?.message).not.toContain('sekrit');
 });
+
+test('ops reads app-profile.json like the server: the repo file by default, APP_PROFILE to point elsewhere, a bad file stops it', async () => {
+  const { mkdtemp, rm, writeFile } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const path = await import('node:path');
+  expect(loadOpsConfig(good).profile).toEqual({ schema: 1, modules: [], policy: { outbound: [], residency: 'uk' } });
+  const dir = await mkdtemp(path.join(tmpdir(), 'hf-ops-profile-'));
+  try {
+    const on = path.join(dir, 'on.json');
+    await writeFile(on, '{ "schema": 1, "modules": ["scheduled-jobs"], "policy": { "outbound": [], "residency": "uk" } }');
+    expect(loadOpsConfig({ ...good, APP_PROFILE: on }).profile.modules).toEqual(['scheduled-jobs']);
+    const bad = path.join(dir, 'bad.json');
+    await writeFile(bad, '{ "schema": 1, ');
+    let err: OpsConfigError | undefined;
+    try { loadOpsConfig({ ...good, APP_PROFILE: bad }); } catch (e) { err = e as OpsConfigError; }
+    expect(err?.problems).toEqual(['app-profile.json could not be read as JSON. Check the file for a typing mistake.']);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

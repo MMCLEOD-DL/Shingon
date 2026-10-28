@@ -14,6 +14,7 @@ export default defineConfig({
       { find: /^@hf\/xlsx-export$/, replacement: at('../modules/xlsx-export/src/index.ts') },
       { find: /^@hf\/server\/db$/, replacement: at('../apps/server/src/db/client.ts') },
       { find: /^@hf\/server\/db\/schema$/, replacement: at('../apps/server/src/db/schema/index.ts') },
+      { find: /^@hf\/server\/jobs$/, replacement: at('../apps/server/src/jobs/index.ts') },
     ],
   },
   test: {

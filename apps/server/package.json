@@ -12,6 +12,10 @@
     "./db/schema": {
       "types": "./dist/db/schema/index.d.ts",
       "default": "./dist/db/schema/index.js"
+    },
+    "./jobs": {
+      "types": "./dist/jobs/index.d.ts",
+      "default": "./dist/jobs/index.js"
     }
   },
   "dependencies": {
@@ -22,9 +26,10 @@
     "@fastify/rate-limit": "11.2.1",
     "@fastify/static": "10.1.7",
     "@hf/ocr": "0.1.0",
-    "@hf/shared": "0.1.0",
     "@hf/pdf-export": "0.1.0",
+    "@hf/shared": "0.1.0",
     "@hf/xlsx-export": "0.1.0",
+    "croner": "10.0.1",
     "drizzle-orm": "0.45.4",
     "fastify": "5.12.7",
     "fastify-type-provider-zod": "7.0.0",
