@@ -559,10 +559,98 @@ test('a release that is not exactly on the changelog commit is refused: releaseP
   assert.equal(h.callsOf('updateDeployment').length, 0);
 });
 
+// Gets a change to stage 'merged' with main on the changelog commit and no release made (releaseApp said no once).
+async function mergedWithoutRelease() {
+  const h = await harness({ ctl: { release: async () => ({ ok: false, reason: 'npm went away' }) } });
+  const first = await h.change();
+  assert.equal(first.status, 'failed');
+  h.ctl.release = null;
+  return { h, runId: first.runId };
+}
+const tagsOf = (appDir) => g(appDir, ['tag', '--list']);
+
+test('a stray commit on main before the release step is never released: stopped, releaseApp not called, no tag added (Ruling amending C4)', async () => {
+  const { h } = await mergedWithoutRelease();
+  writeFiles(h.appDir, { 'apps/server/src/stray.ts': 'export const stray = 1;\n' });
+  g(h.appDir, ['add', '-A']);
+  g(h.appDir, ['commit', '-q', '-m', 'unreviewed work']);
+  const tags = tagsOf(h.appDir);
+  const out = await h.resume();
+  assert.equal(out.status, 'stopped');
+  assert.match(out.reason, /main line moved after the change was added/);
+  assert.equal(h.callsOf('releaseApp').length, 1);
+  assert.equal(tagsOf(h.appDir), tags);
+  assert.equal(h.callsOf('updateDeployment').length, 0);
+});
+
+test('a fake release commit that also touches code is never released (Ruling amending C4)', async () => {
+  const { h } = await mergedWithoutRelease();
+  for (const file of ['package.json', 'package-lock.json']) {
+    const j = readJson(path.join(h.appDir, file));
+    j.version = '0.3.0';
+    writeFileSync(path.join(h.appDir, file), `${JSON.stringify(j, null, 2)}\n`);
+  }
+  writeFiles(h.appDir, { 'apps/server/src/sneaky.ts': 'export const sneaky = 1;\n' });
+  g(h.appDir, ['add', '-A']);
+  g(h.appDir, ['commit', '-q', '-m', 'release: v0.3.0']);
+  const tags = tagsOf(h.appDir);
+  const out = await h.resume();
+  assert.equal(out.status, 'stopped');
+  assert.match(out.reason, /main line moved after the change was added/);
+  assert.equal(h.callsOf('releaseApp').length, 1);
+  assert.equal(tagsOf(h.appDir), tags);
+});
+
+test('a genuine release commit left untagged by a crash is adopted through releaseApp', async () => {
+  const { h } = await mergedWithoutRelease();
+  const r = simulateRelease(h.appDir, 'minor', null);
+  g(h.appDir, ['tag', '-d', r.tag]);
+  h.ctl.release = ({ expectedMain }) => {
+    g(h.appDir, ['tag', '-a', r.tag, '-m', r.tag, expectedMain]);
+    return { ok: true, version: r.version, sha: expectedMain, tag: r.tag };
+  };
+  const out = await h.resume();
+  assert.equal(out.status, 'done', out.reason);
+  assert.equal(h.callsOf('releaseApp')[1].args[0].expectedMain, r.sha);
+});
+
+test('abandon after main moved but before project.json was written records the project first', async () => {
+  const { h, runId } = await mergedWithoutRelease();
+  const run = loadChangeRun(h.projectDir, runId);
+  const projectAfter = h.project();
+  const before = { ...projectAfter, builtFromBrief: 1, approved: { ...projectAfter.approved, briefVersion: 1, sha: run.mainAtStart } };
+  writeFileSync(path.join(h.projectDir, 'project.json'), JSON.stringify(before));
+  run.stage = 'approved';
+  saveChangeRun(h.projectDir, run);
+  const dropped = await abandonChange({ factory: h.factory, slug: 'acme', deps: h.deps });
+  assert.match(dropped.reason, /already has this change/);
+  assert.match(dropped.reason, /recorded in the project/);
+  const project = h.project();
+  assert.equal(project.builtFromBrief, 2);
+  assert.equal(project.approved.sha, run.changelogSha);
+  assert.equal(loadChangeRun(h.projectDir, runId).status, 'stopped');
+});
+
+test('on resume a saved changelog commit that does not sit on the approved work is refused', async () => {
+  const { h, runId } = await mergedWithoutRelease();
+  const run = loadChangeRun(h.projectDir, runId);
+  run.stage = 'approved';
+  run.changelogSha = run.mainAtStart;
+  saveChangeRun(h.projectDir, run);
+  const out = await h.resume();
+  assert.equal(out.status, 'stopped');
+  assert.match(out.reason, /does not sit directly on the work you approved/);
+  assert.equal(h.callsOf('releaseApp').length, 1);
+});
+
 test('a ready app that never had its own release ends at merged and is told to ship with conductor ship (Ruling C4)', async () => {
   const h = await harness({ setup: { released: false, status: 'ready', deployments: [] } });
   const out = await h.change();
   assert.equal(out.status, 'done', out.reason);
+  const gate = h.term.calls.find((c) => c.name === 'approveBuild').arg;
+  assert.doesNotMatch(gate.approveLabel, /update \d+ deployment/);
+  assert.match(gate.approveLabel, /nothing is shipped yet/);
+  assert.match(gate.approveLabel, /conductor ship/);
   assert.match(out.report, /conductor ship acme/);
   assert.equal(h.callsOf('releaseApp').length, 0);
   const run = loadChangeRun(h.projectDir, out.runId);
@@ -877,6 +965,39 @@ test('an upgrade gate refusal after a check that throws is plain and resumable',
   assert.equal(out.status, 'stopped');
   assert.equal(out.reason, CHECK_FAILED);
   assert.equal(loadChangeRun(h.projectDir, out.runId).status, 'paused');
+});
+
+test('resume of an upgrade whose merge branch was landed but not saved adopts it; a foundation record that differs stops', async () => {
+  const h = await harness({ ctl: { buildResults: [{ status: 'paused', reason: 'later' }] } });
+  const first = await h.upgrade();
+  assert.equal(first.status, 'paused');
+  const forget = () => {
+    const run = loadChangeRun(h.projectDir, first.runId);
+    delete run.upgrade;
+    run.stage = 'prepare';
+    run.baseRef = 'main';
+    saveChangeRun(h.projectDir, run);
+    return run;
+  };
+  const saved = loadChangeRun(h.projectDir, first.runId).upgrade;
+  forget();
+  // The app's record of v0.1.1 now names another commit than the foundation's tag.
+  g(h.appDir, ['update-ref', 'refs/foundation/v0.1.1', h.f.tagSha('v0.1.0')]);
+  const bad = await h.resume();
+  assert.equal(bad.status, 'stopped');
+  assert.match(bad.reason, /records the foundation's v0\.1\.1 as a different commit/);
+
+  const h2 = await harness({ ctl: { buildResults: [{ status: 'paused', reason: 'later' }] } });
+  const one = await h2.upgrade();
+  const kept = loadChangeRun(h2.projectDir, one.runId).upgrade;
+  const run = loadChangeRun(h2.projectDir, one.runId);
+  delete run.upgrade;
+  run.stage = 'prepare';
+  saveChangeRun(h2.projectDir, run);
+  const out = await h2.resume();
+  assert.equal(out.status, 'done', out.reason);
+  assert.equal(loadChangeRun(h2.projectDir, one.runId).upgrade.mergeSha, kept.mergeSha);
+  assert.ok(saved.branch);
 });
 
 test('UNFINISHED names a foundation upgrade', async () => {

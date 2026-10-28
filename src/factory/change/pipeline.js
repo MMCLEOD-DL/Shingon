@@ -29,7 +29,7 @@ import { missingSeams, loadBriefVersion, currentBriefVersion } from './seams.js'
 import { STAGES, createChangeRun, saveChangeRun, findUnfinishedRun } from './run.js';
 import { briefDelta, deltaProblem, buildUnits, profileChanged, deltaText, changeChangelogLines } from './delta.js';
 import { makeChangeGate, conflictMarkers, MARKERS_LEFT, NOT_APPROVED_COMMIT, NO_APPROVAL, CHECK_FAILED } from './gate.js';
-import { nextVersion, appMain, appCheckoutProblem, appVersionAt, commitChangelog, advanceMain, releaseProblem, MAIN_MOVED } from './mainline.js';
+import { nextVersion, appMain, appCheckoutProblem, appVersionAt, commitChangelog, advanceMain, releaseProblem, MAIN_MOVED, RELEASE_FILES } from './mainline.js';
 import { upgradeTargetProblem, prepareUpgradeMerge, upgradeUnit, upgradeChangelogLines, MAX_CONFLICT_FILES } from './upgradeMerge.js';
 import { shipUpdate, shipReport, projectDeployments, NO_DEPLOYMENTS } from './ship.js';
 
@@ -54,6 +54,10 @@ const STALE_REVISION = (slug) => `An older revision of the brief is still open a
 const DRAFT_OPEN = (slug) => `An unfinished brief draft is waiting for this project. Finish it or throw it away with "conductor brief ${slug}" first, then start the change. Nothing was changed.`;
 const MAIN_MOVED_IN_PREPARE = 'The app changed while the foundation merge was being prepared, so nothing was built. Start the foundation upgrade again.';
 const MAIN_MOVED_SINCE_ADDED = 'The app\'s main line moved after the change was added to it, so no release was made and nothing was shipped. Check the app\'s main line before shipping by hand.';
+const NO_BRIEF_RECORD = 'This project does not record which brief version the app was built from, so Conductor cannot record the upgrade against it. Nothing was changed.';
+const RECORD_DIFFERS = (toTag) => `The app records the foundation's ${toTag} as a different commit than the foundation now has, so Conductor stopped. Nothing was built.`;
+const CHANGELOG_NOT_ON_APPROVED = 'The saved changelog commit does not sit directly on the work you approved, so Conductor stopped rather than add something else to the app.';
+const ABANDON_WROTE_RECORD = 'Conductor first recorded in the project that the app now has it.';
 const UNRELEASED_NAME = 'highland-foundation';
 const SHA_RE = /^[0-9a-f]{40}$/;
 const MARKER_GREP = ['grep', '-l', '-I', '-E', '-e', '^(<{7}|>{7})( |$)'];
@@ -152,6 +156,7 @@ export async function runFoundationUpgrade(args) {
   const { repo, tag: fromTag } = o.project.foundation ?? {};
   if (!repo || !fromTag) return refuse('stopped', NOT_BUILT_YET);
   const builtFrom = Number.isInteger(o.project.builtFromBrief) ? o.project.builtFromBrief : o.project.approved.briefVersion;
+  if (!Number.isInteger(builtFrom)) return refuse('stopped', NO_BRIEF_RECORD);
   const ctx = context(args, o.projectDir);
   try {
     // Ruling C11: an approved brief the app does not have yet would be silently stamped as built.
@@ -194,6 +199,17 @@ export async function abandonChange(args) {
   if (!reached && typeof run.changelogSha === 'string' && SHA_RE.test(run.changelogSha)) {
     reached = (await git(appDir, ['merge-base', '--is-ancestor', run.changelogSha, 'refs/heads/main'])).code === 0;
   }
+  // Main already has the change but the run stopped before recording it: the project record is written first, so
+  // project.json never claims an older approval than the app's main line carries.
+  let wrote = false;
+  if (reached && run.stage === 'approved' && isObject(run.approval)) {
+    try {
+      writeProjectRecord(o.projectDir, run);
+      wrote = true;
+    } catch (e) {
+      return refuse('stopped', `The app's main line already has this change, but Conductor could not record it in the project (${plainMessage(e)}), so the change was not dropped. Resume it to finish.`);
+    }
+  }
   run.status = 'stopped';
   run.reason = 'You dropped this change.';
   saveChangeRun(o.projectDir, run);
@@ -201,7 +217,7 @@ export async function abandonChange(args) {
   const left = reached
     ? 'The app\'s main line already has this change; the deployments not yet updated stay on their current version.'
     : 'Nothing reached the app\'s main line.';
-  return { status: 'stopped', runId: run.runId, reason: `You dropped the ${what} ${run.runId}. ${left}` };
+  return { status: 'stopped', runId: run.runId, reason: `You dropped the ${what} ${run.runId}. ${left}${wrote ? ` ${ABANDON_WROTE_RECORD}` : ''}` };
 }
 
 // ---- the stage machine ------------------------------------------------------------------------------------
@@ -316,7 +332,7 @@ async function stepBrief(ctx, run) {
 
 // On resume: an upgrade branch this run already landed (its parents are main at the start and the release) is used
 // as it is. The files still holding both versions are read from the merge commit.
-async function landedUpgrade(ctx, run, toTag) {
+async function landedUpgrade(ctx, run, toTag, repo) {
   const branch = `factory/upgrade-${toTag}-${run.runId}`;
   const merge = await git(ctx.appDir, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}^{commit}`]);
   if (merge.code !== 0) return null;
@@ -324,6 +340,9 @@ async function landedUpgrade(ctx, run, toTag) {
   if (tag.code !== 0) return null;
   const mergeSha = merge.stdout.trim();
   const tagSha = tag.stdout.trim();
+  // The app's record of the release is trusted only when it is the commit the foundation's own tag names.
+  const theirs = await git(repo, ['rev-parse', '--verify', '--quiet', `refs/tags/${toTag}^{commit}`]);
+  if (theirs.code !== 0 || theirs.stdout.trim() !== tagSha) return { status: 'stopped', reason: RECORD_DIFFERS(toTag) };
   const parents = (await git(ctx.appDir, ['rev-list', '--parents', '-n', '1', mergeSha])).stdout.trim().split(' ');
   if (parents.length !== 3 || parents[1] !== run.mainAtStart || parents[2] !== tagSha) return null;
   const marked = await git(ctx.appDir, [...MARKER_GREP, mergeSha]);
@@ -348,7 +367,8 @@ async function stepPrepare(ctx, run) {
     const toV = toTag.slice(1);
     const changes = changesBetween(changelog, fromV, toV);
     const security = securityFixesSince(changelog, fromV).filter((s) => compareVersions(s.version, toV) <= 0);
-    let merged = await landedUpgrade(ctx, run, toTag);
+    let merged = await landedUpgrade(ctx, run, toTag, repo);
+    if (merged?.status === 'stopped') return end(ctx, run, 'stopped', 'stopped', merged.reason);
     if (!merged) {
       merged = await prepareUpgradeMerge({ projectDir, appDir, foundationRepo: repo, fromTag, toTag, runId: run.runId });
       if (merged?.status !== 'ready') {
@@ -404,7 +424,9 @@ async function stepBuild(ctx, run) {
     : upgradeChangelogLines({ fromTag: u.fromTag, toTag: u.toTag, security: u.security });
   const deployments = projectDeployments(deps, { projectsRoot: factory.projectsRoot, slug });
   const n = deployments.list.length;
-  const approveLabel = `approve → add to the app and update ${n} deployment${n === 1 ? '' : 's'}`;
+  const approveLabel = firstPending
+    ? 'approve → add to the app (nothing is shipped yet: "conductor ship" makes its first release)'
+    : `approve → add to the app and update ${n} deployment${n === 1 ? '' : 's'}`;
 
   const extraText = () => {
     const lines = [];
@@ -517,6 +539,8 @@ async function stepMerge(ctx, run) {
       message: isChange ? `changelog: change from brief v${run.brief.to}` : `changelog: foundation ${run.upgrade.toTag}`,
     });
     save(ctx, run);
+  } else if (!(await changelogOnApproved(appDir, run.changelogSha, a.sha))) {
+    return end(ctx, run, 'stopped', 'stopped', CHANGELOG_NOT_ON_APPROVED);
   }
   const moved = await advanceMain({ appDir, from: run.mainAtStart, to: run.changelogSha });
   if (!moved?.ok) {
@@ -526,15 +550,46 @@ async function stepMerge(ctx, run) {
     if (why === MAIN_MOVED) return end(ctx, run, 'stopped', 'stopped', `${why} The approved work is on the branch ${a.branch}.`);
     return end(ctx, run, 'paused', 'stopped', why);
   }
+  writeProjectRecord(projectDir, run);
+  run.stage = 'merged';
+  save(ctx, run);
+  return null;
+}
+
+// The changelog commit is the approved commit itself (the lines were already there) or sits directly on it.
+async function changelogOnApproved(appDir, changelogSha, approvedSha) {
+  if (!SHA_RE.test(String(changelogSha))) return false;
+  if (changelogSha === approvedSha) return true;
+  const r = await git(appDir, ['rev-list', '--parents', '-n', '1', changelogSha]);
+  const p = r.stdout.trim().split(' ');
+  return r.code === 0 && p.length === 2 && p[1] === approvedSha;
+}
+
+// project.json after main has the change: the approval, and what the app is now built from. Idempotent.
+function writeProjectRecord(projectDir, run) {
+  const a = run.approval;
+  const isChange = run.kind === 'change';
   const project = loadProject(projectDir);
   const approved = { sha: run.changelogSha, at: a.at, runId: run.runId, briefVersion: isChange ? run.brief.to : run.briefVersion };
   const next = isChange
     ? { ...project, approved, builtFromBrief: run.brief.to }
     : { ...project, approved, foundation: { repo: run.upgrade.repo, tag: run.upgrade.toTag, commit: run.upgrade.tagSha } };
   saveProject(projectDir, next);
-  run.stage = 'merged';
-  save(ctx, run);
-  return null;
+}
+
+// Ruling (Task 9) amending C4: an alternate main is handed to Plan 10 only when it is exactly the release Plan 10
+// would have made and then crashed before tagging: the right subject and version, directly on the changelog commit,
+// changing only release files. Anything else is never released.
+async function isUntaggedRelease(appDir, sha, changelogSha, expectedVersion) {
+  const subject = await git(appDir, ['log', '-1', '--format=%s', sha]);
+  if (subject.code !== 0 || subject.stdout.trim() !== `release: v${expectedVersion}`) return false;
+  try { if ((await appVersionAt(appDir, sha)) !== expectedVersion) return false; } catch { return false; }
+  const parents = await git(appDir, ['rev-list', '--parents', '-n', '1', sha]);
+  const p = parents.stdout.trim().split(' ');
+  if (parents.code !== 0 || p.length !== 2 || p[1] !== changelogSha) return false;
+  const names = await git(appDir, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-only', '-z', changelogSha, sha]);
+  if (names.code !== 0) return false;
+  return names.stdout.split('\0').filter((f) => f !== '').every((f) => RELEASE_FILES.includes(f));
 }
 
 // ---- merged: the release ----------------------------------------------------------------------------------
@@ -566,8 +621,9 @@ async function stepRelease(ctx, run) {
       let expectedMain = run.changelogSha;
       if (main !== run.changelogSha) {
         // Ruling C4: a release commit left untagged directly on the changelog commit is Plan 10's to adopt.
-        const parents = (await git(appDir, ['rev-list', '--parents', '-n', '1', main])).stdout.trim().split(' ');
-        if (parents.length !== 2 || parents[1] !== run.changelogSha) return end(ctx, run, 'stopped', 'stopped', MAIN_MOVED_SINCE_ADDED);
+        if (!(await isUntaggedRelease(appDir, main, run.changelogSha, a.expectedVersion))) {
+          return end(ctx, run, 'stopped', 'stopped', MAIN_MOVED_SINCE_ADDED);
+        }
         expectedMain = main;
       }
       const r = await deps.releaseApp({ projectDir, bump: a.bump, runId: run.runId, expectedMain });
