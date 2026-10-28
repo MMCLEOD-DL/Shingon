@@ -3,7 +3,7 @@
 // release tag. It fails closed: anything it cannot read is "could not check: …", never "up to date".
 import { existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
-import { releaseTags, readChangelogAt, parseChangelog, securityFixesSince } from '../foundationLog.js';
+import { releaseTags, readChangelogAt, parseChangelog, securityFixesSince, compareVersions } from '../foundationLog.js';
 import { loadProject } from '../projects.js';
 
 const RELEASE_NAME = /^v\d+\.\d+\.\d+$/;
@@ -16,7 +16,8 @@ async function readFoundation(repo, read) {
     const latest = (await read.releaseTags(repo)).at(-1);
     if (!latest) return { problem: 'the foundation has no releases yet.' };
     const text = await read.readChangelogAt(repo, latest);
-    parseChangelog(text); // a heading that is not understood could hide a security fix
+    const sections = parseChangelog(text); // a heading that is not understood could hide a security fix
+    if (!sections.some((s) => s.version === latest.slice(1))) return { problem: `the foundation's CHANGELOG.md at ${latest} has no section for ${latest} itself.` };
     return { latest, text };
   } catch (err) {
     return { problem: tidy(err.message) };
@@ -28,6 +29,7 @@ function judge(slug, where, on, source) {
   if (source.problem) return { ...row, problem: `could not check: ${source.problem}` };
   if (typeof on !== 'string' || !RELEASE_NAME.test(on)) return { ...row, problem: `could not check: "${on}" is not a foundation release name.` };
   try {
+    if (compareVersions(on.slice(1), source.latest.slice(1)) > 0) return { ...row, problem: `could not check: ${on} is newer than the newest foundation release ${source.latest}.` };
     return { ...row, behind: securityFixesSince(source.text, on.slice(1)) };
   } catch (err) {
     return { ...row, problem: `could not check: ${tidy(err.message)}` };
@@ -69,7 +71,8 @@ export async function securityBehind({ projectsRoot, deps, read = { releaseTags,
       } else if (!entry.deployment.foundation) {
         rows.push({ slug: project.slug, where: entry.name, on: null, latest: source.latest ?? null, behind: [], problem: NO_FOUNDATION_RECORDED });
       } else {
-        rows.push(judge(project.slug, entry.name, entry.deployment.foundation, source));
+        const row = judge(project.slug, entry.name, entry.deployment.foundation, source);
+        rows.push(entry.deployment.pendingCheck ? { ...row, unconfirmed: true } : row);
       }
     }
   }
@@ -85,9 +88,10 @@ export function behindText(rows) {
   for (const r of rows) {
     if (r.slug !== slug) { out.push(r.slug); slug = r.slug; }
     if (r.problem) { out.push(`  ${r.where}: ${r.problem}`); continue; }
-    if (r.behind.length === 0) { out.push(`  ${r.where}: up to date (${r.on})`); continue; }
+    const note = r.unconfirmed ? ' (update unconfirmed)' : '';
+    if (r.behind.length === 0) { out.push(`  ${r.where}: up to date (${r.on})${note}`); continue; }
     const n = r.behind.reduce((sum, b) => sum + b.lines.length, 0);
-    out.push(`  ${r.where}: on ${r.on}, missing ${n} security ${n === 1 ? 'fix' : 'fixes'}:`);
+    out.push(`  ${r.where}: on ${r.on}, missing ${n} security ${n === 1 ? 'fix' : 'fixes'}${latests.length > 1 ? ` (newest ${r.latest})` : ''}${note}:`);
     for (const b of r.behind) for (const line of b.lines) out.push(`    - ${line} (${b.version})`);
   }
   out.push('');
@@ -95,7 +99,11 @@ export function behindText(rows) {
   const behind = rows.some((r) => r.behind.length > 0);
   if (failed) out.push('Some rows could not be checked, so do not assume they are up to date.');
   if (behind) {
-    out.push(`To fix: if the code is behind, run "conductor foundation-upgrade <slug> --to ${latests[0]}". If only deployments are behind, the upgrade is already in the code: finish or resume the change that ships it (conductor change <slug> --resume).`);
+    const first = new Map();
+    for (const r of rows) if (r.behind.length > 0 && !first.has(r.slug)) first.set(r.slug, r.latest);
+    for (const [slug, latest] of first) {
+      out.push(`To fix: if the code is behind, run "conductor foundation-upgrade ${first.size > 1 ? slug : '<slug>'} --to ${latest}". If only deployments are behind, the upgrade is already in the code: finish or resume the change that ships it (conductor change ${first.size > 1 ? slug : '<slug>'} --resume).`);
+    }
   } else if (!failed) {
     out.push('Every project and deployment has every security fix in the newest foundation release.');
   }

@@ -1,7 +1,7 @@
 // Plan 11 Task 10: the security-behind report.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { rmSync, writeFileSync, mkdtempSync } from 'node:fs';
+import { rmSync, writeFileSync, readFileSync, mkdtempSync, mkdirSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { securityBehind, behindText } from '../src/factory/change/behind.js';
@@ -73,7 +73,7 @@ test('behindText: everything current, and rows that could not be checked', async
 test('a project whose foundation repo cannot be read says "could not check", never up to date', async () => {
   const { p } = await setup([]);
   const file = path.join(p.projectDir, 'project.json');
-  const j = JSON.parse((await import('node:fs')).readFileSync(file, 'utf8'));
+  const j = JSON.parse(readFileSync(file, 'utf8'));
   j.foundation.repo = path.join(tmpdir(), 'conductor-no-such-foundation-dir');
   writeFileSync(file, JSON.stringify(j));
   const rows = await securityBehind({ projectsRoot: p.projectsRoot, deps: stubDeps() });
@@ -110,7 +110,7 @@ test('a deployment with no foundation recorded, or one Plan 10 could not read, s
 test('a tag recorded in project.json that is not a release name is a "could not check"', async () => {
   const { p } = await setup([]);
   const file = path.join(p.projectDir, 'project.json');
-  const j = JSON.parse((await import('node:fs')).readFileSync(file, 'utf8'));
+  const j = JSON.parse(readFileSync(file, 'utf8'));
   j.foundation.tag = 'main';
   writeFileSync(file, JSON.stringify(j));
   const rows = await securityBehind({ projectsRoot: p.projectsRoot, deps: stubDeps() });
@@ -123,7 +123,6 @@ test('a damaged project.json gives one could-not-check row; projects with no dep
   cleanup.push(root);
   assert.equal(behindText(await securityBehind({ projectsRoot: root, deps: stubDeps() })), 'There are no projects to check.');
   assert.equal((await securityBehind({ projectsRoot: p.projectsRoot, deps: stubDeps() })).length, 1);
-  const { mkdirSync } = await import('node:fs');
   mkdirSync(path.join(root, 'broken'));
   writeFileSync(path.join(root, 'broken', 'project.json'), '{ nope');
   const rows = await securityBehind({ projectsRoot: root, deps: stubDeps() });
@@ -131,11 +130,10 @@ test('a damaged project.json gives one could-not-check row; projects with no dep
 });
 
 test('the foundation repo is read once per repo, however many projects use it', async () => {
-  const { f, p } = await setup([{ name: 'acme-office', foundation: 'v0.1.0' }]);
-  const { cpSync } = await import('node:fs');
+  const { p } = await setup([{ name: 'acme-office', foundation: 'v0.1.0' }]);
   cpSync(p.projectDir, path.join(p.projectsRoot, 'beta'), { recursive: true });
   const bj = path.join(p.projectsRoot, 'beta', 'project.json');
-  const j = JSON.parse((await import('node:fs')).readFileSync(bj, 'utf8'));
+  const j = JSON.parse(readFileSync(bj, 'utf8'));
   j.slug = 'beta';
   writeFileSync(bj, JSON.stringify(j));
   const calls = { tags: 0, changelog: 0 };
@@ -146,5 +144,60 @@ test('the foundation repo is read once per repo, however many projects use it', 
   const rows = await securityBehind({ projectsRoot: p.projectsRoot, deps: stubDeps(), read });
   assert.deepEqual([...new Set(rows.map((r) => r.slug))], ['acme', 'beta']);
   assert.deepEqual(calls, { tags: 1, changelog: 1 });
-  assert.ok(f.dir);
+});
+
+test('null foundation repo, throwing listDeployments, non-release deployment foundation', async () => {
+  const { p } = await setup([{ name: 'acme-office', foundation: 'v0.1.0' }]);
+  const rows = await securityBehind({ projectsRoot: p.projectsRoot, deps: stubDeps({ listDeployments: () => { throw new Error('disk gone'); } }) });
+  assert.deepEqual(rows.map((r) => [r.where, r.problem]), [['code', null], ['deployments', 'could not check: disk gone']]);
+  const base = { slug: 'acme', projectDir: p.projectDir, problem: null };
+  const r2 = await securityBehind({ projectsRoot: p.projectsRoot, deps: stubDeps({ listDeployments: () => [{ ...base, name: 'a', deployment: { foundation: 'latest' } }, { ...base, name: 'b', deployment: { foundation: 'v9.0.0' } }] }) });
+  assert.match(r2[1].problem, /"latest" is not a foundation release name/);
+  assert.match(r2[2].problem, /v9\.0\.0 is newer than the newest foundation release v0\.2\.0/);
+  const file = path.join(p.projectDir, 'project.json');
+  const j = JSON.parse(readFileSync(file, 'utf8'));
+  j.foundation = { repo: null, tag: null };
+  writeFileSync(file, JSON.stringify(j));
+  const r3 = await securityBehind({ projectsRoot: p.projectsRoot, deps: stubDeps() });
+  assert.match(r3[0].problem, /^could not check: this project does not record/);
+});
+
+test('mixed foundations: each to-fix line uses its own newest release; unconfirmed updates are marked', async () => {
+  const { p } = await setup([{ name: 'acme-office', foundation: 'v0.1.0' }]);
+  const g = await makeFoundation({ versions: ['0.1.0', '0.1.1'] });
+  cleanup.push(g.dir);
+  const q = await makeProject({ foundation: g, tag: 'v0.1.0' });
+  cleanup.push(q.projectsRoot);
+  cpSync(q.projectDir, path.join(p.projectsRoot, 'beta'), { recursive: true });
+  const bj = path.join(p.projectsRoot, 'beta', 'project.json');
+  const j = JSON.parse(readFileSync(bj, 'utf8'));
+  j.slug = 'beta';
+  writeFileSync(bj, JSON.stringify(j));
+  const real = stubDeps().listDeployments;
+  const deps = stubDeps({ listDeployments: (r) => real(r).map((e) => (e.name === 'acme-office' ? { ...e, deployment: { ...e.deployment, pendingCheck: { why: 'in-progress' } } } : e)) });
+  const rows = await securityBehind({ projectsRoot: p.projectsRoot, deps });
+  const text = behindText(rows);
+  assert.match(text, /Newest foundation release: v0\.2\.0, v0\.1\.1\./);
+  assert.match(text, /acme-office: on v0\.1\.0, missing 2 security fixes \(newest v0\.2\.0\) \(update unconfirmed\):/);
+  assert.match(text, /beta\n {2}code: on v0\.1\.0, missing 1 security fix \(newest v0\.1\.1\):/);
+  assert.match(text, /foundation-upgrade acme --to v0\.2\.0"/);
+  assert.match(text, /foundation-upgrade beta --to v0\.1\.1"/);
+});
+
+test('behindText with both failed and behind rows says both', () => {
+  const rows = [
+    { slug: 'a', where: 'code', on: 'v0.1.0', latest: 'v0.2.0', behind: [{ version: '0.2.0', lines: ['Fix.'] }], problem: null },
+    { slug: 'a', where: 'box', on: null, latest: 'v0.2.0', behind: [], problem: 'could not check: no.' },
+  ];
+  const t = behindText(rows);
+  assert.match(t, /Some rows could not be checked[^\n]*\nTo fix:/);
+});
+
+test('a changelog without a section for its own newest release is could not check', async () => {
+  const f = await makeFoundation({ versions: ['0.1.0'] });
+  cleanup.push(f.dir);
+  const p = await makeProject({ foundation: f, tag: 'v0.1.0' });
+  cleanup.push(p.projectsRoot);
+  const rows = await securityBehind({ projectsRoot: p.projectsRoot, deps: stubDeps(), read: { releaseTags: async () => ['v0.1.0', 'v0.3.0'], readChangelogAt: async (r, t) => readChangelogAt(r, 'v0.1.0') } });
+  assert.match(rows[0].problem, /no section for v0\.3\.0 itself/);
 });
