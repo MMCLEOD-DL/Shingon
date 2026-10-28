@@ -18,6 +18,8 @@ test('a passing smoke: every step ok, in order', () => {
   assert.equal(r.passed, true);
   assert.deepEqual(r.steps.map((s) => [s.n, s.ok]), [['1', true], ['2', true], ['3', true], ['4', true], ['5', true], ['6', true], ['6a', true], ['7', true], ['8', true], ['9', true], ['secrets', true], ['10', false]]);
   assert.equal(SMOKE_STEPS['7'], 'stop the app: an alert is sent, then Fixed');
+  assert.equal(SMOKE_STEPS['7a'], 'kill the database, app and ops without warning; everything comes back');
+  assert.deepEqual(parseSmokeLog('== Step 7a: hard kill\n   ok: back\n', 0).steps[0], { n: '7a', title: SMOKE_STEPS['7a'], ok: true });
 });
 
 test('a failed step: which one, and the FAILED line', () => {
@@ -131,6 +133,7 @@ test('the generated script, run locally: cleans only the smoke\'s own names, the
     assert.deepEqual(r.leftovers, []);
     assert.match(r.docker, /ps -aq --filter label=com\.docker\.compose\.project=hfsmoke/);
     assert.match(r.docker, /rm -f hf-smoke-rest/);
+    assert.match(r.docker, /rm -f hfsmoke-rest/, "foundation v0.2.0's smoke names its rest container hfsmoke-rest (Plan 12 Ruling P7)");
     assert.doesNotMatch(r.docker, /rmi|prune|system/);
     assert.equal(parseSmokeLog(r.stdout, 0).steps[0].ok, true);
   } finally { rmSync(root, { recursive: true, force: true }); }

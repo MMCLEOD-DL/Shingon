@@ -305,9 +305,15 @@ Once a client's brief is approved, Conductor can build the app.
   own containers, only inside the pool, number range and limits you set up for it, and only ones
   it labelled itself. Keep that number range free of any other container, and if a container
   was made but left without its label (a crash half way), remove it by hand in Proxmox.
-- **What it will not do yet.** Briefs that need optional modules (OCR, PDF or spreadsheet
-  export, scheduled jobs); rebuilding an app that is already approved (that will be
-  `conductor change`).
+- **Optional modules.** A brief that needs optional modules (OCR, PDF or spreadsheet export,
+  scheduled jobs) is built only on foundation `v0.2.0` or later: set `factory.foundation.tag` to
+  `"v0.2.0"`. On an older release the build refuses it, because the modules are not there.
+  Rebuilding an app that is already approved goes through `conductor change`.
+- **The acceptance test.** The factory's acceptance test (one real app, from the meeting notes
+  to an update on a test box) is run by hand over several sessions. Its criteria, the steps with
+  their exact commands, a results template and a checker that reads the project folder and fills
+  in every automated criterion are in `spikes/acceptance/PROCEDURE.md`. The results are kept in
+  the project folder, never in a repo.
 - **Quote run requests.** A run request that begins with the word `build`, `preview` or
   `machines` is read as one of these commands. Put the request in quotes, for example
   `conductor "build a login page"`, or word it differently (the same goes for `brief` and

@@ -8,6 +8,7 @@ import { featureRequest } from './featureRequest.js';
 import { isApiKind } from '../vendors.js';
 import { redact } from '../secrets.js';
 import { clip } from '../text.js';
+import { compareVersions } from './foundationLog.js';
 
 export const MAX_UNITS = 30;
 export const MAX_EXAMPLES_PER_UNIT = 6;
@@ -21,10 +22,18 @@ const BLOCK_RULES =
   'If a concern is about something hard to undo (data loss, deleting user work, a public API break, ' +
   'a schema or data migration), start your reason with "IRREVERSIBLE:".';
 
-export function briefProblems(brief) {
+// The first foundation release with the optional modules (Plan 12). Before it, or with no tag, a brief with modules
+// is refused as Plan 8 built it.
+export const MODULES_SINCE = 'v0.2.0';
+function hasModules(tag) {
+  if (typeof tag !== 'string' || !tag.startsWith('v')) return false;
+  try { return compareVersions(tag.slice(1), MODULES_SINCE.slice(1)) >= 0; } catch { return false; }   // not a release tag
+}
+
+export function briefProblems(brief, { foundationTag = null } = {}) {
   const out = [];
   if (brief.kind !== 'web-app') out.push(`This brief is for "${brief.kind}", and the factory only builds web apps.`);
-  if (Array.isArray(brief.modules) && brief.modules.length) {
+  if (Array.isArray(brief.modules) && brief.modules.length && !hasModules(foundationTag)) {
     out.push(`The brief needs optional modules (${brief.modules.join(', ')}) that the foundation does not have yet, so building it now would leave them out.`);
   }
   const seenIds = new Set();

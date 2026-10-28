@@ -176,7 +176,9 @@ export async function runBuild({ factory, slug, team, hooks, options = {}, baseD
   }
   let brief;
   try { brief = d.loadBrief(projectDir); } catch (e) { return refuse(e.message); }
-  const problems = briefProblems(brief);
+  // Plan 12 (Ruling P8): the foundation this build lands on decides whether the brief's modules exist: a change's
+  // upgrade first, then the project's pinned release, then the factory's for a first build.
+  const problems = briefProblems(brief, { foundationTag: change?.foundation?.tag ?? project.foundation?.tag ?? factory.foundation.tag });
   if (problems.length) return refuse(problems.join(' '));
   const dbProblem = testDatabaseProblem({ testCommand: factory.build.testCommand, env });
   if (dbProblem) return refuse(dbProblem);

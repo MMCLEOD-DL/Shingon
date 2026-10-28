@@ -18,6 +18,7 @@ export const SMOKE_STEPS = {
   6: 'run every health check',
   '6a': 'restore over the live data, then upload a file',
   7: 'stop the app: an alert is sent, then Fixed',
+  '7a': 'kill the database, app and ops without warning; everything comes back',
   8: 'update, then undo a broken update automatically',
   9: 'back up and test a restore after the rollback',
   secrets: 'no secret in the alerts or logs',
