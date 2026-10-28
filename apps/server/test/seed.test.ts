@@ -1,6 +1,7 @@
 import { test, expect } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { readdir } from 'node:fs/promises';
+import { DEFAULT_PROFILE } from '@hf/shared';
 import { createTestApp, call } from './helpers/testApp.js';
 import { seedDemo } from '../src/seed/demo.js';
 import { receiptPng } from '../src/seed/image.js';
@@ -13,7 +14,8 @@ const NOW = new Date('2026-11-01T12:00:00Z');
 test('seeding fills a preview with invented data, once', async () => {
   const t = await createTestApp({ instanceMode: 'demo' });
   const s = await seedDemo(t.db, t.config, { now: NOW });
-  expect(s.counts).toEqual({ teams: 2, people: 10, notes: 32, files: 16 });
+  // Every module is on in a test app, so the OCR demo receipts are there too.
+  expect(s.counts).toEqual({ teams: 2, people: 10, notes: 32, files: 16, receipts: 2 });
   expect(s.text.split('\n')[0]).toBe('Demo data added: 2 teams, 10 people, 32 notes, 16 attached photos.');
   const emails = (await t.db.execute(sql`select email from users`)).rows.map((r) => String(r.email));
   expect(emails.every((e) => e.endsWith('@demo.test'))).toBe(true);
@@ -57,8 +59,10 @@ test('people follow the same rules as the app, and the invited one has no passwo
 });
 
 test('every photo has a row, an owner, a note, and a stored object; the sweep leaves them all alone', async () => {
-  const t = await createTestApp({ instanceMode: 'demo' });
-  await seedDemo(t.db, t.config, { now: NOW });
+  // With the optional modules off, as a client app that has not asked for any: no receipts are seeded.
+  const t = await createTestApp({ instanceMode: 'demo', profile: structuredClone(DEFAULT_PROFILE) });
+  const s = await seedDemo(t.db, t.config, { now: NOW });
+  expect(s.counts['receipts']).toBeUndefined();
   const f = (await t.db.execute(sql`select f.storage_key, f.owner_id, f.attached_type, f.attached_id, f.content_type, n.owner_id as note_owner, n.attachment_file_id, n.created_at from files f join notes n on n.id = f.attached_id`)).rows;
   expect(f).toHaveLength(16);
   for (const r of f) {
@@ -84,6 +88,28 @@ test('every photo has a row, an owner, a note, and a stored object; the sweep le
   expect(by['file.uploaded']).toBe(16);
   expect(by['team.created']).toBe(2);
   expect(by['seed.demo']).toBe(1);
+  await t.close();
+});
+
+test('with ocr on, the first Operations member has one confirmed receipt and one waiting to be checked', async () => {
+  const t = await createTestApp({ instanceMode: 'demo' });
+  await seedDemo(t.db, t.config, { now: NOW });
+  const rows = (await t.db.execute(sql`select r.status, r.corrected, r.proposal, r.confirmed, r.owner_id, r.team_id, f.owner_id as file_owner, f.team_id as file_team,
+      f.attached_type, f.attached_id, r.id, f.storage_key, f.content_type, u.email, tm.name as team
+    from receipt_readings r join files f on f.id = r.file_id join users u on u.id = r.owner_id join teams tm on tm.id = u.team_id order by r.created_at`)).rows;
+  expect(rows.map((r) => r.status)).toEqual(['confirmed', 'read']);
+  const first = (await t.db.execute(sql`select u.email from users u join teams tm on tm.id = u.team_id where tm.name = 'Operations' and u.role = 'member' and u.password_hash is not null order by u.email limit 1`)).rows[0]!;
+  for (const r of rows) {
+    expect(r).toMatchObject({ email: first.email, team: 'Operations', owner_id: r.file_owner, team_id: r.file_team, attached_type: 'receipt-reading', attached_id: r.id, content_type: 'image/jpeg' });
+  }
+  expect(rows[0]!.confirmed).toEqual({ amountPence: 875, vatPence: 146, date: '2026-03-05', merchant: 'Corner Café' });
+  expect((rows[1]!.proposal as { vatPence: { confidence: number } }).vatPence.confidence).toBeLessThan(0.85);
+  // The photos are stored, and the sweep keeps them (they are attached to their readings).
+  const storage = new LocalDiskStorage(t.config.uploadDir);
+  expect(await sweepStrayObjects(t.db, storage, new Date(Date.now() + 86400_000 * 2))).toBe(0);
+  const onDisk: string[] = [];
+  for await (const o of storage.list()) onDisk.push(o.key);
+  for (const r of rows) expect(onDisk).toContain(String(r.storage_key));
   await t.close();
 });
 

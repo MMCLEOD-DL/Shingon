@@ -50,7 +50,7 @@ export async function seedDemo(db: Db, cfg: Config, opts: { reset?: boolean; now
 
   const passwordHash = await hashPassword(password);
   const faker = fakerEN_GB;
-  const ctx: Omit<SeedCtx, 'tx'> = { storage, faker, now, password, passwordHash, created: {}, counts: {}, signIns: [], writtenKeys: [] };
+  const ctx: Omit<SeedCtx, 'tx'> = { storage, faker, now, password, passwordHash, created: {}, counts: {}, signIns: [], writtenKeys: [], profile: cfg.profile };
   let oldKeys: string[] = [];
   try {
     const result = await db.transaction(async (tx) => {

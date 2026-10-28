@@ -22,6 +22,9 @@ import { registerFileRoutes } from './files/routes.js';
 import { sweepOrphans } from './files/repo.js';
 import { LocalDiskStorage, type Storage } from './files/storage.js';
 import { createTransport, startOutboxWorker, type EmailTransport } from './email/index.js';
+import type { OcrEngine } from '@hf/ocr';
+import { moduleOn } from './appProfile.js';
+import { registerOcrModule, type ReadingQueue } from './modules/ocr/index.js';
 
 
 export interface AppDeps {
@@ -32,6 +35,8 @@ export interface AppDeps {
   now?: () => Date;
   /** How long /readyz reuses its checks (default 5 s). Tests that change data between calls set 0. */
   readinessCacheMs?: number;
+  /** The receipt reader (main.ts builds it with createReadingEngine). Needed when the ocr module is on; the caller closes it after the app. */
+  ocrEngine?: OcrEngine | null;
 }
 
 export interface HfState {
@@ -42,6 +47,8 @@ export interface HfState {
   allRoutes: { method: string; url: string }[];
   /** Built web app files (Task 11): the only allow-list for routes outside defineRoute. */
   staticRoutes: { method: string; url: string }[];
+  /** The receipt reading queue, or null when the ocr module is off. */
+  readings: ReadingQueue | null;
 }
 
 declare module 'fastify' {
@@ -65,7 +72,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         },
   });
 
-  app.decorate('hf', { db, routes: [], allRoutes: [], staticRoutes: [] } satisfies HfState);
+  app.decorate('hf', { db, routes: [], allRoutes: [], staticRoutes: [], readings: null } satisfies HfState);
   app.decorateRequest('actor', null);
   app.decorateRequest('sessionId', null);
   // True only while @fastify/static registers the built web app's files: those routes (and only those) go on the allow-list.
@@ -180,6 +187,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   }
 
   registerRoutes(app, config, storage, deps.now, deps.readinessCacheMs);
+
+  // Optional modules: decided here, once, from the app profile (Ruling 7). A module that is off registers nothing and starts nothing.
+  if (moduleOn(config, 'ocr')) {
+    if (!deps.ocrEngine) throw new Error('The ocr module is on, but no receipt reader was given to the app.');
+    app.hf.readings = registerOcrModule(app, { config, db, storage, engine: deps.ocrEngine, ...(deps.now ? { now: deps.now } : {}) });
+  }
   return app;
 }
 

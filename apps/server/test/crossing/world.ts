@@ -35,6 +35,13 @@ export const IDS = {
 
 export const PASSWORD = 'correct horse battery';
 
+export const CROSSING_HEALTH_TOKEN = 'h'.repeat(32);
+/**
+ * The crossing app's settings. Nothing here overrides `profile`, so createTestApp turns every optional module on and
+ * every module's routes are crossed (Ruling 7); modules-optin.test.ts checks that this stays so.
+ */
+export const CROSSING_APP = { appVersion: '9.8.7', commit: 'deadbeef1234', healthToken: CROSSING_HEALTH_TOKEN } as const;
+
 const ACTOR_SHAPE: Record<ActorKey, { role: Role | null; teamId: string | null }> = {
   anon: { role: null, teamId: null },
   admin: { role: 'admin', teamId: null },

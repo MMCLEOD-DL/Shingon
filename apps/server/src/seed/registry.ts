@@ -1,5 +1,5 @@
 import type { Faker } from '@faker-js/faker';
-import type { Role } from '@hf/shared';
+import type { AppProfile, Role } from '@hf/shared';
 import type { Tx } from '../db/client.js';
 import type { Storage } from '../files/storage.js';
 
@@ -18,6 +18,8 @@ export interface SeedCtx {
   signIns: { email: string; role: Role; team: string | null }[];
   /** Keys of objects written to storage; removed again if the seeding transaction fails. */
   writtenKeys: string[];
+  /** The app profile, so a module's seeder adds its data only when the module is on (`moduleOn(ctx, 'ocr')`). */
+  profile: AppProfile;
 }
 
 export interface Seeder {

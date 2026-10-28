@@ -21,6 +21,7 @@
     "@fastify/multipart": "10.1.6",
     "@fastify/rate-limit": "11.2.1",
     "@fastify/static": "10.1.7",
+    "@hf/ocr": "0.1.0",
     "@hf/shared": "0.1.0",
     "drizzle-orm": "0.45.4",
     "fastify": "5.12.7",

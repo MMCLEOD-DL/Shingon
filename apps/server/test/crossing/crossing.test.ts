@@ -1,13 +1,13 @@
 import { test, expect, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { createTestApp } from '../helpers/testApp.js';
-import { buildWorld } from './world.js';
+import { CROSSING_APP, CROSSING_HEALTH_TOKEN, buildWorld } from './world.js';
 import { CASES } from './cases.js';
 import { runCrossing, uncoveredRoutes } from './harness.js';
 import { writeCrossingReport } from './report.js';
 
-const HEALTH_TOKEN = 'h'.repeat(32);
-const t = await createTestApp({ appVersion: '9.8.7', commit: 'deadbeef1234', healthToken: HEALTH_TOKEN });
+const HEALTH_TOKEN = CROSSING_HEALTH_TOKEN;
+const t = await createTestApp(CROSSING_APP);
 afterAll(async () => { await t.close(); });
 
 test('every non-public route has at least one role-crossing case', () => {

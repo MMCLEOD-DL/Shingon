@@ -15,6 +15,9 @@ export const PERMISSIONS = {
   'notes:read': ['admin', 'manager', 'member'],
   'notes:update': ['admin', 'manager', 'member'],
   'notes:delete': ['admin', 'manager', 'member'],
+  // Receipt readings (OCR module). Who may see or confirm a given reading follows its file: the item rules, not the role.
+  'readings:read': ['admin', 'manager', 'member'],
+  'readings:confirm': ['admin', 'manager', 'member'],
 } as const satisfies Record<string, readonly Role[]>;
 
 export type Permission = keyof typeof PERMISSIONS;

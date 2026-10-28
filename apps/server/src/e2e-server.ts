@@ -15,6 +15,8 @@ import { createDb, runMigrations } from './db/client.js';
 import { teams, users } from './db/schema/index.js';
 import { ensureInstance } from './instance.js';
 import { seedDemo } from './seed/demo.js';
+import { MODULES } from '@hf/shared';
+import { createFakeOcr } from '../test/helpers/fakeOcr.js';
 
 const PORT = 4319;
 const ORIGIN = `http://localhost:${String(PORT)}`;
@@ -80,6 +82,8 @@ try {
     EMAIL_FROM: 'Highland App <app@demo.test>',
     WEB_DIST_DIR: path.resolve(import.meta.dirname, '../../web/dist'),
   });
+  // The browser gate runs with every optional module on (Ruling 7); receipts are read by a stand-in with fixed answers.
+  config.profile = { ...config.profile, modules: [...MODULES] };
   handle = createDb(config.databaseUrl);
   const { db } = handle;
   await runMigrations(db);
@@ -95,7 +99,7 @@ try {
     await db.insert(users).values({ email: `flow.${project}@demo.test`, name: `Flow ${label}`, role: 'member', teamId: ops.id, passwordHash });
   }
 
-  app = await buildApp({ config, db });
+  app = await buildApp({ config, db, ocrEngine: createFakeOcr() });
   await app.listen({ host: 'localhost', port: PORT });
   console.log(`Browser-test app ready at ${ORIGIN} (database ${dbName}).`);
 } catch (e) {

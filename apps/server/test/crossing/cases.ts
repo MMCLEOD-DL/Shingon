@@ -34,6 +34,11 @@ export const EXPECTED_ROLES: Record<Route, readonly Role[]> = {
   'GET /api/notes/:id': ALL,
   'PATCH /api/notes/:id': ALL,
   'DELETE /api/notes/:id': ALL,
+  // Receipt readings (OCR module, on in the crossing world): every signed-in role. Who may ask for, see or confirm a given
+  // reading follows its file, and is the item rule in CASES.
+  'POST /api/files/:id/reading': ALL,
+  'GET /api/readings/:id': ALL,
+  'POST /api/readings/:id/confirm': ALL,
 };
 
 /**
@@ -119,6 +124,19 @@ export const CASES: CrossingCase[] = [
     allowed: (a, r) => a.role === 'admin' || a.id === r.ownerId, okStatus: (_r, a) => (a.role === 'admin' ? 200 : 404) },
   { kind: 'action', route: 'POST /api/notes', body: () => ({ title: 'With photo', attachmentId: DAVE_FILE }), mutates: true,
     okStatus: (_r, a) => (a.role === 'admin' ? 201 : 404) },
+
+  // Receipt readings (Ruling 6). Asking for one changes the file (it is attached to the reading), so only its owner or an
+  // admin may; anyone else gets 404, as with attachFile, even a manager who can see the file. northAlice's seeded file is
+  // already her note's photo, so it cannot become a receipt reading too (409).
+  { kind: 'item', route: 'POST /api/files/:id/reading', resource: 'file', body: () => ({}), mutates: true,
+    visible: (a, r) => a.role === 'admin' || r.ownerId === a.id, okStatus: (r) => (r.key === 'northAlice' ? 409 : 202),
+    why: 'asking for a reading needs edit rights on the file; others get 404 as with attachFile',
+    forbiddenFields: [{ ownerId: SOME_ID }, { teamId: IDS.teams.south }, { status: 'confirmed' }, { fileId: SOME_ID }] },
+  { kind: 'item', route: 'GET /api/readings/:id', resource: 'reading' },
+  { kind: 'item', route: 'POST /api/readings/:id/confirm', resource: 'reading', mutates: true, okStatus: 200,
+    allowed: (a, r) => a.role === 'admin' || r.ownerId === a.id,
+    body: () => ({ amountPence: 1240, vatPence: 207, date: '2026-03-12', merchant: 'Confirmed Merchant' }),
+    forbiddenFields: [{ ownerId: SOME_ID }, { teamId: IDS.teams.south }, { status: 'confirmed' }, { corrected: [] }, { fileId: SOME_ID }] },
 
   // Public routes: every actor, signed in or not, gets the same answer, nothing leaks and a refusal changes nothing.
   { kind: 'action', route: 'POST /api/auth/sign-in', body: () => ({ email: 'canary-user-northalice@hf.test', password: 'not the right password' }), okStatus: 401, mutates: true },

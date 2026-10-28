@@ -9,6 +9,7 @@ export const AUDIT_ACTIONS = [
   'team.created',
   'file.uploaded', 'file.downloaded', 'file.deleted',
   'note.created', 'note.updated', 'note.deleted',
+  'reading.requested', 'reading.confirmed',
   'seed.demo', 'instance.promoted',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
