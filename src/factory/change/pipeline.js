@@ -15,7 +15,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { git } from '../../workspace.js';
+import { git as workspaceGit } from '../../workspace.js';
 import { redact } from '../../secrets.js';
 import { RunLog } from '../../runlog.js';
 import { readProject, loadProject, saveProject } from '../projects.js';
@@ -31,6 +31,7 @@ import { briefDelta, deltaProblem, buildUnits, profileChanged, deltaText, change
 import { makeChangeGate, conflictMarkers, MARKERS_LEFT, NOT_APPROVED_COMMIT, NO_APPROVAL, CHECK_FAILED } from './gate.js';
 import { nextVersion, appMain, appCheckoutProblem, appVersionAt, commitChangelog, advanceMain, releaseProblem, releaseContentProblem, MAIN_MOVED, RELEASE_FILES } from './mainline.js';
 import { upgradeTargetProblem, prepareUpgradeMerge, upgradeUnit, upgradeChangelogLines, MAX_CONFLICT_FILES } from './upgradeMerge.js';
+import { CLEAN_GIT_ENV, SHA_RE, isObject } from './gitSafe.js';
 import { shipUpdate, shipReport, projectDeployments, NO_DEPLOYMENTS } from './ship.js';
 
 export const NOT_BUILT_YET = 'This project has not been built and approved yet, so there is nothing to change. Build it first with "conductor build <slug>".';
@@ -59,10 +60,10 @@ const RECORD_DIFFERS = (toTag) => `The app records the foundation's ${toTag} as 
 const CHANGELOG_NOT_ON_APPROVED = 'The saved changelog commit does not sit directly on the work you approved, so Conductor stopped rather than add something else to the app.';
 const ABANDON_WROTE_RECORD = 'Conductor first recorded in the project that the app now has it.';
 const UNRELEASED_NAME = 'highland-foundation';
-const SHA_RE = /^[0-9a-f]{40}$/;
 const MARKER_GREP = ['grep', '-l', '-I', '-E', '-e', '^(<{7}|>{7})( |$)'];
 
-const isObject = (o) => o !== null && typeof o === 'object' && !Array.isArray(o);
+// Every git call here runs without the caller's GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE.
+const git = (dir, args, opts = {}) => workspaceGit(dir, args, { ...opts, env: { ...CLEAN_GIT_ENV, ...(opts.env ?? {}) } });
 const plainMessage = (e) => String(redact(String(e?.message ?? e ?? 'no reason given'))).trim().replace(/\.+$/, '');
 
 // ---- the operator's yes/no --------------------------------------------------------------------------------

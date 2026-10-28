@@ -9,6 +9,7 @@
 import path from 'node:path';
 import { CONTINUE_OUTCOMES } from './seams.js';
 import { shipProblem } from './gate.js';
+import { isObject } from './gitSafe.js';
 import { compareVersions } from '../foundationLog.js';
 import { redact } from '../../secrets.js';
 import { clip } from '../../text.js';
@@ -30,7 +31,6 @@ function pendingSentence(name, r) {
 // Outcomes this module records itself that are looked at again on resume without asking (nothing reached the box).
 // A Plan 10 pendingCheck is read again from the record each time, so it is re-checked too.
 const RECHECK = new Set(['not-set-up', 'newer', 'pending-check']);
-const isObject = (o) => o !== null && typeof o === 'object' && !Array.isArray(o);
 const MESSAGE_MAX = 1000;
 const OUTCOME_MAX = 60;
 

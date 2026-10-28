@@ -11,10 +11,12 @@ import { rmSync, mkdirSync, lstatSync, realpathSync, writeFileSync } from 'node:
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { git } from '../../workspace.js';
-import { parseVersion } from '../foundationLog.js';
+import { RELEASE_FILES } from '../ship/release.js';
+import { releaseContentProblem, RELEASE_CHANGED_SETTINGS, RELEASE_UNCHECKABLE, NO_RELEASE_GIVEN } from '../ship/releaseContent.js';
+import { CLEAN_GIT_ENV, SHA_RE, RELEASE_TAG_RE, isSha, isObject, plainVersion } from './gitSafe.js';
 
-// Plan 10's private S20 set (src/factory/ship/release.js): the only files a release may change.
-export const RELEASE_FILES = Object.freeze(['CHANGELOG.md', 'package.json', 'package-lock.json', 'foundation.json']);
+// Plan 10's S20 set and its release-content check (shared with releaseApp), re-exported for the change modules.
+export { RELEASE_FILES, releaseContentProblem, RELEASE_CHANGED_SETTINGS };
 export const RELEASE_BUMPS = Object.freeze(['minor', 'patch']);
 
 export const MAIN_MOVED = 'The app changed while this change was being built (its main line is no longer where it was when the run started), so the change was not added. The approved work is safe on its own branch in the app; start the change again to build it on top of the newer app.';
@@ -23,7 +25,6 @@ export const NO_MAIN = 'The app has no main line (branch "main"), so Conductor c
 export const RELEASE_TOUCHED_CODE = (files) => `The release step changed more than the version and changelog (${files.join(', ')}), so nothing was shipped.`;
 export const RELEASE_VERSION_DIFFERS = (expected, got) => `The release came out as version ${got}, but you approved ${expected}, so nothing was shipped.`;
 export const RELEASE_NOT_ON_MAIN = 'The release is not on the app\'s main line, so nothing was shipped.';
-export const RELEASE_CHANGED_SETTINGS = (files) => `The release step changed more than the version numbers in ${files.join(', ')}, so nothing was shipped.`;
 export const RELEASE_TAG_ELSEWHERE = (version) => `The release tag v${version} is not on the release, so nothing was shipped.`;
 
 const APP_UNREADABLE = 'Conductor could not check the app folder, so it did not touch it.';
@@ -34,31 +35,19 @@ export const EDITED_AFTER_MAIN_MOVED = 'The app\'s main line already has the app
 export const FILES_BEHIND = 'The app\'s main line already has the approved change, but Conductor could not bring the files in the app folder up to date, so the folder looks as if the change were being undone. Do not commit those edits. Check that no other program is using the app folder and that no ignored files stand where the change adds files, then resume.';
 export const IGNORED_IN_THE_WAY = 'The app folder has files that are set to be ignored where the approved work adds or changes files, so Conductor did not touch it. Move or remove them, then resume.';
 const IGNORED_UNCHECKED = 'Conductor could not check the app folder for files in the way of the approved work, so it did not touch it.';
-const RELEASE_UNCHECKABLE = 'Conductor could not check the release, so nothing was shipped.';
-const NO_RELEASE_GIVEN = 'Conductor was not given a release it can check, so nothing was shipped.';
 const CHANGELOG_FAILED = 'Conductor could not add the changelog lines to the approved work, so it stopped. The app\'s main line was not moved.';
 
-const SHA_RE = /^[0-9a-f]{40}$/;
-const RELEASE_TAG_RE = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const MAIN = 'refs/heads/main';
 const UNRELEASED = /^## \[Unreleased\]\s*$/;
 const ANY_HEADING = /^## \[/;
 const DIFF_NAMES = ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-only', '-z'];
 const CHANGELOG_BRANCH = 'factory/changelog';
-// Never follow a GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE left in Conductor's own environment.
-const CLEAN_GIT_ENV = { GIT_DIR: undefined, GIT_WORK_TREE: undefined, GIT_INDEX_FILE: undefined };
 // The changelog commit is the same commit every time for the same approved commit, lines and message.
 const FIXED_IDENTITY = { GIT_AUTHOR_NAME: 'Conductor', GIT_AUTHOR_EMAIL: 'conductor@localhost', GIT_COMMITTER_NAME: 'Conductor', GIT_COMMITTER_EMAIL: 'conductor@localhost' };
 
 const short = (sha) => String(sha).slice(0, 7);
 const g = (dir, args, opts = {}) => git(dir, args, { ...opts, env: { ...CLEAN_GIT_ENV, ...(opts.env ?? {}) } });
-const isSha = (s) => typeof s === 'string' && SHA_RE.test(s);
 const notACommit = (s, what) => `"${String(s).slice(0, 80)}" is not a commit, so ${what}.`;
-
-function plainVersion(s) {
-  const v = parseVersion(s);
-  return v && s === `${v.major}.${v.minor}.${v.patch}` ? v : null;
-}
 
 /** The version a release of kind `bump` ('minor' or 'patch') after `current` will have. Throws plain English. */
 export function nextVersion(current, bump) {
@@ -292,7 +281,7 @@ async function repairAfterCrash(appDir, from, to) {
 
 // null when the release Plan 10 made is exactly what was approved (Ruling C4); otherwise the plain reason.
 export async function releaseProblem({ appDir, from, release, expectedVersion }) {
-  if (!isSha(from) || !release || typeof release !== 'object' || !isSha(release.sha) || !plainVersion(expectedVersion)) return NO_RELEASE_GIVEN;
+  if (!isSha(from) || !isObject(release) || !isSha(release.sha) || !plainVersion(expectedVersion)) return NO_RELEASE_GIVEN;
   let main;
   try { main = await appMain(appDir); } catch { return NO_MAIN; }
   if (main !== release.sha) return RELEASE_NOT_ON_MAIN;
@@ -318,74 +307,4 @@ export async function releaseProblem({ appDir, from, release, expectedVersion })
   const stray = names.stdout.split('\0').filter((f) => f !== '' && !RELEASE_FILES.includes(f));
   if (stray.length) return RELEASE_TOUCHED_CODE(stray);
   return releaseContentProblem(appDir, from, release.sha);
-}
-
-const REGULAR_MODES = new Set(['100644', '100755']);
-
-// One `ls-tree -z` entry for a top-level file: { mode, type } or null when the commit has no such entry.
-async function treeEntry(appDir, sha, file) {
-  const r = await g(appDir, ['ls-tree', '-z', sha, '--', file]);
-  if (r.code !== 0) throw new Error('unreadable');
-  const entry = r.stdout.split('\0').find((e) => e.slice(e.indexOf('\t') + 1) === file);
-  if (!entry) return null;
-  const [mode, type] = entry.slice(0, entry.indexOf('\t')).split(' ');
-  return { mode, type };
-}
-
-// Canonical JSON (keys sorted), so only content counts, never key order.
-function canonical(v) {
-  if (Array.isArray(v)) return v.map(canonical);
-  if (v && typeof v === 'object') return Object.fromEntries(Object.keys(v).sort().map((k) => [k, canonical(v[k])]));
-  return v;
-}
-
-// What a release may change in each JSON release file (the foundation's scripts/release.ts): the version in
-// package.json, package-lock.json (top and packages[""]) and foundation.json, and foundation.json's commit stamp, which
-// it sets to the new tag name. True when `before` and `after` differ in nothing else.
-function sameApartFromRelease(file, before, after) {
-  const isObj = (o) => o !== null && typeof o === 'object' && !Array.isArray(o);
-  if (!isObj(before) || !isObj(after)) return false;
-  const strip = (j, stamp) => {
-    const c = structuredClone(j);
-    delete c.version;
-    if (stamp) delete c.commit;
-    if (file === 'package-lock.json' && isObj(c.packages) && isObj(c.packages[''])) delete c.packages[''].version;
-    return JSON.stringify(canonical(c));
-  };
-  const stamp = file === 'foundation.json' && (after.commit === before.commit || after.commit === `v${after.version}`);
-  return strip(before, stamp) === strip(after, stamp);
-}
-
-/**
- * Between `base` and `head`, the release files may change only as a release changes them: each stays a regular file
- * with the same mode (no link, no submodule, none added or removed), package.json, package-lock.json and
- * foundation.json differ only in their version fields (and foundation.json's commit stamp), CHANGELOG.md is free text.
- * Files outside RELEASE_FILES are not looked at here. null when fine, otherwise the plain reason (fails closed).
- */
-export async function releaseContentProblem(appDir, base, head) {
-  if (!isSha(base) || !isSha(head)) return NO_RELEASE_GIVEN;
-  const names = await g(appDir, [...DIFF_NAMES, base, head]);
-  if (names.code !== 0) return RELEASE_UNCHECKABLE;
-  const changed = names.stdout.split('\0').filter((f) => RELEASE_FILES.includes(f));
-  const bad = [];
-  try {
-    for (const file of changed) {
-      const before = await treeEntry(appDir, base, file);
-      const after = await treeEntry(appDir, head, file);
-      if (!before || !after || after.type !== 'blob' || before.type !== 'blob' || !REGULAR_MODES.has(after.mode) || after.mode !== before.mode) {
-        bad.push(file);
-        continue;
-      }
-      if (file === 'CHANGELOG.md') continue;
-      const a = await g(appDir, ['show', `${base}:${file}`]);
-      const b = await g(appDir, ['show', `${head}:${file}`]);
-      if (a.code !== 0 || b.code !== 0) return RELEASE_UNCHECKABLE;
-      let same;
-      try { same = sameApartFromRelease(file, JSON.parse(a.stdout), JSON.parse(b.stdout)); } catch { same = false; }
-      if (!same) bad.push(file);
-    }
-  } catch {
-    return RELEASE_UNCHECKABLE;
-  }
-  return bad.length ? RELEASE_CHANGED_SETTINGS(bad) : null;
 }

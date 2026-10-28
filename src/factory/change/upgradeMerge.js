@@ -10,6 +10,7 @@ import { git, Workspace } from '../../workspace.js';
 import { compareVersions } from '../foundationLog.js';
 import { MAX_INSTRUCTIONS } from '../split.js';
 import { RUN_ID_RE } from '../ids.js';
+import { CLEAN_GIT_ENV, RELEASE_TAG_RE as RELEASE_TAG } from './gitSafe.js';
 
 export const MAX_CONFLICT_FILES = 20;
 
@@ -17,10 +18,7 @@ export const NOT_FROM_FOUNDATION = 'This app does not share any history with the
 export const UNRESOLVABLE = (list) => `The foundation release cannot be merged automatically. ${list} A person needs to decide each of these, so nothing was changed in the app.`;
 const NOT_LANDED = (error) => `Conductor could not add the foundation merge to the app: ${error}. Nothing else was changed.`;
 
-const RELEASE_TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const ZERO_SHA = '0'.repeat(40);
-// Never follow a GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE left in Conductor's own environment.
-const CLEAN_GIT_ENV = { GIT_DIR: undefined, GIT_WORK_TREE: undefined, GIT_INDEX_FILE: undefined };
 const FETCH_TIMEOUT_MS = 15 * 60_000;
 // Pinned so the markers are always the two-sided form the loop, the gate and resolveVersionHunks expect.
 const MERGE_FLAGS = ['-c', 'merge.conflictStyle=merge', '-c', 'merge.renames=true', '-c', 'rerere.enabled=false'];

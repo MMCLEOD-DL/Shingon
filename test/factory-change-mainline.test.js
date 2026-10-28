@@ -12,6 +12,9 @@ import {
   MAIN_MOVED, APP_FOLDER_EDITED, EDITED_AFTER_MAIN_MOVED, NO_MAIN, FILES_NOT_UPDATED, FILES_BEHIND, IGNORED_IN_THE_WAY, MAIN_NOT_PUT_BACK, RELEASE_TOUCHED_CODE, RELEASE_VERSION_DIFFERS, RELEASE_NOT_ON_MAIN,
   releaseContentProblem, RELEASE_CHANGED_SETTINGS,
 } from '../src/factory/change/mainline.js';
+import { RELEASE_FILES as PLAN10_RELEASE_FILES } from '../src/factory/ship/release.js';
+import { releaseContentProblem as sharedContentProblem } from '../src/factory/ship/releaseContent.js';
+import { SHA_RE, RELEASE_TAG_RE, plainVersion, isObject } from '../src/factory/change/gitSafe.js';
 
 const ID = ['-c', 'user.name=Test', '-c', 'user.email=test@example.com'];
 const LINE = '- Change (brief v3): added Mileage claims.';
@@ -71,6 +74,19 @@ async function simulateRelease(appDir, from, version, { extra = {}, tagAt = 'rel
 test('RELEASE_FILES is Plan 10\'s S20 set', () => {
   assert.deepEqual(RELEASE_FILES, ['CHANGELOG.md', 'package.json', 'package-lock.json', 'foundation.json']);
   assert.throws(() => RELEASE_FILES.push('x'));
+  // One copy (final review item 7): the change modules use Plan 10's own set and its content check.
+  assert.equal(RELEASE_FILES, PLAN10_RELEASE_FILES);
+  assert.equal(releaseContentProblem, sharedContentProblem);
+});
+
+test('gitSafe: one sha rule (40 hex), one release-tag rule, plain versions and plain objects', () => {
+  assert.ok(SHA_RE.test('a'.repeat(40)));
+  assert.ok(!SHA_RE.test('a'.repeat(64)) && !SHA_RE.test('-'.repeat(40)) && !SHA_RE.test('A'.repeat(40)));
+  assert.ok(RELEASE_TAG_RE.test('v1.20.3') && !RELEASE_TAG_RE.test('v01.2.3') && !RELEASE_TAG_RE.test('v1.2.3-rc.1'));
+  assert.deepEqual(plainVersion('1.2.3'), { major: 1, minor: 2, patch: 3, pre: [] });
+  assert.equal(plainVersion('1.2.3-rc.1'), null);
+  assert.equal(plainVersion('v1.2.3'), null);
+  assert.ok(isObject({}) && !isObject([]) && !isObject(null));
 });
 
 test('the operator texts are exactly as specified', () => {

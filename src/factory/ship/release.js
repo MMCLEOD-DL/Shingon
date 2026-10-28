@@ -13,6 +13,10 @@ import { parseVersion, compareVersions } from '../foundationLog.js';
 import { runCommand } from '../../exec.js';
 import { childEnv, strictChildEnv, redact } from '../../secrets.js';
 import { findBin } from '../../council/tools.js';
+import { RELEASE_FILES } from './releaseContent.js';
+
+// Ruling S20's set of release files, exported for Plan 11 (src/factory/change/mainline.js).
+export { RELEASE_FILES };
 
 export const RELEASE_BUMPS = Object.freeze(['first', 'minor', 'patch']);
 // Contract 7 §7.11: the app's first release is 1.0.0, made with the foundation's `major` (its `first` would only re-tag 0.1.0).
@@ -22,8 +26,6 @@ const UNRELEASED_NAME = 'highland-foundation';
 const NPM_CI_TIMEOUT_MS = 15 * 60 * 1000;
 const NPM_RELEASE_TIMEOUT_MS = 10 * 60 * 1000;
 const SHA_RE = /^[0-9a-f]{40}$/;
-// Ruling S20: the only files a release (and the first release's preparation) may change.
-const RELEASE_FILES = new Set(['CHANGELOG.md', 'package.json', 'package-lock.json', 'foundation.json']);
 const GIT_LOCATION_ENV = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE'];
 const DEFAULT_IDENTITY = { name: 'Conductor', email: 'conductor@localhost' };
 
@@ -188,7 +190,7 @@ export async function releaseApp({ projectDir, bump, runId, expectedMain = null 
     // Read untrimmed: a file named " CHANGELOG.md" must not pass as CHANGELOG.md.
     const diff = await g.git(clone, ['diff', '--name-only', '-z', main, sha]);
     if (diff.code !== 0) return no(NOT_EXPECTED);
-    const stray = String(diff.stdout).split('\0').filter((f) => f !== '' && !RELEASE_FILES.has(f));
+    const stray = String(diff.stdout).split('\0').filter((f) => f !== '' && !RELEASE_FILES.includes(f));
     if (stray.length > 0) {
       const named = stray.slice(0, 5).join(', ') + (stray.length > 5 ? ` and ${stray.length - 5} more` : '');
       return no(`The app's release script changed files a release should not touch (${named}), so nothing was added.`);

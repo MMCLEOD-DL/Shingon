@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { writeJsonAtomic, createFileExclusive } from '../fsAtomic.js';
 import { newRunId, RUN_ID_RE } from '../ids.js';
+import { isObject as isObj } from './gitSafe.js';
 
 export const STAGES = Object.freeze(['brief', 'prepare', 'build', 'approved', 'merged', 'released', 'shipping', 'done']);
 export const RUN_KINDS = Object.freeze(['change', 'foundation-upgrade']);
@@ -14,7 +15,6 @@ const MAX_ID_TRIES = 5;
 
 export const RUN_UNREADABLE = (runId) => `The record of change ${runId} could not be read, so Conductor stopped rather than guess where it was. Nothing was changed.`;
 
-const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const changeFile = (projectDir, runId) => path.join(projectDir, 'builds', runId, 'change.json');
 
 export function createChangeRun(projectDir, fields, { now = new Date(), newId = newRunId } = {}) {

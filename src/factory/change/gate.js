@@ -8,8 +8,9 @@
 // Everything here fails closed: anything not understood counts as "not approved".
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { git as gitFn } from '../../workspace.js';
+import { git as workspaceGit } from '../../workspace.js';
 import { RUN_ID_RE } from '../ids.js';
+import { CLEAN_GIT_ENV, isSha, isObject } from './gitSafe.js';
 
 export const COUNCIL_MISSING = 'The full council did not review this change, so it cannot be shipped. Nothing was added to the app. Check that the council is set up (conductor doctor) and run the change again.';
 export const COUNCIL_NOT_PASSED = 'The council still found problems that must be fixed, and you did not choose to ship anyway, so this change cannot be shipped. Nothing was added to the app.';
@@ -21,10 +22,8 @@ export const APPROVAL_NOT_SAVED = 'Conductor could not record your approval, so 
 export const CHECK_FAILED = 'Conductor could not finish checking this change before asking you, so nothing was added to the app. Resume the change to try again.';
 
 const OVERRIDE_NOTE = 'You chose to ship although the council still found problems.';
-// A full commit id (sha-1 or sha-256): never anything git could read as an option or a branch name.
-const SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
-const isSha = (s) => typeof s === 'string' && SHA_RE.test(s);
-const isObject = (o) => o !== null && typeof o === 'object' && !Array.isArray(o);
+// Every git call here runs without the caller's GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE.
+const gitFn = (dir, args, opts = {}) => workspaceGit(dir, args, { ...opts, env: { ...CLEAN_GIT_ENV, ...(opts.env ?? {}) } });
 const PASSING = new Set(['approved', 'approved-with-warnings']);
 // A conflict marker line: seven < or >, then a space, or the end of the line (CRLF files included).
 const MARKER_RE = /^(<{7}|>{7})( |\r?$)/m;
