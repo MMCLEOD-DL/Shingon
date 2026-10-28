@@ -128,7 +128,7 @@ test('an existing refs/foundation/<tag> at a different commit stops and changes 
   await git(p.appDir, ['update-ref', 'refs/foundation/v0.1.1', f.tagSha('v0.1.0')]);
   const refs = await refsOf(p.appDir);
   const r = await prepare(f, p);
-  assert.deepEqual(r, { status: 'stopped', reason: "The app records the foundation's v0.1.1 as a different commit than the foundation now has, so Conductor stopped. Nothing was changed in the app." });
+  assert.deepEqual(r, { status: 'stopped', reason: "The app records a different version of the foundation's v0.1.1 than the foundation now has, so Conductor stopped. Nothing was changed in the app." });
   assert.equal(await refsOf(p.appDir), refs);
   assert.equal(existsSync(p.scratchDir), false);
 });

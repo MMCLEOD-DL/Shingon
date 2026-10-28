@@ -15,7 +15,7 @@ import { HOSTING_CHANGED } from '../src/factory/change/delta.js';
 import { COUNCIL_NOT_PASSED, COUNCIL_MISSING, MARKERS_LEFT, CHECK_FAILED } from '../src/factory/change/gate.js';
 import { MAIN_MOVED } from '../src/factory/change/mainline.js';
 import {
-  runChange, runFoundationUpgrade, resumeChange, abandonChange, askOperator,
+  runChange, runFoundationUpgrade, resumeChange, abandonChange, askOperator, RELEASE_STILL_TO_MAKE, BRIEF_CHANGED_WHILE_PAUSED,
   NOT_BUILT_YET, NO_BUILT_FROM, UNFINISHED, NOTHING_TO_RESUME, MISSING_SEAMS, TOO_MANY_CONFLICTS,
 } from '../src/factory/change/pipeline.js';
 
@@ -650,7 +650,20 @@ test('a genuine release commit left untagged by a crash is adopted through relea
   assert.equal(h.callsOf('releaseApp')[1].args[0].expectedMain, r.sha);
 });
 
-test('abandon after main moved but before project.json was written records the project first', async () => {
+// Final review item 2: between "main has the change" and "the release exists" a drop would leave no way forward.
+test('abandon is refused once main has the change but before the release (stage merged): resume makes the release', async () => {
+  const { h, runId } = await mergedWithoutRelease();
+  assert.equal(loadChangeRun(h.projectDir, runId).stage, 'merged');
+  const projectBefore = h.project();
+  const dropped = await abandonChange({ factory: h.factory, slug: 'acme', deps: h.deps });
+  assert.deepEqual(dropped, { status: 'stopped', runId: null, reason: RELEASE_STILL_TO_MAKE('acme') });
+  assert.equal(RELEASE_STILL_TO_MAKE('acme'), 'The change is already on the app\'s main line, so it cannot be dropped. Resume it to make the release (conductor change acme --resume); nothing more ships until you do.');
+  assert.equal(loadChangeRun(h.projectDir, runId).status, 'failed');
+  assert.deepEqual(h.project(), projectBefore);
+  assert.equal((await h.resume()).status, 'done');
+});
+
+test('abandon is refused at stage approved once main has reached the changelog commit, and the project record is left alone', async () => {
   const { h, runId } = await mergedWithoutRelease();
   const run = loadChangeRun(h.projectDir, runId);
   const projectAfter = h.project();
@@ -659,12 +672,11 @@ test('abandon after main moved but before project.json was written records the p
   run.stage = 'approved';
   saveChangeRun(h.projectDir, run);
   const dropped = await abandonChange({ factory: h.factory, slug: 'acme', deps: h.deps });
-  assert.match(dropped.reason, /already has this change/);
-  assert.match(dropped.reason, /recorded in the project/);
-  const project = h.project();
-  assert.equal(project.builtFromBrief, 2);
-  assert.equal(project.approved.sha, run.changelogSha);
-  assert.equal(loadChangeRun(h.projectDir, runId).status, 'stopped');
+  assert.equal(dropped.status, 'stopped');
+  assert.equal(dropped.runId, null);
+  assert.equal(dropped.reason, RELEASE_STILL_TO_MAKE('acme'));
+  assert.equal(h.project().builtFromBrief, 1);
+  assert.equal(loadChangeRun(h.projectDir, runId).status, 'failed');
 });
 
 test('on resume a saved changelog commit that does not sit on the approved work is refused', async () => {
@@ -1021,7 +1033,7 @@ test('resume of an upgrade whose merge branch was landed but not saved adopts it
   g(h.appDir, ['update-ref', 'refs/foundation/v0.1.1', h.f.tagSha('v0.1.0')]);
   const bad = await h.resume();
   assert.equal(bad.status, 'stopped');
-  assert.match(bad.reason, /records the foundation's v0\.1\.1 as a different commit/);
+  assert.match(bad.reason, /records a different version of the foundation's v0\.1\.1 than the foundation now has/);
 
   const h2 = await harness({ ctl: { buildResults: [{ status: 'paused', reason: 'later' }] } });
   const one = await h2.upgrade();
@@ -1045,4 +1057,86 @@ test('UNFINISHED names a foundation upgrade', async () => {
   const resumed = await h.resume();
   assert.equal(resumed.status, 'done', resumed.reason);
   assert.equal(h.project().foundation.tag, 'v0.1.1');
+});
+
+// ---- final review fix wave ----------------------------------------------------------------------------------
+
+test('item 4: a brief approved while the change was paused stops the build plainly; nothing is built', async () => {
+  const h = await harness({ ctl: { buildResults: [{ status: 'paused', reason: 'The council paused.' }] } });
+  const first = await h.change();
+  assert.equal(first.status, 'paused');
+  writeBriefVersion(h.projectDir, 3, { revisedFrom: 2, features: V2_FEATURES, exampleSeq: V2_SEQ });
+  const out = await h.resume();
+  assert.equal(out.status, 'stopped');
+  assert.equal(out.reason, BRIEF_CHANGED_WHILE_PAUSED({ kind: 'change', slug: 'acme', current: 3, built: 2 }));
+  assert.equal(out.reason, 'The approved brief changed while this change was paused (it is now version 3; the change was being built for version 2), so nothing was built. Drop this change with "conductor change acme --abandon", then start it again.');
+  assert.equal(h.callsOf('runBuild').length, 1);
+  assert.equal(loadChangeRun(h.projectDir, first.runId).status, 'paused');
+  assert.equal((await abandonChange({ factory: h.factory, slug: 'acme', deps: h.deps })).runId, first.runId);
+});
+
+test('item 4: a foundation upgrade stops the same way when the brief moved on while it was paused', async () => {
+  const h = await harness({ ctl: { buildResults: [{ status: 'paused', reason: 'later' }] } });
+  const first = await h.upgrade();
+  assert.equal(first.status, 'paused');
+  writeBriefVersion(h.projectDir, 2, { revisedFrom: 1, features: V2_FEATURES, exampleSeq: V2_SEQ });
+  const out = await h.resume();
+  assert.equal(out.status, 'stopped');
+  assert.equal(out.reason, BRIEF_CHANGED_WHILE_PAUSED({ kind: 'foundation-upgrade', slug: 'acme', current: 2, built: 1 }));
+  assert.match(out.reason, /^The approved brief changed while this foundation upgrade was paused/);
+  assert.equal(h.callsOf('runBuild').length, 1);
+});
+
+test('item 5: a paused build\'s "conductor build" hint becomes the change resume hint', async () => {
+  const h = await harness({ ctl: { buildResults: [{ status: 'paused', reason: 'The council hit a problem it could not get past (no model), so the build paused. Run "conductor build acme" to try again.' }] } });
+  const out = await h.change();
+  assert.equal(out.status, 'paused');
+  assert.equal(out.reason, 'The council hit a problem it could not get past (no model), so the build paused. Run "conductor change acme --resume" to try again.');
+});
+
+test('item 5: a build stopped by a rejected escalation is paused and says how to resume', async () => {
+  const h = await harness({ ctl: { buildResults: [{ status: 'stopped', reason: 'You stopped the build because the council still found problems that must be fixed. The build is kept.' }] } });
+  const out = await h.change();
+  assert.equal(out.status, 'paused');
+  assert.equal(out.reason, 'You stopped the build because the council still found problems that must be fixed. The build is kept. Resume it with "conductor change acme --resume".');
+  assert.equal(loadChangeRun(h.projectDir, out.runId).status, 'paused');
+  // A reason that already names the resume command is not given it twice.
+  const h2 = await harness({ ctl: { buildResults: [{ status: 'stopped', reason: 'You stopped at the build\'s approval without deciding. Run "conductor change acme --resume" to be asked again.' }] } });
+  assert.equal((await h2.change()).reason, 'You stopped at the build\'s approval without deciding. Run "conductor change acme --resume" to be asked again.');
+});
+
+test('item 8: on resume a saved changelog commit that changes more than CHANGELOG.md is refused; main does not move', async () => {
+  const { h, runId } = await mergedWithoutRelease();
+  const run = loadChangeRun(h.projectDir, runId);
+  // Back to "approved, main not moved yet", with a saved changelog commit that also adds code.
+  g(h.appDir, ['reset', '-q', '--hard', run.mainAtStart]);
+  const tree = g(h.appDir, ['rev-parse', `${run.changelogSha}^{tree}`]);
+  const scratch = mkdtempSync(path.join(tmpdir(), 'idx-'));
+  cleanup.push(scratch);
+  const env = { ...process.env, GIT_INDEX_FILE: path.join(scratch, 'index') };
+  execFileSync('git', ['-C', h.appDir, 'read-tree', tree], { env });
+  const blob = execFileSync('git', ['-C', h.appDir, 'hash-object', '-w', '--stdin'], { input: 'export const sneaky = 1;\n', encoding: 'utf8' }).trim();
+  execFileSync('git', ['-C', h.appDir, 'update-index', '--add', '--cacheinfo', `100644,${blob},apps/server/src/sneaky.ts`], { env });
+  const sneakyTree = execFileSync('git', ['-C', h.appDir, 'write-tree'], { env, encoding: 'utf8' }).trim();
+  const sneaky = g(h.appDir, ['commit-tree', sneakyTree, '-p', run.approval.sha, '-m', 'changelog: change from brief v2']);
+  run.changelogSha = sneaky;
+  run.stage = 'approved';
+  run.status = 'failed';
+  saveChangeRun(h.projectDir, run);
+  const out = await h.resume();
+  assert.equal(out.status, 'stopped');
+  assert.equal(out.reason, 'The saved changelog commit changes more than the changelog, so Conductor stopped rather than add something else to the app.');
+  assert.equal(appMain(h.appDir), run.mainAtStart);
+});
+
+test('item 3: an upgrade passes the target foundation (tag and commit) to the change build', async () => {
+  const h = await harness();
+  const out = await h.upgrade();
+  assert.equal(out.status, 'done', out.reason);
+  const change = h.callsOf('runBuild')[0].args[0].options.change;
+  assert.deepEqual(change.foundation, { tag: 'v0.1.1', commit: h.f.tagSha('v0.1.1') });
+  // A change request builds on the foundation the project already records: nothing is passed.
+  const h2 = await harness();
+  assert.equal((await h2.change()).status, 'done');
+  assert.equal(h2.callsOf('runBuild')[0].args[0].options.change.foundation, undefined);
 });

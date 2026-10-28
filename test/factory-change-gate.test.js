@@ -211,8 +211,8 @@ test('conflictMarkers finds files that still hold <<<<<<< or >>>>>>> lines at a 
   assert.deepEqual(await conflictMarkers(repo, sha, ['a.md', 'b.ts', 'gone.ts', 'c.ts', 'd.ts']), ['b.ts', 'c.ts']);
   assert.deepEqual(await conflictMarkers(repo, sha, []), []);
   // a commit that is not in the repo is never read as "no markers"
-  await assert.rejects(conflictMarkers(repo, 'c'.repeat(40), ['b.ts']));
-  await assert.rejects(conflictMarkers(repo, '--help', ['b.ts']));
+  await assert.rejects(conflictMarkers(repo, 'c'.repeat(40), ['b.ts']), { message: 'Conductor could not read that version of the app (ccccccc), so it could not check it.' });
+  await assert.rejects(conflictMarkers(repo, '--help', ['b.ts']), { message: 'Conductor could not read that version of the app (--help), so it could not check it.' });
 });
 
 test('shipProblem: refuses with no approval, an unapproved council, or a released commit that does not contain the approved one', async () => {

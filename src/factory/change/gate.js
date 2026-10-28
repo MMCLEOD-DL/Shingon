@@ -114,7 +114,7 @@ export function makeChangeGate({ projectDir, approveBuild, extraText, check, onA
 // skipped; a commit that cannot be read throws, so it is never taken for "no markers".
 export async function conflictMarkers(dir, sha, files, { git = gitFn } = {}) {
   if (!isSha(sha) || (await git(dir, ['cat-file', '-e', `${sha}^{commit}`])).code !== 0) {
-    throw new Error(`Conductor could not read commit ${String(sha)} in the app.`);
+    throw new Error(`Conductor could not read that version of the app (${String(sha).slice(0, 7)}), so it could not check it.`);
   }
   const marked = [];
   for (const file of files) {

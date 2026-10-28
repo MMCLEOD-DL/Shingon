@@ -27,7 +27,7 @@ const MERGE_FLAGS = ['-c', 'merge.conflictStyle=merge', '-c', 'merge.renames=tru
 const NOT_PREPARED = 'Conductor could not prepare the foundation merge in its scratch copy of the app, so it stopped. Nothing was changed in the app.';
 const NO_SCRATCH = 'Conductor could not set up its scratch folder for the foundation merge (the project folder or its builds folder is missing or is a link to somewhere else), so it stopped. Nothing was changed in the app.';
 const RECORD_FAILED = (toTag) => `Conductor could not record the foundation release ${toTag} with the app, so it stopped. Nothing was changed in the app.`;
-const RECORD_MOVED = (toTag) => `The app records the foundation's ${toTag} as a different commit than the foundation now has, so Conductor stopped. Nothing was changed in the app.`;
+const RECORD_MOVED = (toTag) => `The app records a different version of the foundation's ${toTag} than the foundation now has, so Conductor stopped. Nothing was changed in the app.`;
 
 class Stop extends Error {}
 

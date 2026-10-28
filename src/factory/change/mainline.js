@@ -47,7 +47,7 @@ const FIXED_IDENTITY = { GIT_AUTHOR_NAME: 'Conductor', GIT_AUTHOR_EMAIL: 'conduc
 
 const short = (sha) => String(sha).slice(0, 7);
 const g = (dir, args, opts = {}) => git(dir, args, { ...opts, env: { ...CLEAN_GIT_ENV, ...(opts.env ?? {}) } });
-const notACommit = (s, what) => `"${String(s).slice(0, 80)}" is not a commit, so ${what}.`;
+const notACommit = (s, what) => `"${String(s).slice(0, 80)}" is not a version of the app Conductor can use, so ${what}.`;
 
 /** The version a release of kind `bump` ('minor' or 'patch') after `current` will have. Throws plain English. */
 export function nextVersion(current, bump) {

@@ -164,8 +164,8 @@ test('commitChangelog refuses bad input with plain reasons and leaves the app al
   const { appDir, approved, scratchDir, projectDir } = await approvedApp();
   const before = await refsOf(appDir);
   const base = { appDir, sha: approved, lines: [LINE], scratchDir, message: 'm' };
-  await assert.rejects(commitChangelog({ ...base, sha: '--upload-pack=x' }), /is not a commit/);
-  await assert.rejects(commitChangelog({ ...base, sha: approved.slice(0, 12) }), /is not a commit/);
+  await assert.rejects(commitChangelog({ ...base, sha: '--upload-pack=x' }), /is not a version of the app Conductor can use/);
+  await assert.rejects(commitChangelog({ ...base, sha: approved.slice(0, 12) }), /is not a version of the app Conductor can use/);
   await assert.rejects(commitChangelog({ ...base, sha: 'f'.repeat(40) }), /is not in the app/);
   await assert.rejects(commitChangelog({ ...base, lines: [] }), /no changelog lines/);
   await assert.rejects(commitChangelog({ ...base, lines: ['- a\n## [9.9.9]'] }), /changelog line/);
@@ -343,7 +343,7 @@ test('advanceMain refuses bad commits without running git on them', async () => 
   for (const [from, to] of [['--all', sha], [mainAtStart, '-q'], [mainAtStart, 'main'], [mainAtStart, sha.toUpperCase()], [null, sha]]) {
     const r = await advanceMain({ appDir, from, to });
     assert.equal(r.ok, false);
-    assert.match(r.reason, /is not a commit/);
+    assert.match(r.reason, /is not a version of the app Conductor can use/);
   }
   assert.equal(await appMain(appDir), mainAtStart);
 });
@@ -392,7 +392,7 @@ test('appCheckoutProblem with the build branch checked out (left by a rejected o
 test('appVersionAt reads package.json at a commit; refuses bad commits and unreadable files plainly', async () => {
   const { appDir, mainAtStart } = await approvedApp();
   assert.equal(await appVersionAt(appDir, mainAtStart), '0.1.0');
-  await assert.rejects(appVersionAt(appDir, '--output=/tmp/x'), /is not a commit/);
+  await assert.rejects(appVersionAt(appDir, '--output=/tmp/x'), /is not a version of the app Conductor can use/);
   await assert.rejects(appVersionAt(appDir, 'e'.repeat(40)), /package\.json/);
   await out(appDir, ['checkout', '-q', '-b', 'broken']);
   const bad = await commitFiles(appDir, { 'package.json': '{not json' }, 'break');

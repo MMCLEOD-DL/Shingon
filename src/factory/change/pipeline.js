@@ -38,6 +38,8 @@ export const NOT_BUILT_YET = 'This project has not been built and approved yet, 
 export const NO_BUILT_FROM = 'This project does not record which brief version the app was built from, so Conductor cannot tell what a change would add. Nothing was changed.';
 export const UNFINISHED = (runId, kind) => `An earlier ${kind === 'change' ? 'change' : 'foundation upgrade'} (${runId}) is not finished. Continue it with --resume, or drop it with --abandon, before starting another.`;
 export const NOTHING_TO_RESUME = 'There is no unfinished change for this project.';
+export const BRIEF_CHANGED_WHILE_PAUSED = ({ kind, slug, current, built }) => `The approved brief changed while this ${kind === 'change' ? 'change' : 'foundation upgrade'} was paused (it is now version ${current}; the ${kind === 'change' ? 'change' : 'upgrade'} was being built for version ${built}), so nothing was built. Drop this ${kind === 'change' ? 'change' : 'foundation upgrade'} with "conductor change ${slug} --abandon", then start it again.`;
+export const RELEASE_STILL_TO_MAKE = (slug) => `The change is already on the app's main line, so it cannot be dropped. Resume it to make the release (conductor change ${slug} --resume); nothing more ships until you do.`;
 export const TOO_MANY_CONFLICTS = (n, files) => ({
   title: 'the foundation upgrade',
   message: `Merging the foundation release left ${n} files with both versions side by side (${files.slice(0, 10).join(', ')}${n > 10 ? ', …' : ''}). Conductor can try to resolve them, which uses your subscription, or you can stop and merge by hand. Approve to let Conductor try.`,
@@ -56,9 +58,9 @@ const DRAFT_OPEN = (slug) => `An unfinished brief draft is waiting for this proj
 const MAIN_MOVED_IN_PREPARE = 'The app changed while the foundation merge was being prepared, so nothing was built. Start the foundation upgrade again.';
 const MAIN_MOVED_SINCE_ADDED = 'The app\'s main line moved after the change was added to it, so no release was made and nothing was shipped. Check the app\'s main line before shipping by hand.';
 const NO_BRIEF_RECORD = 'This project does not record which brief version the app was built from, so Conductor cannot record the upgrade against it. Nothing was changed.';
-const RECORD_DIFFERS = (toTag) => `The app records the foundation's ${toTag} as a different commit than the foundation now has, so Conductor stopped. Nothing was built.`;
+const RECORD_DIFFERS = (toTag) => `The app records a different version of the foundation's ${toTag} than the foundation now has, so Conductor stopped. Nothing was built.`;
 const CHANGELOG_NOT_ON_APPROVED = 'The saved changelog commit does not sit directly on the work you approved, so Conductor stopped rather than add something else to the app.';
-const ABANDON_WROTE_RECORD = 'Conductor first recorded in the project that the app now has it.';
+const CHANGELOG_NOT_ONLY = 'The saved changelog commit changes more than the changelog, so Conductor stopped rather than add something else to the app.';
 const UNRELEASED_NAME = 'highland-foundation';
 const MARKER_GREP = ['grep', '-l', '-I', '-E', '-e', '^(<{7}|>{7})( |$)'];
 
@@ -200,17 +202,9 @@ export async function abandonChange(args) {
   if (!reached && typeof run.changelogSha === 'string' && SHA_RE.test(run.changelogSha)) {
     reached = (await git(appDir, ['merge-base', '--is-ancestor', run.changelogSha, 'refs/heads/main'])).code === 0;
   }
-  // Main already has the change but the run stopped before recording it: the project record is written first, so
-  // project.json never claims an older approval than the app's main line carries.
-  let wrote = false;
-  if (reached && run.stage === 'approved' && isObject(run.approval)) {
-    try {
-      writeProjectRecord(o.projectDir, run);
-      wrote = true;
-    } catch (e) {
-      return refuse('stopped', `The app's main line already has this change, but Conductor could not record it in the project (${plainMessage(e)}), so the change was not dropped. Resume it to finish.`);
-    }
-  }
+  // Main has the change but the release is not made yet: a drop here would leave no way forward (the next change
+  // would start from a main nobody released), so only resume can carry it on.
+  if (reached && (run.stage === 'approved' || run.stage === 'merged')) return refuse('stopped', RELEASE_STILL_TO_MAKE(args.slug));
   run.status = 'stopped';
   run.reason = 'You dropped this change.';
   saveChangeRun(o.projectDir, run);
@@ -218,7 +212,7 @@ export async function abandonChange(args) {
   const left = reached
     ? 'The app\'s main line already has this change; the deployments not yet updated stay on their current version.'
     : 'Nothing reached the app\'s main line.';
-  return { status: 'stopped', runId: run.runId, reason: `You dropped the ${what} ${run.runId}. ${left}${wrote ? ` ${ABANDON_WROTE_RECORD}` : ''}` };
+  return { status: 'stopped', runId: run.runId, reason: `You dropped the ${what} ${run.runId}. ${left}` };
 }
 
 // ---- the stage machine ------------------------------------------------------------------------------------
@@ -416,6 +410,13 @@ async function firstReleasePending(appDir, sha) {
 async function stepBuild(ctx, run) {
   const { projectDir, appDir, deps, term, factory, slug } = ctx;
   const isChange = run.kind === 'change';
+  // The brief this run builds must still be the approved one: a brief approved while the run was paused would be
+  // stamped as built without ever being built (final review item 4).
+  const builtFor = isChange ? run.brief.to : run.briefVersion;
+  const currentBrief = currentBriefVersion(projectDir);
+  if (currentBrief !== builtFor) {
+    return end(ctx, run, 'paused', 'stopped', BRIEF_CHANGED_WHILE_PAUSED({ kind: run.kind, slug, current: currentBrief, built: builtFor }));
+  }
   const bump = isChange ? 'minor' : 'patch';
   const firstPending = await firstReleasePending(appDir, run.mainAtStart);
   const expectedVersion = firstPending ? null : nextVersion(await appVersionAt(appDir, run.mainAtStart), bump);
@@ -501,7 +502,14 @@ async function stepBuild(ctx, run) {
   };
   const outcome = await deps.runBuild({
     factory, slug, team: ctx.team, baseDir: ctx.baseDir, warnings: ctx.warnings, env: ctx.env, hooks,
-    options: { ...ctx.options, change: { runId: run.runId, baseRef: run.baseRef, units: run.units, profile: run.profile ?? null } },
+    options: {
+      ...ctx.options,
+      change: {
+        runId: run.runId, baseRef: run.baseRef, units: run.units, profile: run.profile ?? null,
+        // An upgrade is reviewed and summarised against the foundation release it brings in (final review item 3).
+        ...(isChange ? {} : { foundation: { tag: u.toTag, commit: u.tagSha } }),
+      },
+    },
   });
 
   const status = outcome?.status;
@@ -511,7 +519,9 @@ async function stepBuild(ctx, run) {
     save(ctx, run);
     return null;
   }
-  const said = typeof outcome?.reason === 'string' && outcome.reason ? outcome.reason : null;
+  // Plan 8 and Plan 9 name "conductor build"; a change carries on with conductor change --resume (Ruling C12).
+  const resumeHint = `conductor change ${slug} --resume`;
+  const said = typeof outcome?.reason === 'string' && outcome.reason ? outcome.reason.replaceAll(`"conductor build ${slug}"`, `"${resumeHint}"`) : null;
   if (status === 'rejected') {
     if (run.refusal) return end(ctx, run, 'paused', 'stopped', run.refusal);
     const reason = isChange
@@ -520,7 +530,10 @@ async function stepBuild(ctx, run) {
     return end(ctx, run, 'stopped', 'rejected', reason);
   }
   // Ruling C5: a build that stopped (no decision at the gate, a rejected escalation) can be carried on.
-  if (status === 'stopped') return end(ctx, run, 'paused', 'paused', said ?? 'The build stopped. You can resume.');
+  if (status === 'stopped') {
+    const why = said ?? 'The build stopped.';
+    return end(ctx, run, 'paused', 'paused', why.includes(resumeHint) ? why : `${why} Resume it with "${resumeHint}".`);
+  }
   if (status === 'paused' || status === 'failed') return end(ctx, run, status, status, said ?? `The build ${status === 'paused' ? 'paused' : 'failed'}. You can resume.`);
   return end(ctx, run, 'failed', 'failed', 'The build ended in a way Conductor does not recognise, so nothing was added to the app. You can resume.');
 }
@@ -540,8 +553,9 @@ async function stepMerge(ctx, run) {
       message: isChange ? `changelog: change from brief v${run.brief.to}` : `changelog: foundation ${run.upgrade.toTag}`,
     });
     save(ctx, run);
-  } else if (!(await changelogOnApproved(appDir, run.changelogSha, a.sha))) {
-    return end(ctx, run, 'stopped', 'stopped', CHANGELOG_NOT_ON_APPROVED);
+  } else {
+    const problem = await changelogOnApproved(appDir, run.changelogSha, a.sha);
+    if (problem) return end(ctx, run, 'stopped', 'stopped', problem);
   }
   const moved = await advanceMain({ appDir, from: run.mainAtStart, to: run.changelogSha });
   if (!moved?.ok) {
@@ -557,13 +571,17 @@ async function stepMerge(ctx, run) {
   return null;
 }
 
-// The changelog commit is the approved commit itself (the lines were already there) or sits directly on it.
+// The changelog commit is the approved commit itself (the lines were already there) or sits directly on it and
+// changes CHANGELOG.md alone. null when it does, otherwise the plain reason.
 async function changelogOnApproved(appDir, changelogSha, approvedSha) {
-  if (!SHA_RE.test(String(changelogSha))) return false;
-  if (changelogSha === approvedSha) return true;
+  if (!SHA_RE.test(String(changelogSha))) return CHANGELOG_NOT_ON_APPROVED;
+  if (changelogSha === approvedSha) return null;
   const r = await git(appDir, ['rev-list', '--parents', '-n', '1', changelogSha]);
   const p = r.stdout.trim().split(' ');
-  return r.code === 0 && p.length === 2 && p[1] === approvedSha;
+  if (r.code !== 0 || p.length !== 2 || p[1] !== approvedSha) return CHANGELOG_NOT_ON_APPROVED;
+  const names = await git(appDir, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-only', '-z', approvedSha, changelogSha]);
+  const changed = names.stdout.split('\0').filter((f) => f !== '');
+  return names.code === 0 && changed.length === 1 && changed[0] === 'CHANGELOG.md' ? null : CHANGELOG_NOT_ONLY;
 }
 
 // project.json after main has the change: the approval, and what the app is now built from. Idempotent.
