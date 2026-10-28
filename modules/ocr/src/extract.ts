@@ -69,7 +69,7 @@ const ORDER_DATE = /\border\s+date\b/gi;
 // "Trans 2231") is not shown as certain, but it still competes: a confident date needs exactly one distinct date left.
 // Whole words or word starts only: a stray match inside another word ("Showcase") would wrongly drop a competitor.
 const NOT_TRANSACTION_DATE =
-  /\b(?:due|reprint|print|return|exchange|expir|exp\b|valid|until|collect|deliver|dispatch|best before|use by|display|sell by|ends?\b|perform|travel|arriv|depart|check|since|member|opened|packed|appointment|next\b|guarantee|warranty|birth|visit|slot|events?\b|shows?\b|showing)/i;
+  /\b(?:due|reprint|return|exchange|expir|exp\b|valid|until|collect|deliver|dispatch|best before|use by|display|sell by|ends?\b|perform|travel|arriv|depart|check|since|member|opened|packed|appointment|next\b|guarantee|warranty|birth|visit|slot|events?\b|shows?\b|showing)/i;
 // Money that changed hands other than the total: a payment, a deposit. If it differs from the total, the total is unsure.
 const PAYMENT_WORD = /paid|payment|received|deposit|settled|on account/i;
 // A line that is only the VAT and its label ("Total VAT £40.00", "VAT amount £3.33", "VAT TOTAL 3.33").

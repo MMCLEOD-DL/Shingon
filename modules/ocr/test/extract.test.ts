@@ -360,6 +360,10 @@ const ADVERSARIAL: [string, string[], Truth][] = [
   ['amount already settled before total', ['Glen Lodge', 'Invoice date 05/03/2026', 'Already settled £100.00', 'Total £240.00'], { amount: 14000, vat: null, date: '2026-03-05', merchant: 'Glen Lodge' }],
   ['Paypal line after', ['Bookshop', '05/03/2026', 'Order total £33.99', 'PayPal £23.99'], { amount: 2399, vat: null, date: '2026-03-05', merchant: 'Bookshop' }],
   ['reprinted receipt: the bare date is the sale', ['Shop', 'Printed 05/03/2026', '04/03/2026', 'TOTAL £8.75'], { amount: 875, vat: null, date: '2026-03-04', merchant: 'Shop' }],
+  // Re-review 4: a "Printed" date may be the sale date itself, so it still competes.
+  ['theatre: printed sale date above the show date', ['Theatre Royal', 'Printed 01/03/2026 10:15', 'Seat B12 Stalls', 'Sat 14/03/2026 19:30', 'Total £40.00'], { amount: 4000, vat: null, date: '2026-03-01', merchant: 'Theatre Royal' }],
+  ['cinema: printed sale date below the screening', ['Picturehouse Five', 'Screen 3 Seat F7', 'Thu 12 Mar 2026 19:30', 'Adult £12.00', 'Total £12.00', 'Printed 01/03/2026 10:15'], { amount: 1200, vat: null, date: '2026-03-01', merchant: 'Picturehouse Five' }],
+  ['hotel folio: printed date beside the night stayed', ['Glen Lodge', 'Printed 11/03/2026', '09/03/2026', 'Room 1 night £120.00', 'Total £120.00', 'VAT £20.00'], { amount: 12000, vat: 2000, date: '2026-03-11', merchant: 'Glen Lodge' }],
   ['show in merchant name', ['Showcase Cinema', 'Showcase 05/03/2026', '06/03/2026', 'TOTAL £8.75'], { amount: 875, vat: null, date: '2026-03-05', merchant: 'Showcase Cinema' }],
   ['order date vs order date', ['Shop Online', 'Order date 01/03/2026', 'Dispatched 03/03/2026', 'Invoice date 04/03/2026', 'Total £30.00'], { amount: 3000, vat: null, date: '2026-03-04', merchant: 'Shop Online' }],
   ['order date with invoice date', ['Shop Online', 'Order date 01/03/2026', 'Invoice date 04/03/2026', 'Total £30.00'], { amount: 3000, vat: null, date: '2026-03-04', merchant: 'Shop Online' }],
