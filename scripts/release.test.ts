@@ -107,8 +107,10 @@ test('an app release leaves foundation.json exactly as inherited', () => {
   expect(calls).toContain('commit+tag v0.2.0');
 });
 test('an app release does not need its version to match foundation.json', () => {
-  const { deps } = setup({}, { name: 'acme-expenses', foundation: INHERITED.replace('0.2.0', '0.1.0') });
+  const older = INHERITED.replace('"version": "0.2.0"', '"version": "0.0.9"');
+  const { deps, root } = setup({}, { name: 'acme-expenses', foundation: older });
   expect(() => runRelease('patch', deps)).not.toThrow();
+  expect(readFileSync(path.join(root, 'foundation.json'), 'utf8')).toBe(older);
 });
 test('refuses when the changelog already has the new version', () => {
   const s = setup();

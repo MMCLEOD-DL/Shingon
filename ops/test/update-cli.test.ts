@@ -2,7 +2,9 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { updateCli, type UpdateCliIo } from '../src/update-cli.js';
+import { crashJsonLine, updateCli, type UpdateCliIo } from '../src/update-cli.js';
+import { UNKNOWN_UPDATE_MESSAGE } from '../src/update.js';
+import { UPDATE_RECORD } from '../src/journal.js';
 import { USAGE } from '../src/init-cli.js';
 import { fakeRunner, TEST_BACKUP_PASSWORD, withDeps, type FakeRunner } from './helpers.js';
 
@@ -29,10 +31,16 @@ function io(runner: FakeRunner, env: Record<string, string | undefined> = { HF_B
     err: (l) => { err.push(...l.split('\n')); },
     env,
     runner,
+    // Like cli.ts's withDeps: an unexpected throw is said on standard error and gives exit 1.
     withDeps: (fn, log) => withDeps({ INSTANCE_MODE: 'demo' }, async (deps) => {
       opened = true;
       await mkdir(path.dirname(deps.cfg.workDir), { recursive: true });
-      return fn({ ...deps, run: runner, log });
+      try {
+        return await fn({ ...deps, run: runner, log });
+      } catch (e) {
+        err.push((e as Error).message);
+        return 1;
+      }
     }),
   };
   return { o, out, err, opened: () => opened };
@@ -92,6 +100,59 @@ describe('ops update --json', () => {
       expect(t.err.join('\n')).toContain(sentence);
       expect(t.opened()).toBe(false);
     }
+  });
+
+  test('an unexpected throw with no outcome: exactly one line, outcome "unknown" (never "cancelled"), exit 1', async () => {
+    const noEnv = await mkdtemp(path.join(tmpdir(), 'hf-update-cli-noenv-'));   // no .env: reading APP_IMAGE throws
+    try {
+      const t = io(nothingWorks(), { HF_BUNDLE_DIR: noEnv });
+      expect(await updateCli(['--to', '0.2.1', '--json'], t.o)).toBe(1);
+      expect(t.out).toHaveLength(1);
+      expect(JSON.parse(t.out[0]!)).toEqual({ schema: 1, outcome: 'unknown', to: '0.2.1', message: UNKNOWN_UPDATE_MESSAGE, urgent: false, exitCode: 1 });
+      expect(t.err.join('\n')).toContain('ENOENT');
+    } finally {
+      await rm(noEnv, { recursive: true, force: true });
+    }
+  });
+
+  test('a throw after the outcome (handing /state back): the line keeps the outcome and gives the real exit code', async () => {
+    // An update record left behind: an urgent refusal (exit 3 on its own). Then the final hand-over of /state throws.
+    let chowns = 0;
+    const r = fakeRunner((c) => {
+      if (c.cmd === 'chown' && ++chowns >= 2) throw new Error('chown could not start');
+      return { code: c.cmd === 'chown' ? 0 : 1, stdout: '', stderr: '' };
+    });
+    const t = io(r);
+    const inner = t.o.withDeps;
+    t.o.withDeps = (fn, log) => inner(async (deps) => {
+      await writeFile(path.join(path.dirname(deps.cfg.workDir), UPDATE_RECORD), JSON.stringify({ from: '0.2.0', to: '0.2.1', startedAt: '2026-10-28T09:00:00Z', step: 'migrating' }));
+      return fn(deps);
+    }, log);
+    const realGetuid = process.getuid;
+    process.getuid = () => 0;   // as root, so /state is handed back before and after the update
+    try {
+      expect(await updateCli(['--to', '0.2.1', '--json'], t.o)).toBe(1);
+    } finally {
+      process.getuid = realGetuid;
+    }
+    expect(chowns).toBe(2);
+    expect(t.out).toHaveLength(1);
+    expect(JSON.parse(t.out[0]!)).toMatchObject({ outcome: 'cancelled', urgent: true, exitCode: 1 });
+  });
+
+  test('settings that cannot be read: one refused line, exit 2', async () => {
+    const t = io(nothingWorks());
+    t.o.withDeps = async () => 2;   // cli.ts's withDeps after loadOpsConfig refused (it says why on standard error)
+    expect(await updateCli(['--to', '0.2.1', '--json'], t.o)).toBe(2);
+    expect(t.out).toHaveLength(1);
+    expect(JSON.parse(t.out[0]!)).toEqual({ schema: 1, outcome: 'refused', to: '0.2.1', message: 'The ops settings could not be read, so nothing was changed. The problem is on standard error.', urgent: false, exitCode: 2 });
+  });
+
+  test('a crash that escapes the command: the last-resort line is "unknown", and only for update --json', () => {
+    expect(JSON.parse(crashJsonLine(['update', '--to', '0.2.1', '--json'])!)).toMatchObject({ outcome: 'unknown', to: '0.2.1', exitCode: 1 });
+    expect(JSON.parse(crashJsonLine(['update', '--json', '--bogus'])!)).toMatchObject({ outcome: 'unknown', to: null });
+    expect(crashJsonLine(['update', '--to', '0.2.1'])).toBeUndefined();
+    expect(crashJsonLine(['backup', '--json'])).toBeUndefined();
   });
 
   test('without --json a refusal prints only its sentence and the usage, on standard error', async () => {

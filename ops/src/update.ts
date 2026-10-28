@@ -59,19 +59,27 @@ export function updateExitCode(o: UpdateOutcome): 0 | 1 | 3 {
 }
 
 /** What `update --to <version> --json` prints on standard output, for scripts. */
-export interface UpdateJson { schema: 1; outcome: UpdateOutcome['outcome'] | 'refused'; to: string | null; message: string; urgent: boolean; exitCode: number }
+export interface UpdateJson { schema: 1; outcome: UpdateOutcome['outcome'] | 'refused' | 'unknown'; to: string | null; message: string; urgent: boolean; exitCode: number }
+
+/** The message of the `unknown` outcome: the update threw before its outcome was known, so the box may or may not have changed. */
+export const UNKNOWN_UPDATE_MESSAGE =
+  'The update stopped because of an unexpected problem, so whether anything changed is not known. The details are on standard error. Check with: docker compose run --rm updater update --status';
 
 /**
  * The outcome as one line of JSON, with no trailing newline. A refusal is a problem found before the update started (a
- * usage or settings error, exit 2). The message must already be redacted by the caller; nothing is added to it here except
- * that its line breaks become spaces.
+ * usage or settings error, exit 2). `unknown` is an unexpected problem with no outcome (exit 1): never reported as
+ * cancelled, because the update may already have begun. The message must already be redacted by the caller; nothing is
+ * added to it here except that its line breaks become spaces. `exitCode` overrides the outcome's own exit code, so the
+ * line always says what the process really exits with.
  */
-export function updateOutcomeJson(o: UpdateOutcome | { refused: string; exitCode: 2 }, to: string | null): string {
+export function updateOutcomeJson(o: UpdateOutcome | { refused: string; exitCode: 2 } | 'unknown', to: string | null, exitCode?: number): string {
   const oneLine = (t: string): string => t.replace(/\r?\n/g, ' ');
-  const j: UpdateJson = 'refused' in o
-    ? { schema: 1, outcome: 'refused', to, message: oneLine(o.refused), urgent: false, exitCode: o.exitCode }
-    : { schema: 1, outcome: o.outcome, to, message: oneLine(o.message), urgent: o.urgent === true, exitCode: updateExitCode(o) };
-  return JSON.stringify(j);
+  const j: UpdateJson = o === 'unknown'
+    ? { schema: 1, outcome: 'unknown', to, message: UNKNOWN_UPDATE_MESSAGE, urgent: false, exitCode: 1 }
+    : 'refused' in o
+      ? { schema: 1, outcome: 'refused', to, message: oneLine(o.refused), urgent: false, exitCode: o.exitCode }
+      : { schema: 1, outcome: o.outcome, to, message: oneLine(o.message), urgent: o.urgent === true, exitCode: updateExitCode(o) };
+  return JSON.stringify(exitCode === undefined ? j : { ...j, exitCode });
 }
 
 interface Result extends UpdateOutcome { alert: boolean; busy?: boolean; snapshotId?: string }
@@ -116,7 +124,9 @@ export async function runUpdate(deps: UpdateDeps, opts: { to: string }): Promise
     }
     return { outcome: result.outcome, message: result.message, ...(result.urgent === true ? { urgent: true as const } : {}) };
   } finally {
-    await deps.lock.release();
+    // Best effort: the outcome is already decided and recorded. A lock left behind names this container, and the next
+    // update takes it over once this container has gone.
+    await deps.lock.release().catch((e: unknown) => { deps.log?.(`Warning: the update lock could not be removed: ${sentence(e)}`); });
   }
 }
 

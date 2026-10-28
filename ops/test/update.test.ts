@@ -1,6 +1,6 @@
 import { test, expect } from 'vitest';
 import { runUpdate, httpWaitReady, frontDoorCheck, type UpdateDeps } from '../src/update.js';
-import { updateExitCode, updateOutcomeJson, UPDATE_EXIT } from '../src/update.js';
+import { updateExitCode, updateOutcomeJson, UPDATE_EXIT, UNKNOWN_UPDATE_MESSAGE } from '../src/update.js';
 import { OpsBusyError } from '../src/opsLock.js';
 import { ROLLBACK_FAILED_MARK } from '@hf/server/db/schema';
 
@@ -566,4 +566,17 @@ test('the JSON outcome is one line with every field', () => {
 test('a refusal before the update starts is JSON too, with exit code 2', () => {
   expect(JSON.parse(updateOutcomeJson({ refused: 'update needs exactly one of --to <version>, --status or --mark-recovered.', exitCode: 2 }, null)))
     .toEqual({ schema: 1, outcome: 'refused', to: null, message: 'update needs exactly one of --to <version>, --status or --mark-recovered.', urgent: false, exitCode: 2 });
+});
+test('an unexpected problem is "unknown", never "cancelled", and the line can carry the process\'s real exit code', () => {
+  expect(UNKNOWN_UPDATE_MESSAGE).toBe('The update stopped because of an unexpected problem, so whether anything changed is not known. The details are on standard error. Check with: docker compose run --rm updater update --status');
+  expect(JSON.parse(updateOutcomeJson('unknown', '0.2.1'))).toEqual({ schema: 1, outcome: 'unknown', to: '0.2.1', message: UNKNOWN_UPDATE_MESSAGE, urgent: false, exitCode: 1 });
+  expect(JSON.parse(updateOutcomeJson({ outcome: 'updated', message: 'x' }, '0.2.1', 1)).exitCode).toBe(1);
+});
+test('a lock that cannot be removed at the end does not turn a finished update into an exception', async () => {
+  const f = fakes();
+  const logged: string[] = [];
+  f.deps.lock = { acquire: async () => true, release: async () => { throw new Error('EBUSY: resource busy'); } };
+  f.deps.log = (l) => { logged.push(l); };
+  expect((await runUpdate(f.deps, { to: '1.1.0' })).outcome).toBe('updated');
+  expect(logged).toContain('Warning: the update lock could not be removed: EBUSY: resource busy.');
 });

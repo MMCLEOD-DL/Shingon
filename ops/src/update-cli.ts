@@ -26,7 +26,6 @@ const NEEDS_ONE_MODE = 'update needs exactly one of --to <version>, --status or 
 const JSON_ONLY_WITH_TO = '--json can be used only with --to <version>.';
 const UNKNOWN_OPTION = 'update was given an option it does not know, or an option without its value.';
 const BAD_SETTINGS = 'The ops settings could not be read, so nothing was changed. The problem is on standard error.';
-const UNEXPECTED = 'The update stopped because of an unexpected problem. The details are on standard error.';
 
 /** Where updateCli writes, what it runs and how it gets its ops deps (cli.ts gives the real ones; tests give fakes). */
 export interface UpdateCliIo {
@@ -153,9 +152,25 @@ export async function updateCli(rest: string[], io: UpdateCliIo): Promise<number
     }
   }, say);
   if (json) {
-    if (outcome !== undefined) io.out(updateOutcomeJson(outcome, to));
+    // The line's exit code is always the process's (a throw after the outcome, while handing /state back, makes it 1).
+    if (outcome !== undefined) io.out(updateOutcomeJson(outcome, to, code));
     else if (code === 2) io.out(updateOutcomeJson({ refused: BAD_SETTINGS, exitCode: 2 }, to));
-    else io.out(updateOutcomeJson({ outcome: 'cancelled', message: UNEXPECTED }, to));
+    else io.out(updateOutcomeJson('unknown', to));
   }
   return code;
+}
+
+/**
+ * The `unknown` line for a crash that escapes updateCli altogether (cli.ts's last-resort handlers), or undefined when the
+ * command was not `update … --json`. The caller writes it only if no JSON line has been written yet.
+ */
+export function crashJsonLine(argv: string[]): string | undefined {
+  const [command, ...rest] = argv;
+  if (command !== 'update' || !rest.includes('--json')) return undefined;
+  let to: string | null = null;
+  try {
+    const v = parseArgs({ args: rest, strict: false, options: { to: { type: 'string' } } }).values['to'];
+    to = typeof v === 'string' ? v : null;
+  } catch { /* the line still goes out, without the version */ }
+  return updateOutcomeJson('unknown', to);
 }

@@ -10,7 +10,7 @@ import { formatChecks, monitorChecks } from './checks.js';
 import { alertSecrets, redactAlert } from './alerts.js';
 import { opsLockHeld } from './opsLock.js';
 import { jobsCommand } from './appJobs.js';
-import { updateCli } from './update-cli.js';
+import { crashJsonLine, updateCli } from './update-cli.js';
 
 const say = (line: string): void => { console.log(line); };
 const MANUAL_BACKUP_LOCK_WAIT = 2 * 60e3;
@@ -22,8 +22,18 @@ function plain(e: unknown): string {
   const text = e instanceof Error ? e.message : String(e);
   return `Ops stopped because of an unexpected problem: ${firstLine(redact(text, process.env as Record<string, string>))}.`;
 }
-process.on('uncaughtException', (e) => { complain(plain(e)); process.exit(1); });
-process.on('unhandledRejection', (e) => { complain(plain(e)); process.exit(1); });
+/** update --json promises exactly one line on standard output: set once it has been written. */
+let jsonWritten = false;
+const out = (line: string): void => { jsonWritten = true; say(line); };
+/** A crash that escapes everything: a plain sentence on standard error, and under update --json the `unknown` line. */
+function crash(e: unknown): never {
+  complain(plain(e));
+  const line = crashJsonLine(process.argv.slice(2));
+  if (line !== undefined && !jsonWritten) process.stdout.write(`${line}\n`);
+  process.exit(1);
+}
+process.on('uncaughtException', crash);
+process.on('unhandledRejection', crash);
 
 function config(): OpsConfig | undefined {
   try {
@@ -114,7 +124,7 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     case 'update':
-      return updateCli(rest, { out: say, err: complain, env: process.env, runner: execRunner, withDeps });
+      return updateCli(rest, { out, err: complain, env: process.env, runner: execRunner, withDeps });
     case 'jobs':
       return jobsCommand(rest, appJobs(), withDeps, { say, complain });
     case 'daemon': {
