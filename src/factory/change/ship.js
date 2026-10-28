@@ -53,6 +53,7 @@ function outcomeSentence(name, r, { version, slug = '<slug>' } = {}) {
     case 'newer': return `${name}: on ${from}, newer than ${version}, so it was left alone. ${NEWER_NEXT(name)}`;
     case 'started': return `${name}: Conductor did not see how the last attempt ended, so it may have stopped part-way. ${CHECK_NEXT(name)}`;
     case 'pending-check': return pendingSentence(name, r);
+    case 'error': return `${name}: the update stopped with a problem Conductor did not expect, so it is treated as failed: ${message}`;
     default: return `${name}: the update ended in a way Conductor does not recognise (${r?.outcome}), so it is treated as failed.`;
   }
 }
@@ -68,8 +69,17 @@ function lastTimeReason(r) {
     case 'lost-contact': return 'Conductor lost contact with the box during the update';
     case 'refused': return 'Conductor did not start the update there';
     case 'started': return 'Conductor started an update there but did not see how it ended';
+    case 'error': return 'the update stopped with a problem Conductor did not expect';
     default: return `it ended in a way Conductor does not recognise (${r?.outcome})`;
   }
+}
+
+// A deployment added after the operator approved was never shown at the gate, so it is not shipped (final review
+// item 6). Runs approved before the gate named its deployments (no list) ship to every deployment, as before.
+const ADDED_AFTER_APPROVAL = (name, slug) => `${name}: not shipped: added after you approved; ship it with "conductor ship ${slug} --to ${name}".`;
+function approvedAtGate(run, name) {
+  const named = run?.approval?.deployments;
+  return !Array.isArray(named) || named.includes(name);
 }
 
 // This project's deployments from Plan 10's listDeployments, sorted by name. An unreadable record of this project is
@@ -100,7 +110,7 @@ export async function shipUpdate({ projectDir, projectsRoot, slug, run, version,
   if (list.length === 0) return { status: 'done', reason: NO_DEPLOYMENTS };
   if (!isObject(run.deployments)) run.deployments = {};
   const stopped = (reason) => ({ status: 'stopped', reason });
-  const at = () => deps.now().toISOString();
+  const at = () => (typeof deps.now === 'function' ? deps.now() : new Date()).toISOString();
   // Saved before the next box is touched: a result that cannot be saved stops the ship.
   const record = (name, result) => {
     run.deployments[name] = result;
@@ -113,6 +123,10 @@ export async function shipUpdate({ projectDir, projectsRoot, slug, run, version,
   };
 
   for (const [i, { name }] of list.entries()) {
+    if (!approvedAtGate(run, name)) {
+      try { say?.(ADDED_AFTER_APPROVAL(name, slug)); } catch { /* display only */ }
+      continue;
+    }
     // Read again before each box (Ruling Task 8): Plan 10 may have changed a record since the last one.
     const fresh = projectDeployments(deps, { projectsRoot, slug });
     // After the first box, earlier ones may already be updated: say only that the rest were not.
@@ -124,6 +138,18 @@ export async function shipUpdate({ projectDir, projectsRoot, slug, run, version,
 
     const before = run.deployments[name];
     if (CONTINUE_OUTCOMES.includes(before?.outcome)) continue;
+
+    // Before the retry question and any version check (final review item 14): a box whose last update was never
+    // checked is not "already on" anything, and trying it again is not the operator's next step.
+    if (d.pendingCheck) {
+      const pc = isObject(d.pendingCheck) ? d.pendingCheck : {};
+      const result = {
+        outcome: 'pending-check', at: at(), from: d.currentVersion,
+        pendingWhy: typeof pc.why === 'string' ? clip(pc.why, OUTCOME_MAX) : 'unknown',
+        pendingVersion: typeof pc.version === 'string' ? clip(redact(pc.version), OUTCOME_MAX) : 'an unknown version',
+      };
+      return stopped(record(name, result) ?? pendingSentence(name, result));
+    }
 
     if (isObject(before) && !RECHECK.has(before.outcome)) {
       let answer = false;
@@ -137,17 +163,6 @@ export async function shipUpdate({ projectDir, projectsRoot, slug, run, version,
       const unsaved = record(name, { outcome: 'not-set-up', at: at() });
       if (unsaved) return stopped(unsaved);
       continue;
-    }
-
-    // Before any version check: a box whose last update was never checked is not "already on" anything.
-    if (d.pendingCheck) {
-      const pc = isObject(d.pendingCheck) ? d.pendingCheck : {};
-      const result = {
-        outcome: 'pending-check', at: at(), from: d.currentVersion,
-        pendingWhy: typeof pc.why === 'string' ? clip(pc.why, OUTCOME_MAX) : 'unknown',
-        pendingVersion: typeof pc.version === 'string' ? clip(redact(pc.version), OUTCOME_MAX) : 'an unknown version',
-      };
-      return stopped(record(name, result) ?? pendingSentence(name, result));
     }
 
     const guard = await shipProblem(run, { appDir: path.join(projectDir, 'app') });
@@ -200,6 +215,7 @@ export function shipReport(run, list) {
   const lines = list.map(({ name, deployment: d }) => {
     const r = results[name];
     const slug = typeof d?.project === 'string' ? d.project : '<slug>';
+    if (!approvedAtGate(run, name)) return ADDED_AFTER_APPROVAL(name, slug);
     if (!isObject(r)) return `${name}: not updated (still on ${d?.currentVersion}), because an earlier deployment did not update.`;
     return outcomeSentence(name, r, { version, slug });
   });

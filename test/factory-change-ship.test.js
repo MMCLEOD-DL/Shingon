@@ -158,7 +158,7 @@ test('an updateDeployment that throws counts as failed and stops the rest, with 
     const deps = stubDeps({ listDeployments: () => entries, updateDeployment: async () => { throw new Error(`ssh: password ${secret}`); } });
     const r = await ship(deps, { save: (x) => saves.push(structuredClone(x.deployments)) });
     assert.equal(r.status, 'stopped');
-    assert.equal(r.reason, 'acme-cloud: the update ended in a way Conductor does not recognise (error), so it is treated as failed.');
+    assert.equal(r.reason, 'acme-cloud: the update stopped with a problem Conductor did not expect, so it is treated as failed: ssh: password [redacted]');
     assert.deepEqual(calledNames(deps), ['acme-cloud']);
     const saved = saves.at(-1)['acme-cloud'];
     assert.equal(saved.outcome, 'error');
@@ -371,4 +371,47 @@ test('a record that becomes unreadable after the first box says only that it and
   assert.doesNotMatch(r.reason, /No deployment was updated/);
   assert.match(r.reason, /acme-office and the deployments after it were not updated\./);
   assert.deepEqual(calledNames(deps), ['acme-cloud']);
+});
+
+// ---- final review fix wave ----------------------------------------------------------------------------------
+
+test('item 6: only the deployments named at the gate are shipped; one added since is reported and does not stop the rest', async () => {
+  const said = [];
+  const deps = stubDeps({ listDeployments: () => entries, updateDeployment: updated });
+  const approval = { ...GOOD_APPROVAL, deployments: ['acme-cloud', 'beta-office'] };
+  const theRun = run({ approval });
+  const r = await ship(deps, { run: theRun, say: (l) => said.push(l) });
+  assert.deepEqual(r, { status: 'done', reason: null });
+  assert.deepEqual(calledNames(deps), ['acme-cloud', 'beta-office']);
+  const line = 'acme-office: not shipped: added after you approved; ship it with "conductor ship acme --to acme-office".';
+  assert.ok(said.includes(line), said.join('\n'));
+  assert.equal(theRun.deployments['acme-office'], undefined);
+  const list = entries.filter((e) => e.slug === 'acme').map((e) => ({ name: e.name, deployment: e.deployment }));
+  assert.match(shipReport(theRun, list), /\n {2}acme-office: not shipped: added after you approved; ship it with "conductor ship acme --to acme-office"\./);
+  // An old run with no list at the gate keeps shipping to every deployment.
+  const all = stubDeps({ listDeployments: () => entries, updateDeployment: updated });
+  await ship(all);
+  assert.deepEqual(calledNames(all), ['acme-cloud', 'acme-office', 'beta-office']);
+});
+
+test('item 9: shipping works when deps has no now (it defaults to the clock)', async () => {
+  const deps = stubDeps({ listDeployments: () => [dep('acme-cloud')], updateDeployment: updated });
+  delete deps.now;
+  const theRun = run();
+  const r = await ship(deps, { run: theRun });
+  assert.deepEqual(r, { status: 'done', reason: null });
+  assert.match(theRun.deployments['acme-cloud'].at, /^\d{4}-\d\d-\d\dT/);
+});
+
+test('item 14: on resume a box with an unchecked update stops before the retry question is asked', async () => {
+  const questions = [];
+  const deps = stubDeps({ listDeployments: () => [dep('acme-cloud', { pendingCheck: { why: 'interrupted', version: '0.3.0' } })], updateDeployment: updated });
+  const r = await ship(deps, {
+    run: run({ deployments: { 'acme-cloud': { outcome: 'started', at: '2026-10-27T14:00:00.000Z', from: '0.2.0' } } }),
+    ask: async (q) => { questions.push(q); return true; },
+  });
+  assert.equal(r.status, 'stopped');
+  assert.match(r.reason, /^acme-cloud: Conductor did not see how an earlier update there \(0\.3\.0\) ended, so nothing was done there\. Check it with "conductor deployments status acme-cloud"/);
+  assert.deepEqual(questions, []);
+  assert.deepEqual(calledNames(deps), []);
 });
