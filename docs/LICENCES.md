@@ -5,7 +5,7 @@ A test (`deploy/test/docs.test.ts`) fails when it no longer matches `package-loc
 
 ## npm packages
 
-Every package recorded in `package-lock.json` (direct and indirect, including build and test tools, and the platform-specific builds for every operating system and processor, such as `@esbuild/linux-x64`), one row for each package version: 519 rows. The list is the same on every computer.
+Every package recorded in `package-lock.json` (direct and indirect, including build and test tools, and the platform-specific builds for every operating system and processor, such as `@esbuild/linux-x64`), one row for each package version: 527 rows. The list is the same on every computer.
 `npm run licences` (part of `npm run verify`) fails if any installed package or any lockfile entry is not on the permissive list, unless the operator has written down a reason in `licence-exceptions.json`.
 Vite is held at 7.3.7, because Vite 8 needs `lightningcss`, which is MPL-2.0.
 
@@ -332,6 +332,7 @@ Vite is held at 7.3.7, because Vite 8 needs `lightningcss`, which is MPL-2.0.
 | fastify-type-provider-zod | 7.0.0 | MIT |
 | fastq | 1.20.3 | ISC |
 | fdir | 6.5.0 | MIT |
+| fflate | 0.8.3 | MIT |
 | file-entry-cache | 11.1.5 | MIT |
 | file-selector | 5.0.1 | MIT |
 | find-my-way | 9.10.0 | MIT |
@@ -344,6 +345,7 @@ Vite is held at 7.3.7, because Vite 8 needs `lightningcss`, which is MPL-2.0.
 | get-tsconfig | 4.14.3 | MIT |
 | glob | 13.0.6 | BlueOak-1.0.0 |
 | glob-parent | 6.0.2 | ISC |
+| graceful-fs | 4.2.11 | ISC |
 | hashery | 1.5.1 | MIT |
 | helmet | 8.3.0 | MIT |
 | hookified | 1.15.1 | MIT |
@@ -391,6 +393,7 @@ Vite is held at 7.3.7, because Vite 8 needs `lightningcss`, which is MPL-2.0.
 | nanoid | 3.3.20 | MIT |
 | natural-compare | 1.4.0 | MIT |
 | node-fetch | 2.7.0 | MIT |
+| node-int64 | 0.4.0 | MIT |
 | node-releases | 2.0.60 | MIT |
 | nodemailer | 10.2.1 | MIT-0 |
 | object-assign | 4.1.1 | MIT |
@@ -451,6 +454,7 @@ Vite is held at 7.3.7, because Vite 8 needs `lightningcss`, which is MPL-2.0.
 | react-router | 8.5.0 | MIT |
 | react-style-singleton | 2.2.3 | MIT |
 | react-transition-group | 4.4.5 | BSD-3-Clause |
+| read-excel-file | 9.3.12 | MIT |
 | real-require | 1.0.0 | MIT |
 | redent | 3.0.0 | MIT |
 | regenerator-runtime | 0.13.11 | MIT |
@@ -462,6 +466,7 @@ Vite is held at 7.3.7, because Vite 8 needs `lightningcss`, which is MPL-2.0.
 | rollup | 4.65.1 | MIT |
 | safe-regex2 | 5.1.2 | MIT |
 | safe-stable-stringify | 2.5.0 | MIT |
+| saxen | 11.2.0 | MIT |
 | saxes | 6.0.0 | ISC |
 | scheduler | 0.28.0 | MIT |
 | secure-json-parse | 4.1.1 | BSD-3-Clause |
@@ -505,6 +510,7 @@ Vite is held at 7.3.7, because Vite 8 needs `lightningcss`, which is MPL-2.0.
 | typescript-eslint | 8.72.0 | MIT |
 | undici | 7.30.1 | MIT |
 | undici-types | 6.21.0 | MIT |
+| unzipper-esm | 0.13.3 | MIT |
 | update-browserslist-db | 1.3.4 | MIT |
 | uri-js | 4.4.1 | BSD-2-Clause |
 | use-callback-ref | 1.3.3 | MIT |
@@ -522,6 +528,8 @@ Vite is held at 7.3.7, because Vite 8 needs `lightningcss`, which is MPL-2.0.
 | which | 2.0.2 | ISC |
 | why-is-node-running | 3.2.1 | MIT |
 | word-wrap | 1.2.5 | MIT |
+| worker-f | 0.1.21 | MIT |
+| write-excel-file | 4.1.1 | MIT |
 | xml-name-validator | 5.0.0 | Apache-2.0 |
 | xmlchars | 2.2.0 | MIT |
 | xtend | 4.0.2 | MIT |

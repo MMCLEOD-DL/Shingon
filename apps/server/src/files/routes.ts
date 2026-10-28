@@ -34,7 +34,7 @@ export function cleanName(raw: string): string {
 }
 
 /** RFC 5987 value: percent-encodes everything but unreserved characters. */
-const encodeName = (name: string): string => encodeURIComponent(name).replace(/['()*!]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+export const encodeName = (name: string): string => encodeURIComponent(name).replace(/['()*!]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
 
 async function drain(stream: Readable): Promise<void> {
   await pipeline(stream, new Writable({ write(_c, _e, cb) { cb(); } })).catch(() => undefined);
