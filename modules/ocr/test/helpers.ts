@@ -98,6 +98,83 @@ export function trickyBombs(): [string, Buffer][] {
 }
 
 /**
+ * A one-page PDF whose objects (catalog, page tree, page, `content` as object 4, font) all sit in one compressed
+ * object stream, with a cross-reference stream. `content` is written as is: a stream there is the N4 construction.
+ */
+function objectStreamPdf(content: Buffer): Buffer {
+  const objs: [number, Buffer][] = [
+    [1, Buffer.from('<</Type/Catalog/Pages 2 0 R>>\n', 'latin1')],
+    [2, Buffer.from('<</Type/Pages/Kids[3 0 R]/Count 1>>\n', 'latin1')],
+    [3, Buffer.from('<</Type/Page/Parent 2 0 R/MediaBox[0 0 226 600]/Resources<</Font<</F1 5 0 R>>>>/Contents 4 0 R>>\n', 'latin1')],
+    [4, content],
+    [5, Buffer.from('<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>\n', 'latin1')],
+  ];
+  const index: string[] = [];
+  let length = 0;
+  for (const [num, b] of objs) {
+    index.push(`${String(num)} ${String(length)}`);
+    length += b.length;
+  }
+  const header = Buffer.from(`${index.join(' ')}\n`, 'latin1');
+  const objStm = deflateSync(Buffer.concat([header, ...objs.map(([, b]) => b)]));
+  const first = Buffer.from('%PDF-1.7\n', 'latin1');
+  const off6 = first.length;
+  const six = Buffer.concat([
+    Buffer.from(`6 0 obj\n<</Type/ObjStm/N ${String(objs.length)}/First ${String(header.length)}/Length ${String(objStm.length)}/Filter/FlateDecode>>stream\n`, 'latin1'),
+    objStm,
+    Buffer.from('\nendstream\nendobj\n', 'latin1'),
+  ]);
+  const xrefAt = off6 + six.length;
+  const row = (type: number, f2: number, f3: number): Buffer => {
+    const b = Buffer.alloc(7);
+    b[0] = type;
+    b.writeUInt32BE(f2, 1);
+    b.writeUInt16BE(f3, 5);
+    return b;
+  };
+  const rows = [row(0, 0, 65535), row(2, 6, 0), row(2, 6, 1), row(2, 6, 2), row(2, 6, 3), row(2, 6, 4), row(1, off6, 0), row(1, xrefAt, 0)];
+  const xref = deflateSync(Buffer.concat(rows));
+  return Buffer.concat([
+    first,
+    six,
+    Buffer.from(`7 0 obj\n<</Type/XRef/Size 8/W[1 4 2]/Root 1 0 R/Filter/FlateDecode/Length ${String(xref.length)}>>stream\n`, 'latin1'),
+    xref,
+    Buffer.from(`\nendstream\nendobj\nstartxref\n${String(xrefAt)}\n%%EOF\n`, 'latin1'),
+  ]);
+}
+
+/**
+ * Ways past the round-3 pre-scan (Task 3 re-review 3), each a 1 GiB bomb that pdfjs reads: N1–N3, other characters
+ * between "stream" and the end of its line (pdfjs skips the whole line); N4, the bomb stream inside an object stream;
+ * and the filter under /F, the abbreviation pdfjs also reads.
+ */
+export function bypassBombs(): [string, Buffer][] {
+  const bomb = zerosBomb(1);
+  const head = `<< /Length ${String(bomb.length)} /Filter /FlateDecode >>`;
+  return [
+    ['N1 a form feed after "stream"', pdfWithRawStream(head, '\nstream\f\n', bomb)],
+    ['N2 a comment after "stream"', pdfWithRawStream(head, '\nstream%x\n', bomb)],
+    ['N3 other words after "stream"', pdfWithRawStream(head, '\nstream junk\n', bomb)],
+    ['N4 the bomb stream inside an object stream', n4Bomb()],
+    ['the filter named by /F', pdfWithRawStream(`<< /Length ${String(bomb.length)} /F /FlateDecode >>`, '\nstream\n', bomb)],
+  ];
+}
+
+/** N4: an object stream holding a stream object (object 4, the page content) that inflates to 1 GiB. */
+export function n4Bomb(): Buffer {
+  const bomb = zerosBomb(1);
+  return objectStreamPdf(
+    Buffer.concat([Buffer.from(`<</Length ${String(bomb.length)}/Filter/FlateDecode>>stream\n`, 'latin1'), bomb, Buffer.from('\nendstream\n', 'latin1')]),
+  );
+}
+
+/** An ordinary page whose "stream" line carries a form feed before its end: pdfjs reads it, and so must we. */
+export function formFeedPdf(): Buffer {
+  const content = deflateSync(Buffer.from('BT /F1 12 Tf 10 500 Td (Total 3.20) Tj ET', 'latin1'));
+  return pdfWithRawStream(`<< /Length ${String(content.length)} /Filter /FlateDecode >>`, '\nstream\f\n', content);
+}
+
+/**
  * An ordinary PDF in the compact modern layout: its catalog, page tree, page and font sit in a compressed object
  * stream, and its cross-reference table is a compressed stream with PNG "Up" prediction (/Predictor 12). The
  * dictionaries are written without spaces ("/Filter/FlateDecode"). The page says "Total 3.20".
@@ -194,6 +271,22 @@ function chunk(type: string, data: Buffer): Buffer {
   const crc = Buffer.alloc(4);
   crc.writeUInt32BE(crc32(body));
   return Buffer.concat([len, body, crc]);
+}
+
+/** A greyscale PNG of width × height pixels covered in 2 × 2 black dots, 4 px apart: under 25 MP, but slow to read. */
+export async function pngDots(width: number, height: number): Promise<Buffer> {
+  const dots = Buffer.alloc(1 + width, 0xff);
+  dots[0] = 0; // filter: none
+  for (let x = 1; x < width; x += 4) dots[x] = dots[x + 1] = 0;
+  const white = Buffer.alloc(1 + width, 0xff);
+  white[0] = 0;
+  const idat = await deflateRepeated(Buffer.concat([dots, dots, white, white]), Math.ceil(height / 4));
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(4 * Math.ceil(height / 4), 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 0; // greyscale
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', idat), chunk('IEND', Buffer.alloc(0))]);
 }
 
 /** A white greyscale PNG of side × side pixels, about 1 MB on disk (a decompression bomb that is slow to read). */

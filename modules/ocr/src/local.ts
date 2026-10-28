@@ -11,6 +11,10 @@ const { createWorker, OEM, PSM } = Tesseract;
 export const HEIC_REFUSED = "Photos in HEIC format can't be read automatically. Please type the details, or take the photo again from this page.";
 export const TOO_SLOW = 'This receipt took too long to read. Please type the details.';
 export const IMAGE_UNREADABLE = "This picture couldn't be opened. Please type the details.";
+export const IMAGE_TOO_LARGE = 'This picture is too large to read. Please type the details, or take the photo again from this page.';
+
+/** The most pixels a picture may have (a phone's full-size photo is 12–50 MP; the browser scales photos down first). */
+const MAX_PIXELS = 25_000_000;
 
 const IMAGE_TYPES: ReadonlySet<OcrInputType> = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const ENGINE_ID = 'local-tesseract';
@@ -66,6 +70,45 @@ function looksLikeImage(b: Buffer): boolean {
   return jpeg || png || webp;
 }
 
+/**
+ * A JPEG, PNG or WebP picture's width and height, read from its header without decoding it; null when the header
+ * can't be read.
+ */
+export function imageSize(b: Buffer): { width: number; height: number } | null {
+  if (b.length < 30) return null;
+  if (b[0] === 0x89 && b.subarray(12, 16).toString('latin1') === 'IHDR') return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };
+  if (b[0] === 0xff && b[1] === 0xd8) {
+    // Walk the markers to the frame header (SOF0–SOF15, except DHT C4, JPG C8 and DAC CC).
+    let at = 2;
+    while (at + 9 < b.length) {
+      if (b[at] !== 0xff) return null;
+      const marker = b[at + 1] ?? 0;
+      if (marker === 0xff) {
+        at += 1; // fill byte
+        continue;
+      }
+      if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+        at += 2; // no length
+        continue;
+      }
+      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) return { width: b.readUInt16BE(at + 7), height: b.readUInt16BE(at + 5) };
+      if (marker === 0xd9 || marker === 0xda) return null; // the end, or the image data, before any frame header
+      at += 2 + b.readUInt16BE(at + 2);
+    }
+    return null;
+  }
+  if (b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP') {
+    const chunk = b.subarray(12, 16).toString('latin1');
+    if (chunk === 'VP8 ' && b[23] === 0x9d && b[24] === 0x01 && b[25] === 0x2a) return { width: b.readUInt16LE(26) & 0x3fff, height: b.readUInt16LE(28) & 0x3fff };
+    if (chunk === 'VP8L' && b[20] === 0x2f) {
+      const bits = b.readUInt32LE(21);
+      return { width: (bits & 0x3fff) + 1, height: ((bits >>> 14) & 0x3fff) + 1 };
+    }
+    if (chunk === 'VP8X') return { width: b.readUIntLE(24, 3) + 1, height: b.readUIntLE(27, 3) + 1 };
+  }
+  return null;
+}
+
 function linesOf(page: Tesseract.Page): OcrLine[] {
   return (page.blocks ?? [])
     .flatMap((b) => b.paragraphs.flatMap((p) => p.lines))
@@ -75,8 +118,8 @@ function linesOf(page: Tesseract.Page): OcrLine[] {
 
 /**
  * The local OCR engine: Tesseract (LSTM only) compiled to WebAssembly, in worker threads, entirely on the box.
- * Images (JPEG, PNG, WebP) are passed as bytes, never as URLs; PDFs are read through their text layer in a thread
- * of their own (pdfText.ts). A reading that takes longer than `timeoutMs`, fails, or whose thread crashes retires
+ * Images (JPEG, PNG, WebP) are passed as bytes, never as URLs, and refused unread over 25 megapixels; PDFs are
+ * read through their text layer in a process of their own (pdfText.ts). A reading that takes longer than `timeoutMs`, fails, or whose thread crashes retires
  * its worker (a fresh one is started for the next reading) and is reported as unreadable.
  *
  * The workers are a small pool rather than a tesseract.js scheduler, so that one stuck job can be stopped
@@ -198,7 +241,13 @@ export async function createLocalEngine(opts: { workers?: number; timeoutMs?: nu
       const started = performance.now();
       let lines: OcrLine[];
       if (type === 'application/pdf') lines = await readPdfText(bytes, timeoutMs);
-      else if (IMAGE_TYPES.has(type) && looksLikeImage(bytes)) lines = await recognise(bytes);
+      else if (IMAGE_TYPES.has(type) && looksLikeImage(bytes)) {
+        // Tesseract decodes the whole picture before reading it: a huge one is refused before that, by its header.
+        const size = imageSize(bytes);
+        if (size === null) throw new UnreadableError(IMAGE_UNREADABLE);
+        if (size.width * size.height > MAX_PIXELS) throw new UnreadableError(IMAGE_TOO_LARGE);
+        lines = await recognise(bytes);
+      }
       else if (type === 'image/heic') throw new UnreadableError(HEIC_REFUSED);
       else throw new UnreadableError(IMAGE_UNREADABLE);
       return { engine: ENGINE_ID, lines, warnings: [], ms: Math.round(performance.now() - started) };

@@ -1,12 +1,18 @@
 /**
- * Runs inside a worker thread (started by pdfText.ts): reads the text layer of one PDF and posts back its lines, or
- * why it could not. Self-contained on purpose (only pdfjs-dist, type-only imports): in the tests it runs from the
- * TypeScript source with Node's type stripping, in the app from dist/.
+ * Runs inside a worker thread of the PDF reader process (pdfChild.ts, started by pdfText.ts): checks the raw PDF,
+ * reads its text layer and posts back its lines, or why it could not. Self-contained on purpose (only pdfjs-dist,
+ * type-only imports): in the tests it runs from the TypeScript source with Node's type stripping, in the app from
+ * dist/.
  */
 import { parentPort, workerData } from 'node:worker_threads';
 import { inflateSync } from 'node:zlib';
 
 export type PdfWorkerReply = { ok: true; lines: string[] } | { ok: false; problem: 'unopenable' };
+/** What the thread is given: the PDF, and whether to check it first (always, except in tests of the watchdogs). */
+export interface PdfWorkerInput {
+  data: Uint8Array;
+  preScan: boolean;
+}
 
 const MAX_PAGES = 3;
 /** The most all the compressed streams of one PDF may inflate to, together. A receipt needs far less. */
@@ -16,8 +22,10 @@ const INFLATE_BUDGET = 32 * 1024 * 1024;
 const WS = new Set(['\0', '\t', '\n', '\f', '\r', ' ']);
 const DELIM = new Set(['(', ')', '<', '>', '[', ']', '{', '}', '/', '%']);
 const OBJ_HEADER = /(\d+)[\0\t\n\f\r ]+(\d+)[\0\t\n\f\r ]+obj(?![^\0\t\n\f\r ()<>[\]{}/%])/g;
-// "stream" opening a stream's data: optional spaces or tabs, then the end of line. Not "endstream".
-const STREAM_KEYWORD = /(?<!end)stream[ \t\0]*(?:\r\n|\n|\r)/g;
+// The keyword "stream" as a token of its own, as pdfjs's lexer reads it: whitespace, a delimiter or the start of the
+// file before it, whitespace, a delimiter or the end after it ("endstream" and "streams" are other tokens).
+const NOT_REGULAR = '\\0\\t\\n\\f\\r ()<>\\[\\]{}/%';
+const STREAM_KEYWORD = new RegExp(`(?<![^${NOT_REGULAR}])stream(?![^${NOT_REGULAR}])`, 'g');
 // An inline image ("BI … ID") whose data names a filter: pdfjs would decode it outside the budget.
 const INLINE_IMAGE_FILTER = /\bBI\b[^]{0,4096}?\/(?:F|Filter)\b[^]{0,4096}?\bID\b/;
 
@@ -143,45 +151,71 @@ function filterNames(v: Value | undefined): string[] | null {
   return null;
 }
 
+/** Where pdfjs starts a stream's data: after the end of the line holding "stream", whatever else is on it (its skipToNextLine). */
+function skipToNextLine(text: string, at: number): number {
+  for (; at < text.length; at += 1) {
+    if (text[at] === '\r') return text[at + 1] === '\n' ? at + 2 : at + 1;
+    if (text[at] === '\n') return at + 1;
+  }
+  return at;
+}
+
+/** True when a stream's dictionary makes it an object stream (pdfjs reads one by its /N and /First alone). */
+function isObjectStream(dict: Map<string, Value>): boolean {
+  const type = dict.get('/Type');
+  return (type?.kind === 'name' && type.name === '/ObjStm') || dict.has('/N') || dict.has('/First');
+}
+
 /**
- * Checks the raw PDF before pdfjs sees it — a cheap first line; the memory watchdog in pdfText.ts is the backstop.
- * Every object is read from its header ("4 0 obj"); a stream's top-level dictionary must have no /Filter,
- * /FlateDecode, /DCTDecode (JPEG pictures, which reading text never decodes) or [/FlateDecode /DCTDecode], and all
- * the FlateDecode streams together must inflate to at most INFLATE_BUDGET. Each stream's data runs to the next
- * "endstream" and must inflate completely. A "stream" keyword outside every object read this way is refused, as is
- * any dictionary this reader can't follow.
+ * Checks the raw PDF before pdfjs sees it — a cheap first line; the memory watchdogs in pdfChild.ts and pdfText.ts
+ * are the backstop. Every object is read from its header ("4 0 obj"); a stream's top-level dictionary must have no
+ * filter, /FlateDecode, /DCTDecode (JPEG pictures, which reading text never decodes) or [/FlateDecode /DCTDecode]
+ * (under /Filter or its abbreviation /F, which pdfjs also reads), and all the FlateDecode streams together must
+ * inflate to at most INFLATE_BUDGET. Each stream's data starts after the end of the "stream" line, as pdfjs starts
+ * it, runs to the next "endstream" and must inflate completely. An object stream may not hold a stream (pdfjs would
+ * decode one found there without this check seeing it). A "stream" keyword outside every object read this way is
+ * refused, as is any dictionary this reader can't follow.
  */
 function withinBudget(data: Uint8Array): boolean {
   const bytes = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
   const text = bytes.toString('latin1');
   let budget = INFLATE_BUDGET;
-  const streams: { start: number; end: number }[] = [];
+  // Where the checked streams' data and the objects' dictionaries are: a "stream" inside them is not a keyword.
+  const covered: { start: number; end: number }[] = [];
   OBJ_HEADER.lastIndex = 0;
   for (let m = OBJ_HEADER.exec(text); m !== null; m = OBJ_HEADER.exec(text)) {
     const reader = new Reader(text, m.index + m[0].length);
     reader.skipSpace();
     if (!text.startsWith('<<', reader.at)) continue; // not a dictionary, so not a stream
+    const dictStart = reader.at;
     let dict: Map<string, Value>;
     try {
       dict = reader.dict();
     } catch {
       return false;
     }
+    covered.push({ start: dictStart, end: reader.at });
     reader.skipSpace();
     STREAM_KEYWORD.lastIndex = reader.at;
     const kw = STREAM_KEYWORD.exec(text);
     if (!kw || kw.index !== reader.at) continue; // a dictionary object without a stream
-    const dataStart = kw.index + kw[0].length;
+    const dataStart = skipToNextLine(text, kw.index + 'stream'.length);
     const dataEnd = text.indexOf('endstream', dataStart);
     if (dataEnd < 0) return false;
-    streams.push({ start: kw.index, end: dataEnd });
+    covered.push({ start: kw.index, end: dataEnd });
     OBJ_HEADER.lastIndex = dataEnd; // an "obj" inside the data is not a header
     const filters = filterNames(dict.get('/Filter'));
-    if (filters === null) return false;
-    if (filters.some((f) => f !== '/FlateDecode' && f !== '/DCTDecode')) return false;
-    if (filters.length > 1 && !(filters.length === 2 && filters[0] === '/FlateDecode' && filters[1] === '/DCTDecode')) return false;
+    const abbreviated = filterNames(dict.get('/F'));
+    if (filters === null || abbreviated === null) return false;
+    for (const list of [filters, abbreviated]) {
+      if (list.some((f) => f !== '/FlateDecode' && f !== '/DCTDecode')) return false;
+      if (list.length > 1 && !(list.length === 2 && list[0] === '/FlateDecode' && list[1] === '/DCTDecode')) return false;
+    }
+    const used = abbreviated.length > 0 ? abbreviated : filters; // pdfjs takes /F when it is there
+    const objectStream = isObjectStream(dict);
+    if (objectStream && used.includes('/DCTDecode')) return false;
     let decoded: Buffer | null = null;
-    if (filters[0] === '/FlateDecode') {
+    if (used[0] === '/FlateDecode') {
       if (budget <= 0) return false;
       try {
         decoded = inflateSync(bytes.subarray(dataStart, dataEnd), { maxOutputLength: budget });
@@ -189,15 +223,19 @@ function withinBudget(data: Uint8Array): boolean {
         return false; // over the budget, or not a complete zlib stream
       }
       budget -= decoded.length;
-    } else if (filters.length === 0) {
+    } else if (used.length === 0) {
       decoded = bytes.subarray(dataStart, dataEnd);
     }
-    if (decoded && filters.length < 2 && INLINE_IMAGE_FILTER.test(decoded.toString('latin1'))) return false;
+    if (decoded && objectStream) {
+      STREAM_KEYWORD.lastIndex = 0;
+      if (STREAM_KEYWORD.test(decoded.toString('latin1'))) return false;
+    }
+    if (decoded && used.length < 2 && INLINE_IMAGE_FILTER.test(decoded.toString('latin1'))) return false;
   }
   // Any "stream" keyword this reading did not account for: pdfjs might find a stream we did not check.
   STREAM_KEYWORD.lastIndex = 0;
   for (const kw of text.matchAll(STREAM_KEYWORD)) {
-    if (!streams.some((st) => kw.index >= st.start && kw.index < st.end)) return false;
+    if (!covered.some((c) => kw.index >= c.start && kw.index < c.end)) return false;
   }
   return true;
 }
@@ -224,8 +262,8 @@ function groupIntoLines(items: Item[]): string[] {
     .filter((text) => text !== '');
 }
 
-async function read(data: Uint8Array): Promise<PdfWorkerReply> {
-  if (!withinBudget(data)) return { ok: false, problem: 'unopenable' };
+async function read({ data, preScan }: PdfWorkerInput): Promise<PdfWorkerReply> {
+  if (preScan && !withinBudget(data)) return { ok: false, problem: 'unopenable' };
   // Loaded only once the file has passed the check.
   const { getDocument, VerbosityLevel } = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const task = getDocument({
@@ -255,7 +293,7 @@ async function read(data: Uint8Array): Promise<PdfWorkerReply> {
 
 if (parentPort) {
   const port = parentPort;
-  void read(workerData as Uint8Array).then((reply) => {
+  void read(workerData as PdfWorkerInput).then((reply) => {
     port.postMessage(reply);
   });
 }
