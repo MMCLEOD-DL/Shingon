@@ -1,7 +1,8 @@
-import { test, expect, beforeAll, afterAll } from 'vitest';
+import { describe, test, expect, beforeAll, afterAll } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { createLocalEngine, localEngineOptions, UnreadableError, type OcrEngine } from '../src/index.js';
+import { pngBomb } from './helpers.js';
 
 let engine: OcrEngine;
 const fx = (p: string) => readFileSync(new URL(`./fixtures/receipts/${p}`, import.meta.url));
@@ -47,17 +48,40 @@ test('bytes that are not a picture are refused, not a crash, and the engine keep
   expect(r.lines.length).toBeGreaterThan(3);
 }, 60_000);
 
-test('a reading that takes too long is refused, and the next one gets a fresh worker', async () => {
-  const slow = await createLocalEngine({ workers: 1, timeoutMs: 1 });
-  try {
-    await expect(slow.read({ bytes: fx('rendered/taxi-clean.png'), type: 'image/png' })).rejects.toMatchObject({
-      userMessage: 'This receipt took too long to read. Please type the details.',
-    });
-    await expect(slow.read({ bytes: fx('rendered/taxi-clean.png'), type: 'image/png' })).rejects.toThrow(UnreadableError);
-  } finally {
-    await slow.close();
-  }
-}, 60_000);
+describe('a reading that takes too long', () => {
+  let bomb: Buffer;
+  beforeAll(async () => { bomb = await pngBomb(30_000); }, 60_000);    // 30000 x 30000 px, about 2.8 s to fail
+
+  test('is refused, and the next reading gets a fresh worker that reads it', async () => {
+    const slow = await createLocalEngine({ workers: 1, timeoutMs: 1500 });
+    try {
+      const started = performance.now();
+      await expect(slow.read({ bytes: bomb, type: 'image/png' })).rejects.toMatchObject({
+        userMessage: 'This receipt took too long to read. Please type the details.',
+      });
+      expect(performance.now() - started).toBeLessThan(5000);                 // unbounded, it fails after about 2.8 s with another sentence
+      const r = await slow.read({ bytes: fx('rendered/taxi-clean.png'), type: 'image/png' });
+      expect(r.lines.map((l) => l.text).join('\n')).toMatch(/12\.40/);
+    } finally {
+      await slow.close();
+    }
+  }, 60_000);
+
+  test('with two workers, does not hold up a reading running beside it', async () => {
+    const pair = await createLocalEngine({ workers: 2, timeoutMs: 1500 });
+    try {
+      const [stuck, taxi] = await Promise.allSettled([
+        pair.read({ bytes: bomb, type: 'image/png' }),
+        pair.read({ bytes: fx('rendered/taxi-clean.png'), type: 'image/png' }),
+      ]);
+      expect(stuck).toMatchObject({ status: 'rejected', reason: { userMessage: 'This receipt took too long to read. Please type the details.' } });
+      expect(taxi.status).toBe('fulfilled');
+      if (taxi.status === 'fulfilled') expect(taxi.value.lines.map((l) => l.text).join('\n')).toMatch(/12\.40/);
+    } finally {
+      await pair.close();
+    }
+  }, 60_000);
+});
 
 test('closing the engine stops a reading in progress instead of leaving it waiting', async () => {
   const other = await createLocalEngine({ workers: 1, timeoutMs: 60_000 });

@@ -92,3 +92,9 @@ test('an engine VAT with no total to check it against is never certain', () => {
   expect(p.vatPence).toMatchObject({ value: 146 });
   expect(p.vatPence!.confidence).toBeLessThan(CONFIDENT);
 });
+
+test('an engine amount on a receipt that never says its currency is capped like the extraction caps its own', () => {
+  const p = readReceipt(result({ lines: [line('Corner Café'), line('TOTAL 8.75')], fields: { amountPence: { value: 875, confidence: 0.99 } } }), TODAY);
+  expect(p.currency).toBe('unknown');
+  expect(p.amountPence).toEqual({ value: 875, confidence: 0.8 });
+});

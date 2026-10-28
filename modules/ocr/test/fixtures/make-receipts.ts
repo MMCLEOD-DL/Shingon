@@ -5,6 +5,7 @@
  *
  * For each template: `<name>-clean.png` (80 mm wide at 300 dpi, straight, black on white) and `<name>-photo.jpg`
  * (rotated 2.5°, low contrast, film grain, JPEG quality 70, about 1500 px on the long side, like a phone snapshot).
+ * The HARD receipts (a badly smudged total) are rendered the same way as `<name>.png` and `<name>-photo.jpg`.
  * Also `pdf/e-ticket.pdf` (the train receipt as a text PDF) and `pdf/scanned.pdf` (the same, image only), and
  * `expected.json` (what each file should be read as).
  */
@@ -29,6 +30,12 @@ const RECEIPTS: Record<string, Expected> = {
   hotel: { amountPence: 24000, vatPence: 4000, date: '2026-03-11', merchant: 'Glen Lodge' },
   restaurant: { amountPence: 2399, vatPence: 400, date: '2026-03-19', merchant: 'Harbour Deli' },
   smudged: { amountPence: 875, vatPence: 146, date: '2026-03-05', merchant: 'Corner Café' },
+};
+
+// Receipts meant to be misread: rendered as `<name>.png` and `<name>-photo.jpg`, outside the "-clean" set whose
+// totals must all be right. They exist so that "never confidently wrong" (Ruling 2) is tested on a real misreading.
+const HARD: Record<string, Expected> = {
+  'smudged-heavy': { amountPence: 875, vatPence: 146, date: '2026-03-05', merchant: 'Corner Café' },
 };
 
 const MM_PX = 96 / 25.4; // CSS pixels per millimetre
@@ -102,13 +109,20 @@ async function main(): Promise<void> {
       expected[`${name}-photo.jpg`] = values;
       if (name === 'train') trainClean = clean;
     }
+    for (const [name, values] of Object.entries(HARD)) {
+      const straight = await renderClean(browser, name);
+      writeFileSync(path.join(out, 'rendered', `${name}.png`), straight);
+      writeFileSync(path.join(out, 'rendered', `${name}-photo.jpg`), await renderPhoto(browser, straight));
+      expected[`${name}.png`] = values;
+      expected[`${name}-photo.jpg`] = values;
+    }
     await renderPdfs(browser, trainClean ?? readFileSync(path.join(out, 'rendered', 'train-clean.png')));
     expected['e-ticket.pdf'] = RECEIPTS['train']!;
   } finally {
     await browser.close();
   }
   writeFileSync(path.join(out, 'expected.json'), `${JSON.stringify(expected, null, 2)}\n`);
-  console.log(`Rendered ${String(Object.keys(RECEIPTS).length)} receipts to ${path.relative(process.cwd(), out)}`);
+  console.log(`Rendered ${String(Object.keys(RECEIPTS).length + Object.keys(HARD).length)} receipts to ${path.relative(process.cwd(), out)}`);
 }
 
 await main();

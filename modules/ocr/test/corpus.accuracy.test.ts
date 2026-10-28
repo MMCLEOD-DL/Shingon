@@ -1,4 +1,5 @@
 import { test, expect, beforeAll, afterAll } from 'vitest';
+import { CONFIDENT } from '@hf/shared';
 import { benchCorpus, createLocalEngine, writeAccuracyReport, type OcrEngine } from '../src/index.js';
 import { fixturesDir, hasImages } from './helpers.js';
 
@@ -14,6 +15,10 @@ test('the rendered corpus meets the bar', async () => {
   expect(clean.length).toBe(8);
   expect(clean.filter((c) => c.right.amount).length).toBe(clean.length);                    // every clean total right
   expect(r.cases.filter((c) => c.right.amount).length / r.cases.length).toBeGreaterThanOrEqual(0.75);
+  // The badly smudged receipt is meant to be misread: its total is right, or it is marked "Please check".
+  const heavy = r.cases.filter((c) => c.file.startsWith('smudged-heavy'));
+  expect(heavy.map((c) => c.file)).toEqual(['smudged-heavy-photo.jpg', 'smudged-heavy.png']);
+  for (const c of heavy) expect(c.right.amount || (c.proposal?.amountPence?.confidence ?? 0) < CONFIDENT).toBe(true);
 }, 900_000);
 
 test('operator photos, when present, are never confidently wrong', async () => {

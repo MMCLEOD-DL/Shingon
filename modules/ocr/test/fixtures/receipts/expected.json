@@ -95,6 +95,18 @@
     "date": "2026-03-05",
     "merchant": "Corner Café"
   },
+  "smudged-heavy.png": {
+    "amountPence": 875,
+    "vatPence": 146,
+    "date": "2026-03-05",
+    "merchant": "Corner Café"
+  },
+  "smudged-heavy-photo.jpg": {
+    "amountPence": 875,
+    "vatPence": 146,
+    "date": "2026-03-05",
+    "merchant": "Corner Café"
+  },
   "e-ticket.pdf": {
     "amountPence": 320,
     "vatPence": null,

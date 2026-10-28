@@ -1,6 +1,7 @@
 import { test, expect, beforeAll, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { createLocalEngine, UnreadableError, type OcrEngine } from '../src/index.js';
+import { pdfBomb } from './helpers.js';
 
 let engine: OcrEngine;
 const fx = (p: string) => readFileSync(new URL(`./fixtures/receipts/${p}`, import.meta.url));
@@ -27,3 +28,19 @@ test('a PDF that is not a PDF inside is refused, not a crash', async () => {
   await expect(read).rejects.toThrow(UnreadableError);
   await expect(read).rejects.toMatchObject({ userMessage: "This PDF couldn't be opened. Please type the details." });
 });
+
+test('a compression-bomb PDF is stopped within the timeout, and the engine still reads the next PDF', async () => {
+  const bomb = await pdfBomb();                                     // about 1 MB that inflates to 1 GB
+  const quick = await createLocalEngine({ workers: 1, timeoutMs: 1500 });
+  try {
+    const started = performance.now();
+    await expect(quick.read({ bytes: bomb, type: 'application/pdf' })).rejects.toMatchObject({
+      userMessage: "This PDF couldn't be opened. Please type the details.",
+    });
+    expect(performance.now() - started).toBeLessThan(5000);                 // unbounded, it runs about 4.6 s and ends "scanned picture"
+    const r = await quick.read({ bytes: fx('pdf/e-ticket.pdf'), type: 'application/pdf' });
+    expect(r.lines.some((l) => /Total £3\.20/.test(l.text))).toBe(true);
+  } finally {
+    await quick.close();
+  }
+}, 60_000);

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en-GB"><head><meta charset="utf-8"><title>Corner Café (heavily smudged)</title><link rel="stylesheet" href="receipt.css">
+<style>
+  /* The total line is badly rubbed (the total is meant to be misread): the print is faded and blurred, with a grey thumb mark over it. */
+  .smudge { position: relative; }
+  .smudge span { filter: blur(0.9px); color: #6a6a6a; }
+  .smudge::after { content: ""; position: absolute; left: 30%; top: -1.5mm; width: 55%; height: 6mm; border-radius: 50%;
+    background: radial-gradient(ellipse at center, rgba(120,120,120,0.45), rgba(160,160,160,0.15) 60%, rgba(255,255,255,0) 75%); }
+</style></head>
+<body><div class="receipt">
+  <div class="c big">Corner Café</div>
+  <div class="c">12 Mill Lane, Anytown AB1 2CD</div>
+  <div class="c">Tel 01234 567890</div>
+  <div class="c">VAT No. GB 123 4567 89</div>
+  <div class="rule"></div>
+  <div>05/03/2026 12:41</div>
+  <div class="gap"></div>
+  <div class="row"><span>Flat white</span><span>2.95</span></div>
+  <div class="row"><span>Cheese toastie</span><span>5.80</span></div>
+  <div class="rule"></div>
+  <div class="row b smudge"><span>TOTAL</span><span>£8.75</span></div>
+  <div class="row"><span>VAT @ 20%</span><span>1.46</span></div>
+  <div class="rule"></div>
+  <div class="c">Thank you for visiting</div>
+</div></body></html>
