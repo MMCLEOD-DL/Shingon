@@ -120,7 +120,7 @@ export function startReadingQueue(opts: ReadingQueueOptions): ReadingQueue {
       inFlight.add(id);
       const p: Promise<void> = readOne(id)
         .catch((e: unknown) => {
-          // A database failure while saving: the row stays pending and is read again after the next start.
+          // A database failure while saving: the row stays pending but stamped, so the next start marks it unreadable.
           log.error({ readingId: id, errName: (e as { name?: string } | null)?.name ?? 'unknown' }, 'A receipt reading could not be saved');
         })
         .finally(() => {
