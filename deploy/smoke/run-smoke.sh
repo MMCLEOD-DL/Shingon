@@ -97,6 +97,7 @@ teardown() {
   for img in "${CREATED_IMAGES[@]}"; do docker rmi "$img" >/dev/null 2>&1; done
   rm -rf "$DIR" "$COOKIES" "$DIR-images-${V1:-x}.tar"
   if [ "$PASSED" = true ]; then rm -f "$DIR-catcher.out"; fi   # kept after a failure, to see what the catcher said
+  if [ "$PASSED" != true ] && [ -e "$DIR-catcher.out" ]; then echo "   What the alert catcher received is kept at $DIR-catcher.out. Delete it before running the smoke again (the next run refuses while it is there)."; fi
   echo "   Removed the containers, volumes, network and the highland images this run built. The alert log is kept at $ALERTS."
   echo "   Pulled third-party images (postgres, caddy, $REST_IMAGE, $MAILPIT_IMAGE) are left; remove them with docker rmi if you like."
   if [ "$PASSED" = true ]; then echo "SMOKE PASSED in $(( (SECONDS - START) / 60 )) min $(( (SECONDS - START) % 60 )) s"; fi
