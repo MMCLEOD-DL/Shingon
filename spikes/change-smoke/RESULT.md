@@ -2,7 +2,7 @@
 
 Not run yet.
 
-Run it with: `bash spikes/change-smoke/run-change-smoke.sh <project> <deployment>` (add `--break` for the optional step 7).
+Run it with: `SOURCE_PROJECTS_ROOT=/var/tmp/hf-ship-smoke.XXXXXX bash spikes/change-smoke/run-change-smoke.sh <project> <deployment>` (add `--break` for the optional step 7). The ship-smoke folder's own deployment record is stale afterwards (it shows the old version).
 The script header says what must be running first.
 
 Fill in after the run:

@@ -400,7 +400,7 @@ Run `conductor deployments status` at least monthly, and whenever a `[security]`
 - Conductor cannot send a test alert yet: foundation v0.1.0 has no such command (v0.2.0 adds `ops test-alert`, and using it is a follow-up once apps are on v0.2.0). Until then the first real alert proves the channel.
 - Updates are watched by polling. If Conductor loses contact, the update still finishes on the box.
 - The images file is copied through the machine running Conductor, so a slow link there slows the ship.
-- The operator smoke is `bash spikes/ship-smoke/run-ship-smoke.sh <project> <deployment>`. It uses a real box and works on a copy of the project in a throwaway folder; its later-ship phases are covered by the change smoke (see "Changing a live app").
+- The operator smoke is `bash spikes/ship-smoke/run-ship-smoke.sh <project> <deployment>`. It uses a real box and works on a copy of the project in a throwaway folder; its first phase ships the app for the first time. Later updates through `conductor change` are tried by the change smoke (see "Changing a live app").
 
 ## Changing a live app
 
@@ -418,11 +418,11 @@ The gate shows what the council found and, under "If you approve", what happens 
 - a new version of the app is made;
 - every deployment of the project is updated, one at a time. Each box takes a backup first and undoes the update by itself if the new version does not start properly.
 
-Nothing ships unless the council passed, or you chose to ship anyway after reading every problem it reported. If you say no, nothing is released and the project stays as it was.
+Nothing ships unless the council passed, or you chose to ship anyway after reading every problem it reported. If you say no, nothing is released and the app stays as it was; the new version of the brief you approved is kept, and the next change builds on it.
 
 Two things are not changes. A feature you remove from the brief is taken out of the app but **keeps its data**: deleting client data is always a separate, manual decision. And moving the app to different hosting is not a change either; Conductor refuses it before building anything, so use `conductor ship` for a new box.
 
-You need a terminal, because Conductor asks you questions and waits for your approval. Without one it refuses to start.
+You need a terminal for `--notes`, `--to` and `--resume`, because Conductor asks you questions and waits for your approval; without one it refuses to start. `--abandon` and `--check` need no terminal.
 
 ### Taking a foundation fix
 
@@ -430,7 +430,7 @@ You need a terminal, because Conductor asks you questions and waits for your app
 
 The foundation is the base every app is built on. When it releases a fix, you choose when an app takes it. Use this whenever the foundation's `CHANGELOG.md` has a `[security]` entry newer than the version the app is on. Conductor brings the foundation release into a copy of the app and then follows the same path as a change: build, whole-app council, gate, then an update to every deployment.
 
-Sometimes the merge reports conflicts. That means both the foundation and the app changed the same lines. Conductor shows the files and asks you before it spends anything; if you approve, the AI team resolves them, and the council reviews the result as usual. Conductor stops and asks a person, without trying, when one side deleted a file the other edited, when a binary file clashes, or when more than 20 files conflict. In those cases merge by hand, or drop the upgrade with `--abandon`.
+Sometimes the merge reports conflicts. That means both the foundation and the app changed the same lines. Up to 20 clashing text files go to the AI team to resolve without a question; the council then reviews the result as usual, and your only question is the final gate. If more than 20 files clash, Conductor asks you first and carries on only if you say yes. If one side deleted a file the other edited, or a binary file, a link or a sub-project clashes, Conductor stops without asking: a person has to merge by hand on the branch it names, or you drop the upgrade with `--abandon`.
 
 ### Seeing who is behind
 
@@ -463,7 +463,7 @@ or drop it (nothing the unfinished run already released is undone, but nothing m
 
 `foundation-upgrade <project> --resume` and `--abandon` do the same. Ctrl-C at any point is safe; Conductor tells you the command to carry on.
 
-The operator smoke for all of this is `bash spikes/change-smoke/run-change-smoke.sh <project> <deployment>`. It uses a disposable test deployment, a throwaway copy of the project, and a scratch copy of the foundation.
+The operator smoke for all of this is `bash spikes/change-smoke/run-change-smoke.sh <project> <deployment>`. It uses a disposable test deployment, a throwaway copy of the project (point `SOURCE_PROJECTS_ROOT` at the folder Plan 10's ship smoke left under `/var/tmp`), and a scratch copy of the foundation.
 
 ## Waking the local model
 
