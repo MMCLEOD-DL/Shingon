@@ -1,5 +1,7 @@
 // Port of the foundation's scripts/changelog.ts (securityFixesSince) for a zero-dependency Conductor.
 // `semver` is replaced by parseVersion/compareVersions below (strict: no leading 'v' or '=').
+import { git } from '../workspace.js';
+
 // Plan 11 extends this file (changesBetween, releaseTags, readChangelogAt); do not redefine these four.
 
 const HEADING = /^## \[([^\]]+)\](?:\s*-\s*(\d{4}-\d{2}-\d{2}))?\s*$/;
@@ -73,4 +75,36 @@ export function securityFixesSince(text, version) {
     .map((s) => ({ version: s.version, lines: s.lines.filter((l) => SECURITY.test(l)).map((l) => l.replace(SECURITY, '')) }))
     .filter((s) => s.lines.length > 0)
     .sort((a, b) => compareVersions(b.version, a.version));
+}
+
+/** The released sections a foundation upgrade from `from` to `to` brings in, oldest first. Throws on an unreadable heading. */
+export function changesBetween(text, from, to) {
+  for (const v of [from, to]) if (parseVersion(v) === null) throw new Error(`"${v}" is not a version number such as 1.2.3.`);
+  return parseChangelog(text)
+    .filter((s) => s.version !== 'Unreleased' && compareVersions(s.version, from) > 0 && compareVersions(s.version, to) <= 0)
+    .sort((a, b) => compareVersions(a.version, b.version));
+}
+
+const RELEASE_TAG = /^v\d+\.\d+\.\d+$/;
+// Reads of the foundation never follow a GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE left in Conductor's own environment.
+const CLEAN_GIT_ENV = { GIT_DIR: undefined, GIT_WORK_TREE: undefined, GIT_INDEX_FILE: undefined };
+
+/** The foundation's `vX.Y.Z` release tags, oldest first. Read-only. */
+export async function releaseTags(repoDir) {
+  const fail = () => new Error(`The foundation repository at ${repoDir} could not be read, so Conductor cannot tell which foundation releases exist.`);
+  let r;
+  try { r = await git(repoDir, ['tag', '--list', 'v*'], { env: CLEAN_GIT_ENV }); } catch { throw fail(); }
+  if (r.code !== 0) throw fail();
+  return r.stdout.split('\n').map((t) => t.trim()).filter((t) => RELEASE_TAG.test(t))
+    .sort((a, b) => compareVersions(a.slice(1), b.slice(1)));
+}
+
+/** The foundation's CHANGELOG.md as it was at release tag `tag`, read without a checkout. */
+export async function readChangelogAt(repoDir, tag) {
+  const fail = () => new Error(`The foundation's CHANGELOG.md at ${tag} could not be read.`);
+  if (typeof tag !== 'string' || !RELEASE_TAG.test(tag)) throw fail();
+  let r;
+  try { r = await git(repoDir, ['show', `refs/tags/${tag}:CHANGELOG.md`], { env: CLEAN_GIT_ENV }); } catch { throw fail(); }
+  if (r.code !== 0) throw fail();
+  return r.stdout;
 }
