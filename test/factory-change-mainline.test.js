@@ -9,7 +9,7 @@ import { makeProject, makeFoundation } from './helpers/changeFixtures.js';
 import { refsOf } from './helpers/gitRepo.js';
 import {
   RELEASE_FILES, nextVersion, appMain, appCheckoutProblem, appVersionAt, addChangelogLines, commitChangelog, advanceMain, releaseProblem,
-  MAIN_MOVED, APP_FOLDER_EDITED, NO_MAIN, FILES_NOT_UPDATED, FILES_BEHIND, IGNORED_IN_THE_WAY, MAIN_NOT_PUT_BACK, RELEASE_TOUCHED_CODE, RELEASE_VERSION_DIFFERS, RELEASE_NOT_ON_MAIN,
+  MAIN_MOVED, APP_FOLDER_EDITED, EDITED_AFTER_MAIN_MOVED, NO_MAIN, FILES_NOT_UPDATED, FILES_BEHIND, IGNORED_IN_THE_WAY, MAIN_NOT_PUT_BACK, RELEASE_TOUCHED_CODE, RELEASE_VERSION_DIFFERS, RELEASE_NOT_ON_MAIN,
 } from '../src/factory/change/mainline.js';
 
 const ID = ['-c', 'user.name=Test', '-c', 'user.email=test@example.com'];
@@ -291,7 +291,7 @@ test('advanceMain after that crash refuses mixed edits, untracked files, and a r
     const { appDir, mainAtStart, sha } = await changelogApp();
     await out(appDir, ['update-ref', 'refs/heads/main', sha, mainAtStart]);
     writeFileSync(path.join(appDir, 'README.md'), 'edited\n'); // matches neither commit
-    assert.deepEqual(await advanceMain({ appDir, from: mainAtStart, to: sha }), { ok: false, reason: APP_FOLDER_EDITED });
+    assert.deepEqual(await advanceMain({ appDir, from: mainAtStart, to: sha }), { ok: false, reason: EDITED_AFTER_MAIN_MOVED });
     assert.equal(readFileSync(path.join(appDir, 'README.md'), 'utf8'), 'edited\n');
     assert.equal(await appMain(appDir), sha);
   }
@@ -299,7 +299,7 @@ test('advanceMain after that crash refuses mixed edits, untracked files, and a r
     const { appDir, mainAtStart, sha } = await changelogApp();
     await out(appDir, ['update-ref', 'refs/heads/main', sha, mainAtStart]);
     writeFileSync(path.join(appDir, 'stray.txt'), 'x\n');
-    assert.deepEqual(await advanceMain({ appDir, from: mainAtStart, to: sha }), { ok: false, reason: APP_FOLDER_EDITED });
+    assert.deepEqual(await advanceMain({ appDir, from: mainAtStart, to: sha }), { ok: false, reason: EDITED_AFTER_MAIN_MOVED });
   }
   {
     const { appDir, mainAtStart, sha } = await changelogApp();

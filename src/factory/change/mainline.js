@@ -29,6 +29,7 @@ const APP_UNREADABLE = 'Conductor could not check the app folder, so it did not 
 const NOT_IN_APP = 'The approved work is not in the app, so the app\'s main line was not moved.';
 export const FILES_NOT_UPDATED = 'Conductor could not bring the files in the app folder up to date with the approved work, so it put the app\'s main line back where it was. Some files may have been partly updated: check that no other program is using the app folder and that it shows no edits, then resume.';
 export const MAIN_NOT_PUT_BACK = 'Conductor could not bring the files in the app folder up to date with the approved work, and could not put the app\'s main line back either. The main line may now have the approved change while the files on disk do not, so the folder can look as if the change were being undone: do not commit anything in the app folder. Check that no other program is using it, then resume.';
+export const EDITED_AFTER_MAIN_MOVED = 'The app\'s main line already has the approved change, but the app folder has other edits that were never committed, so Conductor did not touch it. Do not commit them without checking: some may be left over from an interrupted update and would undo part of the change. Remove the ones you did not make, then resume.';
 export const FILES_BEHIND = 'The app\'s main line already has the approved change, but Conductor could not bring the files in the app folder up to date, so the folder looks as if the change were being undone. Do not commit those edits. Check that no other program is using the app folder and that no ignored files stand where the change adds files, then resume.';
 export const IGNORED_IN_THE_WAY = 'The app folder has files that are set to be ignored where the approved work adds or changes files, so Conductor did not touch it. Move or remove them, then resume.';
 const IGNORED_UNCHECKED = 'Conductor could not check the app folder for files in the way of the approved work, so it did not touch it.';
@@ -277,11 +278,11 @@ async function repairAfterCrash(appDir, from, to) {
   if (status.stdout.trim() === '') return { ok: true };
   const untracked = await g(appDir, ['ls-files', '-z', '--others', '--exclude-standard']);
   if (untracked.code !== 0) return no(APP_UNREADABLE);
-  if (untracked.stdout !== '') return no(APP_FOLDER_EDITED);
-  if ((await g(appDir, ['merge-base', '--is-ancestor', from, to])).code !== 0) return no(APP_FOLDER_EDITED);
+  if (untracked.stdout !== '') return no(EDITED_AFTER_MAIN_MOVED);
+  if ((await g(appDir, ['merge-base', '--is-ancestor', from, to])).code !== 0) return no(EDITED_AFTER_MAIN_MOVED);
   const filesAtFrom = (await g(appDir, ['diff', '--no-ext-diff', '--no-textconv', '--quiet', from])).code === 0;
   const indexAtFrom = (await g(appDir, ['diff', '--no-ext-diff', '--no-textconv', '--cached', '--quiet', from])).code === 0;
-  if (!filesAtFrom || !indexAtFrom) return no(APP_FOLDER_EDITED);
+  if (!filesAtFrom || !indexAtFrom) return no(EDITED_AFTER_MAIN_MOVED);
   const blocked = await ignoredInTheWay(appDir, from, to);
   if (blocked) return no(FILES_BEHIND);
   if ((await g(appDir, ['read-tree', '-m', '-u', from, to])).code !== 0) return no(FILES_BEHIND);
