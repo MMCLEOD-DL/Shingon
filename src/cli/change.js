@@ -109,7 +109,10 @@ async function changeHandler(cli, ctx, mode) {
     let started = false;
     // Ruling C9: prepareTeam owns the one Ctrl-C handler; its exit runs this, which frees what the run holds.
     const exit = (code) => {
-      if (shipState.phase) print(interruptShip(shipState)); // records the unconfirmed update, frees the deployment lock
+      if (shipState.phase) {
+        const said = interruptShip(shipState); // records the unconfirmed update, frees the deployment lock
+        if (shipState.phase === 'updating' && said) print(said); // otherwise its "same command" hint would mislead
+      }
       print(started ? INTERRUPTED_CHANGE(slug, RESUME_CMD) : INTERRUPTED_BEFORE_START);
       release();
       ctx.exit(code);
@@ -156,6 +159,8 @@ async function changeHandler(cli, ctx, mode) {
       p.remember();
       say(`Conductor could not carry on with the change: ${plain(e)}`);
       return EXIT.failed;
+    } finally {
+      started = false; // the run has ended: a late Ctrl-C has nothing to resume
     }
     p.remember();
     say('');

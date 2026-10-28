@@ -124,7 +124,7 @@ export function parseCli(argv) {
   const isProjectNew = first === 'project' && rest[0] === 'new';
   const change = first === 'change' || first === 'foundation-upgrade' ? changeCommand(first, rest, v, flags) : null;
   if (change) {
-    if (v.revise || v['discard-draft']) return { error: '--notes, --revise and --discard-draft only go with conductor brief' };
+    if (v.revise || v['discard-draft']) return { error: '--revise and --discard-draft only go with conductor brief' };
     if (v.slug !== undefined) return { error: '--slug only goes with conductor project new' };
     if (v.stop) return { error: '--stop only goes with conductor preview' };
     if (v.new) return { error: '--new only goes with conductor build' };
