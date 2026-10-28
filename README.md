@@ -400,7 +400,70 @@ Run `conductor deployments status` at least monthly, and whenever a `[security]`
 - Conductor cannot send a test alert yet: foundation v0.1.0 has no such command (v0.2.0 adds `ops test-alert`, and using it is a follow-up once apps are on v0.2.0). Until then the first real alert proves the channel.
 - Updates are watched by polling. If Conductor loses contact, the update still finishes on the box.
 - The images file is copied through the machine running Conductor, so a slow link there slows the ship.
-- The operator smoke is `bash spikes/ship-smoke/run-ship-smoke.sh <project> <deployment>`. It uses a real box and works on a copy of the project in a throwaway folder; its later-ship phases need `conductor change` (after Plan 11).
+- The operator smoke is `bash spikes/ship-smoke/run-ship-smoke.sh <project> <deployment>`. It uses a real box and works on a copy of the project in a throwaway folder; its later-ship phases are covered by the change smoke (see "Changing a live app").
+
+## Changing a live app
+
+Once an app is built and shipped, every later change goes through Conductor, so the same checks happen every time: a written change, a build, a review of the whole app by the council, your approval, and then a safe update to each place the app is running.
+
+### Making a change
+
+    conductor change <project> --notes <file>
+
+The notes file is plain text: what the client asked for (meeting notes are fine). Conductor first asks you the brief questions about the change, as it did when the app was first planned, and you approve the new version of the brief. It then builds only the difference, has the council review the **whole** app (not only the new part, so a change cannot quietly break something that worked), and stops at the gate.
+
+The gate shows what the council found and, under "If you approve", what happens next. If you approve:
+
+- the app's main line moves on to the approved work, with the change listed in its changelog;
+- a new version of the app is made;
+- every deployment of the project is updated, one at a time. Each box takes a backup first and undoes the update by itself if the new version does not start properly.
+
+Nothing ships unless the council passed, or you chose to ship anyway after reading every problem it reported. If you say no, nothing is released and the project stays as it was.
+
+Two things are not changes. A feature you remove from the brief is taken out of the app but **keeps its data**: deleting client data is always a separate, manual decision. And moving the app to different hosting is not a change either; Conductor refuses it before building anything, so use `conductor ship` for a new box.
+
+You need a terminal, because Conductor asks you questions and waits for your approval. Without one it refuses to start.
+
+### Taking a foundation fix
+
+    conductor foundation-upgrade <project> --to <tag>
+
+The foundation is the base every app is built on. When it releases a fix, you choose when an app takes it. Use this whenever the foundation's `CHANGELOG.md` has a `[security]` entry newer than the version the app is on. Conductor brings the foundation release into a copy of the app and then follows the same path as a change: build, whole-app council, gate, then an update to every deployment.
+
+Sometimes the merge reports conflicts. That means both the foundation and the app changed the same lines. Conductor shows the files and asks you before it spends anything; if you approve, the AI team resolves them, and the council reviews the result as usual. Conductor stops and asks a person, without trying, when one side deleted a file the other edited, when a binary file clashes, or when more than 20 files conflict. In those cases merge by hand, or drop the upgrade with `--abandon`.
+
+### Seeing who is behind
+
+    conductor foundation-upgrade --check
+
+This changes nothing. It lists every project and every deployment and says whether each has all the `[security]` fixes in the newest foundation release. There are two kinds of line for a project:
+
+- **code**: the app's own source is behind. Run the upgrade it suggests.
+- **a deployment name**: a box is behind. If the code line says up to date but a deployment is behind, the fix is already in the code and just has not reached the box yet. Finish or resume the change that ships it: `conductor change <project> --resume`.
+
+A line that says "could not check" is not good news. Fix the reason it gives and run it again.
+
+### When a ship stops part-way
+
+A change or upgrade can stop after the gate, while it is updating the boxes. Conductor prints one line per deployment saying what happened to it, and it stops at the first box that did not update, so later boxes are untouched.
+
+1. Read the deployment lines. "The box undid the update by itself" means the box is back on the old version and its data is as before. Find out why the new version failed before trying again.
+2. If a line starts with **URGENT**, the box may be down or on the wrong data. Before anything else, follow "Recovering from a failed update" in the foundation's runbook (`RUNBOOK.md` in the box's bundle folder), then run `docker compose run --rm updater update --mark-recovered` on the box and `conductor deployments status`.
+3. Then carry on with `conductor change <project> --resume`. It carries on from where it stopped and asks you before trying a deployment that already started again. The same command carries on an upgrade.
+
+### `--resume`, `--abandon` and one change at a time
+
+Only one change or upgrade runs per project at a time. If you try to start another while one is unfinished, Conductor says so. Either carry on:
+
+    conductor change <project> --resume
+
+or drop it (nothing the unfinished run already released is undone, but nothing more happens):
+
+    conductor change <project> --abandon
+
+`foundation-upgrade <project> --resume` and `--abandon` do the same. Ctrl-C at any point is safe; Conductor tells you the command to carry on.
+
+The operator smoke for all of this is `bash spikes/change-smoke/run-change-smoke.sh <project> <deployment>`. It uses a disposable test deployment, a throwaway copy of the project, and a scratch copy of the foundation.
 
 ## Waking the local model
 
