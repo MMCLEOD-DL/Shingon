@@ -20,6 +20,12 @@ export const USAGE = `Usage:
   conductor machines [list|sweep]    show the factory's machines, or clear ones left over from crashes
   conductor ship <project> --to <deployment>   ship the approved release to a box (the first time, it sets the box up)
   conductor deployments [status] [<project>]   list deployments; with status, check every box over SSH
+  conductor change <slug> --notes <file>          change brief → build → full council → gate → ship as an update
+  conductor change <slug> --resume                continue the project's unfinished change or upgrade
+  conductor change <slug> --abandon               drop it
+  conductor foundation-upgrade <slug> --to <tag>  bring a newer foundation release into the app, then the same path
+  conductor foundation-upgrade <slug> --resume | --abandon
+  conductor foundation-upgrade --check            which projects and deployments are behind on security fixes
 Options:
   --config <file>        config file (default: ./conductor.json, then ~/.config/conductor/config.json)
   --test "<command>"     the command that runs this project's tests, e.g. "npm test"
@@ -31,6 +37,10 @@ Options:
   --new                  with build: start a fresh build instead of carrying on an unfinished one
   --stop                 with preview: stop the running preview
   --to <deployment>      with ship: the deployment (box) to ship to
+  --to <tag>             with foundation-upgrade: the foundation release to bring in
+  --resume               with change or foundation-upgrade: continue the unfinished one
+  --abandon              with change or foundation-upgrade: drop the unfinished one
+  --check                with foundation-upgrade: list what is behind on security fixes
   --no-bell              do not ring the terminal bell when Conductor needs you
   -h, --help             show this help
   --version              show the version`;
@@ -53,8 +63,38 @@ const OPTIONS = {
   stop: { type: 'boolean' },
   new: { type: 'boolean' },
   to: { type: 'string' },
+  resume: { type: 'boolean' },
+  abandon: { type: 'boolean' },
+  check: { type: 'boolean' },
 };
 const SUBCOMMANDS = new Set(['resume', 'runs', 'doctor']);
+const CHANGE_USAGE = 'change needs a project name and one of --notes <file>, --resume or --abandon';
+const UPGRADE_USAGE = 'foundation-upgrade needs a project name and one of --to <tag>, --resume or --abandon, or --check on its own';
+
+// `change` and `foundation-upgrade` are commands only with a change flag or at most one word after them;
+// otherwise the words are an ordinary request ("conductor change the button colour").
+function changeCommand(first, rest, v, flags) {
+  const hasFlag = v.notes !== undefined || v.to !== undefined || v.resume || v.abandon || v.check;
+  if (!hasFlag && rest.length > 1) return null;
+  const resume = v.resume === true;
+  const abandon = v.abandon === true;
+  if (first === 'change') {
+    if (rest.length > 1) return { error: 'change needs one project name, e.g. conductor change acme --resume' };
+    const modes = [v.notes !== undefined, resume, abandon].filter(Boolean).length;
+    if (rest.length !== 1 || modes !== 1 || v.to !== undefined || v.check || v.notes === '') return { error: CHANGE_USAGE };
+    return { command: 'change', slug: rest[0], notesFile: v.notes ?? null, resume, abandon, flags };
+  }
+  if (rest.length > 1) return { error: 'foundation-upgrade needs one project name, e.g. conductor foundation-upgrade acme --to v0.1.1' };
+  const check = v.check === true;
+  if (v.notes !== undefined) return { error: UPGRADE_USAGE };
+  if (check) {
+    if (rest.length || v.to !== undefined || resume || abandon) return { error: UPGRADE_USAGE };
+    return { command: 'foundation-upgrade', slug: null, toTag: null, resume, abandon, check, flags };
+  }
+  const modes = [v.to !== undefined, resume, abandon].filter(Boolean).length;
+  if (rest.length !== 1 || modes !== 1 || v.to === '') return { error: UPGRADE_USAGE };
+  return { command: 'foundation-upgrade', slug: rest[0], toTag: v.to ?? null, resume, abandon, check, flags };
+}
 
 export function parseCli(argv) {
   let parsed;
@@ -82,6 +122,15 @@ export function parseCli(argv) {
   const [first, ...rest] = positionals;
   const isBrief = first === 'brief';
   const isProjectNew = first === 'project' && rest[0] === 'new';
+  const change = first === 'change' || first === 'foundation-upgrade' ? changeCommand(first, rest, v, flags) : null;
+  if (change) {
+    if (v.revise || v['discard-draft']) return { error: '--notes, --revise and --discard-draft only go with conductor brief' };
+    if (v.slug !== undefined) return { error: '--slug only goes with conductor project new' };
+    if (v.stop) return { error: '--stop only goes with conductor preview' };
+    if (v.new) return { error: '--new only goes with conductor build' };
+    return change;
+  }
+  if (v.resume || v.abandon || v.check) return { error: '--resume, --abandon and --check only go with conductor change or conductor foundation-upgrade' };
   if ((v.notes !== undefined || v.revise || v['discard-draft']) && !isBrief) {
     return { error: '--notes, --revise and --discard-draft only go with conductor brief' };
   }

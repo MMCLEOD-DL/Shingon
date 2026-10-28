@@ -205,10 +205,11 @@ export function createTerminal({ input = process.stdin, output = process.stdout,
   // The whole build at its final gate (Contract 7 §7.11). Fails closed: only [a] answers exactly true.
   // Answers: true (approve), { note } (feedback), false ([r] reject, or no terminal), or { stop: true } when the
   // input ends before a decision, which leaves the build resumable rather than rejected.
-  const approveBuild = prompt(async ({ summary }) => {
+  // approveLabel (Plan 11): a change's gate says what approving does instead of "mark the app ready".
+  const approveBuild = prompt(async ({ summary, approveLabel }) => {
     say(`\n=== The finished app is ready for your approval ===\n${summary ?? ''}\n`);
     if (!isTTY) { say(NO_TTY_BUILD); return false; }
-    const a = await ask('[a] approve: mark the app ready · [f] send feedback to fix · [r] reject > ', ['a', 'f', 'r']);
+    const a = await ask(`[a] ${approveLabel ?? 'approve: mark the app ready'} · [f] send feedback to fix · [r] reject > `, ['a', 'f', 'r']);
     if (a === null) return { stop: true };
     if (a === 'a') return true;
     if (a !== 'f') return false;

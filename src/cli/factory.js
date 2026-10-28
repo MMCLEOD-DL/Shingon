@@ -15,6 +15,7 @@ import { runBriefSession } from '../factory/briefRun.js';
 import { briefAuthorSeat } from '../factory/briefTeam.js';
 import { buildCommand, previewCommand, machinesCommand, resumeBuildCommand } from './factoryBuild.js';
 import { shipCommand, deploymentsCommand } from './factoryShip.js';
+import { runChangeCommand, runUpgradeCommand } from './change.js';
 import { createTerminal } from '../ui/terminal.js';
 import { RunLog } from '../runlog.js';
 import { killAllChildren } from '../exec.js';
@@ -242,6 +243,8 @@ export const FACTORY_COMMANDS = {
   resume: resumeBuildCommand,
   ship: shipCommand,
   deployments: deploymentsCommand,
+  change: runChangeCommand,
+  'foundation-upgrade': runUpgradeCommand,
 };
 
 export async function runFactoryCommand(cli, { cwd, env, stdin, stdout, isTTY, onSignal, exit, deps = {} }) {

@@ -117,3 +117,40 @@ test('parseCli: ship and deployments', () => {
   assert.deepEqual(pick(parseCli(['deployments', 'status', 'acme'])), { command: 'deployments', status: true, slug: 'acme' });
 });
 function pick(c) { const { flags, ...rest } = c; return rest; }
+
+test('parseCli: change and foundation-upgrade', () => {
+  assert.deepEqual(pick(parseCli(['change', 'acme', '--notes', 'n.md'])), { command: 'change', slug: 'acme', notesFile: 'n.md', resume: false, abandon: false });
+  assert.deepEqual(pick(parseCli(['change', 'acme', '--resume'])), { command: 'change', slug: 'acme', notesFile: null, resume: true, abandon: false });
+  assert.deepEqual(pick(parseCli(['change', 'acme', '--abandon'])), { command: 'change', slug: 'acme', notesFile: null, resume: false, abandon: true });
+  assert.deepEqual(pick(parseCli(['foundation-upgrade', 'acme', '--to', 'v0.1.1'])), { command: 'foundation-upgrade', slug: 'acme', toTag: 'v0.1.1', resume: false, abandon: false, check: false });
+  assert.deepEqual(pick(parseCli(['foundation-upgrade', 'acme', '--resume'])), { command: 'foundation-upgrade', slug: 'acme', toTag: null, resume: true, abandon: false, check: false });
+  assert.deepEqual(pick(parseCli(['foundation-upgrade', '--check'])), { command: 'foundation-upgrade', slug: null, toTag: null, resume: false, abandon: false, check: true });
+  assert.match(parseCli(['change', 'acme']).error, /change needs a project name and one of --notes/);
+  assert.match(parseCli(['change', 'acme', '--notes', 'n', '--resume']).error, /one of/);
+  assert.match(parseCli(['change', 'acme', '--to', 'v0.1.1']).error, /one of/);
+  assert.match(parseCli(['change']).error, /change needs a project name/);
+  assert.match(parseCli(['foundation-upgrade', 'acme', '--check']).error, /--check on its own/);
+  assert.match(parseCli(['foundation-upgrade', 'acme']).error, /one of --to <tag>/);
+  assert.match(parseCli(['foundation-upgrade', 'acme', '--notes', 'n.md']).error, /one of --to <tag>/);
+  assert.match(parseCli(['change', 'a', 'b', '--resume']).error, /one project name/);
+  assert.equal(parseCli(['change', 'acme', '--notes', 'n.md', '--no-bell']).flags.bell, false);
+});
+
+test('a request that merely starts with the word change is still a normal run when it has more words and no change flags', () => {
+  assert.deepEqual(pick(parseCli(['change', 'the', 'button', 'colour'])), { command: 'run', request: 'change the button colour' });
+  assert.deepEqual(pick(parseCli(['foundation-upgrade', 'the', 'docs'])), { command: 'run', request: 'foundation-upgrade the docs' });
+});
+
+test('the change flags stay where they belong; the old guards still hold for other commands', () => {
+  assert.match(parseCli(['fix it', '--notes', 'm.md']).error, /--notes, --revise and --discard-draft only go with conductor brief/);
+  assert.match(parseCli(['build', 'acme', '--to', 'x']).error, /--to only goes with conductor ship/);
+  assert.match(parseCli(['build', 'acme', '--resume']).error, /--resume, --abandon and --check only go with conductor change or conductor foundation-upgrade/);
+  assert.match(parseCli(['change', 'acme', '--notes', 'n.md', '--revise']).error, /--revise and --discard-draft only go with conductor brief/);
+  assert.equal(parseCli(['ship', 'acme', '--to', 'box']).command, 'ship');
+  assert.equal(parseCli(['brief', 'acme', '--notes', 'n.md']).command, 'brief');
+});
+
+test('the usage text lists the change commands', () => {
+  for (const s of ['conductor change <slug> --notes <file>', 'conductor change <slug> --resume', 'conductor change <slug> --abandon',
+    'conductor foundation-upgrade <slug> --to <tag>', 'conductor foundation-upgrade <slug> --resume | --abandon', 'conductor foundation-upgrade --check']) assert.ok(USAGE.includes(s), s);
+});

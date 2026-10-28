@@ -285,3 +285,14 @@ test('final-fix 6: approveBuild asks again on a blank feedback line; end of inpu
   assert.equal(await term({ answers: ['r'] }).t.approveBuild({ summary: 's' }), false, '[r] still rejects');
   for (const x of [blank, eofAtNote, eofAtChoice]) x.t.close();
 });
+
+test('the build gate shows the approveLabel when one is given', async () => {
+  const a = term({ answers: ['a'] });
+  assert.equal(await a.t.approveBuild({ summary: 's', approveLabel: 'approve → add to the app and update 2 deployments' }), true);
+  assert.match(a.text(), /\[a\] approve → add to the app and update 2 deployments · \[f\] send feedback to fix · \[r\] reject > /);
+  assert.doesNotMatch(a.text(), /mark the app ready/);
+  const b = term({ answers: ['r'] });
+  assert.equal(await b.t.approveBuild({ summary: 's' }), false);
+  assert.match(b.text(), /\[a\] approve: mark the app ready · /);
+  for (const x of [a, b]) x.t.close();
+});
