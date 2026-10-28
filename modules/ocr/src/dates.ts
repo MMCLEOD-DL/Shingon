@@ -44,3 +44,10 @@ export function daysBetween(a: string, b: string): number {
   };
   return day(b) - day(a);
 }
+
+const TIME = /(?<![\d.:])\d{1,2}[:.]\d{2}(?::\d{2})?\s*(?:am|pm)?(?![\d.:])/gi;
+
+/** The line with its dates and times taken out, leaving any label ("Sell by", "Invoice date"). */
+export function withoutDatesAndTimes(text: string): string {
+  return text.replace(ISO, ' ').replace(NUMERIC, ' ').replace(NAMED, (m, _d, month: string) => (MONTHS[month.toLowerCase()] === undefined ? m : ' ')).replace(TIME, ' ');
+}

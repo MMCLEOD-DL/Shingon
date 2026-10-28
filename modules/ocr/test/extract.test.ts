@@ -260,6 +260,40 @@ const ADVERSARIAL: [string, string[], Truth][] = [
   ['member-since date', ['Corner Café', '05/03/2026 12:41', 'Member since 01/01/2019', 'TOTAL £8.75', 'VAT 1.46'], CAFE],
   ['next appointment date', ['Corner Café', '05/03/2026 12:41', 'TOTAL £8.75', 'VAT 1.46', 'Next appointment 12/03/2026'], CAFE],
   ['amount charged after a gift voucher', [...CAFE_TOP, 'Total £8.75', 'Gift voucher £5.00', 'Amount charged £3.75', 'VAT 1.46'], { ...CAFE, amount: 375 }],
+  // Re-review 2 (round 3): totals.
+  ['service charge then Total paid', ['Harbour Deli', '19/03/2026 20:15', 'Total £19.99', 'Service charge 12.5% £2.50', 'Total paid £22.49'], { ...DELI, amount: 2249, vat: null }],
+  ['service charge then Amount paid', ['Harbour Deli', '19/03/2026 20:15', 'Total £19.99', 'Service charge 12.5% £2.50', 'Amount paid £22.49'], { ...DELI, amount: 2249, vat: null }],
+  ['service charge then Charged to card', ['Harbour Deli', '19/03/2026 20:15', 'Total £19.99', 'Service charge 12.5% £2.50', 'Charged to card £22.49'], { ...DELI, amount: 2249, vat: null }],
+  ['service charge, Amount paid and VAT', ['Harbour Deli', '19/03/2026 20:15', 'Total £19.99', 'Service charge £2.50', 'Amount paid £22.49', 'VAT £3.33'], { ...DELI, amount: 2249, vat: 333 }],
+  ['TOTAL INC GRATUITY', ['Corner Café', '05/03/2026 12:41', 'TOTAL £8.75', 'Gratuity £1.00', 'TOTAL INC GRATUITY £9.75'], { ...CAFE, amount: 975, vat: null }],
+  ['Total with tip', ['Corner Café', '05/03/2026 12:41', 'TOTAL £8.75', 'Tip £1.00', 'Total with tip £9.75'], { ...CAFE, amount: 975, vat: null }],
+  ['Total after discount', ['Corner Café', '05/03/2026 12:41', 'Total £9.75', 'Staff -£1.00', 'Total after discount £8.75', 'VAT 1.46'], CAFE],
+  ['Total after savings', ['Corner Café', '05/03/2026 12:41', 'Total £9.75', 'Staff -£1.00', 'Total after savings £8.75', 'VAT 1.46'], CAFE],
+  ['Total after points', ['Corner Café', '05/03/2026 12:41', 'Total £9.75', 'Staff -£1.00', 'Total after points £8.75', 'VAT 1.46'], CAFE],
+  ['Promo total', ['Corner Café', '05/03/2026 12:41', 'Total £9.75', 'Staff -£1.00', 'Promo total £8.75', 'VAT 1.46'], CAFE],
+  ['Balance after deposit', ['Glen Lodge', 'Invoice date 11/03/2026', 'Total £240.00', 'Deposit received £50.00', 'Balance after deposit £190.00'], { ...HOTEL, amount: 19000, vat: null }],
+  ['Cash total after delivery', ['Corner Café', '05/03/2026 12:41', 'Total £8.75', 'Delivery £2.00', 'Cash total £10.75'], { ...CAFE, amount: 1075, vat: null }],
+  ['Subscription total', ['Gym', '05/03/2026', 'Joining fee £10.00', 'Total £10.00', 'Subscription total £35.00'], { amount: 4500, vat: null, date: '2026-03-05', merchant: 'Gym' }],
+  ['TOTAL DUE then DUE £0.00', ['Corner Café', '05/03/2026 12:41', 'TOTAL DUE £8.75', 'DUE £0.00'], { ...CAFE, vat: null }],
+  // Re-review 2 (round 3): labelled dates (no transaction date at all).
+  ['label Sell by 20/03/2026', ['Shop', 'Sell by 20/03/2026', 'TOTAL £8.75'], { ...CAFE, vat: null, date: null, merchant: 'Shop' }],
+  ['label Display until 20/03/2026', ['Shop', 'Display until 20/03/2026', 'TOTAL £8.75'], { ...CAFE, vat: null, date: null, merchant: 'Shop' }],
+  ['label Exp 20/03/2026', ['Shop', 'Exp 20/03/2026', 'TOTAL £8.75'], { ...CAFE, vat: null, date: null, merchant: 'Shop' }],
+  ['label Exchange by 20/03/2026', ['Shop', 'Exchange by 20/03/2026', 'TOTAL £8.75'], { ...CAFE, vat: null, date: null, merchant: 'Shop' }],
+  ['label Guarantee to 20/03/2026', ['Shop', 'Guarantee to 20/03/2026', 'TOTAL £8.75'], { ...CAFE, vat: null, date: null, merchant: 'Shop' }],
+  ['label Last visit 01/03/2026', ['Shop', 'Last visit 01/03/2026', 'TOTAL £8.75'], { ...CAFE, vat: null, date: null, merchant: 'Shop' }],
+  ['label Packed on 01/03/2026', ['Shop', 'Packed on 01/03/2026', 'TOTAL £8.75'], { ...CAFE, vat: null, date: null, merchant: 'Shop' }],
+  ['label Member since 01/06/2025', ['Shop', 'Member since 01/06/2025', 'TOTAL £8.75'], { ...CAFE, vat: null, date: null, merchant: 'Shop' }],
+  ['label Account opened 10/10/2025', ['Shop', 'Account opened 10/10/2025', 'TOTAL £8.75'], { ...CAFE, vat: null, date: null, merchant: 'Shop' }],
+  // Own pass against the round-3 rules.
+  ['label above a bare date', ['Shop', 'Last visit', '01/03/2026', 'TOTAL £8.75'], { ...CAFE, vat: null, date: null, merchant: 'Shop' }],
+  ['label with a colon above a bare date', ['Shop', 'Offer valid until:', '30/03/2026', '05/03/2026 12:41', 'TOTAL £8.75'], { ...CAFE, vat: null, merchant: 'Shop' }],
+  ['allow-listed word as a label (Sale ends)', ['Shop', 'Sale ends 20/03/2026', 'TOTAL £8.75'], { ...CAFE, vat: null, date: null, merchant: 'Shop' }],
+  ['two bare dates', ['Shop', '05/03/2026', '01/03/2026', 'TOTAL £8.75'], { ...CAFE, vat: null, merchant: 'Shop' }],
+  ['discount after the total, then a bare amount', ['Shop', '05/03/2026', 'Total £9.75', 'Staff discount -£1.00', '£8.75'], { ...CAFE, vat: null, merchant: 'Shop' }],
+  ['voucher after the total, card charged less', ['Shop', '05/03/2026', 'Total £9.75', 'Less voucher 1.00', 'Card payment £8.75'], { ...CAFE, vat: null, merchant: 'Shop' }],
+  ['bare amount after the total', ['Shop', '05/03/2026', 'TOTAL £8.75', 'Gratuity', '£9.75'], { ...CAFE, amount: 975, vat: null, merchant: 'Shop' }],
+  ['subtotal larger than the total with no saving shown', ['Shop', '05/03/2026', 'Subtotal £9.75', 'TOTAL £8.75'], { ...CAFE, amount: 975, vat: null, merchant: 'Shop' }],
 ];
 
 test.each(ADVERSARIAL)('adversarial: %s is right or marked "Please check" on every field', (_name, texts, truth) => {
@@ -283,8 +317,27 @@ test('"Total incl. VAT £8.75" with "VAT £1.46" is now confident and correct', 
 });
 
 test('a 4-column VAT table that adds up is read confidently', () => {
-  const p = extractReceipt([...MIXED_TOP, 'A 20% 16.66 3.33 19.99', 'B 0% 3.50 0.00 3.50', 'VAT TOTAL 3.33'].map((text) => ({ text, confidence: 0.95 })), { today: '2026-03-31' });
+  const p = extractReceipt([...MIXED_TOP, 'A 20% 16.66 3.33 19.99', 'B 0% 3.50 0.00 3.50'].map((text) => ({ text, confidence: 0.95 })), { today: '2026-03-31' });
+  expect(p.amountPence).toEqual({ value: 2349, confidence: 0.95 });
   expect(p.vatPence).toEqual({ value: 333, confidence: 0.95 });
+});
+
+test('Ruling (Task 2, round 3): any owed word after the total with a different amount makes it unsure, even "VAT TOTAL"', () => {
+  const p = extractReceipt([...MIXED_TOP, 'A 20% 16.66 3.33 19.99', 'B 0% 3.50 0.00 3.50', 'VAT TOTAL 3.33'].map((text) => ({ text, confidence: 0.95 })), { today: '2026-03-31' });
+  expect(p.amountPence).toEqual({ value: 2349, confidence: 0.6 });
+  expect(p.vatPence).toEqual({ value: 333, confidence: 0.8 });
+});
+
+test('a zero balance due beside a real total shows the real total, never confidently', () => {
+  const p = extractReceipt(['Corner Café', '05/03/2026 12:41', 'TOTAL DUE £8.75', 'DUE £0.00'].map((text) => ({ text, confidence: 0.95 })), { today: '2026-03-31' });
+  expect(p.amountPence).toEqual({ value: 875, confidence: 0.6 });
+});
+
+test('a plain date with a time, a weekday or a transaction label is still confident', () => {
+  for (const text of ['Date: 05/03/2026', 'Thu 05/03/2026 12:41 pm', 'Transaction date 05/03/2026', 'Tax point 05/03/2026', '5 March 2026', 'Date of issue 05/03/2026']) {
+    const p = extractReceipt([{ text: 'Shop', confidence: 0.95 }, { text, confidence: 0.95 }, { text: 'TOTAL £8.75', confidence: 0.95 }], { today: '2026-03-31' });
+    expect(p.date, text).toEqual({ value: '2026-03-05', confidence: 0.95 });
+  }
 });
 
 test('"Total before V.A.T." with "Amount payable" is confident and correct', () => {

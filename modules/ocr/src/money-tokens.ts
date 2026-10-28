@@ -46,7 +46,18 @@ export function isIgnoredLine(text: string): boolean {
  * pounds). Each letter repaired to a digit costs 0.3 of the line's confidence.
  */
 export function findMoney(text: string, lineConfidence: number, opts: { commaDecimals: boolean }): MoneyToken[] {
-  if (isIgnoredLine(text)) return [];
+  return isIgnoredLine(text) ? [] : scan(text, lineConfidence, opts);
+}
+
+/**
+ * The amounts on a card or authorisation line ("Charged to card £22.49"), which `findMoney` ignores because of
+ * card digits. Used only to notice that the card was charged something other than the total.
+ */
+export function findCardLineMoney(text: string, lineConfidence: number, opts: { commaDecimals: boolean }): MoneyToken[] {
+  return CARD_OR_AUTH.test(text) && !isPhoneLine(text) && !VAT_NUMBER.test(text) ? scan(text, lineConfidence, opts) : [];
+}
+
+function scan(text: string, lineConfidence: number, opts: { commaDecimals: boolean }): MoneyToken[] {
   const re = opts.commaDecimals ? COMMA_DECIMAL_RE : POUNDS_RE;
   const out: MoneyToken[] = [];
   for (const m of text.matchAll(re)) {
