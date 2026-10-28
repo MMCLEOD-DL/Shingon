@@ -10,13 +10,11 @@ import { parseVersion, compareVersions, securityFixesSince } from '../foundation
 import { addHistory, saveDeployment, loadDeployment, lockDeployment, listDeployments } from '../deployments/store.js';
 import { targetOf, missingTools } from './remote.js';
 import { probeBox } from './probe.js';
-import { readUpdateExit } from './update.js';
-import { SHIP_EXIT } from './outcomes.js';
+import { readUpdateRun, readRecoveryRecord } from './update.js';
+import { SHIP_EXIT, interpretUpdate } from './outcomes.js';
 
 const clean = (s, max = 400) => String(redact(terminalText(s))).slice(0, max);
 const GIT_TIMEOUT_MS = 5 * 60 * 1000;
-// pendingCheck reasons where Conductor never saw the update end (Ruling S21).
-const UNSEEN_END = new Set(['in-progress', 'lost-contact', 'interrupted']);
 
 const UK_TIME = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 export function ukTime(iso) {
@@ -107,30 +105,37 @@ export async function deploymentStatus(entry, { foundation, env = process.env, n
     }
     for (const n of box.notes) { lines.push(clean(n, 600)); problems.push(clean(n, 300)); }
 
-    // 5. Pending check (Ruling 6, S19, S21): resolved only by seeing a known version AND passing checks, and, when
-    // Conductor never saw the update end, only once it has provably finished (the box runs its version, or its exit
-    // file was read). Until then the box may simply not have got there yet.
+    // 5. Pending check (Ruling 6, S19, S21, S22): status never looks calmer than the box is. It is cleared only under the
+    // lock, with a known version and passing checks, and only once how the update ended is known: the run's own exit code and
+    // log (interpreted exactly as a ship would, never taken as 'confirmed'), or, for an urgent one, the foundation's own record.
     if (dep.pendingCheck) {
       const pc = dep.pendingCheck;
-      const finished = seen && box.checks?.ok && lock
-        ? !UNSEEN_END.has(pc.why) || seen === pc.version || (await readUpdateExit(targetOf(dep), { dir: dep.bundleDir, runId: pc.runId, env })).read
-        : false;
-      if (seen && box.checks?.ok && lock && !finished) {
-        fail('an update may still be running');
-        lines.push(`The last update's result is still not clear: the box runs ${seen}, not ${clean(pc.version ?? 'the new version', 40)}, and the update's result was not found, so an update may still be running. Wait a few minutes, then run this again.`);
-      } else if (finished) {
-        const from = dep.currentVersion;
-        const foundationNow = seen === pc.version ? pc.foundation : dep.foundation;
-        const withHistory = addHistory(dep, { version: seen, from, outcome: 'confirmed', at: now(),
-          detail: `After an update whose end Conductor did not see, the box was found running ${seen} and healthy.` });
-        save({ pendingCheck: null, currentVersion: seen, foundation: foundationNow, history: withHistory.history });
-        lines.push(`The last update's result is now known: the box runs ${seen} and is healthy. Shipping to it is allowed again.`);
-      } else if (seen && box.checks?.ok && !lock) {
-        fail("the last update's result is still not clear");
-        lines.push("The last update's result is still not clear: a ship to this box is running, so it was not checked off.");
+      const healthy = Boolean(seen && box.checks?.ok);
+      const unclear = (text) => { fail("the last update's result is still not clear"); lines.push(`The last update's result is still not clear: ${text}`); };
+      const notHealthy = () => (seen ? "the box's checks do not all pass" : 'the box did not report its version');
+      const recover = `Follow "Recovering from a failed update" in RUNBOOK.md in ${dep.bundleDir} on the box, then run there: docker compose run --rm updater update --mark-recovered. Then run this again.`;
+      const settle = (patch, outcome, text, line) => {
+        const withHistory = addHistory(dep, { version: seen, from: dep.currentVersion, outcome, at: now(), detail: text.split('\n')[0] });
+        save({ pendingCheck: null, ...patch, history: withHistory.history });
+        lines.push(line);
+      };
+      if (!lock) {
+        unclear(healthy ? 'a ship to this box is running, so it was not checked off.' : `${notHealthy()}. Follow RUNBOOK.md on the box ("Recovering from a failed update"), then run this again.`);
+      } else if (pc.why === 'urgent') {
+        // Healthy checks alone never clear it: only the foundation's own record (marked as recovered on the box) does.
+        const rec = await readRecoveryRecord(targetOf(dep), dep, { env });
+        if (rec.read && rec.recovered && healthy) {
+          settle({ currentVersion: seen, foundation: seen === pc.version ? pc.foundation : dep.foundation }, 'confirmed',
+            `The box's own record shows no failed update left to recover (it was marked as recovered); the box runs ${seen} and is healthy.`,
+            `The box's own record shows no failed update left to recover, and the box runs ${seen} and is healthy. Shipping to it is allowed again.`);
+        } else {
+          fail('the last update needs recovering by hand');
+          const why = !rec.read ? "the box's own record of it could not be read"
+            : !rec.recovered ? "the box's own record says it has not been marked as recovered" : notHealthy();
+          lines.push(`URGENT: the last update to ${clean(pc.version ?? 'a new version', 40)} failed and could not be undone, or was left half done (${why}). ${recover}`);
+        }
       } else {
-        fail("the last update's result is still not clear");
-        lines.push(`The last update's result is still not clear: ${seen ? "the box's checks do not all pass" : 'the box did not report its version'}. Follow RUNBOOK.md on the box ("Recovering from a failed update"), then run this again.`);
+        await unseenEnd({ pc, seen, healthy, save, unclear, notHealthy, settle, recover });
       }
     }
 
@@ -181,6 +186,56 @@ export async function deploymentStatus(entry, { foundation, env = process.env, n
     return report(ok, lines, dep);
   } finally {
     lock?.release();
+  }
+
+  // A pendingCheck whose end Conductor never saw ('in-progress', 'lost-contact', 'interrupted', or anything unknown).
+  async function unseenEnd({ pc, seen, healthy, save, unclear, notHealthy, settle, recover }) {
+    const from = dep.currentVersion;
+    const t = targetOf(dep);
+    // With a run id the run is read even when the box runs the new version: an exit 3 after the switch must not hide.
+    const run = pc.runId ? await readUpdateRun(t, { dir: dep.bundleDir, runId: pc.runId, env }) : { state: 'no-run-id' };
+    if (run.state === 'exited') {
+      const result = interpretUpdate({ code: run.code, output: terminalText(run.output), to: pc.version, from, name: t.label, bundleDir: dep.bundleDir });
+      const text = clean(result.text, 2000);
+      const said = text.split('\n');
+      if (result.outcome === 'urgent') {
+        fail('the last update needs recovering by hand');
+        const withHistory = addHistory(dep, { version: pc.version, from, outcome: 'urgent', at: now(), detail: said[0] });
+        save({ pendingCheck: { ...pc, why: 'urgent', since: now() }, history: withHistory.history });
+        lines.push(...said);
+        if (!/--mark-recovered/.test(text)) lines.push(recover);
+        return;
+      }
+      if (result.outcome === 'lost-contact') return unclear("the update has ended, but what it said could not be understood. Look at the update's log on the box, then run this again.");
+      const landed = result.outcome === 'updated' || result.outcome === 'already-on';
+      const expected = landed ? pc.version : from;
+      if (seen !== expected) {
+        return unclear(`the update says it ended (${result.outcome}), so the box should run ${clean(expected ?? 'the old version', 40)}, but it reports ${seen ? clean(seen, 40) : 'no version'}: the two disagree. Check the box, then run this again.`);
+      }
+      if (!healthy) return unclear(`the update ended (${result.outcome}), but ${notHealthy()}.`);
+      const patch = landed ? { currentVersion: pc.version, foundation: pc.foundation } : {};
+      settle(patch, result.outcome, text, `The last update's result is now known: ${said[0]}`);
+      lines.push(...said.slice(1));
+      if (result.outcome === 'updated') lines.push('Conductor did not see this update end, so it did not bring in the new compose.yaml and Caddyfile: see RUNBOOK.md on the box, "Keeping a deployment patched".');
+      lines.push('Shipping to it is allowed again.');
+      return;
+    }
+    if (run.state === 'running') return unclear('the update\'s log is on the box but it has not finished, so an update may still be running. Wait a few minutes, then run this again.');
+    if (run.state === 'never-started' && seen && seen === from) {
+      if (!healthy) return unclear(`the update never started on the box, but ${notHealthy()}.`);
+      const text = `The update to ${clean(pc.version ?? 'a new version', 40)} was cancelled: the update never started on the box, which still runs ${seen}.`;
+      return settle({}, 'cancelled', text, `The last update's result is now known: ${text} Shipping to it is allowed again.`);
+    }
+    // No run on record to read (S21): the box provably running the new version, healthy, is the only way out.
+    if ((run.state === 'no-run-id' || run.state === 'never-started') && healthy && seen === pc.version) {
+      return settle({ currentVersion: seen, foundation: pc.foundation }, 'confirmed',
+        `After an update whose end Conductor did not see, the box was found running ${seen} and healthy.`,
+        `The last update's result is now known: the box runs ${seen} and is healthy. Shipping to it is allowed again.`);
+    }
+    if (!healthy) return unclear(`${notHealthy()}. Follow RUNBOOK.md on the box ("Recovering from a failed update"), then run this again.`);
+    if (run.state === 'unknown') return unclear("the update's result could not be read from the box, so an update may still be running. Wait a few minutes, then run this again.");
+    if (run.state === 'never-started') return unclear(`the update never started on the box, but it runs ${clean(seen, 40)}, not ${clean(from ?? 'the recorded version', 40)} or ${clean(pc.version ?? 'the new version', 40)}: the two disagree. Check the box, then run this again.`);
+    return unclear(`the box runs ${seen}, not ${clean(pc.version ?? 'the new version', 40)}, and the update's result was not found, so an update may still be running. Wait a few minutes, then run this again.`);
   }
 
   function finishSave() {

@@ -186,15 +186,21 @@ test('bad inputs are refused before the box is touched', async () => {
   await assert.rejects(go([], { dep: { ...live(), pendingCheck: { since: 't', version: '0.1.4', foundation: 'v0.1.1', why: 'urgent' } } }), /deployments status/);
 });
 
-test('readUpdateExit reads the exit file only when it holds a code (Ruling S21)', async () => {
-  const { readUpdateExit } = await import('../src/factory/ship/update.js');
-  const f = fakeSsh(mkdtempSync(path.join(tmpdir(), 'ls-')), [{ match: 'update-20261027-100000-a1b2\\.exit', once: true, stdout: 'exit=3\n' },
-    { match: 'update-20261027-100000-a1b2\\.exit', once: true, stdout: 'exit=\n' }, { match: 'update-20261027-100000-a1b2\\.exit', code: 255 }]);
+// S22 replaces S21's readUpdateExit: the exit code AND the log in one look, and whether the update ever started.
+test('readUpdateRun reads the exit code and the log in one call, and tells running and never-started apart (Ruling S22)', async () => {
+  const { readUpdateRun } = await import('../src/factory/ship/update.js');
+  const m = 'update-20261027-100000-a1b2\\.exit';
+  const f = fakeSsh(mkdtempSync(path.join(tmpdir(), 'ls-')), [{ match: m, once: true, stdout: 'exit=3\n[x] URGENT: update to 0.1.4 failed\n' },
+    { match: m, once: true, stdout: 'exit=\nhalf\n' }, { match: m, once: true, stdout: 'exit=running\nTaking a backup\n' },
+    { match: m, once: true, stdout: 'exit=none\n' }, { match: m, code: 255 }]);
   const args = { dir: '/opt/highland/acme', runId: '20261027-100000-a1b2', env: f.env() };
-  assert.deepEqual(await readUpdateExit(T, args), { read: true, code: 3 });
-  assert.deepEqual(await readUpdateExit(T, args), { read: false, code: null }); // an empty file: still being written
-  assert.deepEqual(await readUpdateExit(T, args), { read: false, code: null }); // the box did not answer
-  assert.deepEqual(await readUpdateExit(T, { ...args, runId: undefined }), { read: false, code: null });
-  assert.equal(f.calls().length, 3);
-  assert.match(f.calls()[0].command, /^cd '\/opt\/highland\/acme' && if \[ -f \.conductor\/update-20261027-100000-a1b2\.exit \]/);
+  assert.deepEqual(await readUpdateRun(T, args), { state: 'exited', code: 3, output: '[x] URGENT: update to 0.1.4 failed\n' });
+  assert.deepEqual(await readUpdateRun(T, args), { state: 'running', code: null, output: 'half\n' }); // an empty exit file: still being written
+  assert.deepEqual(await readUpdateRun(T, args), { state: 'running', code: null, output: 'Taking a backup\n' });
+  assert.deepEqual(await readUpdateRun(T, args), { state: 'never-started', code: null, output: '' });
+  assert.deepEqual(await readUpdateRun(T, args), { state: 'unknown', code: null, output: '' }); // the box did not answer
+  assert.deepEqual(await readUpdateRun(T, { ...args, runId: undefined }), { state: 'unknown', code: null, output: '' });
+  assert.equal(f.calls().length, 5);
+  assert.match(f.calls()[0].command, /^cd '\/opt\/highland\/acme' && if \[ -f \.conductor\/update-20261027-100000-a1b2\.exit \]; then .* elif \[ -f \.conductor\/update-20261027-100000-a1b2\.log \]; .*cat \.conductor\/update-20261027-100000-a1b2\.log 2>\/dev\/null/);
+  await assert.rejects(readUpdateRun(T, { ...args, dir: "/opt/x'; rm -rf /" }), /unsafe path/);
 });

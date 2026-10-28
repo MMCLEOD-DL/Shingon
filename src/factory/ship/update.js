@@ -138,15 +138,49 @@ done`;
   return { warnings };
 }
 
-// Status (Ruling S21): the detached update's exit file, if it exists. { read: true, code } only when it was read;
-// anything else (no run id, no file yet, an empty file, the box not answering) is { read: false }.
-export async function readUpdateExit(t, { dir, runId, env = process.env }) {
-  if (typeof runId !== 'string' || !RUN_ID_RE.test(runId)) return { read: false, code: null };
-  const { exit } = files(runId);
-  const cmd = `cd ${shQuote(assertSafe('path', dir))} && if [ -f ${exit} ]; then echo "exit=$(cat ${exit})"; else echo exit=none; fi`;
+// Status (Ruling S22): what the detached update left on the box, read in one call shaped like pollUpdate's.
+// startDetachedUpdate removes both files, then the detached shell creates the log at once and the exit file at the end, so:
+// 'exited' (with the code and the log) once the exit file holds a code; 'running' while the log is there without one (or the
+// code is still being written); 'never-started' when neither file is there; 'unknown' when it could not be read.
+export async function readUpdateRun(t, { dir, runId, env = process.env }) {
+  const unknown = { state: 'unknown', code: null, output: '' };
+  if (typeof runId !== 'string' || !RUN_ID_RE.test(runId)) return unknown;
+  const { log, exit } = files(runId);
+  const cmd = `cd ${shQuote(assertSafe('path', dir))} && if [ -f ${exit} ]; then echo "exit=$(cat ${exit})"; elif [ -f ${log} ]; then echo exit=running; else echo exit=none; fi; cat ${log} 2>/dev/null; true`;
   const r = await remoteRun(t, cmd, { env, timeoutMs: MINUTE });
-  const m = r.code === 0 ? /^exit=(\d+)$/m.exec(String(r.stdout ?? '')) : null;
-  return m ? { read: true, code: Number(m[1]) } : { read: false, code: null };
+  if (r.code !== 0) return unknown;
+  const text = String(r.stdout ?? '');
+  const nl = text.indexOf('\n');
+  const head = (nl === -1 ? text : text.slice(0, nl)).trim();
+  const output = nl === -1 ? '' : text.slice(nl + 1);
+  const m = /^exit=(\d*|running|none)$/.exec(head);
+  if (!m) return unknown;
+  if (/^\d+$/.test(m[1])) return { state: 'exited', code: Number(m[1]), output };
+  if (m[1] === 'none') return { state: 'never-started', code: null, output: '' };
+  return { state: 'running', code: null, output };
+}
+
+// The foundation's own rule for "an update could not be undone and has not been marked as recovered" (ops/src/runs.ts
+// outstandingUpdate, the same as the app's /readyz update check): a failed, not-busy update run carrying the URGENT mark,
+// newer than the last good one. `update --mark-recovered` records a good update run, which ends it.
+export const OUTSTANDING_SQL = `select 'outstanding=' || count(*) from ops_runs where kind = 'update' and not ok and not busy
+ and position('URGENT: update to' in detail) > 0
+ and at > coalesce((select max(at) from ops_runs where kind = 'update' and ok), '-infinity'::timestamptz)`;
+// The updater's record of an update that stopped part-way, in /state (ops/src/journal.ts UPDATE_RECORD next to OPS_WORK_DIR);
+// `--mark-recovered` deletes it.
+const RECORD_SCRIPT = 'f="$(dirname "${OPS_WORK_DIR:-/state/work}")/update-in-progress.json"; if [ -e "$f" ]; then echo record=yes; else echo record=no; fi';
+
+// Status (Ruling S22): whether the foundation's own records still hold an unrecovered update. { read: true, recovered }
+// only when both were read; anything else is { read: false } (and the caller stays blocked).
+export async function readRecoveryRecord(t, dep, { env = process.env } = {}) {
+  const no = { read: false, recovered: false };
+  const q = await remoteRun(t, composeCmd(dep, `exec -T db psql -U app -d app -At -c ${shQuote(OUTSTANDING_SQL)}`), { env, timeoutMs: MINUTE });
+  const n = q.code === 0 ? /^outstanding=(\d+)$/m.exec(String(q.stdout ?? '')) : null;
+  if (!n) return no;
+  const j = await remoteRun(t, composeCmd(dep, `run --rm --no-deps -T --entrypoint sh ops -c ${shQuote(RECORD_SCRIPT)}`), { env, timeoutMs: 2 * MINUTE });
+  const rec = j.code === 0 ? /^record=(yes|no)$/m.exec(String(j.stdout ?? '')) : null;
+  if (!rec) return no;
+  return { read: true, recovered: Number(n[1]) === 0 && rec[1] === 'no' };
 }
 
 // Removes old images-<v>.tar files, always keeping the new version's and the one an undo would go back to.

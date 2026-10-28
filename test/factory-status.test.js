@@ -183,6 +183,8 @@ test('deploymentsCommand lists without ssh, and status checks every box and exit
 // ---- Final-wave fixes (Ruling S21, items 6 and 9) ----
 
 const RUN = '20261027-100000-a1b2';
+const ROLLED_BACK = '[Acme Ltd] Update to 0.1.4 failed (the database update failed), so it was undone automatically. The app is back on 0.1.3 with its data exactly as it was before the update. (The monitor did not restart; run: docker compose up -d ops)\n';
+const healthyNew = [{ match: 'entrypoint node ops', stdout: version('0.1.4') }, { match: 'ops check', stdout: '✓ app\n' }, { match: 'psql', stdout: RUNS }];
 const healthyOld = [{ match: 'entrypoint node ops', stdout: version('0.1.3') }, { match: 'ops check', stdout: '✓ app\n' }, { match: 'psql', stdout: RUNS }];
 
 for (const why of ['in-progress', 'lost-contact', 'interrupted']) {
@@ -198,16 +200,22 @@ for (const why of ['in-progress', 'lost-contact', 'interrupted']) {
     assert.ok(s.f.calls().some((c) => c.command.includes(`.conductor/update-${RUN}.exit`)), 'the exit file was looked for');
   });
 
-  test(`S21: an unseen (${why}) check is cleared once the update's exit file was read`, async () => {
-    const s = setup([{ match: `update-${RUN}\\.exit`, stdout: 'exit=1\n' }, ...healthyOld],
+  // S22 replaces the S21 "exit file read → confirmed" test: a read exit is interpreted, never taken as 'confirmed'.
+  test(`S22: an unseen (${why}) check whose run rolled back is recorded as rolled-back and cleared (box on the old version)`, async () => {
+    const s = setup([{ match: `update-${RUN}\\.exit`, stdout: `exit=1\n${ROLLED_BACK}` }, ...healthyOld],
       { pendingCheck: { since: 't', version: '0.1.4', foundation: 'v0.1.1', why, runId: RUN } });
     const r = await deploymentStatus(s.entry, opts(s.f));
     const dep = loadDeployment(s.projectDir, 'acme-office');
     assert.equal(dep.pendingCheck, null);
     assert.equal(dep.currentVersion, '0.1.3');
     assert.equal(dep.foundation, 'v0.1.0'); // the update did not land, so the recorded foundation stays
-    assert.equal(dep.history.at(-1).outcome, 'confirmed');
-    assert.ok(r.lines.some((l) => /Shipping to it is allowed again/.test(l)));
+    assert.equal(dep.history.at(-1).outcome, 'rolled-back');
+    assert.equal(dep.history.at(-1).from, '0.1.3');
+    assert.match(dep.history.at(-1).detail, /^The update to 0\.1\.4 did not work \(.*\), so the box undid it by itself\./);
+    assert.ok(r.lines.some((l) => /so the box undid it by itself/.test(l)), r.lines.join('\n'));
+    assert.ok(!dep.history.some((h) => h.outcome === 'confirmed'));
+    const read = s.f.calls().find((c) => c.command.includes(`.conductor/update-${RUN}.exit`));
+    assert.match(read.command, new RegExp(`cat \\.conductor/update-${RUN}\\.log`), 'the log is read in the same call');
   });
 }
 
@@ -241,4 +249,131 @@ test('latestFoundation runs git without secret-looking variables', async () => {
   assert.equal(envs[0].MY_SERVICE_TOKEN, undefined);
   assert.equal(envs[0].GIT_DIR, undefined);
   assert.equal(envs[0].GIT_TERMINAL_PROMPT, '0');
+});
+
+// ---- Ruling S22: status never looks calmer than the box is ----
+
+const exitRule = (body) => ({ match: `update-${RUN}\\.exit`, stdout: body });
+const pendingWith = (why = 'lost-contact', extra = {}) => ({ pendingCheck: { since: 't', version: '0.1.4', foundation: 'v0.1.1', why, runId: RUN, ...extra } });
+const URGENT_LINE = '[Acme Ltd] URGENT: update to 0.1.4 failed (the database update failed) and the automatic undo also failed (restore stopped). The app may be down. Backup 1a2b3c4d holds the data from before the update.\n';
+const NOT_RECOVERED = '[Acme Ltd] Update to 0.1.4 cancelled: an earlier update could not be undone and has not been marked as recovered. Nothing was changed. Recover the box first (see the runbook, section "Recovering from a failed update"), then run: docker compose run --rm updater update --mark-recovered\n';
+
+function assertUrgent(s, r) {
+  const dep = loadDeployment(s.projectDir, 'acme-office');
+  assert.equal(r.ok, false);
+  assert.equal(dep.pendingCheck.why, 'urgent');
+  assert.equal(dep.pendingCheck.runId, RUN);
+  assert.equal(dep.currentVersion, '0.1.3');
+  assert.equal(dep.history.at(-1).outcome, 'urgent');
+  assert.ok(!dep.history.some((h) => h.outcome === 'confirmed'));
+  assert.ok(r.lines.some((l) => /RUNBOOK\.md/.test(l) && /--mark-recovered/.test(l)), r.lines.join('\n'));
+  return dep;
+}
+
+test('S22: an exit 3 keeps the box blocked as urgent, with a history entry and the recovery steps', async () => {
+  const s = setup([exitRule(`exit=3\n${URGENT_LINE}`), ...healthyOld], pendingWith('lost-contact'));
+  const r = await deploymentStatus(s.entry, opts(s.f));
+  assertUrgent(s, r);
+});
+
+test('S22: an exit 3 stays blocked even when the box already runs the new version', async () => {
+  const s = setup([exitRule(`exit=3\n${URGENT_LINE}`), ...healthyNew], pendingWith('in-progress'));
+  const r = await deploymentStatus(s.entry, opts(s.f));
+  assertUrgent(s, r);
+});
+
+test('S22: exit 1 "not marked as recovered" is urgent', async () => {
+  const s = setup([exitRule(`exit=1\n${NOT_RECOVERED}`), ...healthyOld], pendingWith('interrupted'));
+  const r = await deploymentStatus(s.entry, opts(s.f));
+  assertUrgent(s, r);
+});
+
+test('S22: an exit whose log cannot be understood stays pending', async () => {
+  const s = setup([exitRule('exit=0\nsomething nobody wrote down\n'), ...healthyOld], pendingWith('lost-contact'));
+  const r = await deploymentStatus(s.entry, opts(s.f));
+  const dep = loadDeployment(s.projectDir, 'acme-office');
+  assert.equal(r.ok, false);
+  assert.equal(dep.pendingCheck.why, 'lost-contact');
+  assert.equal(dep.history.length, 0);
+  assert.equal(dep.currentVersion, '0.1.3');
+});
+
+test('S22: a log with no exit file means the update may still be running (even on the new version)', async () => {
+  for (const healthy of [healthyOld, healthyNew]) {
+    const s = setup([exitRule('exit=running\n[Acme Ltd] Taking a backup first\n'), ...healthy], pendingWith('lost-contact'));
+    const r = await deploymentStatus(s.entry, opts(s.f));
+    const dep = loadDeployment(s.projectDir, 'acme-office');
+    assert.equal(r.ok, false);
+    assert.equal(dep.pendingCheck.why, 'lost-contact');
+    assert.equal(dep.history.length, 0);
+    assert.ok(r.lines.some((l) => /an update may still be running/.test(l)), r.lines.join('\n'));
+  }
+});
+
+test('S22: neither file and the old version: the update never started, cleared as cancelled', async () => {
+  const s = setup([exitRule('exit=none\n'), ...healthyOld], pendingWith('lost-contact'));
+  const r = await deploymentStatus(s.entry, opts(s.f));
+  const dep = loadDeployment(s.projectDir, 'acme-office');
+  assert.equal(dep.pendingCheck, null);
+  assert.equal(dep.currentVersion, '0.1.3');
+  assert.equal(dep.foundation, 'v0.1.0');
+  assert.equal(dep.history.at(-1).outcome, 'cancelled');
+  assert.match(dep.history.at(-1).detail, /the update never started on the box/);
+  assert.ok(r.lines.some((l) => /the update never started on the box/.test(l)), r.lines.join('\n'));
+});
+
+test('S22: an updated exit clears only when the box runs the new version; otherwise the two disagree', async () => {
+  const UPDATED = 'exit=0\n[Acme Ltd] Updated from 0.1.3 to 0.1.4. A backup (1a2b3c4d) was taken first.\n';
+  const s = setup([exitRule(UPDATED), ...healthyOld], pendingWith('lost-contact'));
+  const r = await deploymentStatus(s.entry, opts(s.f));
+  assert.equal(r.ok, false);
+  assert.equal(loadDeployment(s.projectDir, 'acme-office').pendingCheck.why, 'lost-contact');
+  assert.ok(r.lines.some((l) => /disagree/.test(l)), r.lines.join('\n'));
+  const s2 = setup([exitRule(UPDATED), ...healthyNew], pendingWith('lost-contact'));
+  await deploymentStatus(s2.entry, opts(s2.f));
+  const dep = loadDeployment(s2.projectDir, 'acme-office');
+  assert.equal(dep.pendingCheck, null);
+  assert.equal(dep.currentVersion, '0.1.4');
+  assert.equal(dep.foundation, 'v0.1.1');
+  assert.equal(dep.history.at(-1).outcome, 'updated');
+});
+
+test('S22: a rolled-back exit while the box runs the new version stays pending', async () => {
+  const s = setup([exitRule(`exit=1\n${ROLLED_BACK}`), ...healthyNew], pendingWith('lost-contact'));
+  const r = await deploymentStatus(s.entry, opts(s.f));
+  assert.equal(r.ok, false);
+  assert.equal(loadDeployment(s.projectDir, 'acme-office').pendingCheck.why, 'lost-contact');
+  assert.ok(r.lines.some((l) => /disagree/.test(l)), r.lines.join('\n'));
+});
+
+// The foundation's own record of an unrecovered update: ops_runs (outstandingUpdate's rule) and /state/update-in-progress.json.
+const recorded = ({ outstanding = '0', record = 'no' } = {}) => [{ match: 'outstanding=', stdout: `outstanding=${outstanding}\n` },
+  { match: 'update-in-progress\\.json', stdout: `record=${record}\n` }];
+
+test('S22: an urgent check stays blocked on healthy checks alone until the foundation record shows it recovered', async () => {
+  // Healthy, but the foundation's record could not be read: blocked.
+  const s = setup(healthyOld, pendingWith('urgent'));
+  const r = await deploymentStatus(s.entry, opts(s.f));
+  assert.equal(r.ok, false);
+  assert.equal(loadDeployment(s.projectDir, 'acme-office').pendingCheck.why, 'urgent');
+  assert.ok(r.lines.some((l) => /--mark-recovered/.test(l)), r.lines.join('\n'));
+  // The database still holds an unrecovered update: blocked.
+  const s2 = setup([...recorded({ outstanding: '1' }), ...healthyOld], pendingWith('urgent'));
+  const r2 = await deploymentStatus(s2.entry, opts(s2.f));
+  assert.equal(r2.ok, false);
+  assert.equal(loadDeployment(s2.projectDir, 'acme-office').pendingCheck.why, 'urgent');
+  // An update record is still in /state: blocked.
+  const s3 = setup([...recorded({ record: 'yes' }), ...healthyOld], pendingWith('urgent'));
+  await deploymentStatus(s3.entry, opts(s3.f));
+  assert.equal(loadDeployment(s3.projectDir, 'acme-office').pendingCheck.why, 'urgent');
+  // Marked as recovered on the box: cleared.
+  const s4 = setup([...recorded(), ...healthyOld], pendingWith('urgent'));
+  const r4 = await deploymentStatus(s4.entry, opts(s4.f));
+  const dep = loadDeployment(s4.projectDir, 'acme-office');
+  assert.equal(dep.pendingCheck, null, r4.lines.join('\n'));
+  assert.equal(dep.currentVersion, '0.1.3');
+  assert.match(dep.history.at(-1).detail, /marked as recovered/);
+  const q = s4.f.calls().find((c) => c.command.includes('outstanding='));
+  assert.match(q.command, /^cd '\/opt\/highland\/acme' && docker compose exec -T db psql/);
+  assert.ok(q.command.includes('URGENT: update to'));
 });

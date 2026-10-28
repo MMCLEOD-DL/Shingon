@@ -9,11 +9,12 @@ import { PassThrough } from 'node:stream';
 import { fakeSsh } from './helpers/fakeSsh.js';
 import { scriptedAsk } from './helpers/scriptedAsk.js';
 import { makeShipProject, fakeProvider, shipRules, releaseNext, TEST_BRIEF, RUN_ID } from './helpers/shipProject.js';
-import { shipProject, updateDeployment, NO_TTY_FIRST, interruptShip, UPDATE_OUTCOMES } from '../src/factory/ship/index.js';
+import { shipProject, updateDeployment, NO_TTY_FIRST, interruptShip, saveLostContact, UPDATE_OUTCOMES } from '../src/factory/ship/index.js';
 import { shipCommand } from '../src/cli/factoryShip.js';
 import { factoryConfig } from '../src/factory/config.js';
-import { loadDeployment, saveDeployment, lockDeployment } from '../src/factory/deployments/store.js';
+import { loadDeployment, saveDeployment, lockDeployment, listDeployments } from '../src/factory/deployments/store.js';
 import { forgetRememberedSecrets } from '../src/secrets.js';
+import { deploymentStatus } from '../src/factory/ship/status.js';
 
 const PW = 'Zq3-backup-password-from-ops-init_xyz';
 const SECRETS = [PW, 'mailpass-9!', 'syt_matrix_token_1', 'kuma-push-token-77', 'cf-tunnel-token-value-88', 'tok_one_time_123'];
@@ -279,6 +280,59 @@ test('an unexpected throw while updating saves a lost-contact pending check (con
   assert.equal(r.exit, 2);
   const pc = loadDeployment(p.projectDir, 'acme-office').pendingCheck;
   assert.deepEqual([pc.why, pc.version, pc.foundation, pc.runId], ['lost-contact', '0.1.4', 'v0.1.0', runId]);
+});
+
+test('S22: the record left by a throw at "Updating" clears as cancelled once status sees the update never started', async (t) => {
+  t.after(forgetRememberedSecrets);
+  const d = mkdtempSync(path.join(tmpdir(), 'ship-'));
+  const p = makeShipProject(d);
+  const f = fakeSsh(d, shipRules(d));
+  assert.equal((await ship(p, f, FIRST_ANSWERS)).exit, 0);
+  releaseNext(p, '0.1.4');
+  f.setRules([...shipRules(d, { version: '0.1.4' }), ...UPDATE_OK]);
+  const runId = '20261027-130000-d4e5';
+  const say = (s) => { if (s.startsWith('Updating ')) throw new Error('the terminal went away'); };
+  await updateDeployment({ projectDir: p.projectDir, name: 'acme-office', version: '0.1.4', foundation: 'v0.1.1', runId },
+    { factory: factoryFor(p), provider: fakeProvider(), env: f.env(), sleep: async () => {}, say });
+  assert.equal(loadDeployment(p.projectDir, 'acme-office').pendingCheck.why, 'lost-contact');
+  const RUNS = JSON.stringify({ backup: { at: '2026-10-27T02:31:00Z', ok: true, detail: 'ok' }, backupOk: '2026-10-27T02:31:00Z',
+    restore: { at: '2026-10-26T04:31:00Z', ok: true, detail: 'ok' }, restoreOk: '2026-10-26T04:31:00Z' });
+  f.setRules([{ match: `update-${runId}\\.exit`, stdout: 'exit=none\n' },
+    { match: 'entrypoint node ops', stdout: JSON.stringify({ version: { app: '0.1.3', foundation: 'v0.1.0', commit: 'c' }, ready: { status: 'ok' } }) },
+    { match: 'ops check', stdout: '✓ app\n' }, { match: 'psql', stdout: RUNS }]);
+  const entry = listDeployments(path.dirname(p.projectDir)).find((e) => e.name === 'acme-office');
+  await deploymentStatus(entry, { foundation: { ok: true, version: '0.1.0', changelog: '' }, env: f.env() });
+  const dep = loadDeployment(p.projectDir, 'acme-office');
+  assert.equal(dep.pendingCheck, null);
+  assert.equal(dep.currentVersion, '0.1.3');
+  assert.equal(dep.history.at(-1).outcome, 'cancelled');
+  assert.match(dep.history.at(-1).detail, /the update never started on the box/);
+});
+
+test('S22: saveLostContact never overwrites a check it did not start (no in-progress check for this run on record)', () => {
+  const d = mkdtempSync(path.join(tmpdir(), 'ship-'));
+  const p = makeShipProject(d);
+  const live = { schema: 1, name: 'acme-office', project: 'acme', host: 'acme-box', ssh: { user: 'highland', port: null, keyPath: null },
+    bundleDir: '/opt/highland/acme', hosting: 'client-box', imageDelivery: 'tar', registry: null, access: 'cloudflare-tunnel',
+    origin: 'https://staff.acme.co.uk', site: ':80', alerts: { matrix: null, webhook: false, heartbeat: false },
+    setup: { step: 'done', at: 't' }, currentVersion: '0.1.3', foundation: 'v0.1.0', bundleVersion: '0.1.3', pendingCheck: null, lastStatus: null, history: [] };
+  const state = { projectDir: p.projectDir, name: 'acme-office', dep: live, version: '0.1.4', foundation: 'v0.1.1', runId: RUN_ID };
+  // An urgent check from an earlier run stays exactly as it was.
+  const urgent = { since: 't', version: '0.1.4', foundation: 'v0.1.1', why: 'urgent', runId: '20261020-100000-aaaa' };
+  saveDeployment(p.projectDir, { ...live, pendingCheck: urgent });
+  saveLostContact(state, 'Conductor stopped unexpectedly.');
+  assert.deepEqual(loadDeployment(p.projectDir, 'acme-office').pendingCheck, urgent);
+  assert.equal(loadDeployment(p.projectDir, 'acme-office').history.length, 0);
+  // No check at all (the throw came before the in-progress save): nothing is written.
+  saveDeployment(p.projectDir, live);
+  saveLostContact(state, 'Conductor stopped unexpectedly.');
+  assert.equal(loadDeployment(p.projectDir, 'acme-office').pendingCheck, null);
+  // This run's in-progress check: replaced by lost-contact.
+  saveDeployment(p.projectDir, { ...live, pendingCheck: { since: 't', version: '0.1.4', foundation: 'v0.1.1', why: 'in-progress', runId: RUN_ID } });
+  saveLostContact(state, 'Conductor stopped unexpectedly.');
+  const dep = loadDeployment(p.projectDir, 'acme-office');
+  assert.deepEqual([dep.pendingCheck.why, dep.pendingCheck.runId], ['lost-contact', RUN_ID]);
+  assert.equal(dep.history.at(-1).outcome, 'lost-contact');
 });
 
 test('every pending check written while updating carries the run id (interruptShip)', () => {

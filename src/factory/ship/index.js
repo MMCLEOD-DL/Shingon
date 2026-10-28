@@ -85,10 +85,12 @@ function updateSaver(projectDir, state) {
 
 // An unexpected throw while updating: the record must say what the caller is told (lost contact, result unknown).
 // Best effort: if this cannot be saved, the in-progress check saved before the update started still blocks the next ship.
-function saveLostContact(state, text) {
+// Ruling S22: written only over this run's own in-progress check. A throw before that save touched nothing on the box, and
+// must never overwrite a check already on record (an urgent one, say).
+export function saveLostContact(state, text) {
   try {
-    const current = loadDeployment(state.projectDir, state.name) ?? state.dep;
-    if (!current) return;
+    const current = loadDeployment(state.projectDir, state.name);
+    if (current?.pendingCheck?.why !== 'in-progress' || current.pendingCheck.runId !== state.runId) return;
     const at = new Date().toISOString();
     const withHistory = addHistory(current, { at, version: state.version, from: current.currentVersion, outcome: 'lost-contact', detail: text.split('\n')[0] });
     saveDeployment(state.projectDir, {
