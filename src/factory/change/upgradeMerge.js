@@ -1,13 +1,15 @@
 // The git side of a foundation upgrade (Plan 11, Task 6; index Ruling 5 as amended by Rulings C1 and C8).
 // The merge happens in a scratch clone of the app, never in the app folder. The foundation repo is only read
-// (a fetch *from* it). The app gains exactly a new upgrade branch (landed create-only by the core's land()) and,
-// if it is missing, refs/foundation/<toTag> at the release's commit. The app's main is never touched.
-import { mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+// (a fetch *from* it). The app gains exactly refs/foundation/<toTag> at the release's commit (if it is missing,
+// recorded first) and a new upgrade branch (landed create-only by the core's land()). The app's main is never touched.
+// The scratch folder is always <projectDir>/builds/<runId>/merge, derived here and never taken from a caller.
+import { mkdirSync, readFileSync, writeFileSync, rmSync, lstatSync, realpathSync, existsSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { git, Workspace } from '../../workspace.js';
 import { compareVersions } from '../foundationLog.js';
 import { MAX_INSTRUCTIONS } from '../split.js';
+import { RUN_ID_RE } from '../ids.js';
 
 export const MAX_CONFLICT_FILES = 20;
 
@@ -23,15 +25,37 @@ const FETCH_TIMEOUT_MS = 15 * 60_000;
 // Pinned so the markers are always the two-sided form the loop, the gate and resolveVersionHunks expect.
 const MERGE_FLAGS = ['-c', 'merge.conflictStyle=merge', '-c', 'merge.renames=true', '-c', 'rerere.enabled=false'];
 
-const firstLine = (s) => String(s ?? '').trim().split('\n')[0] || 'no detail given';
+// Operator text never carries git's own output (no jargon, no stderr).
+const NOT_PREPARED = 'Conductor could not prepare the foundation merge in its scratch copy of the app, so it stopped. Nothing was changed in the app.';
+const NO_SCRATCH = 'Conductor could not set up its scratch folder for the foundation merge (the project folder or its builds folder is missing or is a link to somewhere else), so it stopped. Nothing was changed in the app.';
+const RECORD_FAILED = (toTag) => `Conductor could not record the foundation release ${toTag} with the app, so it stopped. Nothing was changed in the app.`;
+const RECORD_MOVED = (toTag) => `The app records the foundation's ${toTag} as a different commit than the foundation now has, so Conductor stopped. Nothing was changed in the app.`;
 
 class Stop extends Error {}
 
 async function run(cwd, args, opts = {}) {
   const r = await git(cwd, args, { env: CLEAN_GIT_ENV, ...opts });
-  if (r.code !== 0) throw new Stop(`Conductor could not prepare the foundation merge (git ${args.find((a) => !a.startsWith('-') && !a.includes('=')) ?? args[0]} failed: ${firstLine(r.stderr)}). Nothing was changed in the app.`);
+  if (r.code !== 0) throw new Stop(NOT_PREPARED);
   return r.stdout;
 }
+
+// <projectDir>/builds/<runId>/merge, or null when the project folder is unusable or builds/ or builds/<runId>
+// is a link (or resolves elsewhere), so the delete below can never reach outside the project.
+function scratchFolder(projectDir, runId) {
+  if (typeof projectDir !== 'string' || projectDir.trim() === '') return null;
+  let root;
+  try { root = realpathSync(path.resolve(projectDir)); } catch { return null; }
+  if (!lstatSync(root).isDirectory()) return null;
+  for (const dir of [path.join(root, 'builds'), path.join(root, 'builds', runId)]) {
+    if (!existsSync(dir) && !isLink(dir)) continue;
+    if (isLink(dir) || !lstatSync(dir).isDirectory()) return null;
+    let real;
+    try { real = realpathSync(dir); } catch { return null; }
+    if (real !== dir) return null;
+  }
+  return path.join(root, 'builds', runId, 'merge');
+}
+const isLink = (p) => { try { return lstatSync(p).isSymbolicLink(); } catch { return false; } };
 
 /** Why `toTag` cannot be the upgrade target, in plain English, or null when it is a newer foundation release. */
 export function upgradeTargetProblem({ fromTag, toTag, tags }) {
@@ -73,15 +97,18 @@ export function resolveVersionHunks(text) {
   return { text: out.join('\n'), remaining };
 }
 
-// Unmerged paths -> { path: Set(stages) }, from `git ls-files -u -z` ("<mode> <sha> <stage>\t<path>\0").
+// Unmerged paths -> { stages: Set, special }, from `git ls-files -u -z` ("<mode> <sha> <stage>\t<path>\0").
+// `special`: some side is a symlink (120000) or a submodule (160000), which has no text to resolve.
 async function unmergedPaths(dir) {
   const byPath = new Map();
   for (const entry of (await run(dir, ['ls-files', '-u', '-z'])).split('\0').filter(Boolean)) {
     const tab = entry.indexOf('\t');
-    const stage = entry.slice(0, tab).split(' ')[2];
+    const [mode, , stage] = entry.slice(0, tab).split(' ');
     const file = entry.slice(tab + 1);
-    if (!byPath.has(file)) byPath.set(file, new Set());
-    byPath.get(file).add(stage);
+    if (!byPath.has(file)) byPath.set(file, { stages: new Set(), special: false });
+    const u = byPath.get(file);
+    u.stages.add(stage);
+    if (mode === '120000' || mode === '160000') u.special = true;
   }
   return byPath;
 }
@@ -91,18 +118,24 @@ const hasMarkers = (file) => {
 };
 
 /**
- * Merges foundation release `toTag` into the app in `scratchDir` and lands the result as a new branch in the app.
- * -> { status: 'ready', mergeSha, tagSha, branch, mainAtStart, conflicts, autoResolved } | { status: 'stopped', reason }
+ * Merges foundation release `toTag` into the app in a scratch clone at <projectDir>/builds/<runId>/merge, records
+ * the release as refs/foundation/<toTag> in the app if missing, and lands the merge as a new branch in the app.
+ * @param {{ projectDir: string, appDir: string, foundationRepo: string, fromTag: string, toTag: string, runId: string }} options
+ * @returns {Promise<{ status: 'ready', mergeSha, tagSha, branch, mainAtStart, conflicts: string[], autoResolved: string[] }
+ *                  | { status: 'stopped', reason: string }>}
  */
-export async function prepareUpgradeMerge({ appDir, foundationRepo, fromTag, toTag, runId, scratchDir }) {
+export async function prepareUpgradeMerge({ projectDir, appDir, foundationRepo, fromTag, toTag, runId }) {
   if (typeof toTag !== 'string' || !RELEASE_TAG.test(toTag)) return { status: 'stopped', reason: `${toTag} is not a foundation release name. Use the form v1.2.3.` };
+  if (typeof runId !== 'string' || !RUN_ID_RE.test(runId)) return { status: 'stopped', reason: `"${runId}" is not a valid run id, so Conductor stopped. Nothing was changed in the app.` };
   const branch = `factory/upgrade-${toTag}-${runId}`;
   const foundationRef = `refs/foundation/${toTag}`;
-  const app = path.resolve(appDir);
-  const scratch = path.resolve(scratchDir);
-  // A leftover from a run that was killed mid-way: the folder is Conductor's own throwaway copy.
-  rmSync(scratch, { recursive: true, force: true });
+  let scratch = null;
   try {
+    scratch = scratchFolder(projectDir, runId);
+    if (!scratch) return { status: 'stopped', reason: NO_SCRATCH };
+    const app = path.resolve(appDir);
+    // A leftover from a run that was killed mid-way: the folder is Conductor's own throwaway copy.
+    rmSync(scratch, { recursive: true, force: true });
     mkdirSync(path.dirname(scratch), { recursive: true });
     // 1. A scratch clone of the app's committed main.
     await run(path.dirname(scratch), ['clone', '--quiet', '--no-hardlinks', '--no-checkout', app, scratch], { timeoutMs: FETCH_TIMEOUT_MS });
@@ -114,7 +147,7 @@ export async function prepareUpgradeMerge({ appDir, foundationRepo, fromTag, toT
 
     // 2. The release's commit, fetched from the foundation (read-only).
     const f = await git(scratch, ['fetch', '--quiet', '--no-tags', '--no-write-fetch-head', path.resolve(foundationRepo), `refs/tags/${toTag}:${foundationRef}`], { env: CLEAN_GIT_ENV, timeoutMs: FETCH_TIMEOUT_MS });
-    if (f.code !== 0) return { status: 'stopped', reason: `Conductor could not read the foundation release ${toTag} from ${foundationRepo}: ${firstLine(f.stderr)}. Nothing was changed in the app.` };
+    if (f.code !== 0) return { status: 'stopped', reason: `Conductor could not read the foundation release ${toTag} from ${foundationRepo}, so it stopped. Nothing was changed in the app.` };
     const tagSha = (await run(scratch, ['rev-parse', '--verify', `${foundationRef}^{commit}`])).trim();
 
     // 3. The app must come from the foundation.
@@ -125,15 +158,15 @@ export async function prepareUpgradeMerge({ appDir, foundationRepo, fromTag, toT
     const m = await git(scratch, [...MERGE_FLAGS, 'merge', '--no-ff', '--no-commit', '-m', message, tagSha], { env: CLEAN_GIT_ENV, timeoutMs: FETCH_TIMEOUT_MS });
     const unmerged = await unmergedPaths(scratch);
     if (m.code !== 0 && unmerged.size === 0) {
-      return { status: 'stopped', reason: `Conductor could not merge the foundation release ${toTag}: ${firstLine(m.stderr || m.stdout)}. Nothing was changed in the app.` };
+      return { status: 'stopped', reason: `Conductor could not merge the foundation release ${toTag} into its scratch copy of the app, so it stopped. Nothing was changed in the app.` };
     }
 
     // 5. Conflicts no text edit can settle stop the run.
     const problems = [];
-    for (const [file, stages] of [...unmerged].sort(([a], [b]) => a.localeCompare(b))) {
+    for (const [file, { stages, special }] of [...unmerged].sort(([a], [b]) => a.localeCompare(b))) {
       if (!stages.has('2')) problems.push(`${file}: the app deleted it but the foundation changed it.`);
       else if (!stages.has('3')) problems.push(`${file}: the foundation deleted it but the app changed it.`);
-      else if (!hasMarkers(path.join(scratch, file))) problems.push(`${file}: both changed this file and it is not text.`);
+      else if (special || !hasMarkers(path.join(scratch, file))) problems.push(`${file}: both changed this file and it is not text.`);
     }
     if (problems.length) return { status: 'stopped', reason: UNRESOLVABLE(problems.join(' ')) };
 
@@ -159,39 +192,54 @@ export async function prepareUpgradeMerge({ appDir, foundationRepo, fromTag, toT
     await run(scratch, ['commit', '-q', '--no-verify', '--no-edit', '-m', subject]);
     const mergeSha = (await run(scratch, ['rev-parse', 'HEAD'])).trim();
 
-    // 8. Land the branch in the app, create-only.
-    const landed = await new Workspace(scratch, branch, mainAtStart).land({ repoDir: app, branch, sha: mergeSha });
-    if (!landed.ok) return { status: 'stopped', reason: NOT_LANDED(landed.error) };
+    // 8. The branch name must be free before the app is written at all.
+    if ((await git(app, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], { env: CLEAN_GIT_ENV })).code === 0) {
+      return { status: 'stopped', reason: NOT_LANDED(`branch ${branch} already exists in the repository`) };
+    }
 
-    // 9. Keep the release in the app as refs/foundation/<toTag> at its commit, only if missing (Ruling C8).
+    // 9. Keep the release in the app as refs/foundation/<toTag> at its commit, only if missing (Ruling C8), before
+    //    landing, so nothing can fail once the branch is in the app.
     const kept = await keepFoundationRelease({ appDir: app, foundationRepo, toTag, tagSha });
-    if (kept) return { status: 'stopped', reason: `Conductor added the foundation merge to the app as ${branch}, but could not record the foundation release ${toTag} with the app: ${kept}. Nothing else was changed.` };
+    if (kept) return { status: 'stopped', reason: kept };
+
+    // 10. Land the branch in the app, create-only.
+    const landed = await new Workspace(scratch, branch, mainAtStart).land({ repoDir: app, branch, sha: mergeSha });
+    if (!landed.ok) {
+      // land()'s own wording is plain except where it would pass on git's output.
+      const why = /^(fetch failed|could not create the branch):/.test(String(landed.error)) ? 'the app\'s repository would not accept the new branch' : landed.error;
+      return { status: 'stopped', reason: NOT_LANDED(why) };
+    }
 
     return { status: 'ready', mergeSha, tagSha, branch, mainAtStart, conflicts, autoResolved };
   } catch (e) {
-    if (e instanceof Stop) return { status: 'stopped', reason: e.message };
-    return { status: 'stopped', reason: `Conductor could not prepare the foundation merge: ${firstLine(e?.message)}. Nothing was changed in the app.` };
+    return { status: 'stopped', reason: e instanceof Stop ? e.message : NOT_PREPARED };
   } finally {
-    rmSync(scratch, { recursive: true, force: true });
+    if (scratch) rmSync(scratch, { recursive: true, force: true });
   }
 }
 
 // As createApp: a temporary fetch from the foundation, then a create-only update-ref at the peeled commit.
-// Returns null when done (or already present), or a plain reason.
+// Returns null when done (or already present at the same commit), or a plain reason for the operator.
 async function keepFoundationRelease({ appDir, foundationRepo, toTag, tagSha }) {
   const ref = `refs/foundation/${toTag}`;
-  if ((await git(appDir, ['rev-parse', '--verify', '--quiet', ref], { env: CLEAN_GIT_ENV })).code === 0) return null;
+  const recorded = () => git(appDir, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], { env: CLEAN_GIT_ENV });
+  const exists = async () => (await git(appDir, ['rev-parse', '--verify', '--quiet', ref], { env: CLEAN_GIT_ENV })).code === 0;
+  if (await exists()) {
+    const r = await recorded();
+    return r.code === 0 && r.stdout.trim() === tagSha ? null : RECORD_MOVED(toTag);
+  }
   const incoming = `refs/conductor/incoming/${randomBytes(8).toString('hex')}`;
   try {
     const f = await git(appDir, ['fetch', '--quiet', '--no-tags', '--no-write-fetch-head', path.resolve(foundationRepo), `refs/tags/${toTag}:${incoming}`], { env: CLEAN_GIT_ENV, timeoutMs: FETCH_TIMEOUT_MS });
-    if (f.code !== 0) return `the foundation could not be read (${firstLine(f.stderr)})`;
+    if (f.code !== 0) return RECORD_FAILED(toTag);
     const got = await git(appDir, ['rev-parse', '--verify', '--quiet', `${incoming}^{commit}`], { env: CLEAN_GIT_ENV });
-    if (got.code !== 0 || got.stdout.trim() !== tagSha) return `the foundation's ${toTag} changed while the merge was being prepared`;
+    if (got.code !== 0 || got.stdout.trim() !== tagSha) return `The foundation's ${toTag} changed while the merge was being prepared, so Conductor stopped. Nothing was changed in the app.`;
     const u = await git(appDir, ['update-ref', ref, tagSha, ZERO_SHA], { env: CLEAN_GIT_ENV });
     if (u.code !== 0) {
-      // Created meanwhile: fine if it records the same release.
-      const now = await git(appDir, ['rev-parse', '--verify', '--quiet', ref], { env: CLEAN_GIT_ENV });
-      return now.code === 0 ? null : firstLine(u.stderr);
+      // Created meanwhile: fine only if it records the same release.
+      if (!(await exists())) return RECORD_FAILED(toTag);
+      const r = await recorded();
+      return r.code === 0 && r.stdout.trim() === tagSha ? null : RECORD_MOVED(toTag);
     }
     return null;
   } finally {

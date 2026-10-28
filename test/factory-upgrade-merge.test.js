@@ -1,7 +1,7 @@
 // Plan 11 Task 6: the git side of a foundation upgrade (merge in a scratch clone, mechanical rules, create-only landing).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, symlinkSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { git } from '../src/workspace.js';
@@ -62,7 +62,7 @@ async function appWithHistory(f, extra = {}) {
   return { ...p, scratchDir: path.join(p.projectDir, 'builds', RUN_ID, 'merge') };
 }
 
-const prepare = (f, p, over = {}) => prepareUpgradeMerge({ appDir: p.appDir, foundationRepo: f.dir, fromTag: 'v0.1.0', toTag: 'v0.1.1', runId: RUN_ID, scratchDir: p.scratchDir, ...over });
+const prepare = (f, p, over = {}) => prepareUpgradeMerge({ projectDir: p.projectDir, appDir: p.appDir, foundationRepo: f.dir, fromTag: 'v0.1.0', toTag: 'v0.1.1', runId: RUN_ID, ...over });
 const head = async (dir, ref) => (await git(dir, ['rev-parse', ref])).stdout.trim();
 
 test('upgradeTargetProblem: not a release name, missing, same, older; null for a newer release', () => {
@@ -113,14 +113,24 @@ test('a clean upgrade with only mechanical conflicts: merge committed on a new b
   assert.equal((await git(appDir, ['status', '--porcelain'])).stdout, '', 'the app checkout is untouched');
 });
 
-test('an existing refs/foundation/<tag> is left as it is (created only if missing)', async () => {
+test('an existing refs/foundation/<tag> at the same commit is kept (created only if missing)', async () => {
   const f = await makeFoundation({ versions: ['0.1.0', '0.1.1'] });
   const p = await appWithHistory(f);
-  const marker = f.tagSha('v0.1.0');
-  await git(p.appDir, ['update-ref', 'refs/foundation/v0.1.1', marker]);
+  await git(p.appDir, ['update-ref', 'refs/foundation/v0.1.1', f.tagSha('v0.1.1')]);
   const r = await prepare(f, p);
   assert.equal(r.status, 'ready', r.reason);
-  assert.equal(await head(p.appDir, 'refs/foundation/v0.1.1'), marker);
+  assert.equal(await head(p.appDir, 'refs/foundation/v0.1.1'), f.tagSha('v0.1.1'));
+});
+
+test('an existing refs/foundation/<tag> at a different commit stops and changes nothing', async () => {
+  const f = await makeFoundation({ versions: ['0.1.0', '0.1.1'] });
+  const p = await appWithHistory(f);
+  await git(p.appDir, ['update-ref', 'refs/foundation/v0.1.1', f.tagSha('v0.1.0')]);
+  const refs = await refsOf(p.appDir);
+  const r = await prepare(f, p);
+  assert.deepEqual(r, { status: 'stopped', reason: "The app records the foundation's v0.1.1 as a different commit than the foundation now has, so Conductor stopped. Nothing was changed in the app." });
+  assert.equal(await refsOf(p.appDir), refs);
+  assert.equal(existsSync(p.scratchDir), false);
 });
 
 test('a real code conflict is committed with its markers and named for the loop', async () => {
@@ -173,12 +183,91 @@ test('a binary file changed on both sides stops the same way', async () => {
 test('an app with no shared history with the foundation is refused', async () => {
   const f = await makeFoundation({ versions: ['0.1.0', '0.1.1'] });
   const appDir = await makeRepo({ 'README.md': 'unrelated\n' });
-  const scratchDir = path.join(mkdtempSync(path.join(tmpdir(), 'upgrade-')), 'merge');
+  const projectDir = mkdtempSync(path.join(tmpdir(), 'upgrade-'));
   const refs = await refsOf(appDir);
-  const r = await prepareUpgradeMerge({ appDir, foundationRepo: f.dir, fromTag: 'v0.1.0', toTag: 'v0.1.1', runId: RUN_ID, scratchDir });
+  const r = await prepareUpgradeMerge({ projectDir, appDir, foundationRepo: f.dir, fromTag: 'v0.1.0', toTag: 'v0.1.1', runId: RUN_ID });
   assert.deepEqual(r, { status: 'stopped', reason: NOT_FROM_FOUNDATION });
   assert.equal(await refsOf(appDir), refs);
-  assert.equal(existsSync(scratchDir), false);
+  assert.equal(existsSync(path.join(projectDir, 'builds', RUN_ID, 'merge')), false);
+});
+
+test('a symlink changed on both sides is not text and stops', async () => {
+  const f = await makeFoundation({ versions: ['0.1.0'] });
+  symlinkSync('a.txt', path.join(f.dir, 'current'));
+  await commitAll(f.dir, 'link');
+  await git(f.dir, [...ID, 'tag', '-f', '-a', 'v0.1.0', '-m', 'v0.1.0']);
+  rmSync(path.join(f.dir, 'current'));
+  symlinkSync('b.txt', path.join(f.dir, 'current'));
+  await commitAll(f.dir, 'release: v0.1.1');
+  await git(f.dir, [...ID, 'tag', '-a', 'v0.1.1', '-m', 'v0.1.1']);
+  const p = await appWithHistory(f);
+  rmSync(path.join(p.appDir, 'current'));
+  symlinkSync('c.txt', path.join(p.appDir, 'current'));
+  await commitAll(p.appDir, 'app link');
+  const refs = await refsOf(p.appDir);
+  const r = await prepare(f, p);
+  assert.equal(r.status, 'stopped');
+  assert.match(r.reason, /current: both changed this file and it is not text\./);
+  assert.equal(await refsOf(p.appDir), refs);
+});
+
+test('a run id that is not valid stops before any folder is touched', async () => {
+  const f = await makeFoundation({ versions: ['0.1.0', '0.1.1'] });
+  const p = await appWithHistory(f);
+  mkdirSync(path.join(p.projectDir, 'builds', 'keep'), { recursive: true });
+  const refs = await refsOf(p.appDir);
+  for (const runId of ['../..', '', undefined, 'keep', '20261027-143205-a1b2/..']) {
+    const r = await prepare(f, p, { runId });
+    assert.equal(r.status, 'stopped', String(runId));
+    assert.match(r.reason, /is not a valid run id/);
+  }
+  assert.ok(existsSync(path.join(p.projectDir, 'builds', 'keep')));
+  assert.equal(await refsOf(p.appDir), refs);
+});
+
+test('an empty or missing project folder stops and deletes nothing', async () => {
+  const f = await makeFoundation({ versions: ['0.1.0', '0.1.1'] });
+  const p = await appWithHistory(f);
+  const cwdBefore = readdirSync(process.cwd()).sort();
+  for (const projectDir of ['', undefined, path.join(p.projectsRoot, 'missing')]) {
+    const r = await prepare(f, p, { projectDir });
+    assert.equal(r.status, 'stopped');
+    assert.match(r.reason, /could not set up its scratch folder/);
+  }
+  assert.deepEqual(readdirSync(process.cwd()).sort(), cwdBefore);
+  assert.equal(existsSync(path.join(p.projectsRoot, 'missing')), false);
+});
+
+test('a builds folder (or run folder) that is a link elsewhere stops and its target survives', async () => {
+  const f = await makeFoundation({ versions: ['0.1.0', '0.1.1'] });
+  for (const linked of ['builds', `builds/${RUN_ID}`]) {
+    const p = await appWithHistory(f);
+    const target = mkdtempSync(path.join(tmpdir(), 'elsewhere-'));
+    mkdirSync(path.join(target, RUN_ID, 'merge'), { recursive: true });
+    mkdirSync(path.join(target, 'merge'), { recursive: true });
+    writeFileSync(path.join(target, RUN_ID, 'merge', 'precious.txt'), 'keep\n');
+    writeFileSync(path.join(target, 'merge', 'precious.txt'), 'keep\n');
+    rmSync(path.join(p.projectDir, 'builds'), { recursive: true, force: true });
+    if (linked === 'builds') symlinkSync(target, path.join(p.projectDir, 'builds'));
+    else { mkdirSync(path.join(p.projectDir, 'builds')); symlinkSync(target, path.join(p.projectDir, 'builds', RUN_ID)); }
+    const refs = await refsOf(p.appDir);
+    const r = await prepare(f, p);
+    assert.equal(r.status, 'stopped', linked);
+    assert.match(r.reason, /could not set up its scratch folder/);
+    assert.ok(existsSync(path.join(target, RUN_ID, 'merge', 'precious.txt')), linked);
+    assert.ok(existsSync(path.join(target, 'merge', 'precious.txt')), linked);
+    assert.equal(await refsOf(p.appDir), refs);
+  }
+});
+
+test('a leftover scratch folder from a killed run is replaced', async () => {
+  const f = await makeFoundation({ versions: ['0.1.0', '0.1.1'] });
+  const p = await appWithHistory(f);
+  mkdirSync(p.scratchDir, { recursive: true });
+  writeFileSync(path.join(p.scratchDir, 'junk.txt'), 'junk\n');
+  const r = await prepare(f, p);
+  assert.equal(r.status, 'ready', r.reason);
+  assert.equal(existsSync(p.scratchDir), false);
 });
 
 test('a branch that already exists in the app stops without changing anything', async () => {
