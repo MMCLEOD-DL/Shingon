@@ -10,6 +10,7 @@ export const NOTHING_TO_BUILD = 'The new brief does not change anything the app 
 export const KIND_CHANGED = 'The new brief describes a different kind of software. That is a new project, not a change: start it with "conductor project new".';
 export const HOSTING_CHANGED = 'The new brief moves where the app runs. That needs a new deployment (conductor ship), not a change request, so nothing was built.';
 export const OPERATOR_ACCESS_REQUIRED = 'The new brief no longer gives you remote access for support. Every Highland deployment needs it (spec §4.6), so nothing was built. Revise the brief first.';
+export const EXAMPLE_ID_INVALID = (list) => `The brief has worked examples whose numbers are missing, repeated or filed under the wrong feature (${list.join(', ')}), so Conductor cannot tell which tests prove them. Nothing was built. Approve the brief again with this version of Conductor.`;
 export const EXAMPLE_ID_REUSED = (ids) => `The new brief changed the words of worked examples that kept their old numbers (${ids.join(', ')}), so Conductor cannot tell which tests prove them. Nothing was built. Revise the brief again so each changed example gets a new number.`;
 
 const FEATURE_FIELDS = ['title', 'story', 'roles', 'data', 'acceptance'];
@@ -101,7 +102,23 @@ export function briefDelta(prev, next) {
   return delta;
 }
 
+// Example ids that are missing, malformed, repeated or filed under another feature's name.
+export function invalidExampleIds(brief) {
+  const bad = [];
+  const seen = new Set();
+  for (const f of brief?.features ?? []) {
+    (f.acceptance ?? []).forEach((e, i) => {
+      const m = typeof e?.id === 'string' ? EXAMPLE_ID_RE.exec(e.id) : null;
+      if (!m || m[1] !== f.id || seen.has(e.id)) bad.push(typeof e?.id === 'string' ? e.id : `${f.id}, example ${i + 1}`);
+      if (typeof e?.id === 'string') seen.add(e.id);
+    });
+  }
+  return bad;
+}
+
 export function deltaProblem(delta, prev, next) {
+  const invalid = [...new Set([...invalidExampleIds(prev), ...invalidExampleIds(next)])];
+  if (invalid.length) return EXAMPLE_ID_INVALID(invalid);
   if (delta.reusedIds.length) return EXAMPLE_ID_REUSED(delta.reusedIds);
   if (delta.empty) return NOTHING_TO_BUILD;
   if (delta.identity.some((x) => x.field === 'kind')) return KIND_CHANGED;
@@ -175,16 +192,27 @@ const tags = (ids) => ids.map(testTag).join(', ');
 // Join sentences; the quoted old story (the only free-length part) is shortened first to fit.
 function fit(head, story, tail) {
   const room = MAX_INSTRUCTIONS - head.length - tail.length - 1;
+  if (room < 0) return [head, tail].filter(Boolean).join(' ');
   let s = story;
   if (s.length > room) s = `${s.slice(0, Math.max(0, room - 1))}…`;
-  return [head + s, tail].filter(Boolean).join(' ').slice(0, MAX_INSTRUCTIONS);
+  return [head + s, tail].filter(Boolean).join(' ');
 }
 
 function briefWideSentences(delta) {
   const out = [];
   for (const r of delta.roles.added) out.push(`Add the role "${r.name}" (it works like a ${r.mapsTo}).`);
   for (const r of delta.roles.removed) out.push(`Remove the role "${r.name}".`);
-  for (const { before, after } of delta.roles.changed) out.push(`The role "${after.name}" changed (it was a ${before.mapsTo}, now a ${after.mapsTo}).`);
+  for (const { before, after } of delta.roles.changed) {
+    const what = [];
+    if (!same(before.whatTheyDo, after.whatTheyDo)) what.push(`what they do (now: ${words(after.whatTheyDo)})`);
+    if (!same(before.sees, after.sees)) what.push(`what they see (now: ${words(after.sees)})`);
+    if (!same(before.mapsTo, after.mapsTo)) what.push(`their access level (it was ${before.mapsTo}, now ${after.mapsTo})`);
+    out.push(`The role "${after.name}" changed: ${what.join('; ') || 'its details'}.`);
+  }
+  for (const x of delta.identity) {
+    if (x.field === 'client') out.push(`The client's name changed from "${x.before}" to "${x.after}": update it wherever the app shows it.`);
+    if (x.field === 'purpose') out.push(`The app's stated purpose changed from "${x.before}" to "${x.after}": update any text that describes it.`);
+  }
   for (const x of delta.outputs.added) out.push(`Add the output "${x.name}" (${x.format}).`);
   for (const x of delta.outputs.removed) out.push(`Remove the output "${x.name}".`);
   for (const x of delta.integrations.added) out.push(`Add the integration "${x.name}".`);
@@ -196,12 +224,17 @@ function briefWideSentences(delta) {
 }
 
 export function buildUnits(delta, { toVersion } = {}) {
+  for (const f of [...delta.features.added, ...delta.features.removed, ...delta.features.changed.flatMap((c) => [c.before, c.after])]) {
+    const bad = invalidExampleIds({ features: [f] });
+    if (bad.length) throw new Error(EXAMPLE_ID_INVALID(bad));
+  }
   const units = [];
   const addedIds = new Set(delta.features.added.map((f) => f.id));
   const changedBy = new Map(delta.features.changed.map((c) => [c.after.id, c]));
   const byId = new Map(delta.features.added.map((f) => [f.id, f]));
   // Added and changed features follow the new brief's feature order.
-  for (const id of delta.order) {
+  const order = delta.order ?? [...delta.features.changed.map((c) => c.after.id), ...delta.features.added.map((f) => f.id)];
+  for (const id of order) {
     if (addedIds.has(id)) {
       const f = byId.get(id);
       units.push({
@@ -225,21 +258,21 @@ export function buildUnits(delta, { toVersion } = {}) {
   }
   for (const f of delta.features.removed) {
     const retire = (f.acceptance ?? []).map((e) => e.id).filter((id) => typeof id === 'string');
-    const parts = [
-      `Take ${f.title} out of the pages, the menu and the routes. Keep its tables and stored files, and do not write a database change that drops or empties anything: deleting old data is the client's decision.`,
+    const tail = [
       retire.length ? `Remove the tests tagged ${tags(retire)}, and only those.` : '',
       `Add a test that the menu no longer shows ${f.title} and that its old address says it is no longer available.`,
-    ];
+    ].filter(Boolean).join(' ');
+    const lead = `Take ${f.title} out of the pages, the menu and the routes. Keep its tables and stored files, and do not write a database change that drops or empties anything: deleting old data is the client's decision.`;
     units.push({
       id: `remove-${f.id}`, title: `Remove ${f.title}`, covers: [], acceptance: [], kind: 'fix', dependsOn: [],
-      instructions: parts.filter(Boolean).join(' ').slice(0, MAX_INSTRUCTIONS), change: 'removed', retire,
+      instructions: fit('', lead, tail), change: 'removed', retire,
     });
   }
   const wide = briefWideSentences(delta);
   if (wide.length) {
     units.push({
       id: 'brief-wide-changes', title: 'Brief-wide changes', covers: [], acceptance: [], kind: 'fix', dependsOn: [],
-      instructions: [...wide, 'For each role change, make sure the role-crossing tests cover it.'].join(' ').slice(0, MAX_INSTRUCTIONS),
+      instructions: fit('', wide.join(' '), 'For each role change, make sure the role-crossing tests cover it.'),
       change: 'brief-wide', retire: [],
     });
   }

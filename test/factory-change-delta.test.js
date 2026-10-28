@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   briefDelta, deltaProblem, buildUnits, profileChanged, deltaText, changeChangelogLines,
-  NOTHING_TO_BUILD, KIND_CHANGED, HOSTING_CHANGED, OPERATOR_ACCESS_REQUIRED, EXAMPLE_ID_REUSED,
+  NOTHING_TO_BUILD, EXAMPLE_ID_INVALID, KIND_CHANGED, HOSTING_CHANGED, OPERATOR_ACCESS_REQUIRED, EXAMPLE_ID_REUSED,
 } from '../src/factory/change/delta.js';
 import { MAX_INSTRUCTIONS } from '../src/factory/split.js';
 
@@ -190,4 +190,84 @@ test('changeChangelogLines: one line naming the brief version', () => {
     ['- Change (brief v3): added Mileage claims; changed Monthly report; removed Paper upload.']);
   assert.deepEqual(changeChangelogLines(briefDelta(prev, withPolicy({ residency: 'uk-eu' })), 3),
     ['- Change (brief v3): brief-wide changes.']);
+});
+
+test('a client-only change still yields a unit that says what to do', () => {
+  const renamed = brief({ version: 2, features: prev.features, client: 'Acme Ltd' });
+  const d = briefDelta(prev, renamed);
+  assert.equal(deltaProblem(d, prev, renamed), null);
+  const units = buildUnits(d, { toVersion: 2 });
+  assert.deepEqual(units.map((u) => u.id), ['brief-wide-changes']);
+  assert.match(units[0].instructions, /The client's name changed from "Acme" to "Acme Ltd"/);
+});
+
+test('every delta that deltaProblem passes produces at least one unit', () => {
+  for (const n of [next, nextWide, withPolicy({ residency: 'uk-eu' }), brief({ version: 2, features: prev.features, client: 'B' }),
+    brief({ version: 2, features: prev.features, modules: ['ocr'] })]) {
+    const d = briefDelta(prev, n);
+    assert.equal(deltaProblem(d, prev, n), null);
+    assert.ok(buildUnits(d, { toVersion: 2 }).length > 0);
+  }
+});
+
+test('buildUnits falls back to changed-then-added order when delta.order is missing', () => {
+  const d = briefDelta(prev, next);
+  delete d.order;
+  assert.deepEqual(buildUnits(d, { toVersion: 3 }).slice(0, 2).map((u) => u.id), ['change-monthly-report', 'mileage-claims']);
+});
+
+test('misfiled, malformed, repeated or missing example ids are refused and never produce a retire list', () => {
+  const cases = [
+    [ex('submit-receipt#1'), ex('paper-upload#1')],
+    [ex('submit-receipt#1'), ex('submit-receipt#1')],
+    [ex('submit-receipt#1'), { given: 'g', when: 'w', then: 't' }],
+    [ex('submit-receipt#1'), ex('nonsense')],
+  ];
+  for (const acc of cases) {
+    const bad = brief({ version: 2, features: [feat('submit-receipt', 'Submit receipt', acc), report(), paper()] });
+    const d = briefDelta(prev, bad);
+    assert.match(deltaProblem(d, prev, bad), /worked examples whose numbers are missing, repeated or filed under the wrong feature/);
+    assert.throws(() => buildUnits(d, { toVersion: 2 }), /filed under the wrong feature/);
+    const old = briefDelta(bad, prev);
+    assert.equal(deltaProblem(old, bad, prev)?.startsWith('The brief has worked examples whose numbers'), true);
+  }
+  assert.match(EXAMPLE_ID_INVALID(['a#1']), /\(a#1\)/);
+});
+
+test('removal and brief-wide units keep every tag and the closing sentence however long', () => {
+  const many = Array.from({ length: 20 }, (_, i) => ex(`paper-upload#${i + 1}`));
+  const big = { ...feat('paper-upload', 'P'.repeat(150), many) };
+  const p = brief({ version: 1, features: [submit(), big] });
+  const roles = Array.from({ length: 40 }, (_, i) => ({ name: `Role ${i}`, whatTheyDo: 'w'.repeat(150), sees: 's'.repeat(150), mapsTo: 'member' }));
+  const n = brief({ version: 2, features: [submit()], roles });
+  const units = buildUnits(briefDelta(p, n), { toVersion: 2 });
+  const removal = units.find((u) => u.change === 'removed');
+  for (let i = 1; i <= 20; i += 1) assert.ok(removal.instructions.includes(`[paper-upload#${i}]`));
+  assert.match(removal.instructions, /its old address says it is no longer available\.$/);
+  assert.match(removal.instructions, /Keep its tables and stored files/);
+  const wide = units.find((u) => u.change === 'brief-wide');
+  assert.ok(wide.instructions.length <= MAX_INSTRUCTIONS);
+  assert.match(wide.instructions, /For each role change, make sure the role-crossing tests cover it\.$/);
+});
+
+test('a role change says what actually changed', () => {
+  const roles = [{ name: 'Staff', whatTheyDo: 'claim and edit', sees: 'own', mapsTo: 'member' }];
+  const [u] = buildUnits(briefDelta(prev, brief({ version: 2, features: prev.features, roles })), { toVersion: 2 });
+  assert.match(u.instructions, /The role "Staff" changed: what they do \(now: claim and edit\)\./);
+  assert.doesNotMatch(u.instructions, /access level/);
+});
+
+test('operator access going from true to missing is refused', () => {
+  const { operatorAccess, ...rest } = basePolicy();
+  const gone = brief({ version: 3, features: prev.features, policy: rest });
+  assert.equal(deltaProblem(briefDelta(prev, gone), prev, gone), OPERATOR_ACCESS_REQUIRED);
+});
+
+test('a changed feature that only retires an example is a fix unit with a retire list', () => {
+  const fewer = brief({ version: 2, features: [submit(), report([ex('monthly-report#1')]), paper()] });
+  const d = briefDelta(prev, fewer);
+  assert.deepEqual(d.features.changed[0].examples, { added: [], retired: ['monthly-report#2'] });
+  const [u] = buildUnits(d, { toVersion: 2 });
+  assert.deepEqual([u.kind, u.acceptance, u.retire], ['fix', [], ['monthly-report#2']]);
+  assert.match(u.instructions, /Tests tagged \[monthly-report#2\]/);
 });
