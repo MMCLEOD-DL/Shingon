@@ -1,5 +1,5 @@
 import { existsSync, readdirSync } from 'node:fs';
-import { createDeflate } from 'node:zlib';
+import { constants, createDeflate, deflateRawSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
 /** An absolute path inside `modules/ocr/test/fixtures`. */
@@ -27,9 +27,22 @@ async function deflateRepeated(chunk: Buffer, times: number): Promise<Buffer> {
   return Buffer.concat(out);
 }
 
-/** A PDF of about 1 MB whose one page's content stream inflates to 1 GB of zeros (a compression bomb). */
-export async function pdfBomb(): Promise<Buffer> {
-  const stream = await deflateRepeated(Buffer.alloc(16 << 20), 64);
+/**
+ * A zlib stream that inflates to `gib` GiB of zeros, built in milliseconds: one 16 MiB block of zeros is compressed
+ * once with a full flush (so it stands alone) and repeated, then closed with an empty final block and the checksum.
+ * About 16 KB per 16 MiB, so 1 GiB is about 1 MB and 4 GiB about 4 MB.
+ */
+function zerosBomb(gib: number): Buffer {
+  const block = deflateRawSync(Buffer.alloc(16 << 20), { level: 9, finishFlush: constants.Z_FULL_FLUSH });
+  const repeats = gib * 64;
+  const total = repeats * (16 << 20);
+  const adler = Buffer.alloc(4);
+  adler.writeUInt32BE((((total % 65521) << 16) >>> 0) + 1); // zeros: a = 1, b = length mod 65521
+  return Buffer.concat([Buffer.from([0x78, 0xda]), ...Array<Buffer>(repeats).fill(block), deflateRawSync(Buffer.alloc(0)), adler]);
+}
+
+/** A one-page PDF whose page content is `data` with the stream dictionary entries `dict` (e.g. "/Filter /FlateDecode"). */
+export function pdfWithContent(dict: string, data: Buffer): Buffer {
   const parts: Buffer[] = [];
   const offsets: number[] = [];
   let at = 0;
@@ -43,7 +56,7 @@ export async function pdfBomb(): Promise<Buffer> {
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
     '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 226 600] /Contents 4 0 R >>',
-    [Buffer.from(`<< /Length ${String(stream.length)} /Filter /FlateDecode >>\nstream\n`, 'latin1'), stream, Buffer.from('\nendstream', 'latin1')],
+    [Buffer.from(`<< /Length ${String(data.length)} ${dict} >>\nstream\n`, 'latin1'), data, Buffer.from('\nendstream', 'latin1')],
   ];
   objects.forEach((o, i) => {
     offsets.push(at);
@@ -57,6 +70,11 @@ export async function pdfBomb(): Promise<Buffer> {
   for (const o of offsets) add(`${String(o).padStart(10, '0')} 00000 n \n`);
   add(`trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`);
   return Buffer.concat(parts);
+}
+
+/** A PDF whose one page's content stream inflates to `gib` GiB of zeros (a compression bomb of about `gib` MB). */
+export function pdfBomb(gib = 1): Buffer {
+  return pdfWithContent('/Filter /FlateDecode', zerosBomb(gib));
 }
 
 const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
