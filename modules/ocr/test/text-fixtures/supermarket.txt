@@ -1,0 +1,21 @@
+Harbour Foods
+1 Quay Street, Anytown AB5 6GH
+VAT No. GB 987 6543 21
+Milk 2 pints 1.20 B
+Wholemeal bread 1.10 B
+Bananas 1.20 B
+Washing-up liquid 1.99 A
+Shampoo 3.50 A
+Red wine 8.00 A
+Crisps multipack 2.50 A
+Batteries 4.00 A
+Kitchen roll 3.00 A
+SUBTOTAL 26.49
+Total savings 3.00
+BALANCE DUE £23.49
+VAT RATE NET VAT
+A 20% 16.66 3.33
+B 0% 3.50 0.00
+CASH 30.00
+CHANGE 6.51
+19/03/26 14:02

@@ -1,0 +1,9 @@
+Northside Taxis
+Unit 4, Station Road, Anytown AB3 4EF
+Tel 01234 765432
+12 Mar 2026 22:05
+Fare 12.40
+Total to pay £12.40
+incl. VAT £2.07
+Card ending 4421
+Auth code 004417

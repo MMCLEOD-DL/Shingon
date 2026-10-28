@@ -1,0 +1,8 @@
+Café de la Gare
+Place de la Gare, 75000 Paris
+03/03/2026 09:12
+Café crème 3,50
+Croissant 2,00
+Omelette 9,00
+TOTAL 14,50 €
+TVA 10% 1,32

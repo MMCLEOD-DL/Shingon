@@ -1,0 +1,6 @@
+Northside Taxis
+Unit 4, Station Road, Anytown AB3 4EF
+12/03/2026 23:40
+Fare 12.40
+TOTAL £12.40
+VAT £2.70

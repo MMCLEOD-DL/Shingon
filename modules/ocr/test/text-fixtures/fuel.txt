@@ -1,0 +1,8 @@
+Fuel Stop
+Ring Road Services, Anytown AB7 8JK
+23-03-2026 08:15
+Pump 3
+UNLEADED 37.50L @ 120.0p
+TOTAL £45.00
+VAT 20.00% £7.50
+Card ending 9012
