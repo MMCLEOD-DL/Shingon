@@ -23,6 +23,7 @@ export const NO_MAIN = 'The app has no main line (branch "main"), so Conductor c
 export const RELEASE_TOUCHED_CODE = (files) => `The release step changed more than the version and changelog (${files.join(', ')}), so nothing was shipped.`;
 export const RELEASE_VERSION_DIFFERS = (expected, got) => `The release came out as version ${got}, but you approved ${expected}, so nothing was shipped.`;
 export const RELEASE_NOT_ON_MAIN = 'The release is not on the app\'s main line, so nothing was shipped.';
+export const RELEASE_CHANGED_SETTINGS = (files) => `The release step changed more than the version numbers in ${files.join(', ')}, so nothing was shipped.`;
 export const RELEASE_TAG_ELSEWHERE = (version) => `The release tag v${version} is not on the release, so nothing was shipped.`;
 
 const APP_UNREADABLE = 'Conductor could not check the app folder, so it did not touch it.';
@@ -315,5 +316,76 @@ export async function releaseProblem({ appDir, from, release, expectedVersion })
   const names = await g(appDir, [...DIFF_NAMES, from, release.sha]);
   if (names.code !== 0) return RELEASE_UNCHECKABLE;
   const stray = names.stdout.split('\0').filter((f) => f !== '' && !RELEASE_FILES.includes(f));
-  return stray.length ? RELEASE_TOUCHED_CODE(stray) : null;
+  if (stray.length) return RELEASE_TOUCHED_CODE(stray);
+  return releaseContentProblem(appDir, from, release.sha);
+}
+
+const REGULAR_MODES = new Set(['100644', '100755']);
+
+// One `ls-tree -z` entry for a top-level file: { mode, type } or null when the commit has no such entry.
+async function treeEntry(appDir, sha, file) {
+  const r = await g(appDir, ['ls-tree', '-z', sha, '--', file]);
+  if (r.code !== 0) throw new Error('unreadable');
+  const entry = r.stdout.split('\0').find((e) => e.slice(e.indexOf('\t') + 1) === file);
+  if (!entry) return null;
+  const [mode, type] = entry.slice(0, entry.indexOf('\t')).split(' ');
+  return { mode, type };
+}
+
+// Canonical JSON (keys sorted), so only content counts, never key order.
+function canonical(v) {
+  if (Array.isArray(v)) return v.map(canonical);
+  if (v && typeof v === 'object') return Object.fromEntries(Object.keys(v).sort().map((k) => [k, canonical(v[k])]));
+  return v;
+}
+
+// What a release may change in each JSON release file (the foundation's scripts/release.ts): the version in
+// package.json, package-lock.json (top and packages[""]) and foundation.json, and foundation.json's commit stamp, which
+// it sets to the new tag name. True when `before` and `after` differ in nothing else.
+function sameApartFromRelease(file, before, after) {
+  const isObj = (o) => o !== null && typeof o === 'object' && !Array.isArray(o);
+  if (!isObj(before) || !isObj(after)) return false;
+  const strip = (j, stamp) => {
+    const c = structuredClone(j);
+    delete c.version;
+    if (stamp) delete c.commit;
+    if (file === 'package-lock.json' && isObj(c.packages) && isObj(c.packages[''])) delete c.packages[''].version;
+    return JSON.stringify(canonical(c));
+  };
+  const stamp = file === 'foundation.json' && (after.commit === before.commit || after.commit === `v${after.version}`);
+  return strip(before, stamp) === strip(after, stamp);
+}
+
+/**
+ * Between `base` and `head`, the release files may change only as a release changes them: each stays a regular file
+ * with the same mode (no link, no submodule, none added or removed), package.json, package-lock.json and
+ * foundation.json differ only in their version fields (and foundation.json's commit stamp), CHANGELOG.md is free text.
+ * Files outside RELEASE_FILES are not looked at here. null when fine, otherwise the plain reason (fails closed).
+ */
+export async function releaseContentProblem(appDir, base, head) {
+  if (!isSha(base) || !isSha(head)) return NO_RELEASE_GIVEN;
+  const names = await g(appDir, [...DIFF_NAMES, base, head]);
+  if (names.code !== 0) return RELEASE_UNCHECKABLE;
+  const changed = names.stdout.split('\0').filter((f) => RELEASE_FILES.includes(f));
+  const bad = [];
+  try {
+    for (const file of changed) {
+      const before = await treeEntry(appDir, base, file);
+      const after = await treeEntry(appDir, head, file);
+      if (!before || !after || after.type !== 'blob' || before.type !== 'blob' || !REGULAR_MODES.has(after.mode) || after.mode !== before.mode) {
+        bad.push(file);
+        continue;
+      }
+      if (file === 'CHANGELOG.md') continue;
+      const a = await g(appDir, ['show', `${base}:${file}`]);
+      const b = await g(appDir, ['show', `${head}:${file}`]);
+      if (a.code !== 0 || b.code !== 0) return RELEASE_UNCHECKABLE;
+      let same;
+      try { same = sameApartFromRelease(file, JSON.parse(a.stdout), JSON.parse(b.stdout)); } catch { same = false; }
+      if (!same) bad.push(file);
+    }
+  } catch {
+    return RELEASE_UNCHECKABLE;
+  }
+  return bad.length ? RELEASE_CHANGED_SETTINGS(bad) : null;
 }

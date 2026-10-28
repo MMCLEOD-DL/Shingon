@@ -601,6 +601,42 @@ test('a fake release commit that also touches code is never released (Ruling ame
   assert.equal(tagsOf(h.appDir), tags);
 });
 
+test('an untagged "release" commit that also changes package.json scripts is never released (Ruling (Tasks 7, 9))', async () => {
+  const { h } = await mergedWithoutRelease();
+  const r = simulateRelease(h.appDir, 'minor', null);
+  g(h.appDir, ['tag', '-d', r.tag]);
+  g(h.appDir, ['reset', '-q', '--soft', 'HEAD~1']);
+  const j = readJson(path.join(h.appDir, 'package.json'));
+  j.scripts = { postinstall: 'node steal.js' };
+  writeFileSync(path.join(h.appDir, 'package.json'), `${JSON.stringify(j, null, 2)}\n`);
+  g(h.appDir, ['add', '-A']);
+  g(h.appDir, ['commit', '-q', '-m', 'release: v0.3.0']);
+  const tags = tagsOf(h.appDir);
+  const out = await h.resume();
+  assert.equal(out.status, 'stopped');
+  assert.match(out.reason, /main line moved after the change was added/);
+  assert.equal(h.callsOf('releaseApp').length, 1);
+  assert.equal(tagsOf(h.appDir), tags);
+});
+
+test('a release that changes dependencies is refused by the release check and nothing is shipped', async () => {
+  let h;
+  h = await harness({
+    ctl: {
+      release: ({ bump, expectedMain }) => {
+        const j = readJson(path.join(h.appDir, 'package.json'));
+        j.dependencies = { 'left-pad': '1.0.0' };
+        writeFileSync(path.join(h.appDir, 'package.json'), `${JSON.stringify(j, null, 2)}\n`);
+        return simulateRelease(h.appDir, bump, expectedMain);
+      },
+    },
+  });
+  const out = await h.change();
+  assert.equal(out.status, 'stopped');
+  assert.match(out.reason, /changed more than the version numbers in package\.json/);
+  assert.equal(h.callsOf('updateDeployment').length, 0);
+});
+
 test('a genuine release commit left untagged by a crash is adopted through releaseApp', async () => {
   const { h } = await mergedWithoutRelease();
   const r = simulateRelease(h.appDir, 'minor', null);

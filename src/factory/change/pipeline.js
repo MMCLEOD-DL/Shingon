@@ -29,7 +29,7 @@ import { missingSeams, loadBriefVersion, currentBriefVersion } from './seams.js'
 import { STAGES, createChangeRun, saveChangeRun, findUnfinishedRun } from './run.js';
 import { briefDelta, deltaProblem, buildUnits, profileChanged, deltaText, changeChangelogLines } from './delta.js';
 import { makeChangeGate, conflictMarkers, MARKERS_LEFT, NOT_APPROVED_COMMIT, NO_APPROVAL, CHECK_FAILED } from './gate.js';
-import { nextVersion, appMain, appCheckoutProblem, appVersionAt, commitChangelog, advanceMain, releaseProblem, MAIN_MOVED, RELEASE_FILES } from './mainline.js';
+import { nextVersion, appMain, appCheckoutProblem, appVersionAt, commitChangelog, advanceMain, releaseProblem, releaseContentProblem, MAIN_MOVED, RELEASE_FILES } from './mainline.js';
 import { upgradeTargetProblem, prepareUpgradeMerge, upgradeUnit, upgradeChangelogLines, MAX_CONFLICT_FILES } from './upgradeMerge.js';
 import { shipUpdate, shipReport, projectDeployments, NO_DEPLOYMENTS } from './ship.js';
 
@@ -589,7 +589,9 @@ async function isUntaggedRelease(appDir, sha, changelogSha, expectedVersion) {
   if (parents.code !== 0 || p.length !== 2 || p[1] !== changelogSha) return false;
   const names = await git(appDir, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-only', '-z', changelogSha, sha]);
   if (names.code !== 0) return false;
-  return names.stdout.split('\0').filter((f) => f !== '').every((f) => RELEASE_FILES.includes(f));
+  if (!names.stdout.split('\0').filter((f) => f !== '').every((f) => RELEASE_FILES.includes(f))) return false;
+  // And only as a release changes them: version numbers, not scripts, dependencies or file types.
+  return (await releaseContentProblem(appDir, changelogSha, sha)) === null;
 }
 
 // ---- merged: the release ----------------------------------------------------------------------------------

