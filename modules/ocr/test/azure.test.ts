@@ -69,6 +69,17 @@ test("a cloud reading still goes through readReceipt's caps and cross-checks (Ru
   expect(p.vatPence?.confidence ?? 0).toBeLessThan(CONFIDENT);
 });
 
+test('a total with no currency code is not taken as pounds', async () => {
+  stub = await startAzureStub();
+  stub.result.analyzeResult = { documents: [{ fields: {
+    Total: { valueCurrency: { amount: 12.4 }, confidence: 0.99 },
+    TotalTax: { valueCurrency: { amount: 2.07 }, confidence: 0.99 },
+  } }] };
+  const r = await engineFor(stub).read({ bytes, type: 'image/jpeg' });
+  expect(r.fields?.amountPence).toEqual({ value: 1240, confidence: 0.8 });
+  expect(r.fields?.vatPence).toEqual({ value: 207, confidence: 0.8 });
+});
+
 test('plain http is refused except to 127.0.0.1 in tests', async () => {
   stub = await startAzureStub();
   const base = { key: 'k', region: 'uksouth' };

@@ -12,17 +12,19 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { toPence, type Pence, type Scored } from '@hf/shared';
 import { z } from 'zod';
 import { OcrPolicyError } from './choose.js';
+import { checkDestinationAddress } from './destinations.js';
 import { NOT_POUNDS_WARNING, type OcrLine } from './extract.js';
 import { CloudEngineError, type CloudFailure, type EngineFields, type OcrEngine, type OcrResult } from './types.js';
 
 const ENGINE_ID = 'azure-document-intelligence';
 const ANALYSE_PATH = '/documentintelligence/documentModels/prebuilt-receipt:analyze?api-version=2024-11-30';
 const KEY_HEADER = 'Ocp-Apim-Subscription-Key';
-const ENDPOINT_REFUSED = 'OCR_AZURE_ENDPOINT must start with https://.';
 /** Azure gives confidences for words, not lines. */
 const LINE_CONFIDENCE = 0.9;
 /** The most an amount in another currency may be trusted (as the extraction caps its own). */
 const NOT_POUNDS_CAP = 0.5;
+/** The most an amount may be trusted when Azure doesn't say which currency it is in (as `readReceipt` caps its own). */
+const NO_CURRENCY_CAP = 0.8;
 /** The largest answer accepted, in bytes. A receipt's reading is a few tens of kilobytes. */
 const MAX_ANSWER_BYTES = 5 * 1024 * 1024;
 const MAX_MERCHANT = 200;
@@ -67,18 +69,6 @@ export interface AzureReceiptOptions {
   fetchImpl?: typeof fetch;
 }
 
-function endpointOrigin(endpoint: string, allowHttpLoopback: boolean): string {
-  let url: URL;
-  try {
-    url = new URL(endpoint);
-  } catch {
-    throw new OcrPolicyError([ENDPOINT_REFUSED]);
-  }
-  const loopback = allowHttpLoopback && url.protocol === 'http:' && url.hostname === '127.0.0.1';
-  if ((url.protocol !== 'https:' && !loopback) || url.username !== '' || url.password !== '') throw new OcrPolicyError([ENDPOINT_REFUSED]);
-  return url.origin;
-}
-
 const realDate = (s: string): boolean => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
   const d = new Date(`${s}T00:00:00Z`);
@@ -94,7 +84,8 @@ function fieldsOf(analysis: Analysis): { fields: EngineFields; warnings: string[
     const v = field?.valueCurrency;
     if (!v) return undefined;
     let confidence = field.confidence ?? 0;
-    if (v.currencyCode !== undefined && v.currencyCode !== 'GBP') {
+    if (v.currencyCode === undefined) confidence = Math.min(confidence, NO_CURRENCY_CAP);
+    else if (v.currencyCode !== 'GBP') {
       confidence = Math.min(confidence, NOT_POUNDS_CAP);
       warnings.push(NOT_POUNDS_WARNING);
     }
@@ -146,8 +137,10 @@ function failureOf(err: unknown): CloudFailure {
 }
 
 export function createAzureReceiptEngine(opts: AzureReceiptOptions): OcrEngine {
-  const origin = endpointOrigin(opts.endpoint, opts.allowHttpLoopback ?? false);
-  const base = opts.endpoint.replace(/\/+$/, '');
+  // Checked again here, not only at start-up, so no caller can point the key at another host.
+  const checked = checkDestinationAddress('OCR_AZURE_ENDPOINT', opts.endpoint, ENGINE_ID, opts.allowHttpLoopback ?? false);
+  if (!checked.ok) throw new OcrPolicyError([checked.problem]);
+  const { origin } = checked;
   const { key } = opts;
   const pollMs = opts.pollMs ?? 1000;
   const timeoutMs = opts.timeoutMs ?? 30000;
@@ -163,7 +156,7 @@ export function createAzureReceiptEngine(opts: AzureReceiptOptions): OcrEngine {
     const call = (url: string, init: RequestInit): Promise<Response> =>
       fetchImpl(url, { ...init, redirect: 'error', signal: AbortSignal.timeout(timeLeft()) });
 
-    const sent = await call(`${base}${ANALYSE_PATH}`, { method: 'POST', headers: { [KEY_HEADER]: key, 'Content-Type': type }, body: Uint8Array.from(bytes) });
+    const sent = await call(`${origin}${ANALYSE_PATH}`, { method: 'POST', headers: { [KEY_HEADER]: key, 'Content-Type': type }, body: Uint8Array.from(bytes) });
     await sent.body?.cancel();
     if (sent.status !== 202) throw new CloudEngineError(`http-${String(sent.status)}`);
     const location = sent.headers.get('operation-location');

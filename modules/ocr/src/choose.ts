@@ -5,8 +5,8 @@
  * configuration mistake can never send a receipt off the box (Review Focus 3).
  */
 import type { AppProfile } from '@hf/shared';
-import { RESIDENCY_REGIONS } from './destinations.js';
-import { withFallback } from './fallback.js';
+import { checkDestinationAddress, RESIDENCY_REGIONS } from './destinations.js';
+import { withFallback, type FallbackOptions } from './fallback.js';
 import type { OcrEngine } from './types.js';
 
 const AZURE_ID = 'azure-document-intelligence';
@@ -33,20 +33,33 @@ export class OcrPolicyError extends Error {
 
 export interface EngineMakers {
   local: () => Promise<OcrEngine>;
-  azure: (cfg: AzureSettings) => OcrEngine;
+  azure: (cfg: AzureSettings & { allowHttpLoopback: boolean }) => OcrEngine;
+}
+
+export interface ChooseOptions extends FallbackOptions {
+  /** Lets `http://127.0.0.1` through as the Azure endpoint. For the test stand-in only; never set in production. */
+  allowHttpLoopback?: boolean;
 }
 
 const orList = (xs: readonly string[]): string => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} or ${xs.at(-1) ?? ''}`);
 const RESIDENCY_WORDS = { uk: 'the UK', 'uk-eu': 'the UK or Europe' } as const;
 
-function azureProblems(profile: AppProfile, azure: Partial<AzureSettings> | undefined): string[] {
+function azureProblems(profile: AppProfile, azure: Partial<AzureSettings> | undefined, allowHttpLoopback: boolean): string[] {
   const problems: string[] = [];
   if (!profile.policy.outbound.includes(AZURE_ID)) {
     problems.push("OCR_ENGINE is set to azure, but this app's data policy does not allow receipts to be sent to Azure Document Intelligence. Use OCR_ENGINE=local, or change the policy through a change request.");
   }
-  const missing = (['endpoint', 'key', 'region'] as const).filter((k) => !azure?.[k]);
-  for (const k of missing) problems.push(`OCR_AZURE_${k.toUpperCase()} is needed when OCR_ENGINE is azure.`);
-  const region = azure?.region;
+  const given = (k: keyof AzureSettings): string => azure?.[k]?.trim() ?? '';
+  for (const k of ['endpoint', 'key', 'region'] as const) {
+    if (given(k) === '') problems.push(`OCR_AZURE_${k.toUpperCase()} is needed when OCR_ENGINE is azure.`);
+  }
+  const endpoint = given('endpoint');
+  if (endpoint !== '') {
+    const checked = checkDestinationAddress('OCR_AZURE_ENDPOINT', endpoint, AZURE_ID, allowHttpLoopback);
+    if (!checked.ok) problems.push(checked.problem);
+  }
+  // The region is what the operator declares for the Azure resource; it is not detected from the service.
+  const region = given('region');
   const residency = profile.policy.residency;
   if (region && residency !== 'any') {
     const allowed = RESIDENCY_REGIONS[residency];
@@ -63,21 +76,22 @@ function azureProblems(profile: AppProfile, azure: Partial<AzureSettings> | unde
  * The engine the app reads receipts with. Local needs no permission. Azure is made only when nothing is wrong, and
  * then always with the local engine as its fallback.
  */
-export async function chooseEngine(profile: AppProfile, cfg: OcrSettings, make: EngineMakers): Promise<OcrEngine> {
+export async function chooseEngine(profile: AppProfile, cfg: OcrSettings, make: EngineMakers, opts: ChooseOptions = {}): Promise<OcrEngine> {
+  const allowHttpLoopback = opts.allowHttpLoopback ?? false;
   const engine: string = cfg.engine;
   if (engine === 'local') return make.local();
   if (engine !== 'azure') throw new OcrPolicyError(['OCR_ENGINE must be local or azure.']);
 
-  const problems = azureProblems(profile, cfg.azure);
+  const problems = azureProblems(profile, cfg.azure, allowHttpLoopback);
   if (problems.length > 0 || !cfg.azure) throw new OcrPolicyError(problems);
 
   const local = await make.local();
   let cloud: OcrEngine;
   try {
-    cloud = make.azure(cfg.azure);
+    cloud = make.azure({ ...cfg.azure, allowHttpLoopback });
   } catch (err) {
     await local.close();
     throw err;
   }
-  return withFallback(cloud, local);
+  return withFallback(cloud, local, { ...(opts.onFallback ? { onFallback: opts.onFallback } : {}) });
 }

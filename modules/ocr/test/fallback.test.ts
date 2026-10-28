@@ -66,3 +66,13 @@ test("the wrapper carries the primary's identity, and closing it closes both", a
   expect(cloud.closed).toBe(true);
   expect(local.closed).toBe(true);
 });
+
+test('onFallback hears the reason, and a throwing hook does not lose the reading', async () => {
+  const reasons: string[] = [];
+  const local = fakeEngine('local-tesseract', 'local');
+  const r = await withFallback(failing(new CloudEngineError('timeout')), local, { onFallback: (reason) => { reasons.push(reason); } }).read({ bytes, type: 'image/jpeg' });
+  expect(reasons).toEqual(['timeout']);
+  expect(r.warnings).toEqual([FELL_BACK]);
+  const r2 = await withFallback(failing(new CloudEngineError('network')), local, { onFallback: () => { throw new Error('logger down'); } }).read({ bytes, type: 'image/jpeg' });
+  expect(r2.engine).toBe('local-tesseract');
+});

@@ -3,7 +3,7 @@ export { CloudEngineError, UnreadableError, type CloudFailure, type EngineFields
 export { createLocalEngine, localEngineOptions } from './local.js';
 export { readReceipt } from './readReceipt.js';
 export { benchCorpus, writeAccuracyReport, type BenchCase, type BenchReport } from './bench.js';
-export { OUTBOUND_DESTINATIONS, RESIDENCY_REGIONS, type OutboundDestination } from './destinations.js';
+export { checkDestinationAddress, OUTBOUND_DESTINATIONS, RESIDENCY_REGIONS, type OutboundDestination } from './destinations.js';
 export { createAzureReceiptEngine, type AzureReceiptOptions } from './azure.js';
-export { chooseEngine, OcrPolicyError, type AzureSettings, type EngineMakers, type OcrSettings } from './choose.js';
-export { FELL_BACK_WARNING, withFallback } from './fallback.js';
+export { chooseEngine, OcrPolicyError, type AzureSettings, type ChooseOptions, type EngineMakers, type OcrSettings } from './choose.js';
+export { FELL_BACK_WARNING, withFallback, type FallbackOptions } from './fallback.js';

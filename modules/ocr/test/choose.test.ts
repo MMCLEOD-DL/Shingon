@@ -88,15 +88,21 @@ test('an unknown engine name is refused', async () => {
   await expect(chooseEngine(profile([]), cfg, make)).rejects.toMatchObject({ problems: ['OCR_ENGINE must be local or azure.'] });
 });
 
-test('an Azure endpoint the adapter refuses stops the start as a policy problem, and the local engine is closed', async () => {
+test('if the cloud engine cannot be made, the start stops and the local engine is closed', async () => {
   const loc = fakeEngine('local-tesseract', 'local');
-  const err = await chooseEngine(profile(['azure-document-intelligence']), ocr('azure', { ...azureCfg, endpoint: 'http://example.com' }), {
+  const refused = new OcrPolicyError(['OCR_AZURE_ENDPOINT must start with https://.']);
+  const err = await chooseEngine(profile(['azure-document-intelligence']), ocr('azure', azureCfg), {
     local: async () => loc,
-    azure: (c) => createAzureReceiptEngine(c),
+    azure: () => { throw refused; },
   }).catch((x: unknown) => x);
-  expect(err).toBeInstanceOf(OcrPolicyError);
-  expect((err as OcrPolicyError).problems).toEqual(['OCR_AZURE_ENDPOINT must start with https://.']);
+  expect(err).toBe(refused);
   expect(loc.closed).toBe(true);
+});
+
+test('plain http is refused at start, before anything is made', async () => {
+  await expect(chooseEngine(profile(['azure-document-intelligence']), ocr('azure', { ...azureCfg, endpoint: 'http://example.com' }), make)).rejects.toMatchObject({
+    problems: ['OCR_AZURE_ENDPOINT must start with https://.'],
+  });
 });
 
 test('the destinations list and residency regions are the pinned values', () => {
@@ -112,4 +118,75 @@ test('the chosen cloud engine is a fallback wrapper over the local one', async (
   expect(e.id).toBe('azure-document-intelligence');
   await e.close();
   expect(loc.closed).toBe(true);
+});
+
+const HOST_REFUSED = 'OCR_AZURE_ENDPOINT must be an Azure Document Intelligence address ending in .cognitiveservices.azure.com, with no port, path or query, like https://name.cognitiveservices.azure.com.';
+
+test.each([
+  ['a typosquat', 'https://acme.cognitiveservices.azure.co'],
+  ['a host that is not Azure', 'https://receipts.example.com'],
+  ['the Azure suffix in the middle', 'https://x.cognitiveservices.azure.com.evil.com'],
+  ['the bare suffix with no name before it', 'https://cognitiveservices.azure.com'],
+  ['a trailing dot', 'https://acme.cognitiveservices.azure.com.'],
+  ['an empty label', 'https://acme..cognitiveservices.azure.com'],
+  ['an explicit port', 'https://acme.cognitiveservices.azure.com:8443'],
+  ['a path', 'https://acme.cognitiveservices.azure.com/proxy'],
+  ['a query', 'https://acme.cognitiveservices.azure.com/?x=1'],
+  ['an empty query', 'https://acme.cognitiveservices.azure.com?'],
+  ['a fragment', 'https://acme.cognitiveservices.azure.com#x'],
+  ['a user name', 'https://user@acme.cognitiveservices.azure.com'],
+])('an endpoint with %s is refused at start, and nothing is sent', async (_name, endpoint) => {
+  stub = await startAzureStub();
+  const s = stub;
+  let made = 0;
+  // Any request the adapter made would land on the stub, so its request count is the proof.
+  const toStub: typeof fetch = (url, init) => fetch(`${s.url}${new URL(url instanceof Request ? url.url : url).pathname}`, init);
+  const err = await chooseEngine(profile(['azure-document-intelligence']), ocr('azure', { ...azureCfg, endpoint }), {
+    local: make.local,
+    azure: (c) => { made += 1; return createAzureReceiptEngine({ ...c, fetchImpl: toStub }); },
+  }).catch((x: unknown) => x);
+  expect(err).toBeInstanceOf(OcrPolicyError);
+  expect((err as OcrPolicyError).problems).toEqual([HOST_REFUSED]);
+  expect(JSON.stringify((err as OcrPolicyError).problems)).not.toContain(endpoint);
+  expect(made).toBe(0);
+  expect(s.requests).toEqual([]);
+});
+
+test('the adapter refuses the same endpoints on its own (defence in depth)', () => {
+  for (const endpoint of ['https://receipts.example.com', 'https://x.cognitiveservices.azure.com.evil.com', 'https://acme.cognitiveservices.azure.com:8443', 'https://acme.cognitiveservices.azure.com/p', 'https://acme.cognitiveservices.azure.com?']) {
+    expect(() => createAzureReceiptEngine({ endpoint, key: 'k', region: 'uksouth' })).toThrow(HOST_REFUSED);
+  }
+  expect(() => createAzureReceiptEngine({ endpoint: 'https://ACME.CognitiveServices.Azure.com/', key: 'k', region: 'uksouth' })).not.toThrow();
+});
+
+test('the loopback stand-in is allowed only when chooseEngine is told so, and then reads end to end', async () => {
+  stub = await startAzureStub();
+  const s = stub;
+  const p = profile(['azure-document-intelligence']);
+  const cfg = ocr('azure', { ...azureCfg, endpoint: s.url });
+  const makers = { local: make.local, azure: (c: Parameters<typeof createAzureReceiptEngine>[0]) => createAzureReceiptEngine({ ...c, pollMs: 10 }) };
+  await expect(chooseEngine(p, cfg, makers)).rejects.toMatchObject({ problems: ['OCR_AZURE_ENDPOINT must start with https://.'] });
+  expect(s.requests).toEqual([]);
+  const e = await chooseEngine(p, cfg, makers, { allowHttpLoopback: true });
+  const r = await e.read({ bytes: Buffer.from('x'), type: 'image/jpeg' });
+  expect(r.fields?.amountPence?.value).toBe(1240);
+});
+
+test('whitespace-only Azure settings count as missing', async () => {
+  await expect(chooseEngine(profile(['azure-document-intelligence']), ocr('azure', { endpoint: '  ', key: ' ', region: '\t' }), make)).rejects.toMatchObject({
+    problems: ['OCR_AZURE_ENDPOINT is needed when OCR_ENGINE is azure.', 'OCR_AZURE_KEY is needed when OCR_ENGINE is azure.', 'OCR_AZURE_REGION is needed when OCR_ENGINE is azure.'],
+  });
+});
+
+test('a fallback is reported through onFallback with a key-free reason', async () => {
+  stub = await startAzureStub('error500');
+  const s = stub;
+  const reasons: string[] = [];
+  const e = await chooseEngine(profile(['azure-document-intelligence']), ocr('azure', { ...azureCfg, endpoint: s.url }), {
+    local: async () => fakeEngine('local-tesseract', 'local'),
+    azure: (c) => createAzureReceiptEngine({ ...c, pollMs: 10 }),
+  }, { allowHttpLoopback: true, onFallback: (reason) => { reasons.push(reason); } });
+  const r = await e.read({ bytes: Buffer.from('x'), type: 'image/jpeg' });
+  expect(r.engine).toBe('local-tesseract');
+  expect(reasons).toEqual(['http-500']);
 });
