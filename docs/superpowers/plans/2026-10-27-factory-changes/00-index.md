@@ -70,7 +70,7 @@
 
    | File | Rule | Why |
    |---|---|---|
-   | `foundation.json` | take the foundation's | it records the foundation release |
+   | `foundation.json` | keep the app's (Ruling C1) | foundation v0.1.x `release.ts` refuses when its version differs from `package.json`; taking the foundation's would break the app's next release |
    | `CHANGELOG.md` | keep the app's. The foundation's notes for the versions brought in go into the app's `Unreleased` section as one line, plus each `[security]` line | the app's changelog is the app's history |
    | `package.json`, `package-lock.json` | a conflict hunk whose two sides are each only a `"version": "…"` line keeps the app's; any other hunk stays for the loop | the app has its own version number |
    | any file with both sides present and text conflict markers | committed with its markers on the upgrade branch; the build unit names it | the author/reviewer loop resolves it, and the council and gate check |
@@ -146,7 +146,7 @@
 5. **A hosting change** is refused as a change request (Ruling 2). Default built: refuse and say to set up a new deployment instead.
 6. **The `foundation.json` stamping bug is fixed in foundation v0.2.0** (Contract 7.9 item 1, Plan 12 milestone 1). `scripts/release.ts` now stamps `foundation.json` only when `package.json.name` is `highland-foundation`.
    - Apps cloned from v0.1.0 that have made a release still carry a wrong `foundation.json`. `/api/version` reports it until they take v0.2.0 through `conductor foundation-upgrade <slug> --to v0.2.0`.
-   - The merge rule "take the foundation's `foundation.json`" (Ruling 5) corrects it at that upgrade.
+   - Ruling C1 keeps the app's `foundation.json` at a merge, so the upgrade does not correct it; the recorded tag in `project.json` stays the source of truth (Ruling 11). Correcting the file is a Plan 12 follow-up.
    - Plan 11 keeps Ruling 11 regardless.
    - Open: should Plan 11 suggest the v0.2.0 upgrade in `--check` even with no `[security]` line? Default built: no; `--check` reports security fixes only.
 7. **Release tags only.** Default built: `--to` accepts `vX.Y.Z` only, no pre-release tags.
