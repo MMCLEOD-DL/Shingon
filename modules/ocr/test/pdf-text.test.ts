@@ -172,7 +172,8 @@ describe('the reader process is held to its memory ceiling, whatever the pre-sca
     const r = await readWatched(n4Bomb(), { preScan: false, ceilingBytes: 64 * PDF_MEMORY_CEILING });
     expect(r.error).toMatchObject({ userMessage: UNOPENABLE });
     expect(r.exit).toEqual(KILLED);
-    expect(r.peakMb).toBeGreaterThan(CEILING_MB);
+    // It reached the ceiling (sampled every few ms from outside, so the last few MB before the kill may be missed).
+    expect(r.peakMb).toBeGreaterThan(CEILING_MB * 0.9);
     expect(r.peakMb).toBeLessThan(CEILING_MB + OVERSHOOT_MB);
   }, 30_000);
 
