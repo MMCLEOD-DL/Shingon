@@ -6,7 +6,10 @@ export interface MoneyToken {
   confidence: number;
   /** How many letters were read as digits (O→0, S→5 …) to make the amount. */
   repairs: number;
-  /** True when a minus sign comes before the amount ("-£8.75", "£-8.75"): a refund or a discount. */
+  /**
+   * True for a refund, credit or discount: a minus before or after the amount ("-£8.75", "£8.75-"), brackets
+   * ("(£8.75)"), a CR suffix, or any amount on a line that mentions a refund or a credit.
+   */
   signed: boolean;
 }
 
@@ -25,6 +28,7 @@ const COMMA_DECIMAL_RE = new RegExp(`${EDGE_BEFORE}(${D}{1,7})[.,](${D}{2})${EDG
 // Lines whose numbers are never money: phone numbers, VAT registration numbers, card and authorisation lines.
 const PHONE_WORD = /\b(tel|telephone|phone|fax|mob|mobile)\b/i;
 const PHONE_NUMBER = /(?<![\d.])(?:\+44\s?|0)\d{2,4}\s?\d{3}\s?\d{3,4}(?![\d.])/;
+const REFUND_OR_CREDIT = /refund|credit/i;
 export const VAT_NUMBER = /\bVAT\s*(no|reg|number)\b/i;
 const CARD_OR_AUTH = /\b(card|auth|authorisation|authorization)\b/i;
 
@@ -56,7 +60,9 @@ export function findMoney(text: string, lineConfidence: number, opts: { commaDec
         return REPAIR[c] ?? c;
       });
     const pence = toPence(`${fix(whole)}.${fix(decimals)}`);
-    const signed = /[-−]\s*(?:£|GBP\s?)?\s*$/.test(text.slice(0, m.index));
+    const before = text.slice(0, m.index);
+    const after = text.slice(m.index + m[0].length);
+    const signed = REFUND_OR_CREDIT.test(text) || /[-−(]\s*(?:£|GBP\s?)?\s*$/.test(before) || /^\s*(?:[-−)]|CR\b)/i.test(after);
     out.push({ pence, confidence: Math.max(0, lineConfidence - 0.3 * repairs), repairs, signed });
   }
   return out;

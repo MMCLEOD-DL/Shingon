@@ -22,19 +22,29 @@ export const VAT_MISMATCH_WARNING = "The VAT doesn't match the usual rates for t
 const UNSURE = 0.6;
 const DOUBTFUL = 0.5;
 
-const TOTAL_WORD = /total|balance due|amount due|to pay|grand total/i;
+const TOTAL_WORD = /total|balance due|amount due|to pay|grand total|payable|\bpay\b|amount\b|charged|due/i;
 // Lines that mention a total but are not the amount paid: subtotals, savings, money handed over, tips, points.
 const NOT_TOTAL_WORD =
-  /sub|\bsav(e|ed|es|ing|ings)\b|reduction|promo|tender|cash|change|paid|deposit|\btip\b|gratuity|suggest|points|\bvat\b|\btax\b|\bnet\b|discount/i;
+  /sub|\bsav(e|ed|es|ing|ings)\b|reduction|promo|tender|cash|change|paid|deposit|\btip\b|gratuity|suggest|points|\bvat\b|\btax\b|\bnet\b|discount|excl|\bexc\b|before|refund|credit/i;
 // "Total incl. VAT £8.75" is a total; "Total excl. VAT" and "Total ex VAT" are not.
 const INCLUDING_VAT = /\b(?:incl(?:uding|\.)?|inc\.?)\s*(?:of\s*)?vat\b/i;
 const VAT_WORD = /\bvat\b|\btax\b/i;
+// "Total before VAT £7.29", "excluding VAT": a net amount, never the VAT.
+const NET_OF_VAT = /\b(?:excl(?:uding|\.)?|exc\.?|ex|before|less|without)\s*(?:of\s*)?vat\b/i;
+// A refund or credit note anywhere (other than a payment card line) means the amounts may be money going back.
+const REFUND_OR_CREDIT = /refund|credit/i;
 // A VAT summary row: a rate code, the rate, then the net and the VAT, and optionally the gross ("A 20% 16.66 3.33 19.99").
 const VAT_ROW = /^\s*[A-Z]\s+(\d{1,2})(?:\.(\d{1,2}))?\s?%/;
 const OTHER_CURRENCY = /€|\bEUR\b|\$|\bUSD\b|\bTVA\b|\bMwSt\b/i;
 const POUNDS = /£|\bGBP\b/;
-const DATE_PREFERRED = /invoice|date|issued/i;
-const DATE_AVOIDED = /arriv|depart|check|due|reprint|print(ed)?|return|expir|valid|order/i;
+// Only these labels make a date the transaction date ("Invoice date", "Date of issue", "Sale date").
+const DATE_PREFERRED = /\b(invoice|issued?|transaction|sale|receipt)\b/i;
+// Labelled dates that are not when the money was spent.
+const NOT_TRANSACTION_DATE =
+  /arriv|depart|check|due|reprint|print(ed)?|return|expir|valid|collect|deliver|best before|use by|\bends?\b|perform|travel/i;
+const ORDER_DATE = /order/i;
+// "V.A.T.", "V A T" -> "VAT", before any other test.
+const SPELLED_VAT = /\bV[.\s]?A[.\s]?T\b\.?/gi;
 const POSTCODE = /\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/i;
 const STREET =
   /\b\d+[A-Za-z]?,?\s+(?:[\p{L}'.-]+\s+){0,3}(street|st|road|rd|lane|ln|avenue|ave|way|close|drive|dr|place|square|sq|crescent|terrace|parade|row|hill|court|gardens|walk|quay|mews)\b/iu;
@@ -65,8 +75,13 @@ function currencyOf(lines: readonly OcrLine[]): ReceiptProposal['currency'] {
   return 'unknown';
 }
 
+/** A line about something other than the amount paid (subtotal, cash handed over, savings, VAT …). */
+function isNotTotalLine(l: Line): boolean {
+  return NOT_TOTAL_WORD.test(l.words.replace(INCLUDING_VAT, ' '));
+}
+
 function isTotalLine(l: Line): boolean {
-  return TOTAL_WORD.test(l.words) && !NOT_TOTAL_WORD.test(l.words.replace(INCLUDING_VAT, ' '));
+  return TOTAL_WORD.test(l.words) && !isNotTotalLine(l);
 }
 
 function findTotal(lines: readonly Line[]): Scored<Pence> | null {
@@ -84,7 +99,11 @@ function findTotal(lines: readonly Line[]): Scored<Pence> | null {
     // Total lines that disagree (a balance due after a deposit) mean we can't be sure which was paid.
     const values = new Set(keyword.map((k) => k.token.pence));
     if (values.size > 1) total = capped(total, UNSURE);
+    // Corroboration: a confident total is the largest amount on any line that could be the amount paid.
+    const largest = Math.max(...lines.filter((l) => !isNotTotalLine(l)).flatMap((l) => l.money.filter((t) => !t.signed).map((t) => t.pence)));
+    if (total.value !== largest) total = capped(total, UNSURE);
     if (total.value === 0) total = capped(total, DOUBTFUL);
+    if (lines.some((l) => REFUND_OR_CREDIT.test(l.words) && !/\bcard\b/i.test(l.text))) total = capped(total, UNSURE);
     return total;
   }
   // No total line: offer the largest amount anywhere, but never confidently.
@@ -125,7 +144,9 @@ function findVat(lines: readonly Line[], amount: Scored<Pence> | null, warnings:
   if (!amount) return null;
   const { rows, unreadable } = vatRows(lines);
   // Every amount on a VAT line, except a total line ("Total incl. VAT £8.75") and the summary rows.
-  const candidates = lines.filter((l) => VAT_WORD.test(l.words) && !VAT_ROW.test(l.text) && !isTotalLine(l)).flatMap((l) => l.money);
+  const candidates = lines
+    .filter((l) => VAT_WORD.test(l.words) && !NET_OF_VAT.test(l.words) && !VAT_ROW.test(l.text) && !isTotalLine(l))
+    .flatMap((l) => l.money);
 
   let vat: Scored<Pence>;
   let fits: boolean;
@@ -160,20 +181,32 @@ function findVat(lines: readonly Line[], amount: Scored<Pence> | null, warnings:
   return vat;
 }
 
-function findDate(lines: readonly OcrLine[], today: string): Scored<string> | null {
-  const found: { rank: number; value: string; confidence: number }[] = [];
+function findDate(lines: readonly OcrLine[], today: string, currency: ReceiptProposal['currency']): Scored<string> | null {
+  const all: { value: string; confidence: number; preferred: boolean; labelled: boolean; order: boolean }[] = [];
   for (const l of lines) {
-    const rank = DATE_AVOIDED.test(l.text) ? 0 : DATE_PREFERRED.test(l.text) ? 2 : 1;
-    for (const value of findDates(l.text)) found.push({ rank, value, confidence: l.confidence });
+    for (const value of findDates(l.text)) {
+      all.push({
+        value,
+        confidence: l.confidence,
+        preferred: DATE_PREFERRED.test(l.text),
+        labelled: NOT_TRANSACTION_DATE.test(l.text),
+        order: ORDER_DATE.test(l.text),
+      });
+    }
   }
-  if (found.length === 0) return null;
-  const bestRank = Math.max(...found.map((f) => f.rank));
-  const atBest = found.filter((f) => f.rank === bestRank);
-  const [best] = atBest;
-  if (!best) return null;
+  if (all.length === 0) return null;
+  // An order date counts only when it is the only date on the receipt.
+  const onlyOneDate = new Set(all.map((d) => d.value)).size === 1;
+  const plausible = all.filter((d) => !d.labelled && (!d.order || onlyOneDate));
+  const best = plausible.find((d) => d.preferred) ?? plausible[0];
+  if (!best) {
+    // Only labelled dates (a delivery date, a best-before date): offer the first, never confidently.
+    const first = all[0];
+    return first ? capped(scored(first.value, first.confidence), UNSURE) : null;
+  }
   let date = scored(best.value, best.confidence);
-  // Two different dates with nothing to tell them apart.
-  if (new Set(atBest.map((f) => f.value)).size > 1) date = capped(date, UNSURE);
+  // Confident only when exactly one plausible date is left, on a receipt in pounds (day-first order).
+  if (new Set(plausible.map((d) => d.value)).size !== 1 || currency === 'other') date = capped(date, UNSURE);
   const unlikely = daysBetween(today, date.value) > 0 || daysBetween(date.value, today) > 400;
   return unlikely ? capped(date, DOUBTFUL) : date;
 }
@@ -197,7 +230,7 @@ function findMerchant(lines: readonly Line[]): Scored<string> | null {
 }
 
 export function extractReceipt(input: readonly OcrLine[], opts: { today: string }): ReceiptProposal {
-  const recognised = input.filter((l) => l.text.trim() !== '');
+  const recognised = input.filter((l) => l.text.trim() !== '').map((l) => ({ ...l, text: l.text.replace(SPELLED_VAT, 'VAT') }));
   const currency = currencyOf(recognised);
   const lines: Line[] = recognised.map((l) => ({
     ...l,
@@ -217,7 +250,7 @@ export function extractReceipt(input: readonly OcrLine[], opts: { today: string 
   return {
     amountPence,
     vatPence: findVat(lines, amountPence, warnings),
-    date: findDate(recognised, opts.today),
+    date: findDate(recognised, opts.today, currency),
     merchant: findMerchant(lines),
     currency,
     warnings,
