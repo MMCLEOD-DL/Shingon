@@ -24,7 +24,7 @@ runs it over several sessions (Tasks 12 to 15 of Plan 12). This folder gives you
 | C7 | §2.3, §2.5 | On a real iPhone (Safari) and a real Android phone (Chrome): **Take a photo** opens the camera and uploads; **Choose a file** uploads a photo from the library and a PDF; the reading appears; correcting a field and confirming works; nothing scrolls sideways. | operator |
 | C8 | §2.4 | On the test box: a manual backup, then `restore-test`, pass; then a real restore drill from the runbook returns a record count known beforehand. | operator |
 | C9 | §2.4 | Stopping the app container sends a Matrix alert within 5 minutes, and starting it sends the recovery message. | operator |
-| C10 | §2.4, §4.8 | The change request went out as an **update**: the deployment's `history` has an `installed` entry followed later by an `updated` or `confirmed` entry at the `currentVersion` (a trailing `already-on` is ignored), that version is newer than the installed one (`compareVersions`), and the last update was not rolled back or urgent. | auto |
+| C10 | §2.4, §4.8 | The change request went out as an **update**: the deployment's `history` has an `installed` entry followed later by an `updated` or `confirmed` entry at the `currentVersion` (a trailing `already-on` is ignored), that version is newer than the installed one (`compareVersions`), and the last update that reached the box (outcomes that changed nothing are skipped) was not rolled back, urgent or lost contact. | auto |
 | C11 | §2.5 | A member gets from "open the app" to a confirmed receipt in under 60 seconds on a phone, with no step that needs help. | operator |
 | C12 | §3, §6 | The app's `app-profile.json` matches the approved brief: `policy.outbound` holds the same `OUTBOUND_SERVICES` ids (Contract 7.4), `residency` is equal, and `modules` contains every module the brief lists (here `ocr`). (Task 14 also checks `OCR_ENGINE=local` on the box by hand.) | auto |
 | C13 | §5a | The latest council report has no blocking or warning item with `member: 'legal'` from the `licences` or `scancode` tool, and every entry in the app's `licence-exceptions.json` has a reason (Plan 9's Legal accepts those entries, Contract 7.7). | auto |
@@ -38,6 +38,12 @@ runs it over several sessions (Tasks 12 to 15 of Plan 12). This folder gives you
 
 The checker checks C1, C6 and C13 on every run you name (the build and, when given, the change). C13 reads the
 council reports of both runs.
+
+It fails closed: a run counts only when its `build.json` is that run's own, of the kind the flag names (`--build` a
+build, `--change` a change), approved, with its final checks on the approved commit and its reports in its own
+`reports/` folder; the council report must pass Plan 11's own check for that commit. `app-profile.json` and
+`licence-exceptions.json` are read from the app at the latest approved commit, and a hand edit to either in the app
+folder is a FAIL (Ruling 9). Uncommitted changes anywhere in the app are noted under C15.
 
 ## The one rule: fix the factory, never the app
 
@@ -167,6 +173,16 @@ conductor preview <slug>
 
 Criteria: C7 (on the box), C8, C9, C12 (the box's part), C17 (tag). Never a client's box.
 
+**The box.** A throwaway machine: CT 111 `hf-build`, or a container made by the `proxmox` machine provider. Set it up
+once as in the README's "Before the first ship (once per box)": Docker with the Compose plugin, a deploy user in the
+`docker` group, the folder `/opt/highland/test-box` owned by that user (this is the deployment's `<bundleDir>`),
+`ssh-copy-id`, the host key checked into `known_hosts`, an alias in `~/.ssh/config`, the Matrix bot and alerts room,
+and an Uptime Kuma push monitor. The first `conductor ship … --to test-box` asks for the rest and creates
+`deployments/test-box.json`.
+
+On the box, run every `docker compose` command below from the bundle folder: `cd <bundleDir>` first
+(for example `cd /opt/highland/test-box`).
+
 ```bash
 conductor ship <slug> --to test-box
 conductor deployments status
@@ -174,7 +190,7 @@ conductor deployments status
 
 - [ ] The app answers on the box; `deployments/test-box.json` starts with outcome `installed` (release `v1.0.0`) and
       records `foundation: "v0.2.0"`.
-- [ ] **C12 on the box:** `grep -E '^OCR_' <bundleDir>/.env` shows `OCR_ENGINE=local` and no `OCR_AZURE_KEY`;
+- [ ] **C12 on the box:** in `<bundleDir>`, `grep -E '^OCR_' .env` shows `OCR_ENGINE=local` and no `OCR_AZURE_KEY`;
       `docker compose exec app cat /app/app-profile.json` has `outbound: []`. Paste both.
 - [ ] **C7 on the box:** both phones, signed in as an invited member, two fictional receipts each; record each
       reading's time from upload to fields shown (expected under 15 s).
@@ -228,5 +244,6 @@ node /root/conductor/spikes/acceptance/check-acceptance.mjs ~/highland-projects/
 - [ ] In `RESULT.md`: every criterion C1–C17 PASS with its evidence; C15's list of hand edits empty; C16's cost per
       stage and paid-API spend £0 unless opted in; a short plain-English summary; the verdict line **PASS** or
       **FAIL** (with the failing criteria and where each fix belongs).
-- [ ] Tidy up: remove the throwaway box's deployment (`docker compose down -v`, or `provider.sweep` for `proxmox`);
+- [ ] Tidy up: on the throwaway box, `cd <bundleDir> && docker compose down -v`; if it was a `proxmox` machine, clear
+      it with `conductor machines sweep` (or remove the container in Proxmox);
       keep `deployments/test-box.json` and `RESULT.md` in the project folder only.

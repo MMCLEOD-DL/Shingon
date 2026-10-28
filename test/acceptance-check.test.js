@@ -148,3 +148,78 @@ test('the CLI exits 2 with usage for bad arguments, 1 on a fail, 0 on a pass', a
   assert.equal(run(good, '--build', RUNS.build, '--change', RUNS.change, '--deployment', 'test-box', '--out', out).status, 0);
   assert.match(readFileSync(out, 'utf8'), /^\| C17 /m);
 });
+
+// ---- fail closed (review fix round 1) ----
+
+test('a build whose records do not belong together fails, whatever its reports say', async () => {
+  const cases = [
+    ['build-stopped', 'C2', /was not approved \(its status is stopped\)/],
+    ['report-older-commit', 'C2', /reviewed an earlier version/],
+    ['stale-checks', 'C1', /final checks ran on a different commit/],
+    ['other-run-record', 'C2', /belongs to run 20261027-090000-0001/],
+    ['report-outside', 'C1', /lists crossing\.json outside its own reports folder/],
+  ];
+  for (const [name, id, why] of cases) {
+    const r = await checkAcceptance(await fx(name), OPTS);
+    assert.equal(byId(r)[id].status, 'fail', name);
+    assert.match(byId(r)[id].evidence, why, name);
+    assert.equal(r.ok, false, name);
+  }
+  const swapped = byId(await checkAcceptance(await fx(), { ...OPTS, build: RUNS.change }));
+  for (const id of ['C1', 'C2', 'C3', 'C6', 'C13']) assert.equal(swapped[id].status, 'fail', id);
+  assert.match(swapped.C2.evidence, /is a change run, not a build run\. Pass it with --change/);
+});
+
+test('a named change run that does not load fails every criterion that reads it, with no fallback to the build', async () => {
+  const s = byId(await checkAcceptance(await fx(), { ...OPTS, change: '20261028-150000-ffff' }));
+  for (const id of ['C1', 'C3', 'C6', 'C12', 'C13', 'C14']) {
+    assert.equal(s[id].status, 'fail', id);
+    assert.match(s[id].evidence, /builds\/20261028-150000-ffff has no build\.json/, id);
+  }
+  assert.equal(s.C2.status, 'pass', s.C2.evidence);
+});
+
+test('a hand edit to the app\'s profile or licence exceptions fails C12 or C13 (Ruling 9), and C15 notes it', async () => {
+  const p = byId(await checkAcceptance(await fx('hand-edited-profile'), OPTS));
+  assert.equal(p.C12.status, 'fail');
+  assert.match(p.C12.evidence, /app\/app-profile\.json was changed by hand after the approved commit/);
+  assert.match(p.C15.evidence, /changes that are not committed \(1 path\)/);
+  const e = byId(await checkAcceptance(await fx('hand-edited-exceptions'), OPTS));
+  assert.equal(e.C13.status, 'fail');
+  assert.match(e.C13.evidence, /app\/licence-exceptions\.json was changed by hand/);
+  const good = byId(await checkAcceptance(await fx(), OPTS));
+  assert.doesNotMatch(good.C15.evidence, /not committed/);
+});
+
+test('C12 reads the profile at the change\'s approved commit and names modules the brief did not ask for', async () => {
+  const s = byId(await checkAcceptance(await fx('extra-module'), OPTS));
+  assert.equal(s.C12.status, 'pass', s.C12.evidence);
+  assert.match(s.C12.evidence, /also on, not in the brief: scheduled-jobs/);
+});
+
+test('C6 fails on a missing screenshot file or an overridden browser gate', async () => {
+  const png = byId(await checkAcceptance(await fx('missing-png'), OPTS)).C6;
+  assert.equal(png.status, 'fail');
+  assert.match(png.evidence, /the screenshot "claims-mobile-webkit\.png" of "claims" is missing/);
+  const over = byId(await checkAcceptance(await fx('browser-overridden'), OPTS)).C6;
+  assert.equal(over.status, 'fail');
+  assert.match(over.evidence, /browser checks failed and the build was approved anyway/);
+});
+
+test('C10 walks back past outcomes that changed nothing: a bad landing is never made calmer', async () => {
+  const history = async (entries, currentVersion) => {
+    const dir = await fx();
+    let dep = { ...loadDeployment(dir, 'test-box'), history: [] };
+    for (const e of entries) dep = addHistory(dep, { at: '2026-10-28T10:00:00.000Z', from: null, detail: '', ...e });
+    saveDeployment(dir, { ...dep, currentVersion });
+    return byId(await checkAcceptance(dir, OPTS)).C10;
+  };
+  const start = [{ version: '1.0.0', outcome: 'installed' }, { version: '1.1.0', outcome: 'updated' }];
+  for (const [bad, after, why] of [['rolled-back', 'busy', /rolled back/], ['rolled-back', 'cancelled', /rolled back/], ['urgent', 'settings-error', /urgent/], ['lost-contact', 'already-on', /lost contact/]]) {
+    const r = await history([...start, { version: '1.2.0', outcome: bad }, { version: '1.2.0', outcome: after }], '1.1.0');
+    assert.equal(r.status, 'fail', `${bad} then ${after}`);
+    assert.match(r.evidence, why, `${bad} then ${after}`);
+  }
+  const ok = await history([...start, { version: '1.1.0', outcome: 'busy' }, { version: '1.1.0', outcome: 'already-on' }], '1.1.0');
+  assert.equal(ok.status, 'pass', ok.evidence);
+});

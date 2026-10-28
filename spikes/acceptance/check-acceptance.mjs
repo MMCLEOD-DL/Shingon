@@ -3,6 +3,7 @@
 // reports, and fills in every automated criterion with its evidence. It never builds, deploys or calls a model:
 // it only reads files. Conductor's own modules are imported, never copied, so a change in their rules reaches here.
 import { readFileSync, existsSync, mkdirSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
@@ -13,7 +14,8 @@ import { writeFileAtomic } from '../../src/factory/fsAtomic.js';
 import { loadDeployment } from '../../src/factory/deployments/store.js';
 import { compareVersions } from '../../src/factory/foundationLog.js';
 import { loadBuild, buildDirOf } from '../../src/factory/buildState.js';
-import { readCouncilReport } from '../../src/factory/change/gate.js';
+import { readCouncilReport, councilPassed } from '../../src/factory/change/gate.js';
+import { isSha } from '../../src/factory/change/gitSafe.js';
 import { RUN_ID_RE } from '../../src/factory/ids.js';
 
 export const FOUNDATION_V020_ROUTES = 31;   // v0.1.0's 28 + Task 5's 3; Task 10's hand-off confirms the figure
@@ -28,7 +30,7 @@ export const CRITERIA = Object.freeze([
   { id: 'C7', spec: '§2.3, §2.5', how: 'operator', title: 'On a real iPhone (Safari) and a real Android phone (Chrome): **Take a photo** opens the camera and uploads; **Choose a file** uploads a photo from the library and a PDF; the reading appears; correcting a field and confirming works; nothing scrolls sideways.' },
   { id: 'C8', spec: '§2.4', how: 'operator', title: 'On the test box: a manual backup, then `restore-test`, pass; then a real restore drill from the runbook returns a record count known beforehand.' },
   { id: 'C9', spec: '§2.4', how: 'operator', title: 'Stopping the app container sends a Matrix alert within 5 minutes, and starting it sends the recovery message.' },
-  { id: 'C10', spec: '§2.4, §4.8', how: 'auto', title: "The change request went out as an **update**: the deployment's `history` has an `installed` entry followed later by an `updated` or `confirmed` entry at the `currentVersion` (a trailing `already-on` is ignored), that version is newer than the installed one (`compareVersions`), and the last update was not rolled back or urgent." },
+  { id: 'C10', spec: '§2.4, §4.8', how: 'auto', title: "The change request went out as an **update**: the deployment's `history` has an `installed` entry followed later by an `updated` or `confirmed` entry at the `currentVersion` (a trailing `already-on` is ignored), that version is newer than the installed one (`compareVersions`), and the last update that reached the box (outcomes that changed nothing are skipped) was not rolled back, urgent or lost contact." },
   { id: 'C11', spec: '§2.5', how: 'operator', title: 'A member gets from "open the app" to a confirmed receipt in under 60 seconds on a phone, with no step that needs help.' },
   { id: 'C12', spec: '§3, §6', how: 'auto', title: "The app's `app-profile.json` matches the approved brief: `policy.outbound` holds the same `OUTBOUND_SERVICES` ids (Contract 7.4), `residency` is equal, and `modules` contains every module the brief lists (here `ocr`). (Task 14 also checks `OCR_ENGINE=local` on the box by hand.)" },
   { id: 'C13', spec: '§5a', how: 'auto', title: "The latest council report has no blocking or warning item with `member: 'legal'` from the `licences` or `scancode` tool, and every entry in the app's `licence-exceptions.json` has a reason (Plan 9's Legal accepts those entries, Contract 7.7)." },
@@ -39,6 +41,7 @@ export const CRITERIA = Object.freeze([
 ].map((c) => Object.freeze(c)));
 
 const PASSING_VERDICTS = new Set(['approved', 'approved-with-warnings']);
+const NOT_LANDING = new Set(['already-on', 'busy', 'cancelled', 'settings-error']);
 const SHOT_PROJECTS = [['desktop-chromium', 'desktop screenshot in Chromium'], ['mobile-chromium', 'phone screenshot in Chromium'], ['mobile-webkit', 'phone screenshot in WebKit']];
 const TESTS_HOW = 'npx vitest run --reporter=json --outputFile=<file>';
 const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -57,15 +60,49 @@ function readJson(file, shown, howToMake) {
 }
 
 // One build or change run: its build.json (Plan 8) and the reports its checks listed (absolute paths, fixed names).
-function runOf(projectDir, runId, label) {
-  if (typeof runId !== 'string' || !RUN_ID_RE.test(runId)) throw new Missing(`"${String(runId)}" is not a run id Conductor made (like 20261028-143205-a1b2).`);
+// It fails closed: only this run's own record, of the kind the flag names, approved, with its checks on the approved
+// commit, counts. kind is 'build' for --build and 'change' for --change.
+function runOf(projectDir, runId, kind) {
+  const flag = `--${kind}`;
+  if (typeof runId !== 'string' || !RUN_ID_RE.test(runId)) throw new Missing(`${flag} "${String(runId)}" is not a run id Conductor made (like 20261028-143205-a1b2).`);
   const dir = buildDirOf(projectDir, runId);
   const shown = `builds/${runId}`;
   let build;
   try { build = loadBuild(dir); } catch (e) { throw new Missing(e.message); }
-  if (!build) throw new Missing(`${shown} has no build.json, so the ${label} run cannot be checked. Check the run id.`);
+  if (!build) throw new Missing(`${shown} has no build.json, so the ${kind} run cannot be checked. Check the run id.`);
+  if (build.runId !== runId) throw new Missing(`${shown}/build.json belongs to run ${String(build.runId)}, not ${runId}, so it cannot be trusted.`);
+  if ((build.kind ?? 'build') !== kind) throw new Missing(`${shown} is a ${build.kind ?? 'build'} run, not a ${kind} run. Pass it with --${build.kind ?? 'build'}.`);
+  if (build.status !== 'approved') throw new Missing(`${shown} was not approved (its status is ${String(build.status)}), so its evidence does not count.`);
+  if (!isSha(build.approvedSha)) throw new Missing(`${shown} has no approved commit recorded, so its evidence does not count.`);
+  if (build.checks?.sha !== build.approvedSha) throw new Missing(`${shown}: the final checks ran on a different commit from the one approved, so their reports do not count. Re-run the build's checks.`);
+  const reportsDir = path.join(dir, 'reports');
   const reports = Array.isArray(build.checks?.reports) ? build.checks.reports.filter((p) => typeof p === 'string') : [];
-  return { runId, dir, shown, build, report: (name) => reports.find((p) => path.basename(p) === name) ?? null };
+  const report = (name) => {
+    const listed = reports.filter((p) => path.basename(p) === name);
+    if (!listed.length) return null;
+    const own = listed.find((p) => path.isAbsolute(p) && path.dirname(p) === reportsDir);
+    if (!own) throw new Missing(`${shown} lists ${name} outside its own reports folder (${shown}/reports), so it does not count.`);
+    return own;
+  };
+  return { runId, dir, shown, build, report };
+}
+
+// The app's own files at a commit (read-only git), and whether they differ in the working tree (a hand edit).
+const gitEnv = () => { const env = { ...process.env }; delete env.GIT_DIR; delete env.GIT_WORK_TREE; delete env.GIT_INDEX_FILE; return env; };
+function appGit(projectDir, args) {
+  const r = spawnSync('git', ['-C', path.join(projectDir, 'app'), ...args], { encoding: 'utf8', env: gitEnv(), maxBuffer: 16 * 1024 * 1024 });
+  return { code: r.status ?? 1, stdout: r.stdout ?? '' };
+}
+function appFileAt(projectDir, sha, name, { optional = false } = {}) {
+  const changed = appGit(projectDir, ['status', '--porcelain', '--', name]);
+  if (changed.code !== 0) throw new Missing(`The app folder is not a git repository Conductor can read, so app/${name} cannot be checked.`);
+  if (changed.stdout.trim()) throw new Missing(`app/${name} was changed by hand after the approved commit (git status shows it), so it does not count (Ruling 9).`);
+  const r = appGit(projectDir, ['show', `${sha}:${name}`]);
+  if (r.code !== 0) {
+    if (optional) return null;
+    throw new Missing(`app/${name} is not in the app at the approved commit ${sha.slice(0, 12)}. The build writes it; build the app first.`);
+  }
+  try { return JSON.parse(r.stdout); } catch (e) { throw new Missing(`app/${name} at ${sha.slice(0, 12)} could not be read (${e.message.split('\n')[0]}).`); }
 }
 
 const display = (projectDir, file) => {
@@ -149,7 +186,11 @@ function councilRule(ctx, run) {
   if (!PASSING_VERDICTS.has(report.verdict) || blocking.length) {
     return fail(`${run.shown}: the council's verdict was ${report.verdict}, with ${plural(blocking.length, 'blocking item')}${items ? `: ${items}` : ''}.`);
   }
-  if (report.overridden === true || run.build.council?.overridden === true) {
+  // Plan 11's own rule: the report is this run's, on the approved commit, with the verdict the build recorded.
+  const b = run.build;
+  const gate = councilPassed(b.council, { sha: b.approvedSha, runId: run.runId, report, squashedSha: b.squashedSha ?? null });
+  if (!gate.ok) return fail(`${run.shown}: ${gate.reason}`);
+  if (gate.overridden || report.overridden === true || b.council?.overridden === true) {
     return fail(`${run.shown}: the operator overrode the council, so its approval does not count.`);
   }
   return pass(`${run.shown}: ${report.verdict}, no blocking items, not overridden (${plural(warnings.length, 'warning')}).`);
@@ -158,12 +199,21 @@ function councilRule(ctx, run) {
 function screenshots(ctx, run) {
   const dir = run.report('screenshots');
   if (!dir) throw new Missing(`${run.shown} has no screenshots in its checks. Re-run the build's checks with the browser gate on.`);
+  const checks = run.build.checks ?? {};
+  if (checks.overridden === true || checks.browser?.status === 'failed') {
+    return fail(`${run.shown}: the browser checks failed and the build was approved anyway, so the screenshots do not count.`);
+  }
   const file = path.join(dir, 'manifest.json');
   const m = readJson(file, display(ctx.projectDir, file));
   if (!Array.isArray(m) || m.length === 0) return fail(`${display(ctx.projectDir, file)} lists no screenshots.`);
   const pages = new Map();
-  for (const e of m) if (isObj(e) && typeof e.page === 'string') (pages.get(e.page) ?? pages.set(e.page, new Set()).get(e.page)).add(e.project);
   const problems = [];
+  for (const e of m) {
+    if (!isObj(e) || typeof e.page !== 'string') continue;
+    const ok = typeof e.file === 'string' && e.file === path.basename(e.file) && e.file.endsWith('.png') && existsSync(path.join(dir, e.file));
+    if (!ok) { problems.push(`the screenshot ${JSON.stringify(e.file)} of "${e.page}" is missing`); continue; }
+    (pages.get(e.page) ?? pages.set(e.page, new Set()).get(e.page)).add(e.project);
+  }
   for (const [page, projects] of pages) {
     for (const [project, words] of SHOT_PROJECTS) if (!projects.has(project)) problems.push(`"${page}" has no ${words}`);
   }
@@ -179,11 +229,14 @@ function update(ctx) {
   if (!dep) return fail(`There is no deployment called "${name}" in this project (deployments/${name}.json).`);
   const shown = `deployments/${name}`;
   const h = dep.history;
+  // Outcomes that changed nothing on the box are walked past; the last landing decides (never calmer than it was).
   let end = h.length;
-  while (end > 0 && h[end - 1].outcome === 'already-on') end--;
+  while (end > 0 && NOT_LANDING.has(h[end - 1].outcome)) end--;
   const last = h[end - 1];
-  if (last?.outcome === 'rolled-back') return fail(`${shown}: the last update was rolled back (${last.version}${last.detail ? `: ${last.detail}` : ''}).`);
-  if (last?.outcome === 'urgent') return fail(`${shown}: the last update ended urgent (${last.version}${last.detail ? `: ${last.detail}` : ''}).`);
+  const why = last ? ` (${last.version}${last.detail ? `: ${last.detail}` : ''})` : '';
+  if (last?.outcome === 'rolled-back') return fail(`${shown}: the last update was rolled back${why}.`);
+  if (last?.outcome === 'urgent') return fail(`${shown}: the last update ended urgent${why}.`);
+  if (last?.outcome === 'lost-contact') return fail(`${shown}: Conductor lost contact with the box during the last update${why}, so it is not known to have landed.`);
   const i = h.findIndex((e) => e.outcome === 'installed');
   if (i < 0) return fail(`${shown}: the history has no "installed" entry, so the first ship was not recorded.`);
   const installed = h[i];
@@ -199,8 +252,7 @@ function update(ctx) {
 }
 
 function profile(ctx, brief) {
-  const file = path.join(ctx.projectDir, 'app', 'app-profile.json');
-  const p = readJson(file, 'app/app-profile.json', 'The build writes it into the app; build the app first.');
+  const p = appFileAt(ctx.projectDir, ctx.approvedSha(), 'app-profile.json');
   const outbound = Array.isArray(p?.policy?.outbound) ? p.policy.outbound : null;
   if (!isObj(p) || !outbound) return fail('app/app-profile.json has no policy.outbound list.');
   const want = Array.isArray(brief.policy?.outbound) ? brief.policy.outbound : [];
@@ -215,7 +267,8 @@ function profile(ctx, brief) {
   const missing = (brief.modules ?? []).filter((m) => !modules.includes(m));
   if (missing.length) problems.push(`the app does not turn on ${missing.join(', ')}, which the brief needs`);
   if (problems.length) return fail(`app/app-profile.json: ${problems.join('; ')}.`);
-  return pass(`app/app-profile.json: outbound ${outbound.length ? outbound.join(', ') : 'none'} (as the brief), residency ${p.policy.residency}, modules ${modules.join(', ') || 'none'} include every module the brief lists.`);
+  const extraModules = modules.filter((m) => !(brief.modules ?? []).includes(m));
+  return pass(`app/app-profile.json: outbound ${outbound.length ? outbound.join(', ') : 'none'} (as the brief), residency ${p.policy.residency}, modules ${modules.join(', ') || 'none'} include every module the brief lists${extraModules.length ? ` (also on, not in the brief: ${extraModules.join(', ')})` : ''}.`);
 }
 
 function licences(ctx, runs) {
@@ -229,10 +282,9 @@ function licences(ctx, runs) {
       }
     }
   }
-  const file = path.join(ctx.projectDir, 'app', 'licence-exceptions.json');
   let n = 0;
-  if (existsSync(file)) {
-    const ex = readJson(file, 'app/licence-exceptions.json');
+  const ex = appFileAt(ctx.projectDir, ctx.approvedSha(), 'licence-exceptions.json', { optional: true });
+  if (ex !== null) {
     if (!isObj(ex)) problems.push('app/licence-exceptions.json is not a list of "name@version": reason entries');
     else {
       n = Object.keys(ex).length;
@@ -276,6 +328,9 @@ export async function checkAcceptance(projectDir, opts = {}) {
   const build = attempt(() => runOf(dir, opts.build, 'build'));
   const change = opts.change ? attempt(() => runOf(dir, opts.change, 'change')) : { error: 'No change run was named, so the change could not be checked. Pass --change <runId>.' };
   ctx.project = project.value;
+  // A change run that was named must load: no quiet fallback to the build's evidence.
+  const named = opts.change ? [build, change] : [build];
+  ctx.approvedSha = () => (change.value ?? build.value).build.approvedSha;
 
   // Each criterion: its inputs must have loaded, and a Missing file becomes a fail with its sentence.
   const guard = (needs, fn) => {
@@ -297,9 +352,9 @@ export async function checkAcceptance(projectDir, opts = {}) {
     : testsFor(ctx, build.value, opts.tests, '--tests'));
 
   const auto = {
-    C1: () => guard([build], () => each((r) => crossing(ctx, r))),
+    C1: () => guard(named, () => each((r) => crossing(ctx, r))),
     C2: () => guard([build], () => councilRule(ctx, build.value)),
-    C3: () => guard([brief, build], () => {
+    C3: () => guard([brief, ...named], () => {
       const { problems: idProblems, ids } = exampleIds(brief.value);
       if (idProblems.length) return fail(`${idProblems.join('; ')}.`);
       const { tests, source } = latest();
@@ -307,10 +362,10 @@ export async function checkAcceptance(projectDir, opts = {}) {
       if (problems.length) return fail(`${plural(problems.length, 'example')} of ${ids.length} not proven in ${source}: ${problems.join('; ')}.`);
       return pass(`${ids.length} of ${ids.length} examples proven by passing tests: ${ids.join(', ')} (${source}).`);
     }),
-    C6: () => guard([build], () => each((r) => screenshots(ctx, r))),
+    C6: () => guard(named, () => each((r) => screenshots(ctx, r))),
     C10: () => guard([], () => update(ctx)),
-    C12: () => guard([brief], () => profile(ctx, brief.value)),
-    C13: () => guard([build], () => licences(ctx, runs())),
+    C12: () => guard([brief, ...named], () => profile(ctx, brief.value)),
+    C13: () => guard(named, () => licences(ctx, runs())),
     C14: () => guard([brief, change], () => {
       const council = councilRule(ctx, change.value);
       const { problems: idProblems, ids } = exampleIds(brief.value);
@@ -329,7 +384,14 @@ export async function checkAcceptance(projectDir, opts = {}) {
   };
 
   const results = CRITERIA.map((c) => {
-    if (c.how === 'operator') return { id: c.id, status: 'operator', evidence: 'The operator checks this by hand and records it in RESULT.md.' };
+    if (c.how === 'operator') {
+      let evidence = 'The operator checks this by hand and records it in RESULT.md.';
+      if (c.id === 'C15') {
+        const st = appGit(dir, ['status', '--porcelain']);
+        if (st.code === 0 && st.stdout.trim()) evidence += ` Note: the app folder has changes that are not committed (${plural(st.stdout.trim().split('\n').length, 'path')}); check whether they are hand edits.`;
+      }
+      return { id: c.id, status: 'operator', evidence };
+    }
     return { id: c.id, ...auto[c.id]() };
   });
   return { results, ok: results.every((r) => r.status !== 'fail') };

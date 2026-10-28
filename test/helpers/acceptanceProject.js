@@ -1,7 +1,7 @@
 // A good, fictional project folder for the acceptance checker (Plan 12 Task 11), built with the owners' own
 // writers (Plan 7's saveApprovedBrief and saveProject, Plan 8's newBuild/saveBuild, Plan 9's writeCouncilReport,
 // Plan 10's deployment store), so the fixture cannot drift from their validators. Each MUTATIONS entry breaks one thing.
-import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { saveProject } from '../../src/factory/projects.js';
 import { saveApprovedBrief } from '../../src/factory/brief.js';
@@ -9,11 +9,21 @@ import { newBuild, saveBuild, buildDirOf, loadBuild } from '../../src/factory/bu
 import { writeCouncilReport } from '../../src/council/reportFile.js';
 import { newDeployment, addHistory, saveDeployment, loadDeployment } from '../../src/factory/deployments/store.js';
 import { approvedBrief } from './briefFixtures.js';
+import { git } from '../../src/workspace.js';
 
 export const SLUG = 'acme-expenses';
 // Real run ids: Plan 11's readCouncilReport reads only a report whose run id Conductor could have made.
 export const RUNS = Object.freeze({ build: '20261028-090000-b001', change: '20261028-140000-c001' });
-const SHA = 'a'.repeat(40);
+const FOUNDATION_SHA = 'a'.repeat(40);
+const GIT_ID = ['-c', 'user.name=Test', '-c', 'user.email=test@example.com'];
+
+// Commits everything in the app folder and returns the new commit's sha.
+export async function commitApp(projectDir, message) {
+  const app = path.join(projectDir, 'app');
+  await git(app, ['add', '-A']);
+  await git(app, [...GIT_ID, 'commit', '-q', '-m', message]);
+  return (await git(app, ['rev-parse', 'HEAD'])).stdout.trim();
+}
 
 const writeJson = (file, obj) => { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, `${JSON.stringify(obj, null, 2)}\n`); };
 const readJson = (file) => JSON.parse(readFileSync(file, 'utf8'));
@@ -52,7 +62,7 @@ const BASE_TESTS = ['an expense is saved [expense-entry#1]', 'a zero amount is r
 const PAGES = [{ page: 'claims', path: '/claims' }, { page: 'receipt-check', path: '/receipts/check' }];
 const SIZES = { 'desktop-chromium': [1280, 800], 'mobile-chromium': [390, 844], 'mobile-webkit': [390, 844] };
 
-async function writeRun(projectDir, runId, { kind, tests, verdict, warnings }) {
+async function writeRun(projectDir, runId, { kind, tests, verdict, warnings, sha }) {
   const dir = buildDirOf(projectDir, runId);
   const reports = path.join(dir, 'reports');
   writeJson(path.join(reports, 'vitest.json'), vitest(tests));
@@ -60,25 +70,33 @@ async function writeRun(projectDir, runId, { kind, tests, verdict, warnings }) {
   writeJson(path.join(reports, 'screenshots', 'manifest.json'), PAGES.flatMap((p) => Object.entries(SIZES).map(([project, [width, height]]) => ({
     page: p.page, path: p.path, project, width, height, file: `${p.page}-${project}.png`,
   }))));
+  for (const p of PAGES) for (const project of Object.keys(SIZES)) writeFileSync(path.join(reports, 'screenshots', `${p.page}-${project}.png`), 'png');
   const build = newBuild({ runId, slug: SLUG, client: 'Acme Expenses Ltd', briefHash: 'f'.repeat(64), briefVersion: kind === 'change' ? 2 : 1,
-    foundation: { repo: '/root/highland-foundation', tag: 'v0.2.0', commit: SHA }, now: new Date('2026-10-28T09:00:00Z'), kind });
+    foundation: { repo: '/root/highland-foundation', tag: 'v0.2.0', commit: FOUNDATION_SHA }, now: new Date('2026-10-28T09:00:00Z'), kind });
   saveBuild(dir, {
-    ...build, phase: 'done', status: 'approved', approvedSha: SHA,
-    checks: { sha: SHA, verify: { status: 'passed', summary: 'ok' }, browser: { status: 'passed', summary: 'ok' },
+    ...build, phase: 'done', status: 'approved', approvedSha: sha,
+    checks: { sha, verify: { status: 'passed', summary: 'ok' }, browser: { status: 'passed', summary: 'ok' },
       reports: ['vitest.json', 'crossing.json', 'screenshots'].map((n) => path.join(reports, n)) },
-    council: { status: verdict, overridden: false, sha: SHA },
+    council: { status: verdict, overridden: false, sha },
   });
   await writeCouncilReport(dir, { round: 1, verdict, blocking: [], warnings, notes: [], overridden: false, text: `Council report: ${verdict}`,
-    checked: ['correctness', 'legal'], coverage: null, files: [] }, { sha: SHA, runId });
+    checked: ['correctness', 'legal'], coverage: null, files: [] }, { sha, runId });
 }
 
 export async function makeAcceptanceProject(root, { mutate } = {}) {
   const projectDir = path.join(root, SLUG);
-  mkdirSync(projectDir, { recursive: true });
+  mkdirSync(path.join(projectDir, 'app'), { recursive: true });
+  // The app repo: the build's approved commit, then the change's.
+  await git(path.join(projectDir, 'app'), ['init', '-q', '-b', 'main']);
+  writeJson(path.join(projectDir, 'app', 'app-profile.json'), { schema: 1, modules: ['ocr', 'xlsx-export', 'pdf-export'], policy: { outbound: [], residency: 'uk' } });
+  writeJson(path.join(projectDir, 'app', 'licence-exceptions.json'), {});
+  const buildSha = await commitApp(projectDir, 'build');
+  writeFileSync(path.join(projectDir, 'app', 'mileage.ts'), 'export {};\n');
+  const changeSha = await commitApp(projectDir, 'change: mileage');
   saveProject(projectDir, {
     schema: 1, slug: SLUG, client: 'Acme Expenses Ltd', createdAt: '2026-10-28T08:00:00.000Z', status: 'shipped',
-    foundation: { repo: '/root/highland-foundation', tag: 'v0.2.0', commit: SHA },
-    approved: { sha: SHA, at: '2026-10-28T15:00:00.000Z', runId: RUNS.change, briefVersion: 2 }, builtFromBrief: 2,
+    foundation: { repo: '/root/highland-foundation', tag: 'v0.2.0', commit: FOUNDATION_SHA },
+    approved: { sha: changeSha, at: '2026-10-28T15:00:00.000Z', runId: RUNS.change, briefVersion: 2 }, builtFromBrief: 2,
   });
 
   const v1 = approvedBrief({
@@ -91,11 +109,8 @@ export async function makeAcceptanceProject(root, { mutate } = {}) {
     exampleSeq: { ...v1.exampleSeq, mileage: 1 }, createdAt: '2026-10-28T12:00:00.000Z', approvedAt: '2026-10-28T12:30:00.000Z' });
 
   const correctness = { member: 'correctness', tool: 'ai', title: 'A long merchant name may wrap on a phone', grade: 'warning' };
-  await writeRun(projectDir, RUNS.build, { kind: 'build', tests: BASE_TESTS, verdict: 'approved-with-warnings', warnings: [correctness] });
-  await writeRun(projectDir, RUNS.change, { kind: 'change', tests: [...BASE_TESTS, 'miles are paid at 45p [mileage#1]'], verdict: 'approved', warnings: [] });
-
-  writeJson(path.join(projectDir, 'app', 'app-profile.json'), { schema: 1, modules: ['ocr', 'xlsx-export', 'pdf-export'], policy: { outbound: [], residency: 'uk' } });
-  writeJson(path.join(projectDir, 'app', 'licence-exceptions.json'), {});
+  await writeRun(projectDir, RUNS.build, { kind: 'build', tests: BASE_TESTS, verdict: 'approved-with-warnings', warnings: [correctness], sha: buildSha });
+  await writeRun(projectDir, RUNS.change, { kind: 'change', tests: [...BASE_TESTS, 'miles are paid at 45p [mileage#1]'], verdict: 'approved', warnings: [], sha: changeSha });
 
   let dep = newDeployment({
     name: 'test-box', project: SLUG, host: '192.168.1.111', ssh: { user: 'hf', port: null, keyPath: null }, bundleDir: '/opt/acme',
@@ -114,18 +129,40 @@ const runFile = (projectDir, runId, ...rel) => path.join(buildDirOf(projectDir, 
 const edit = (file, fn) => { const o = readJson(file); fn(o); writeJson(file, o); };
 const editTests = (projectDir, runId, fn) => edit(runFile(projectDir, runId, 'reports', 'vitest.json'), (v) => { v.testResults[0].assertionResults = fn(v.testResults[0].assertionResults); });
 const editDeployment = (projectDir, fn) => saveDeployment(projectDir, fn(loadDeployment(projectDir, 'test-box')));
+const editBuild = (projectDir, runId, fn) => { const dir = buildDirOf(projectDir, runId); saveBuild(dir, fn(loadBuild(dir))); };
+
+// The factory made a new commit for the change (as a fix round would): every record of the change run points at it.
+async function recommitChange(projectDir, message) {
+  const sha = await commitApp(projectDir, message);
+  editBuild(projectDir, RUNS.change, (b) => ({ ...b, approvedSha: sha, checks: { ...b.checks, sha }, council: { ...b.council, sha } }));
+  edit(runFile(projectDir, RUNS.change, 'council-report.json'), (r) => { r.sha = sha; });
+  edit(path.join(projectDir, 'project.json'), (p) => { p.approved.sha = sha; });
+}
 
 export const MUTATIONS = {
   crossing: (d) => edit(runFile(d, RUNS.build, 'reports', 'crossing.json'), (c) => {
     c.failures = [{ sentence: 'A member could read another member\'s receipt at GET /api/receipts/:id.' }];
   }),
-  'council-blocked': (d) => edit(runFile(d, RUNS.build, 'council-report.json'), (r) => {
-    r.verdict = 'blocked'; r.blocking = [{ member: 'security', tool: 'ai', title: 'Receipts are served without a sign-in check', grade: 'blocking' }];
-  }),
-  'council-overridden': (d) => {
-    const dir = buildDirOf(d, RUNS.build);
-    const b = loadBuild(dir);
-    saveBuild(dir, { ...b, council: { ...b.council, overridden: true } });
+  'council-blocked': (d) => {
+    edit(runFile(d, RUNS.build, 'council-report.json'), (r) => {
+      r.verdict = 'blocked'; r.blocking = [{ member: 'security', tool: 'ai', title: 'Receipts are served without a sign-in check', grade: 'blocking' }];
+    });
+    editBuild(d, RUNS.build, (b) => ({ ...b, council: { ...b.council, status: 'blocked' } }));
+  },
+  'council-overridden': (d) => editBuild(d, RUNS.build, (b) => ({ ...b, council: { ...b.council, overridden: true } })),
+  // Fail-closed cases: the build's records do not belong together.
+  'build-stopped': (d) => editBuild(d, RUNS.build, (b) => ({ ...b, status: 'stopped', phase: 'gate' })),
+  'report-older-commit': (d) => edit(runFile(d, RUNS.build, 'council-report.json'), (r) => { r.sha = 'c'.repeat(40); }),
+  'stale-checks': (d) => editBuild(d, RUNS.build, (b) => ({ ...b, checks: { ...b.checks, sha: 'd'.repeat(40) } })),
+  'other-run-record': (d) => editBuild(d, RUNS.build, (b) => ({ ...b, runId: '20261027-090000-0001' })),
+  'report-outside': (d) => editBuild(d, RUNS.build, (b) => ({ ...b, checks: { ...b.checks, reports: b.checks.reports.map((p) => (path.basename(p) === 'crossing.json' ? path.join(d, 'crossing.json') : p)) } })),
+  'missing-png': (d) => rmSync(runFile(d, RUNS.build, 'reports', 'screenshots', 'claims-mobile-webkit.png')),
+  'browser-overridden': (d) => editBuild(d, RUNS.build, (b) => ({ ...b, checks: { ...b.checks, browser: { status: 'failed', summary: 'x' }, overridden: true } })),
+  'hand-edited-profile': (d) => edit(path.join(d, 'app', 'app-profile.json'), (p) => { p.policy.outbound = ['azure-document-intelligence']; }),
+  'hand-edited-exceptions': (d) => writeJson(path.join(d, 'app', 'licence-exceptions.json'), { 'some-lib@1.0.0': 'accepted' }),
+  'extra-module': async (d) => {
+    edit(path.join(d, 'app', 'app-profile.json'), (p) => { p.modules.push('scheduled-jobs'); });
+    await recommitChange(d, 'change: scheduled jobs on');
   },
   'example-failed': (d) => {
     for (const runId of [RUNS.build, RUNS.change]) {
@@ -133,15 +170,14 @@ export const MUTATIONS = {
     }
   },
   'example-missing': (d) => editTests(d, RUNS.change, (tests) => tests.filter((t) => !t.title.includes('[mileage#1]'))),
-  'no-vitest-report': (d) => {
-    const dir = buildDirOf(d, RUNS.build);
-    const b = loadBuild(dir);
-    saveBuild(dir, { ...b, checks: { ...b.checks, reports: b.checks.reports.filter((p) => path.basename(p) !== 'vitest.json') } });
-  },
+  'no-vitest-report': (d) => editBuild(d, RUNS.build, (b) => ({ ...b, checks: { ...b.checks, reports: b.checks.reports.filter((p) => path.basename(p) !== 'vitest.json') } })),
   'no-webkit': (d) => edit(runFile(d, RUNS.build, 'reports', 'screenshots', 'manifest.json'), (m) => {
     m.splice(m.findIndex((e) => e.page === 'receipt-check' && e.project === 'mobile-webkit'), 1);
   }),
-  outbound: (d) => edit(path.join(d, 'app', 'app-profile.json'), (p) => { p.policy.outbound = ['azure-document-intelligence']; }),
+  outbound: async (d) => {
+    edit(path.join(d, 'app', 'app-profile.json'), (p) => { p.policy.outbound = ['azure-document-intelligence']; });
+    await recommitChange(d, 'change: cloud reading');
+  },
   licence: (d) => edit(runFile(d, RUNS.build, 'council-report.json'), (r) => {
     r.warnings.push({ member: 'legal', tool: 'licences', title: 'some-lib@1.0.0 is under the LGPL-3.0 licence', grade: 'warning' });
   }),
