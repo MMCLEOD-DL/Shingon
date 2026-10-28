@@ -10,5 +10,12 @@
       "default": "./dist/index.js"
     }
   },
-  "types": "./dist/index.d.ts"
+  "types": "./dist/index.d.ts",
+  "dependencies": {
+    "@hf/shared": "0.1.0",
+    "pdfkit": "0.20.2"
+  },
+  "devDependencies": {
+    "pdfjs-dist": "6.4.299"
+  }
 }

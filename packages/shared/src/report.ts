@@ -13,6 +13,10 @@ export interface ReportColumn {
 
 export type ReportRow = Record<string, string | number>;
 
+/**
+ * What a report is built from. Every money cell must be a whole number of pence: a missing money cell is refused, so
+ * map "no VAT" to 0 before building.
+ */
 export interface ReportInput {
   title: string;
   periodLabel: string;
@@ -33,6 +37,8 @@ export interface MoneyReportGroup {
 export interface MoneyReport {
   title: string;
   periodLabel: string;
+  /** When the report was generated: the PDF's creation date, so the same report always gives the same file. */
+  generatedAt: Date;
   /** `generatedAt` in Europe/London, like `27 October 2026, 14:05`. */
   generatedAtText: string;
   columns: ReportColumn[];
@@ -123,6 +129,7 @@ export function buildMoneyReport(input: ReportInput): MoneyReport {
   return {
     title: input.title,
     periodLabel: input.periodLabel,
+    generatedAt: new Date(input.generatedAt.getTime()),
     generatedAtText: londonText(input.generatedAt),
     columns: columns.map((c) => ({ ...c })),
     groups: labels.map((label) => {

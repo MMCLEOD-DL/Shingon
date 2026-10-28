@@ -8,7 +8,8 @@ import writeXlsxFile from 'write-excel-file/node';
 import type { CellObject, Row, SheetData } from 'write-excel-file/node';
 import type { MoneyReport, ReportColumn } from '@hf/shared';
 
-const MONEY_FORMAT = '£#,##0.00';
+/** Pounds; a negative shows a minus sign (U+2212) before the pound sign, "−£5.00", as formatCell does. */
+const MONEY_FORMAT = '£#,##0.00;"−"£#,##0.00';
 const DATE_FORMAT = 'dd/mm/yyyy';
 const MAX_SHEET_NAME = 31;
 

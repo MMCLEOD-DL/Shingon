@@ -86,7 +86,7 @@ test('W1: the totals in the file are the totals the app computed', async () => {
   expect(money.map((v) => Math.round(v * 100))).toEqual(expected);
 });
 
-test('money is stored as exact decimals with a pounds format', async () => {
+test('money is stored as exact decimals with a pounds format that shows a negative as −£5.00', async () => {
   const buf = await renderXlsx(buildMoneyReport(W1_MARCH));
   const xml = parts(buf);
   expect(xml.sheet).toContain('<v>93.64</v>');
@@ -94,9 +94,11 @@ test('money is stored as exact decimals with a pounds format', async () => {
   // Row 19 is the Total row: 5 header rows, 3 group headings, 7 rows, 3 subtotals, then Total.
   expect(cellXml(xml.sheet, 'E19')).toContain('<v>93.64</v>');
   expect(cellXml(xml.sheet, 'F19')).toContain('<v>15.08</v>');
-  expect(formatCodeOf(xml, 'E19')).toBe('£#,##0.00');
-  expect(formatCodeOf(xml, 'F19')).toBe('£#,##0.00');
-  expect(formatCodeOf(xml, 'E7')).toBe('£#,##0.00');
+  // The second section is for negatives: a minus sign (U+2212) before the pound sign, as formatCell shows it.
+  const MONEY = '£#,##0.00;"\u2212"£#,##0.00';
+  expect(formatCodeOf(xml, 'E19')).toBe(MONEY);
+  expect(formatCodeOf(xml, 'F19')).toBe(MONEY);
+  expect(formatCodeOf(xml, 'E7')).toBe(MONEY);
 });
 
 test('totals are values, not formulas', async () => {

@@ -8,7 +8,6 @@ import { makeUser } from './helpers/factories.js';
 import { W1_MARCH } from '../../../packages/shared/test/worked-examples.js';
 
 let t: TestApp;
-let pdfError: unknown = null;
 
 beforeAll(async () => {
   t = await createTestApp({
@@ -29,12 +28,7 @@ beforeAll(async () => {
         access: { permission: 'self:manage' },
         schema: { query: z.strictObject({}) },
         async handler(_req, reply) {
-          try {
-            await sendReport(reply, buildMoneyReport(W1_MARCH), 'pdf', 'March 2026 expenses');
-          } catch (e) {
-            pdfError = e;
-            throw e;
-          }
+          await sendReport(reply, buildMoneyReport(W1_MARCH), 'pdf', 'March 2026 expenses');
         },
       });
     },
@@ -68,10 +62,23 @@ test('a stranger gets 401 and no file', async () => {
   expect(r.headers['content-disposition']).toBeUndefined();
 });
 
-test('PDF export is not installed yet: a plain sentence, and no download headers', async () => {
+test('a PDF download has the right headers and a PDF body', async () => {
   const u = await makeUser(t.db, { role: 'member' });
-  const r = await call(t, await signInAs(t, u), 'GET', '/api/test/report.pdf');
-  expect(r.status).toBe(500);
-  expect(r.headers['content-disposition']).toBeUndefined();
-  expect((pdfError as Error).message).toBe('PDF export is not installed in this app.');
+  const res = await t.app.inject({ method: 'GET', url: '/api/test/report.pdf', headers: { cookie: (await signInAs(t, u)).cookie, origin: t.config.appOrigin } });
+  expect(res.statusCode).toBe(200);
+  expect(res.headers['content-type']).toBe('application/pdf');
+  expect(res.headers['content-disposition']).toBe("attachment; filename*=UTF-8''March%202026%20expenses.pdf");
+  expect(res.headers['cache-control']).toBe('private, no-store');
+  expect(res.headers['x-content-type-options']).toBe('nosniff');
+  expect(Number(res.headers['content-length'])).toBe(res.rawPayload.length);
+  expect(res.rawPayload.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+});
+
+test('a long file name is cut to 120 characters, keeping the extension', async () => {
+  const u = await makeUser(t.db, { role: 'member' });
+  const r = await call(t, await signInAs(t, u), 'GET', `/api/test/report.xlsx?name=${encodeURIComponent('Ł'.repeat(300))}`);
+  expect(r.status).toBe(200);
+  const name = decodeURIComponent(/filename\*=UTF-8''(.*)$/.exec(String(r.headers['content-disposition']))![1]!);
+  expect(name).toBe(`${'Ł'.repeat(115)}.xlsx`);
+  expect(Array.from(name)).toHaveLength(120);
 });
