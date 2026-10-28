@@ -63,6 +63,7 @@ function sentence(issue: z.core.$ZodIssue, data: unknown): string[] {
   }
   if (where === 'policy.residency' && typeof value === 'string') return [`${FILE} has an unknown residency "${value}". Use ${orList(RESIDENCIES)}.`];
   if (value === undefined) return [`${FILE} is missing "${where}".`];
+  if (where === 'policy') return [`${FILE} must give the policy in braces, like "policy": { "outbound": [], "residency": "uk" } (residency is ${orList(RESIDENCIES)}).`];
   if (where === 'modules') return [`${FILE} must list its modules in square brackets, like "modules": ["ocr"].`];
   if (where === 'policy.outbound') return [`${FILE} must list its outbound services in square brackets, like "outbound": [].`];
   if (where === 'policy.residency') return [`${FILE} must give the residency as uk, uk-eu or any.`];
@@ -74,14 +75,17 @@ export function checkAppProfile(data: unknown): AppProfileResult {
   const problems: string[] = [];
   const parsed = AppProfileSchema.safeParse(data);
   if (!parsed.success) for (const issue of parsed.error.issues) problems.push(...sentence(issue, data));
-  const modules = valueAt(data, ['modules']);
-  if (Array.isArray(modules)) {
+  const repeated = (path: readonly string[], what: string): void => {
+    const list = valueAt(data, path);
+    if (!Array.isArray(list)) return;
     const seen = new Set<unknown>();
-    for (const m of modules) {
-      if (seen.has(m) && typeof m === 'string') problems.push(`${FILE} lists the module "${m}" twice.`);
-      seen.add(m);
+    for (const x of list) {
+      if (seen.has(x) && typeof x === 'string') problems.push(`${FILE} lists the ${what} "${x}" twice.`);
+      seen.add(x);
     }
-  }
+  };
+  repeated(['modules'], 'module');
+  repeated(['policy', 'outbound'], 'outbound service');
   const unique = [...new Set(problems)];
   return parsed.success && unique.length === 0 ? { ok: true, profile: parsed.data } : { ok: false, problems: unique };
 }

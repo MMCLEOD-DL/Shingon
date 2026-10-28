@@ -33,3 +33,11 @@ test('vatFromGross: half up, integers only (spec example £12.40 -> £2.07)', ()
   expect(vatFromGross(1050, 500)).toBe(50);  // 5% rate
   expect(vatFromGross(1240, 0)).toBe(0);
 });
+test('refunds and large values', () => {
+  expect(vatFromGross(-1240, 2000)).toBe(-207);
+  expect(vatFromGross(-3, 2000)).toBe(-1);
+  expect(Object.is(vatFromGross(-1, 2000), 0)).toBe(true);
+  expect(() => vatFromGross(Number.MAX_SAFE_INTEGER, 2000)).toThrow(MoneyError);
+  expect(() => formatPounds(0.5)).toThrow(MoneyError);
+  expect(toPence(formatPounds(-500))).toBe(-500);
+});

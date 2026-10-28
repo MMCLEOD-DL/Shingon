@@ -1,3 +1,4 @@
+/// <reference types="node" />
 /**
  * Reads app-profile.json from disk (Node only, so it is a separate entry point the web bundle never loads).
  * The server, ops and the web build all read the profile through this one function.
