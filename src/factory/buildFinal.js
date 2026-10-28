@@ -91,6 +91,13 @@ export async function runFinal(bctx) {
   const { factory, slug, projectDir, appDir, buildDir, brief, build, team, hooks, env, deps, save, emit, progress, finish } = bctx;
   const git = gitFn;
   const now = deps.now ?? (() => new Date());
+  // Change mode (Plan 11): the gate's yes leaves main and project.json alone; Plan 11 moves main itself.
+  const changeMode = Boolean(bctx.change);
+  const again = bctx.again ?? `conductor build ${slug}`;
+  const changeOutcome = () => ({ status: 'approved', runId: build.runId, buildDir, sha: build.approvedSha, branch: build.branch });
+
+  // Approved before (a crash after the gate was answered): the same outcome, without asking again.
+  if (changeMode && build.status === 'approved' && build.approvedSha) return changeOutcome();
 
   // A fix unit saved before a crash that came before the phase changed: build it first.
   if (build.features.some((f) => f.status !== 'merged')) return { next: 'features' };
@@ -100,7 +107,7 @@ export async function runFinal(bctx) {
   let main = await rev(appDir, 'refs/heads/main^{commit}', git);
 
   // Approved before a crash: main already moved, so finish the approval without asking again.
-  if (build.phase === 'gate' && main === sha) return approve();
+  if (!changeMode && build.phase === 'gate' && main === sha) return approve();
 
   // ---- 1-4: whole-app checks -------------------------------------------------------------------------------
   if (build.checks?.sha !== sha) {
@@ -132,7 +139,7 @@ export async function runFinal(bctx) {
     // (a database or browsers missing, a flaky runner). fixRounds stays at the cap, so no new fix unit follows.
     const stop = (reason) => { build.checks = null; return finish('stopped', reason); };
     if (verifyRed) {
-      return stop( `The whole-app checks still fail after ${rounds(build.fixRounds)}, so the build cannot be approved. ${checksLine(checks).replace(/\.$/, '')}. The build is kept; fix the cause and run "conductor build ${slug}" to try again.`);
+      return stop( `The whole-app checks still fail after ${rounds(build.fixRounds)}, so the build cannot be approved. ${checksLine(checks).replace(/\.$/, '')}. The build is kept; fix the cause and run "${again}" to try again.`);
     }
     const what = firstLine(checks.browser.output) || checks.browser.summary;
     const message = `Conductor needs your decision on: the browser checks\n\nWhat happened: The browser checks still fail on the finished build after ${rounds(build.fixRounds)}, although the main checks pass.\n\nThe first failure: ${what}\n\nApprove to carry on to the build's approval with a warning, or reject to stop the build here (it is kept).`;
@@ -190,9 +197,14 @@ export async function runFinal(bctx) {
   // ---- 6: a secret was seen: the build branch becomes one commit -------------------------------------------
   if (build.secretSeen && build.squashedSha !== sha) {
     // The squash goes on main's tip; a main that moved off the build's history is never written over.
-    if (!main || (await git(appDir, ['merge-base', '--is-ancestor', main, sha])).code !== 0) return finish('failed', MAIN_MOVED);
+    // In change mode it goes on the commit the build branch started from, so an upgrade keeps its foundation
+    // merge as the parent (Ruling C6).
+    const onto = changeMode ? build.startSha : main;
+    if (!onto || (await git(appDir, ['merge-base', '--is-ancestor', onto, sha])).code !== 0) {
+      return finish('failed', changeMode ? branchMoved(build.branch) : MAIN_MOVED);
+    }
     const squashed = await squashBuild({
-      appDir, branch: build.branch, sha, onto: main, git,
+      appDir, branch: build.branch, sha, onto, git,
       message: `Build ${build.runId} of ${build.client}'s app (one commit: a possible secret was seen in its history)`,
     });
     // The tree is identical, so the checks and the council still hold for the new commit.
@@ -215,12 +227,14 @@ export async function runFinal(bctx) {
   save();
   const summary = buildSummaryText({ build, project: bctx.project, checks: build.checks, councilText, slug });
   let answer;
-  try { answer = await hooks.approveBuild({ summary }); } catch { answer = false; }
-  if (answer === true) return approve();
+  try {
+    answer = await hooks.approveBuild({ summary, sha, branch: build.branch, runId: build.runId, council: build.council, checks: build.checks });
+  } catch { answer = false; }
+  if (answer === true) return changeMode ? approveChange() : approve();
   // { stop: true }: the operator stopped without deciding (end of input at the gate). Not a rejection: the build
   // stays at the gate and "conductor build <slug>" asks again.
   if (answer && typeof answer === 'object' && answer.stop === true) {
-    return finish('stopped', `You stopped at the build's approval without deciding. The app's main branch is unchanged; run "conductor build ${slug}" to be asked again.`);
+    return finish('stopped', `You stopped at the build's approval without deciding. The app's main branch is unchanged; run "${again}" to be asked again.`);
   }
   if (answer && typeof answer === 'object' && typeof answer.note === 'string' && answer.note.trim()) {
     fixUnit({
@@ -232,6 +246,16 @@ export async function runFinal(bctx) {
     return { next: 'features' };
   }
   return finish('rejected', `You did not approve the build. The app's main branch is unchanged; the build is kept in ${buildDir}.`);
+
+  // Change mode: main is not moved and project.json is not touched; the app folder goes back to main (clean).
+  async function approveChange() {
+    const co = await git(appDir, ['checkout', '-q', 'main']);
+    if (co.code !== 0) throw new Error(`git checkout main failed: ${firstLine(co.stderr) || `exit ${co.code}`}`);
+    build.approvedSha = sha;
+    build.phase = 'done';
+    finish('approved', null);
+    return changeOutcome();
+  }
 
   // main moves to the build's tip by compare-and-swap, then project.json records the approval (Contract 7 §7.11).
   async function approve() {

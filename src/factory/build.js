@@ -2,7 +2,7 @@
 // Phases setup → split → features → final, each re-entrant: build.json is saved after every step that
 // matters, so running the command again carries on from the last saved point (Review Focus 1).
 // runBuild never takes the project lock: its caller (the build/resume handler) holds it (Contract 7 §7.11).
-import { readdirSync, rmSync, mkdirSync } from 'node:fs';
+import { readdirSync, rmSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { runTask as realRunTask, resume as realResume } from '../conductor.js';
 import { DEFAULT_OPTIONS } from '../options.js';
@@ -11,19 +11,25 @@ import { git, defaultBaseDir } from '../workspace.js';
 import { FEATURE_COUNCIL } from '../council/index.js';
 import { readProject, saveProject } from './projects.js';
 import { loadBrief as realLoadBrief, renderBrief as realRenderBrief, currentBriefInfo as realCurrentBriefInfo } from './brief.js';
-import { createApp, nameApp } from './app.js';
+import { createApp, nameApp, APP_PROFILE_FILE } from './app.js';
+import { acceptanceIds } from './acceptance.js';
 import { featureRequest, acceptanceStep } from './featureRequest.js';
-import { runSplit, briefProblems } from './split.js';
+import { runSplit, briefProblems, MAX_INSTRUCTIONS } from './split.js';
 import { runAppChecks as realRunAppChecks, testDatabaseProblem, VERIFY_COMMAND } from './checks.js';
 import {
   buildDirOf, loadBuild, saveBuild, newBuild, hashBrief, appendBuildLog, readRunState, archiveFeatureRun,
   mergeFeature as realMergeFeature,
 } from './buildState.js';
-import { newRunId } from './ids.js';
+import { newRunId, RUN_ID_RE } from './ids.js';
 
 const UNFINISHED = new Set(['running', 'paused', 'failed', 'stopped']);
 const RESUMABLE_RUN = new Set(['running', 'failed', 'paused']);
 const DIRTY = 'The app folder has changes Conductor did not make, so it stopped. Nothing was changed.';
+// Change mode (Plan 11, options.change): a change built on a live app.
+export const NOT_LIVE_YET = 'This project has not been built and approved yet, so there is nothing to change. Build it first with "conductor build <slug>".';
+export const BASE_REF_MISSING = (baseRef) => `There is no branch called ${baseRef} in the app, so the change build did not start.`;
+export const BAD_CHANGE_UNITS = (problems) => `The change could not be turned into build steps: ${problems.join(' ')} Nothing was built.`;
+const PROFILE_MESSAGE = 'Update the app profile from the brief';
 const notWhereLeft = (branch) => `The build branch ${branch} is not where Conductor left it, so it stopped rather than guess. Nothing was changed.`;
 
 // A problem whose message is already plain English for the operator (not an internal fault).
@@ -47,6 +53,61 @@ function newestBuild(projectDir) {
     if (b && b.kind !== 'change') return b;
   }
   return null;
+}
+
+// A new feature record for a unit (the split's units, or a change's).
+const newFeature = (u) => ({
+  id: u.id, title: u.title, status: 'pending', attempts: 0, workspaceDir: null, branch: null, landedSha: null,
+  baseSha: null, mergedSha: null, transcript: null, notes: [], councilText: null, gateReason: null,
+});
+
+// JSON with keys sorted, so two objects that differ only in key order compare equal.
+function canonicalJson(v) {
+  const sort = (x) => (Array.isArray(x) ? x.map(sort)
+    : x && typeof x === 'object' ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, sort(x[k])])) : x);
+  return JSON.stringify(sort(v));
+}
+
+// The change's base must be an existing local branch, named plainly (never an option, a range or a relative name).
+async function baseRefProblem(appDir, baseRef) {
+  const missing = BASE_REF_MISSING(baseRef);
+  if (typeof baseRef !== 'string' || !baseRef || baseRef.startsWith('-') || /[~^:@{]/.test(baseRef)) return missing;
+  if ((await git(appDir, ['check-ref-format', `refs/heads/${baseRef}`])).code !== 0) return missing;
+  const r = await git(appDir, ['rev-parse', '--verify', '--quiet', `refs/heads/${baseRef}^{commit}`]);
+  return r.code === 0 ? null : missing;
+}
+
+const LIST_WORDS = { covers: 'features it covers', acceptance: 'worked examples', dependsOn: 'steps it depends on', retire: 'retired worked examples' };
+
+// Every problem with a change's units, as plain sentences; [] when they can be built.
+function changeUnitProblems(brief, units) {
+  if (!Array.isArray(units) || units.length === 0) return ['There are no build steps.'];
+  const known = new Set(acceptanceIds(brief).map((a) => a.id));
+  const problems = [];
+  const seen = new Set();
+  units.forEach((u, i) => {
+    if (!u || typeof u !== 'object' || Array.isArray(u)) { problems.push(`Step ${i + 1} is not a build step.`); return; }
+    if (typeof u.id !== 'string' || !u.id.trim()) { problems.push(`Step ${i + 1} has no id.`); return; }
+    const name = `step ${i + 1} (${u.id})`;
+    if (seen.has(u.id)) problems.push(`The step id ${u.id} is used more than once.`);
+    seen.add(u.id);
+    if (typeof u.title !== 'string' || !u.title.trim()) problems.push(`The ${name} has no title.`);
+    if (typeof u.instructions !== 'string' || !u.instructions.trim()) problems.push(`The ${name} has no instructions.`);
+    else if (u.instructions.length > MAX_INSTRUCTIONS) problems.push(`The instructions for ${name} are ${u.instructions.length} characters (the limit is ${MAX_INSTRUCTIONS}).`);
+    for (const key of Object.keys(LIST_WORDS)) {
+      if (u[key] !== undefined && !(Array.isArray(u[key]) && u[key].every((x) => typeof x === 'string'))) problems.push(`The ${name} has an unreadable list of ${LIST_WORDS[key]}.`);
+    }
+    const unknown = Array.isArray(u.acceptance) ? u.acceptance.filter((id) => !known.has(id)) : [];
+    if (unknown.length) problems.push(`The ${name} names worked examples the brief does not have: ${unknown.join(', ')}.`);
+  });
+  if (problems.length) return problems;
+  // Each request must fit whole: a clipped fix unit could lose the tags its instructions name.
+  units.forEach((u, i) => {
+    let text = null;
+    try { text = featureRequest({ brief, units, index: i }); } catch { /* reported below */ }
+    if (text === null || !text.includes(u.instructions)) problems.push(`The request for step ${i + 1} (${u.id}) is too long for one build step.`);
+  });
+  return problems;
 }
 
 async function gitOut(cwd, args) {
@@ -76,9 +137,20 @@ export async function runBuild({ factory, slug, team, hooks, options = {}, baseD
   let projectDir;
   let project;
   try { ({ dir: projectDir, project } = readProject(factory.projectsRoot, slug)); } catch (e) { return refuse(e.message); }
-  if (project.status === 'ready' || project.status === 'shipped') {
+  // Change mode (Plan 11): only a live app takes a change; the ready/shipped refusal is lifted for it alone.
+  const change = options.change ?? null;
+  if (change) {
+    if (typeof change !== 'object' || Array.isArray(change)) return refuse('The change to build was not passed in a form Conductor can read, so the change build did not start.');
+    if (project.status !== 'ready' && project.status !== 'shipped') return refuse(NOT_LIVE_YET);
+    if (typeof change.runId !== 'string' || !RUN_ID_RE.test(change.runId)) {
+      return refuse(`The change's run id "${String(change.runId).slice(0, 40)}" is not one Conductor made, so the change build did not start.`);
+    }
+    if (change.profile != null && (typeof change.profile !== 'object' || Array.isArray(change.profile))) {
+      return refuse('The app profile for the change cannot be read, so the change build did not start.');
+    }
+  } else if (project.status === 'ready' || project.status === 'shipped') {
     await finishApprovedBuild(projectDir, project);
-    return refuse(`${project.client} is already built and approved. Changes to a finished app will go through "conductor change", which is not available yet.`);
+    return refuse(`${project.client} is already built and approved. Changes to a finished app go through "conductor change ${slug}".`);
   }
   let brief;
   try { brief = d.loadBrief(projectDir); } catch (e) { return refuse(e.message); }
@@ -86,18 +158,51 @@ export async function runBuild({ factory, slug, team, hooks, options = {}, baseD
   if (problems.length) return refuse(problems.join(' '));
   const dbProblem = testDatabaseProblem({ testCommand: factory.build.testCommand, env });
   if (dbProblem) return refuse(dbProblem);
+  if (change) {
+    const refProblem = await baseRefProblem(path.join(projectDir, 'app'), change.baseRef);
+    if (refProblem) return refuse(refProblem);
+    const unitProblems = changeUnitProblems(brief, change.units);
+    if (unitProblems.length) return refuse(BAD_CHANGE_UNITS(unitProblems));
+  }
 
   // Which build: carry on with an unfinished one, or start a new one.
-  let latest;
-  try { latest = newestBuild(projectDir); } catch (e) {
-    if (!options.newBuild) return refuse(e.message);
-    latest = null;   // --new: the damaged record is left as it is
-  }
   const briefHash = hashBrief(brief);
-  const unfinished = latest && UNFINISHED.has(latest.status) ? latest : null;
   let build;
   let resumed = false;
-  if (unfinished && !options.newBuild) {
+  let latest = null;
+  if (!change) {
+    try { latest = newestBuild(projectDir); } catch (e) {
+      if (!options.newBuild) return refuse(e.message);
+      latest = null;   // --new: the damaged record is left as it is
+    }
+  }
+  const unfinished = latest && UNFINISHED.has(latest.status) ? latest : null;
+  if (change) {
+    // A change build lives at builds/<change.runId>; calling again with the same run id carries it on.
+    const dir = buildDirOf(projectDir, change.runId);
+    let saved;
+    try { saved = loadBuild(dir); } catch {
+      return refuse(`The saved state of change build ${change.runId} cannot be read, so Conductor stopped rather than guess. It is kept in ${path.join(dir, 'build.json')}.`);
+    }
+    if (saved && saved.kind !== 'change') return refuse(`Build ${change.runId} is not a change build, so Conductor will not carry it on as one.`);
+    // Approved before (a crash after the gate): the same outcome, without asking again.
+    if (saved?.status === 'approved') return { status: 'approved', runId: saved.runId, buildDir: dir, sha: saved.approvedSha, branch: saved.branch };
+    if (saved) {
+      if (saved.briefHash !== briefHash) {
+        return refuse(`The brief has changed since change build ${saved.runId} started, so Conductor will not mix the two. Run "conductor change ${slug} --abandon", then start the change again.`);
+      }
+      build = saved;
+      resumed = true;
+    } else {
+      const foundation = project.foundation?.tag ? { ...project.foundation } : null;
+      build = newBuild({ runId: change.runId, slug, client: brief.client, briefHash, briefVersion: brief.version ?? null, foundation, now: d.now(), kind: 'change' });
+      build.baseRef = change.baseRef;
+      build.startSha = null;
+      build.approvedSha = null;
+      build.units = JSON.parse(JSON.stringify(change.units));
+      build.features = build.units.map(newFeature);
+    }
+  } else if (unfinished && !options.newBuild) {
     if (unfinished.briefHash !== briefHash) {
       return refuse(`The brief has changed since build ${unfinished.runId} started, so Conductor will not mix the two. Run "conductor build ${slug} --new" to start a fresh build from the current brief.`);
     }
@@ -124,6 +229,8 @@ export async function runBuild({ factory, slug, team, hooks, options = {}, baseD
     try { hooks.onEvent?.({ type, ...data }); } catch { /* a display hook never stops a build */ }
   };
   const progress = (text) => { try { hooks.onProgress?.(text); } catch { /* display only */ } };
+  // How the operator carries this build on (Ruling C12).
+  const again = change ? `conductor change ${slug} --resume` : `conductor build ${slug}`;
   const finish = (status, reason) => {
     build.status = status;
     build.reason = reason ?? null;
@@ -139,7 +246,7 @@ export async function runBuild({ factory, slug, team, hooks, options = {}, baseD
 
   const bctx = {
     factory, slug, projectDir, appDir, buildDir, project, brief, build, team, hooks, options, baseDir, warnings, env, deps: d,
-    save, emit, progress, finish, runFeatures: () => featuresPhase(),
+    save, emit, progress, finish, runFeatures: () => featuresPhase(), change, again,
   };
 
   // ---- setup ---------------------------------------------------------------------------------------------
@@ -159,21 +266,8 @@ export async function runBuild({ factory, slug, team, hooks, options = {}, baseD
     build.foundation = recorded;
     save();
 
-    if (!build.baseline) {
-      const sha = await gitOut(appDir, ['rev-parse', '--verify', 'refs/heads/main^{commit}']);
-      progress('Checking that the foundation passes its own checks');
-      const c = await d.runAppChecks({
-        appDir, sha, workDir: path.join(buildDir, 'check'), reportsDir: path.join(buildDir, 'baseline'),
-        testCommand: factory.build.testCommand, browser: false, env,
-      });
-      // The output goes to the build log only.
-      try { appendBuildLog(buildDir, 'baseline', { sha, status: c.verify.status, summary: c.verify.summary, output: c.verify.output ?? '' }); } catch { /* best effort */ }
-      if (c.verify.status !== 'passed') {
-        return finish('failed', `The foundation does not pass its own checks on this computer, so building on it would hide problems. ${c.verify.summary} The output is in ${path.join(buildDir, 'build-log.jsonl')}.`);
-      }
-      build.baseline = { status: c.verify.status, summary: c.verify.summary };
-      save();
-    }
+    const r = await baselinePhase();
+    if (r) return r;
 
     await assertClean();
     const exists = (await git(appDir, ['rev-parse', '--verify', '--quiet', `refs/heads/${build.branch}`])).code === 0;
@@ -185,6 +279,58 @@ export async function runBuild({ factory, slug, team, hooks, options = {}, baseD
     build.phase = 'split';
     save();
     return null;
+  }
+
+  // The checks on main before anything is built: a red main would hide the build's own problems.
+  async function baselinePhase() {
+    if (build.baseline) return null;
+    const what = change ? 'The app' : 'The foundation';
+    const sha = await gitOut(appDir, ['rev-parse', '--verify', 'refs/heads/main^{commit}']);
+    progress(`Checking that ${what.toLowerCase()} passes its own checks`);
+    const c = await d.runAppChecks({
+      appDir, sha, workDir: path.join(buildDir, 'check'), reportsDir: path.join(buildDir, 'baseline'),
+      testCommand: factory.build.testCommand, browser: false, env,
+    });
+    // The output goes to the build log only.
+    try { appendBuildLog(buildDir, 'baseline', { sha, status: c.verify.status, summary: c.verify.summary, output: c.verify.output ?? '' }); } catch { /* best effort */ }
+    if (c.verify.status !== 'passed') {
+      return finish('failed', `${what} does not pass its own checks on this computer, so building on it would hide problems. ${c.verify.summary} The output is in ${path.join(buildDir, 'build-log.jsonl')}.`);
+    }
+    build.baseline = { status: c.verify.status, summary: c.verify.summary };
+    save();
+    return null;
+  }
+
+  // ---- setup, change mode: no app creation and no split; the build branch starts from change.baseRef -------
+  async function changeSetupPhase() {
+    const r = await baselinePhase();
+    if (r) return r;
+    await assertClean();
+    if (!build.startSha) {
+      // Recorded before the branch exists: a secret squash goes back onto this commit (Ruling C6).
+      build.startSha = await gitOut(appDir, ['rev-parse', '--verify', `refs/heads/${build.baseRef}^{commit}`]);
+      save();
+    }
+    const exists = (await git(appDir, ['rev-parse', '--verify', '--quiet', `refs/heads/${build.branch}`])).code === 0;
+    if ((await currentBranch()) !== build.branch) {
+      await gitOut(appDir, exists ? ['checkout', '-q', build.branch] : ['checkout', '-q', '-b', build.branch, build.startSha]);
+    }
+    if (change.profile) await commitProfile(change.profile);
+    build.baseSha = await gitOut(appDir, ['rev-parse', 'HEAD']);
+    build.phase = 'features';
+    save();
+    return null;
+  }
+
+  // The brief's app profile, committed alone on the build branch when it differs (in content, not key order).
+  async function commitProfile(profile) {
+    const file = path.join(appDir, APP_PROFILE_FILE);
+    let current = null;
+    try { current = canonicalJson(JSON.parse(readFileSync(file, 'utf8'))); } catch { /* missing or unreadable: written below */ }
+    if (current === canonicalJson(profile)) return;
+    writeFileSync(file, JSON.stringify(profile, null, 2) + '\n');
+    await gitOut(appDir, ['add', '--', APP_PROFILE_FILE]);
+    await gitOut(appDir, ['commit', '-q', '-m', PROFILE_MESSAGE, '--', APP_PROFILE_FILE]);
   }
 
   async function currentBranch() {
@@ -214,10 +360,7 @@ export async function runBuild({ factory, slug, team, hooks, options = {}, baseD
     save();   // usage
     if (r.status !== 'ok') return finish(r.status, r.reason);
     build.units = r.units;
-    build.features = r.units.map((u) => ({
-      id: u.id, title: u.title, status: 'pending', attempts: 0, workspaceDir: null, branch: null, landedSha: null,
-      baseSha: null, mergedSha: null, transcript: null, notes: [], councilText: null, gateReason: null,
-    }));
+    build.features = r.units.map(newFeature);
     if (r.note && !build.notes.includes(r.note)) build.notes.push(r.note);
     save();
     emit('build-split', { units: r.units.map((u) => ({ id: u.id, title: u.title })) });
@@ -273,7 +416,8 @@ export async function runBuild({ factory, slug, team, hooks, options = {}, baseD
       keepWorkspace: true,
       council: true,
       councilMembers: [...FEATURE_COUNCIL],
-      factoryFeature: { id: unit.id, tags: [...(unit.acceptance ?? [])] },   // the member gets ws.baseSha from the run (ruling Q27 b)
+      // The member gets ws.baseSha from the run (ruling Q27 b); a change unit also names the tags it retires.
+      factoryFeature: { id: unit.id, tags: [...(unit.acceptance ?? [])], ...(change ? { retire: [...(unit.retire ?? [])] } : {}) },
       firstChunk: acceptanceStep({ brief, unit }),
     };
     const featureHooks = featureHooksFor(i);
@@ -316,7 +460,7 @@ export async function runBuild({ factory, slug, team, hooks, options = {}, baseD
       return finish(out.status, out.reason);
     }
     f.status = 'stopped';
-    return finish('stopped', `Feature ${i + 1} (${f.title}) was not accepted: ${f.gateReason ?? out.reason} Fix the cause, then run "conductor build ${slug}" to try that feature again.`);
+    return finish('stopped', `Feature ${i + 1} (${f.title}) was not accepted: ${f.gateReason ?? out.reason} Fix the cause, then run "${again}" to try that feature again.`);
   }
 
   async function mergeLanded(i) {
@@ -384,7 +528,7 @@ export async function runBuild({ factory, slug, team, hooks, options = {}, baseD
     save();
     emit('build-start', { runId: build.runId, slug, resumed });
     for (;;) {
-      if (build.phase === 'setup') { const r = await setupPhase(); if (r) return r; }
+      if (build.phase === 'setup') { const r = change ? await changeSetupPhase() : await setupPhase(); if (r) return r; }
       if (build.phase === 'split') { const r = await splitPhase(); if (r) return r; }
       if (build.phase === 'features') {
         const r = await featuresPhase();
@@ -403,8 +547,8 @@ export async function runBuild({ factory, slug, team, hooks, options = {}, baseD
     const detail = String(e?.message ?? e);
     emit('build-error', { detail });
     const reason = e instanceof PlainError
-      ? `${detail} Run "conductor build ${slug}" to carry on once it is sorted.`
-      : `Conductor hit an internal problem and stopped. The build so far is kept; run "conductor build ${slug}" to carry on. Details are in ${path.join(buildDir, 'build-log.jsonl')}.`;
+      ? `${detail} Run "${again}" to carry on once it is sorted.`
+      : `Conductor hit an internal problem and stopped. The build so far is kept; run "${again}" to carry on. Details are in ${path.join(buildDir, 'build-log.jsonl')}.`;
     try { return finish('failed', reason); } catch { return { status: 'failed', runId: build.runId, buildDir, reason }; }
   }
 }

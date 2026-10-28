@@ -10,9 +10,9 @@ import { redact } from '../secrets.js';
 export const buildDirOf = (projectDir, runId) => path.join(projectDir, 'builds', runId);
 const buildFile = (buildDir) => path.join(buildDir, 'build.json');
 
-export function newBuild({ runId, slug, client, briefHash, briefVersion, foundation, now = new Date() }) {
+export function newBuild({ runId, slug, client, briefHash, briefVersion, foundation, now = new Date(), kind = 'build' }) {
   return {
-    schema: 1, kind: 'build', runId, slug, client, startedAt: now.toISOString(), briefHash, briefVersion, foundation,
+    schema: 1, kind, runId, slug, client, startedAt: now.toISOString(), briefHash, briefVersion, foundation,
     branch: `build/${runId}`, baseSha: null, phase: 'setup', status: 'running',
     units: [], features: [], fixRounds: 0, councilFixRounds: 0, secretSeen: false, squashedSha: null,
     usage: { costUsd: 0, apiCostUsd: 0, apiCalls: 0 },
