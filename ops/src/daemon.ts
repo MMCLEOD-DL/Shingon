@@ -12,12 +12,12 @@ import { withOpsLock, OpsBusyError, opsLockHeld } from './opsLock.js';
 import { connect, pgEnv } from './pg.js';
 import { outstandingUpdate, recordRun, scrub, type OpsDeps } from './runs.js';
 import { execRunner } from './runner.js';
-import { startScheduler, type Job } from './scheduler.js';
+import { startScheduler, type Job, type ScheduleFn } from './scheduler.js';
 import { alertSecrets, channelFromConfig, logChannel, redactAlert, redactingChannel, type AlertChannel } from './alerts.js';
 import { Monitor } from './monitor.js';
 import { monitorChecks } from './checks.js';
 import { readRecord, recordIsLeftover, UPDATE_RECORD } from './journal.js';
-import { appJobs } from '@hf/server/jobs';
+import { appJobs, type AppJob } from '@hf/server/jobs';
 import { AppJobError, scheduleAppJobs } from './appJobs.js';
 
 export const AUDIT_PURGE_SCHEDULE = '15 3 * * *';
@@ -269,9 +269,45 @@ export async function sweepLeftovers(deps: OpsDeps, maxAgeMs = 3600e3): Promise<
   return removed;
 }
 
+export interface DaemonOptions {
+  /** Replaces croner (tests fire the timers by hand). */
+  schedule?: ScheduleFn;
+  /** Replaces the app's registered jobs (tests). */
+  appJobs?: AppJob[];
+  /** Replaces the alert channel and monitor built from the settings (tests). */
+  alerting?: { channel: AlertChannel; monitor: Monitor };
+  appJobTimeLimitMs?: number;
+}
+
+/**
+ * Starts the daemon's work: tidies leftovers, starts every scheduled job (backups, restore tests, the audit-log tidy-up,
+ * the monitor and the app's jobs), and only then begins the app jobs' start-up work (reporting runs cut short and catching
+ * up), without waiting for it: a hung app job must never stop backups or the monitor. `startUp` settles when that is done.
+ */
+export async function startDaemon(deps: OpsDeps, opts: DaemonOptions = {}): Promise<{ stop: () => void; startUp: Promise<void> }> {
+  const { cfg } = deps;
+  const { channel, monitor } = opts.alerting ?? buildMonitor(deps);
+  const where = [cfg.alerts.matrix ? 'Matrix' : '', cfg.alerts.webhookUrl !== undefined ? 'the alert webhook' : ''].filter(Boolean).join(' and ') || 'the ops log only';
+  deps.log(`Health checks run every minute; alerts go to ${where}${cfg.heartbeatUrl !== undefined ? ', with a heartbeat to the outside watcher' : ''}.`);
+  await sweepLeftovers(deps);
+  const onFailure = onJobFailure(deps, monitor);
+  const app = scheduleAppJobs(deps, opts.appJobs ?? appJobs(), onFailure, opts.appJobTimeLimitMs !== undefined ? { timeLimitMs: opts.appJobTimeLimitMs } : {});
+  const scheduler = startScheduler([...daemonJobs(deps, channel, monitor), ...app.jobs], onFailure, opts.schedule);
+  const startUp = app.startUp().catch((e: unknown) => {
+    deps.log(`The app's scheduled jobs could not be checked at start: ${firstLine(scrub(deps, e instanceof Error ? e.message : String(e)))}.`);
+  });
+  return { stop: () => { scheduler.stop(); }, startUp };
+}
+
 /** `ops daemon`: the long-running scheduler. Resolves when asked to stop (SIGTERM from `docker compose stop`, or SIGINT). */
 export async function runDaemon(deps: OpsDeps, close: () => Promise<void>): Promise<void> {
   const { cfg } = deps;
+  // Listening for the stop signal before anything else starts, so a stop during start-up is never missed.
+  const stopped = new Promise<void>((resolve) => {
+    const stop = (): void => { resolve(); };
+    process.once('SIGTERM', stop);
+    process.once('SIGINT', stop);
+  });
   deps.log(`Ops is running for ${cfg.client}. Backups: "${cfg.backup.schedule}"; restore tests: "${cfg.backup.restoreTestSchedule}"; audit-log tidy-up: "${AUDIT_PURGE_SCHEDULE}" (UK time).`);
   if (cfg.backup.allowLocal) deps.log(`BACKUP_ALLOW_LOCAL is true. ${LOCAL_WARNING}`);
   for (const w of cfg.warnings) deps.log(`Warning: ${w}`);
@@ -279,20 +315,9 @@ export async function runDaemon(deps: OpsDeps, close: () => Promise<void>): Prom
   if (left !== null && (await recordIsLeftover(left, path.dirname(cfg.workDir), deps.now(), () => opsLockHeld(deps)))) {
     deps.log(`Warning: an update from ${left.from} to ${left.to} stopped part-way (step: ${left.step}). Backups are paused and the health check raises a critical alert until it is sorted out.`);
   }
-  const { channel, monitor } = buildMonitor(deps);
-  const where = [cfg.alerts.matrix ? 'Matrix' : '', cfg.alerts.webhookUrl !== undefined ? 'the alert webhook' : ''].filter(Boolean).join(' and ') || 'the ops log only';
-  deps.log(`Health checks run every minute; alerts go to ${where}${cfg.heartbeatUrl !== undefined ? ', with a heartbeat to the outside watcher' : ''}.`);
-  await sweepLeftovers(deps);
-  const onFailure = onJobFailure(deps, monitor);
-  // The app's scheduled jobs, when "scheduled-jobs" is on: missed runs are caught up once before the timers start.
-  const appScheduled = await scheduleAppJobs(deps, appJobs(), onFailure);
-  const scheduler = startScheduler([...daemonJobs(deps, channel, monitor), ...appScheduled], onFailure);
-  await new Promise<void>((resolve) => {
-    const stop = (): void => { resolve(); };
-    process.once('SIGTERM', stop);
-    process.once('SIGINT', stop);
-  });
-  scheduler.stop();
+  const daemon = await startDaemon(deps);
+  await stopped;
+  daemon.stop();
   deps.log('Ops is stopping.');
   await close().catch(() => undefined);
 }

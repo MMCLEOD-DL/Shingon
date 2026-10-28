@@ -269,8 +269,9 @@ export function loadOpsConfig(env: NodeJS.ProcessEnv = process.env): OpsConfig {
     problems.push('No alert channel is set. Set MATRIX_HOMESERVER, MATRIX_ACCESS_TOKEN and MATRIX_ROOM_ID, or ALERT_WEBHOOK_URL.');
   }
 
+  // A bad profile must not stop backups: ops then runs none of the app's scheduled jobs and raises it as a warning.
   const profileRead = readAppProfile(get('APP_PROFILE') ?? DEFAULT_PROFILE_FILE);
-  if (!profileRead.ok) problems.push(...profileRead.problems);
+  if (!profileRead.ok) warnings.push(`${profileRead.problems.join(' ')} Until it is fixed, ops runs none of the app's scheduled jobs (backups carry on).`);
 
   const healthToken = get('HEALTH_TOKEN');
   const cfg: OpsConfig = {

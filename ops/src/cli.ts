@@ -5,7 +5,6 @@ import { parseArgs } from 'node:util';
 import { desc, eq } from 'drizzle-orm';
 import { opsRuns } from '@hf/server/db/schema';
 import { appJobs } from '@hf/server/jobs';
-import { moduleOn } from '@hf/shared';
 import { realIo, runHelp, runInit, USAGE } from './init-cli.js';
 import { checkEdgePair, loadOpsConfig, OpsConfigError, type OpsConfig } from './config.js';
 import { BackupError, runBackup, firstLine } from './backup.js';
@@ -20,7 +19,7 @@ import { fileJournal, UPDATE_RECORD } from './journal.js';
 import { fileLock, holderFromInspect, pidAlive, type LockHolder } from './lock.js';
 import { opsLockHeld, withOpsLock } from './opsLock.js';
 import { outstandingUpdate, recordRun } from './runs.js';
-import { describeAppJobs } from './appJobs.js';
+import { jobsCommand } from './appJobs.js';
 import { frontDoorCheck, httpWaitReady, markRecovered, runUpdate } from './update.js';
 
 const say = (line: string): void => { console.log(line); };
@@ -233,16 +232,8 @@ async function main(argv: string[]): Promise<number> {
     }
     case 'update':
       return updateCli(rest);
-    case 'jobs': {
-      if (rest.length > 0) { complain(`jobs takes no options.\n\n${USAGE}`); return 2; }
-      return withDeps(async (deps) => {
-        const jobs = appJobs();
-        if (jobs.length === 0) { say('This app has no scheduled jobs.'); return 0; }
-        if (!moduleOn(deps.cfg, 'scheduled-jobs')) say('These jobs are switched off. Add "scheduled-jobs" to app-profile.json to run them.');
-        for (const line of await describeAppJobs(deps, jobs)) say(line);
-        return 0;
-      });
-    }
+    case 'jobs':
+      return jobsCommand(rest, appJobs(), withDeps, { say, complain });
     case 'daemon': {
       const cfg = config();
       if (cfg === undefined) return 2;

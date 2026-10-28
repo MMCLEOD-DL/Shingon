@@ -1,7 +1,13 @@
 import { Cron } from 'croner';
 
 /** `at` is the time the run was due, when the timer knows it (the app jobs record each run against it). */
-export interface Job { name: string; cron: string; run: (at?: Date) => Promise<void> }
+export interface Job {
+  name: string;
+  cron: string;
+  run: (at?: Date) => Promise<void>;
+  /** Told when a due run is skipped because the previous run is still going (ops' own jobs skip silently). */
+  onSkip?: () => void;
+}
 
 /**
  * Starts one timer that calls `fire` on a cron schedule, with the time the run was due. The default is croner in UK time;
@@ -10,8 +16,9 @@ export interface Job { name: string; cron: string; run: (at?: Date) => Promise<v
 export type ScheduleFn = (cron: string, name: string, fire: (at?: Date) => Promise<unknown>) => { stop(): void };
 
 const cronSchedule: ScheduleFn = (cron, name, fire) =>
-  // `protect` as well as the guard below, so croner itself also never stacks runs.
-  new Cron(cron, { timezone: 'Europe/London', protect: true, name }, async (self: Cron) => { await fire(self.currentRun() ?? undefined); });
+  // croner's `protect` as well as the guard below, so croner itself also never stacks runs. When croner holds a run back,
+  // the guarded `fire` is still called, so the guard counts it as skipped (and an app job says so).
+  new Cron(cron, { timezone: 'Europe/London', protect: () => { void fire(); }, name }, async (self: Cron) => { await fire(self.currentRun() ?? undefined); });
 
 /**
  * One job's run as the scheduler calls it: never overlapping itself (a call while the last run is still going is skipped
@@ -21,7 +28,10 @@ const cronSchedule: ScheduleFn = (cron, name, fire) =>
 export function guardJob(job: Job, onFailure: (name: string, err: Error) => Promise<void>): (at?: Date) => Promise<'ran' | 'skipped'> {
   let running = false;
   return async (at) => {
-    if (running) return 'skipped';
+    if (running) {
+      job.onSkip?.();
+      return 'skipped';
+    }
     running = true;
     try {
       await job.run(at);

@@ -1,16 +1,16 @@
-import { test, expect, beforeAll, afterAll } from 'vitest';
+import { test, expect, beforeAll, afterAll, describe } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { jobRuns } from '@hf/server/db/schema';
 import type { AppJob } from '@hf/server/jobs';
 import type { Db } from '@hf/server/db';
-import { catchUpAppJobs, claimRun, describeAppJobs, dueSince, lastJobRun, runAppJob, scheduleAppJobs } from '../src/appJobs.js';
-import { onJobFailure } from '../src/daemon.js';
+import { catchUpAppJobs, claimRun, describeAppJobs, dueAtFor, dueSince, jobsCommand, lastJobRun, runAppJob, scheduleAppJobs } from '../src/appJobs.js';
+import { onJobFailure, startDaemon } from '../src/daemon.js';
 import { Monitor } from '../src/monitor.js';
 import { startScheduler } from '../src/scheduler.js';
 import type { OpsDeps } from '../src/runs.js';
-import { withDeps } from './helpers.js';
+import { okBackup, withDeps, type FakeRunner } from './helpers.js';
 
 let dir = '';
 let profileOn = '';
@@ -27,12 +27,22 @@ afterAll(async () => { await rm(dir, { recursive: true, force: true }); });
 type TestDeps = OpsDeps & { logged: string[] };
 
 /** OpsDeps on a fresh test database with scheduled-jobs on (unless `on` is false), a fixed clock and the log kept as `logged`. */
-async function withJobDeps(fn: (deps: TestDeps) => Promise<void>, on = true): Promise<void> {
+async function withJobDeps(fn: (deps: TestDeps, rec: FakeRunner) => Promise<void>, on = true): Promise<void> {
   await withDeps({ APP_PROFILE: on ? profileOn : profileOff }, async (base, rec) => {
     const deps = Object.assign(base, { logged: rec.logs, now: () => new Date('2026-03-02T09:00:20Z') });
-    await fn(deps);
+    await fn(deps, rec);
   });
 }
+
+/** A Monitor whose alerts land in `sent`, with checks that only count ticks. */
+function testMonitor(): { monitor: Monitor; sent: string[]; ticks: () => number } {
+  const sent: string[] = [];
+  let n = 0;
+  const monitor = new Monitor({ checks: async () => { n++; return []; }, channel: { send: async (t) => { sent.push(t); } }, client: 'Acme' });
+  return { monitor, sent, ticks: () => n };
+}
+
+const never = (): Promise<string> => new Promise<string>(() => undefined);
 
 /** A finished, successful run recorded for `due`, as if it ran before the box was switched off. */
 async function seedRun(db: Db, job: string, due: Date): Promise<void> {
@@ -157,7 +167,7 @@ test('a failing job is recorded and alerted with its label, and the schedule car
     };
     const failure = onJobFailure(deps, monitor);
     const fire: Record<string, (at?: Date) => Promise<unknown>> = {};
-    const s = startScheduler(await scheduleAppJobs(deps, [job], failure), failure, (_cron, name, f) => { fire[name] = f; return { stop: () => undefined }; });
+    const s = startScheduler(scheduleAppJobs(deps, [job], failure).jobs, failure, (_cron, name, f) => { fire[name] = f; return { stop: () => undefined }; });
     try {
       expect(await fire['monthly-report']!(new Date('2026-03-01T07:00:00.004Z'))).toBe('ran');
       expect(await lastJobRun(deps.db, 'monthly-report')).toMatchObject({ dueAt: new Date('2026-03-01T07:00:00Z'), ok: false, summary: 'Mail server refused (password [hidden])' });
@@ -198,14 +208,14 @@ test('with scheduled-jobs off, registered jobs are not started and one line says
     const mk = (name: string): AppJob => ({ name, label: name, cron: '0 7 1 * *', catchUp: 'once', run: async () => { runs++; } });
     await seedRun(deps.db, 'one', new Date('2026-01-01T07:00:00Z'));
     deps.now = () => new Date('2026-05-10T12:00:00Z');
-    expect(await scheduleAppJobs(deps, [mk('one'), mk('two')], async () => undefined)).toEqual([]);
+    expect(scheduleAppJobs(deps, [mk('one'), mk('two')], async () => undefined).jobs).toEqual([]);
     expect(runs).toBe(0);
     expect(deps.logged).toEqual(['2 scheduled jobs are written but switched off. Add "scheduled-jobs" to app-profile.json to run them.']);
     deps.logged.length = 0;
-    expect(await scheduleAppJobs(deps, [mk('one')], async () => undefined)).toEqual([]);
+    expect(scheduleAppJobs(deps, [mk('one')], async () => undefined).jobs).toEqual([]);
     expect(deps.logged).toEqual(['1 scheduled job is written but switched off. Add "scheduled-jobs" to app-profile.json to run them.']);
     deps.logged.length = 0;
-    expect(await scheduleAppJobs(deps, [], async () => undefined)).toEqual([]);   // no jobs: nothing to say
+    expect(scheduleAppJobs(deps, [], async () => undefined).jobs).toEqual([]);   // no jobs: nothing to say
     expect(deps.logged).toEqual([]);
   }, false);
 });
@@ -213,7 +223,7 @@ test('with scheduled-jobs off, registered jobs are not started and one line says
 test('with scheduled-jobs on, each job is scheduled on its own cron under its own name', async () => {
   await withJobDeps(async (deps) => {
     const job: AppJob = { name: 'monthly-report', label: 'monthly report', cron: '0 7 1 * *', catchUp: 'once', run: async () => 'sent' };
-    const jobs = await scheduleAppJobs(deps, [job], async () => undefined);
+    const { jobs } = scheduleAppJobs(deps, [job], async () => undefined);
     expect(jobs.map((j) => [j.name, j.cron])).toEqual([['monthly-report', '0 7 1 * *']]);
   });
 });
@@ -230,5 +240,161 @@ test('ops jobs lists each job with its schedule, last run in UK time and outcome
       'tidy-up — "0 7 1 * *" (UK time) — last run 1 March 2026 at 07:00: worked.',
       'new job — "0 7 1 * *" (UK time) — not run yet.',
     ]);
+  });
+});
+
+test('the due time is the schedule slot the fire was for, even when the fire is late', () => {
+  expect(dueAtFor('0 7 1 * *', new Date('2026-03-01T07:00:00Z'))).toEqual(new Date('2026-03-01T07:00:00Z'));
+  expect(dueAtFor('0 7 1 * *', new Date('2026-03-01T07:03:12Z'))).toEqual(new Date('2026-03-01T07:00:00Z'));   // held up 3 minutes
+  expect(dueAtFor('*/15 * * * *', new Date('2026-03-02T09:29:59Z'))).toEqual(new Date('2026-03-02T09:15:00Z'));
+});
+
+test('a run still going after its time limit is recorded as failed and alerted by label; the job cannot hold anything up', async () => {
+  await withJobDeps(async (deps) => {
+    const { monitor, sent } = testMonitor();
+    const job: AppJob = { name: 'stuck', label: 'stuck job', cron: '0 7 1 * *', catchUp: 'skip', run: never };
+    const due = new Date('2026-03-01T07:00:00Z');
+    const err = await runAppJob(deps, job, due, { timeLimitMs: 1000 }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ name: 'AppJobError', label: 'stuck job', message: 'It did not finish within 1 second.' });
+    expect(await lastJobRun(deps.db, 'stuck')).toMatchObject({ ok: false, summary: 'It did not finish within 1 second.' });
+    await onJobFailure(deps, monitor)('stuck', err as Error);
+    expect(sent).toEqual(['[Acme] Problem: the scheduled job "stuck job" failed. It did not finish within 1 second.']);
+    // A job that throws after its limit is not an unhandled rejection, and its late outcome is not written.
+    const late: AppJob = { ...job, name: 'late', run: () => new Promise<string>((_r, reject) => { setTimeout(() => { reject(new Error('too late')); }, 1300); }) };
+    await expect(runAppJob(deps, late, due, { timeLimitMs: 1000 })).rejects.toThrow('It did not finish within 1 second.');
+    await new Promise((r) => setTimeout(r, 500));
+    expect(await lastJobRun(deps.db, 'late')).toMatchObject({ ok: false, summary: 'It did not finish within 1 second.' });
+  });
+});
+
+test('a fire skipped because the last run is still going is logged each time and alerted once', async () => {
+  await withJobDeps(async (deps) => {
+    const { monitor, sent } = testMonitor();
+    let release!: () => void;
+    let calls = 0;
+    const job: AppJob = {
+      name: 'slow', label: 'slow job', cron: '*/5 * * * *', catchUp: 'skip',
+      run: () => (++calls === 1 ? new Promise<string>((r) => { release = () => { r('done'); }; }) : Promise.resolve('quick')),
+    };
+    const failure = onJobFailure(deps, monitor);
+    const fire: Record<string, (at?: Date) => Promise<unknown>> = {};
+    const s = startScheduler(scheduleAppJobs(deps, [job], failure).jobs, failure, (_c, name, f) => { fire[name] = f; return { stop: () => undefined }; });
+    try {
+      const first = fire['slow']!(new Date('2026-03-02T09:00:00Z'));
+      await new Promise((r) => setTimeout(r, 50));
+      deps.now = () => new Date('2026-03-02T09:05:00Z');
+      expect(await fire['slow']!(new Date('2026-03-02T09:05:00Z'))).toBe('skipped');
+      deps.now = () => new Date('2026-03-02T09:10:00Z');
+      expect(await fire['slow']!(new Date('2026-03-02T09:10:00Z'))).toBe('skipped');
+      await new Promise((r) => setTimeout(r, 20));
+      expect(sent).toEqual(['[Acme] Problem: the scheduled job "slow job" failed. The run due on 2 March 2026 at 09:05 was skipped because the run due on 2 March 2026 at 09:00 is still going.']);
+      expect(deps.logged).toContain('slow job: The run due on 2 March 2026 at 09:10 was skipped because the run due on 2 March 2026 at 09:00 is still going.');
+      release();
+      expect(await first).toBe('ran');
+      deps.now = () => new Date('2026-03-02T09:15:00Z');
+      expect(await fire['slow']!(new Date('2026-03-02T09:15:00Z'))).toBe('ran');   // free again; the next stuck run would alert again
+    } finally {
+      s.stop();
+    }
+  });
+});
+
+test('at start, a run cut short by an ops stop is reported once by label and never run again', async () => {
+  await withJobDeps(async (deps) => {
+    const { monitor, sent } = testMonitor();
+    let runs = 0;
+    const job: AppJob = { name: 'monthly-report', label: 'monthly report', cron: '0 7 1 * *', catchUp: 'once', run: async () => { runs++; return 'sent'; } };
+    const due = new Date('2026-05-01T06:00:00Z');
+    await claimRun(deps.db, 'monthly-report', due, due);
+    deps.now = () => new Date('2026-05-10T12:00:00Z');
+    await scheduleAppJobs(deps, [job], onJobFailure(deps, monitor)).startUp();
+    const message = 'It started on 1 May 2026 at 07:00 but ops stopped before it finished, so it has not been run again. Check whether it did its work.';
+    expect(sent).toEqual([`[Acme] Problem: the scheduled job "monthly report" failed. ${message}`]);
+    expect(deps.logged).toContain(`The scheduled job "monthly report" did not work: ${message}`);
+    expect(runs).toBe(0);
+    await scheduleAppJobs(deps, [job], onJobFailure(deps, monitor)).startUp();   // the next start does not say it again
+    expect(sent).toHaveLength(1);
+    expect(runs).toBe(0);
+  });
+});
+
+test('ops keeps working while an app job hangs: the scheduler starts first, the monitor ticks and a backup runs', async () => {
+  await withJobDeps(async (deps, rec) => {
+    rec.respond(okBackup);
+    const { monitor, sent, ticks } = testMonitor();
+    const hung: AppJob = { name: 'hung', label: 'hung job', cron: '0 7 1 * *', catchUp: 'once', run: never };
+    await deps.db.insert(jobRuns).values({ job: 'hung', dueAt: new Date('2026-01-01T07:00:00Z'), startedAt: new Date('2026-01-01T07:00:00Z'), finishedAt: new Date('2026-01-01T07:00:01Z'), ok: true });
+    const fire: Record<string, (at?: Date) => Promise<unknown>> = {};
+    const daemon = await startDaemon(deps, {
+      appJobs: [hung], alerting: { channel: { send: async (t) => { sent.push(t); } }, monitor },
+      schedule: (_c, name, f) => { fire[name] = f; return { stop: () => undefined }; },
+    });
+    try {
+      // startDaemon came back although the catch-up run never settles, and every job is on its timer.
+      expect(Object.keys(fire).sort()).toEqual(['audit-purge', 'backup', 'hung', 'monitor', 'restore-test']);
+      for (let i = 0; i < 3; i++) expect(await fire['monitor']!()).toBe('ran');
+      expect(ticks()).toBe(3);
+      expect(await fire['backup']!()).toBe('ran');
+      expect(rec.calls.some((c) => c.cmd === 'restic' && c.args[0] === 'backup')).toBe(true);
+      // The catch-up run is still going, so the next live fire of the same job is skipped and alerted, never run twice.
+      expect(await fire['hung']!(new Date('2026-03-02T09:00:00Z'))).toBe('ran');   // the guard ran it; the job's own runner skipped it
+      await new Promise((r) => setTimeout(r, 20));
+      expect(sent.filter((t) => t.includes('"hung job"'))).toHaveLength(1);
+      expect(sent[0]).toMatch(/was skipped because the run due on 1 March 2026 at 07:00 is still going\.$/);
+    } finally {
+      daemon.stop();
+    }
+  });
+});
+
+test('with scheduled-jobs off, startDaemon schedules only ops\' own jobs', async () => {
+  await withJobDeps(async (deps) => {
+    const { monitor } = testMonitor();
+    const fire: Record<string, unknown> = {};
+    const daemon = await startDaemon(deps, {
+      appJobs: [{ name: 'report', label: 'report', cron: '0 7 1 * *', catchUp: 'once', run: async () => 'x' }],
+      alerting: { channel: { send: async () => undefined }, monitor },
+      schedule: (_c, name, f) => { fire[name] = f; return { stop: () => undefined }; },
+    });
+    await daemon.startUp;
+    daemon.stop();
+    expect(Object.keys(fire).sort()).toEqual(['audit-purge', 'backup', 'monitor', 'restore-test']);
+    expect(deps.logged).toContain('1 scheduled job is written but switched off. Add "scheduled-jobs" to app-profile.json to run them.');
+  }, false);
+});
+
+describe('ops jobs', () => {
+  const io = (): { out: string[]; err: string[]; say: (l: string) => void; complain: (l: string) => void } => {
+    const out: string[] = [];
+    const err: string[] = [];
+    return { out, err, say: (l) => { out.push(l); }, complain: (l) => { err.push(l); } };
+  };
+  const job: AppJob = { name: 'report', label: 'monthly report', cron: '0 7 1 * *', catchUp: 'once', run: async () => 'x' };
+
+  test('extra words are a usage error and nothing is opened', async () => {
+    const o = io();
+    let opened = false;
+    expect(await jobsCommand(['--all'], [job], async () => { opened = true; return 0; }, o)).toBe(2);
+    expect(o.err[0]).toMatch(/^jobs takes no options\.\n\nUsage: ops <command>/);
+    expect(opened).toBe(false);
+  });
+
+  test('no jobs', async () => {
+    const o = io();
+    expect(await jobsCommand([], [], async () => 1, o)).toBe(0);
+    expect(o.out).toEqual(['This app has no scheduled jobs.']);
+  });
+
+  test('switched off, then on', async () => {
+    await withJobDeps(async (deps) => {
+      const o = io();
+      expect(await jobsCommand([], [job], (fn) => fn(deps), o)).toBe(0);
+      expect(o.out).toEqual(['These jobs are switched off. Add "scheduled-jobs" to app-profile.json to run them.', 'monthly report — "0 7 1 * *" (UK time) — not run yet.']);
+    }, false);
+    await withJobDeps(async (deps) => {
+      const o = io();
+      expect(await jobsCommand([], [job], (fn) => fn(deps), o)).toBe(0);
+      expect(o.out).toEqual(['monthly report — "0 7 1 * *" (UK time) — not run yet.']);
+    });
   });
 });

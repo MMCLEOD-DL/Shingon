@@ -124,7 +124,7 @@ test('alert settings: Matrix needs all three values, and production refuses to s
   expect(badUrls?.message).not.toContain('sekrit');
 });
 
-test('ops reads app-profile.json like the server: the repo file by default, APP_PROFILE to point elsewhere, a bad file stops it', async () => {
+test('ops reads app-profile.json like the server: the repo file by default, APP_PROFILE to point elsewhere, a bad file only switches the app jobs off', async () => {
   const { mkdtemp, rm, writeFile } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
   const path = await import('node:path');
@@ -136,9 +136,12 @@ test('ops reads app-profile.json like the server: the repo file by default, APP_
     expect(loadOpsConfig({ ...good, APP_PROFILE: on }).profile.modules).toEqual(['scheduled-jobs']);
     const bad = path.join(dir, 'bad.json');
     await writeFile(bad, '{ "schema": 1, ');
-    let err: OpsConfigError | undefined;
-    try { loadOpsConfig({ ...good, APP_PROFILE: bad }); } catch (e) { err = e as OpsConfigError; }
-    expect(err?.problems).toEqual(['app-profile.json could not be read as JSON. Check the file for a typing mistake.']);
+    // Backups carry on: a bad profile means no app jobs and a warning (raised by the monitor), never a refusal to start.
+    const cfg = loadOpsConfig({ ...good, APP_PROFILE: bad });
+    expect(cfg.profile.modules).toEqual([]);
+    expect(cfg.warnings).toEqual([
+      'app-profile.json could not be read as JSON. Check the file for a typing mistake. Until it is fixed, ops runs none of the app\'s scheduled jobs (backups carry on).',
+    ]);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

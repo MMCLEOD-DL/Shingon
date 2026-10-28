@@ -24,8 +24,12 @@ export interface AppJob {
   cron: string;
   /** 'once': if the box was off when the job was due, run it once when ops starts again. 'skip': wait for the next due time. */
   catchUp: 'once' | 'skip';
-  /** Does the work. May return a one-line summary for the run history (at most 500 characters are kept). */
-  run: (ctx: AppJobContext) => Promise<string> | Promise<void>;
+  /**
+   * Does the work. May return a one-line summary for the run history (at most 500 characters are kept). Ops stops waiting
+   * for it after 30 minutes and records the run as failed.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- a job either returns a summary or nothing
+  run: (ctx: AppJobContext) => Promise<string | void>;
 }
 
 const NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/;
