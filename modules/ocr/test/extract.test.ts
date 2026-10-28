@@ -190,6 +190,14 @@ const DELI: Truth = { amount: 2399, vat: 400, date: '2026-03-19', merchant: 'Har
 const MIXED_TOP = ['Harbour Foods', '1 Quay Street, Anytown AB5 6GH', '19/03/26 14:02', 'SUBTOTAL 23.49', 'BALANCE DUE £23.49'];
 const MIXED: Truth = { amount: 2349, vat: 333, date: '2026-03-19', merchant: 'Harbour Foods' };
 
+// Ruling (Task 2, round 4): a VAT-only line after the total whose amount is the VAT that fits does not make the total
+// unsure. These ordinary receipts must be read right and confidently (amount, VAT, date).
+const LEGIT_ROUND_4: [string, string[], Truth][] = [
+  ['hotel Total VAT line', ['Glen Lodge', 'Invoice date 11/03/2026', 'Room 2 nights £200.00', 'Breakfast £40.00', 'Total £240.00', 'Total VAT £40.00', 'Paid by card £240.00'], { amount: 24000, vat: 4000, date: '2026-03-11', merchant: 'Glen Lodge' }],
+  ['restaurant VAT amount line', ['Harbour Deli', '19/03/2026 20:15', 'Food £19.99', 'Total £19.99', 'VAT amount £3.33', 'Card £19.99'], { amount: 1999, vat: 333, date: '2026-03-19', merchant: 'Harbour Deli' }],
+  ['supermarket table + VAT TOTAL', ['Harbour Foods', '19/03/26 14:02', 'SUBTOTAL 23.49', 'BALANCE DUE £23.49', 'A 20% 16.66 3.33 19.99', 'B 0% 3.50 0.00 3.50', 'VAT TOTAL 3.33'], { amount: 2349, vat: 333, date: '2026-03-19', merchant: 'Harbour Foods' }],
+];
+
 const ADVERSARIAL: [string, string[], Truth][] = [
   ['singular TOTAL SAVING', [...CAFE_TOP, 'TOTAL £8.75', 'TOTAL SAVING £1.00', 'VAT @ 20% 1.46'], CAFE],
   ['Total saved today', [...CAFE_TOP, 'TOTAL £8.75', 'VAT @ 20% 1.46', 'Total saved today £2.50'], CAFE],
@@ -294,6 +302,74 @@ const ADVERSARIAL: [string, string[], Truth][] = [
   ['voucher after the total, card charged less', ['Shop', '05/03/2026', 'Total £9.75', 'Less voucher 1.00', 'Card payment £8.75'], { ...CAFE, vat: null, merchant: 'Shop' }],
   ['bare amount after the total', ['Shop', '05/03/2026', 'TOTAL £8.75', 'Gratuity', '£9.75'], { ...CAFE, amount: 975, vat: null, merchant: 'Shop' }],
   ['subtotal larger than the total with no saving shown', ['Shop', '05/03/2026', 'Subtotal £9.75', 'TOTAL £8.75'], { ...CAFE, amount: 975, vat: null, merchant: 'Shop' }],
+  // Re-review 3 (round 4): the reviewer's inputs.
+  ['next appointment (label line, no colon) + till-labelled txn date', ['Hair Studio', 'TILL 2 OP 14 05/03/2026 12:41', 'Cut and blow dry £35.00', 'TOTAL £35.00', 'Next appointment', '12/03/2026 10:00'], { amount: 3500, vat: null, date: '2026-03-05', merchant: 'Hair Studio' }],
+  ['grocery delivery slot bare, order placed labelled', ['Fresh Grocer Online', 'Order confirmation', 'Order placed 01/03/2026', 'Your delivery slot', 'Thursday 12 March 2026 08:00 - 09:00', 'Order total £54.20'], { amount: 5420, vat: null, date: '2026-03-01', merchant: null }],
+  ['cinema booking: Booked on + performance line', ['Picturehouse Five', 'Booking confirmation', 'Booked on 01/03/2026', 'Thu 12 Mar 2026 at 19:30', 'Screen 3', '2 x Adult £24.00', 'Booking fee £1.50', 'Total £25.50'], { amount: 2550, vat: null, date: '2026-03-01', merchant: 'Picturehouse Five' }],
+  ['hotel arrival on own line below "Arrival"', ['Glen Lodge', 'Arrival', '09/03/2026', 'Departure', '11/03/2026', 'Invoice 4471', 'Total £240.00', 'VAT £40.00'], { amount: 24000, vat: 4000, date: '2026-03-11', merchant: 'Glen Lodge' }],
+  ['parcel: Collection / date', ['Post Shop', 'Trans 2231 05/03/2026', 'Collection', '07/03/2026', 'TOTAL £3.20'], { amount: 320, vat: null, date: '2026-03-05', merchant: 'Post Shop' }],
+  ['MOT due below the label "MOT expires on" ok, "Next MOT"', ['Kwik Garage', 'Inv 1234 05/03/2026 Op 3', 'MOT test £54.85', 'Total £54.85', 'Next MOT', '04/03/2027'], { amount: 5485, vat: null, date: '2026-03-05', merchant: 'Kwik Garage' }],
+  ['date with till/op labels only, appointment same-line', ['Optician', '05/03/2026 Till 1', 'Total £85.00', 'Appointment 12/03/2026'], { amount: 8500, vat: null, date: '2026-03-05', merchant: 'Optician' }],
+  ['train: Purchased labelled + travel bare', ['Fictional Rail Ltd', 'Purchased 28/02/2026', 'Travel', '02/03/2026', 'Total £3.20'], { amount: 320, vat: null, date: '2026-02-28', merchant: null }],
+  ['Valid from (label line) season ticket', ['Fictional Rail Ltd', 'Season ticket', 'Purchased 28/02/2026', 'Valid', '02/03/2026', 'Total £320.00'], { amount: 32000, vat: null, date: '2026-02-28', merchant: null }],
+  ['event "Date" for a ticket', ['Theatre Royal', 'Booked 01/03/2026', 'Date', '20/03/2026', 'Total £40.00'], { amount: 4000, vat: null, date: '2026-03-01', merchant: 'Theatre Royal' }],
+  ['hotel deposit receipt (payment received before booking total)', ['Glen Lodge', 'Invoice date 05/03/2026', 'Payment received £50.00', 'Total booking value £240.00', 'VAT £40.00'], { amount: 5000, vat: null, date: '2026-03-05', merchant: 'Glen Lodge' }],
+  ['deposit receipt: Deposit taken then total cost of stay', ['Glen Lodge', '05/03/2026', 'Deposit taken today £50.00', 'Total cost of stay £240.00'], { amount: 5000, vat: null, date: '2026-03-05', merchant: 'Glen Lodge' }],
+  ['split bill: Your share after total', ['Harbour Deli', '19/03/2026 20:15', 'Total £60.00', 'Split 3 ways', 'Your share £20.00'], { amount: 2000, vat: null, date: '2026-03-19', merchant: 'Harbour Deli' }],
+  ['taxi tip after total, card line no amount', ['Northside Taxis', '12 Mar 2026', 'Fare £12.40', 'Total £12.40', 'Tip £2.00', 'Card ending 4421'], { amount: 1440, vat: null, date: '2026-03-12', merchant: 'Northside Taxis' }],
+  ['service charge after total, nothing else', ['Harbour Deli', '19/03/2026 20:15', 'Food 19.99', 'Total £19.99', 'Service charge 12.5% £2.50'], { amount: 2249, vat: null, date: '2026-03-19', merchant: 'Harbour Deli' }],
+  ['Visa line with amount after total (gift cert part-pay)', ['Bookshop', '05/03/2026', 'Order total £33.99', 'Gift certificate £10.00', 'Visa £23.99'], { amount: 3399, vat: null, date: '2026-03-05', merchant: 'Bookshop' }],
+  ['loyalty spend after total', ['Corner Café', '05/03/2026 12:41', 'TOTAL £8.75', 'Your spend this year £450.00'], { amount: 875, vat: null, date: '2026-03-05', merchant: 'Corner Café' }],
+  ['petrol pre-auth', ['Fuel Stop', '23-03-2026', 'Pump 3 Unleaded £45.00', 'Pre-auth £99.00', 'TOTAL £45.00', 'VAT 20.00% £7.50'], { amount: 4500, vat: 750, date: '2026-03-23', merchant: 'Fuel Stop' }],
+  ['parking cash paid + change', ['City Car Park', '05/03/2026 09:12', 'Tariff 2 hrs', 'Amount due £3.20', 'Paid £5.00', 'Change £1.80'], { amount: 320, vat: null, date: '2026-03-05', merchant: 'City Car Park' }],
+  ['multi-buy saving after total then bare', ['Harbour Foods', '19/03/26', 'Cola 3 for £2.00 2.00', 'TOTAL £12.00', 'You saved £1.00'], { amount: 1200, vat: null, date: '2026-03-19', merchant: 'Harbour Foods' }],
+  ['Clubcard: Clubcard Prices saving after total', ['Harbour Foods', '19/03/26', 'Milk 1.25', 'Bread 1.10', 'TOTAL £2.35', 'Clubcard Prices saving 0.40'], { amount: 235, vat: null, date: '2026-03-19', merchant: 'Harbour Foods' }],
+  ['Nectar: points worth £ after total', ['Harbour Foods', '19/03/26', 'TOTAL £12.00', 'Nectar worth £2.50 redeemed'], { amount: 1200, vat: null, date: '2026-03-19', merchant: 'Harbour Foods' }],
+  ['Total VAT after total, wrong total before service', ['Harbour Deli', '19/03/2026', 'Total £19.99', 'Service £2.50', 'Total VAT £3.33'], { amount: 2249, vat: 375, date: '2026-03-19', merchant: 'Harbour Deli' }],
+  ['online: total then refund of one item listed as Returned', ['Shop Online', 'Order date 01/03/2026', 'Order total £40.00', 'Item returned £10.00'], { amount: 3000, vat: null, date: '2026-03-01', merchant: 'Shop Online' }],
+  ['taxi: meter + extras line after total with no word', ['Northside Taxis', '12/03/2026', 'Total £12.40', 'Airport surcharge £3.00'], { amount: 1540, vat: null, date: '2026-03-12', merchant: 'Northside Taxis' }],
+  ['two receipts merged? amount to pay after card', ['Corner Café', '05/03/2026', 'TOTAL £8.75', 'Contactless £8.75'], { amount: 875, vat: null, date: '2026-03-05', merchant: 'Corner Café' }],
+  ['VAT on food only line + total VAT', ['Harbour Deli', '19/03/2026', 'Total £23.99', 'VAT 20% £3.33', 'VAT 0% £0.00'], { amount: 2399, vat: 333, date: '2026-03-19', merchant: 'Harbour Deli' }],
+  ['VAT rate written 20.00 with space', ['Fuel Stop', '23/03/2026', 'TOTAL £45.00', 'VAT 20.00 % £7.50'], { amount: 4500, vat: 750, date: '2026-03-23', merchant: 'Fuel Stop' }],
+  // The real VAT is unknown here (part of the food is zero-rated); 200 stands for "not 50p for certain".
+  ['VAT 5% portion only (mixed restaurant takeaway)', ['Chippy', '19/03/2026', 'Hot food £10.50', 'Cold drink £1.50', 'Total £12.00', 'VAT £0.50'], { amount: 1200, vat: 200, date: '2026-03-19', merchant: 'Chippy' }],
+  // Re-review 3 (round 4): exploits of the VAT-line exemption.
+  ['EXPLOIT merged columns VAT due + Total due', ['Corner Café', '05/03/2026 12:41', 'TOTAL £8.75', 'VAT due £1.46   Total due £9.75'], { amount: 975, vat: null, date: '2026-03-05', merchant: 'Corner Café' }],
+  ['EXPLOIT Total VAT + Amount payable one line', ['Corner Café', '05/03/2026 12:41', 'TOTAL £8.75', 'Total VAT £1.46 Amount payable £9.75'], { amount: 975, vat: null, date: '2026-03-05', merchant: 'Corner Café' }],
+  ['EXPLOIT VAT total incl service', ['Harbour Deli', '19/03/2026', 'Total £19.99', 'VAT total incl service £3.33'], { amount: 1999, vat: 333, date: '2026-03-19', merchant: 'Harbour Deli' }],
+  ['EXPLOIT second VAT line disagrees', ['Corner Café', '05/03/2026 12:41', 'TOTAL £8.75', 'VAT £1.63', 'Total VAT £1.46'], { amount: 875, vat: null, date: '2026-03-05', merchant: 'Corner Café' }],
+  ['EXPLOIT Amount due VAT inc', ['Corner Café', '05/03/2026 12:41', 'TOTAL £8.75', 'Amount due VAT inc £0.44'], { amount: 875, vat: null, date: '2026-03-05', merchant: 'Corner Café' }],
+  ['EXPLOIT merged VAT + deposit paid', ['Glen Lodge', 'Invoice date 05/03/2026', 'Total booking £240.00', 'Total VAT £40.00   Deposit paid £50.00'], { amount: 5000, vat: null, date: '2026-03-05', merchant: 'Glen Lodge' }],
+  ['EXPLOIT merged VAT + Paid by card smaller', ['Corner Café', '05/03/2026 12:41', 'TOTAL £8.75', 'VAT amount £1.46 Paid £5.00'], { amount: 500, vat: null, date: '2026-03-05', merchant: 'Corner Café' }],
+  // Own pass against the round-4 rules.
+  ['label on line 1 above the only date', ['Next appointment', '12/03/2026', 'Hair Studio', 'TOTAL £35.00'], { amount: 3500, vat: null, date: null, merchant: 'Hair Studio' }],
+  ['weekday line between label and date', ['Hair Studio', 'TOTAL £35.00', 'Next appointment', 'Thursday', '12/03/2026 10:00'], { amount: 3500, vat: null, date: null, merchant: 'Hair Studio' }],
+  ['Date line between label and date', ['Hair Studio', 'TOTAL £35.00', 'Your next visit', 'Date', '12/03/2026'], { amount: 3500, vat: null, date: null, merchant: 'Hair Studio' }],
+  ['service incl. VAT after total', ['Corner Café', '05/03/2026 12:41', 'TOTAL £8.75', 'Service incl. VAT £1.00'], { amount: 975, vat: null, date: '2026-03-05', merchant: 'Corner Café' }],
+  ['delivery inc VAT after total', ['Shop', '05/03/2026', 'Total £30.00', 'Delivery inc VAT £3.99'], { amount: 3399, vat: null, date: '2026-03-05', merchant: 'Shop' }],
+  ['tax on tip after total', ['Diner', '05/03/2026', 'Total £30.00', 'Tip (no tax) £3.00'], { amount: 3300, vat: null, date: '2026-03-05', merchant: 'Diner' }],
+  ['net after total then cash', ['Shop', '05/03/2026', 'Total £30.00', 'Net amount £25.00', 'Cash £40.00', 'Change £10.00'], { amount: 3000, vat: null, date: '2026-03-05', merchant: 'Shop' }],
+  ['VAT due line exactly fitting but extra after', ['Corner Café', '05/03/2026 12:41', 'TOTAL £8.75', 'VAT due £1.46', 'Service £1.00'], { amount: 975, vat: null, date: '2026-03-05', merchant: 'Corner Café' }],
+  ['VAT amount with rate @', ['Corner Café', '05/03/2026 12:41', 'TOTAL £8.75', 'VAT amount @ 20% £1.46'], { amount: 875, vat: 146, date: '2026-03-05', merchant: 'Corner Café' }],
+  ['TAX TOTAL fitting 5%', ['Chippy', '05/03/2026', 'TOTAL £21.00', 'TAX TOTAL £1.00'], { amount: 2100, vat: 100, date: '2026-03-05', merchant: 'Chippy' }],
+  ['Total VAT zero after total', ['Shop', '05/03/2026', 'TOTAL £8.75', 'Total VAT £0.00'], { amount: 875, vat: 0, date: '2026-03-05', merchant: 'Shop' }],
+  ['Total VAT equals 20% but a second VAT TOTAL', ['Shop', '05/03/2026', 'TOTAL £8.75', 'Total VAT £1.46', 'VAT total £0.42'], { amount: 875, vat: null, date: '2026-03-05', merchant: 'Shop' }],
+  ['received before total equal', ['Glen Lodge', 'Invoice date 05/03/2026', 'Total £240.00', 'Payment received £240.00'], { amount: 24000, vat: null, date: '2026-03-05', merchant: 'Glen Lodge' }],
+  ['payment on account before total', ['Glen Lodge', 'Invoice date 05/03/2026', 'Payment on account £100.00', 'Total £240.00'], { amount: 14000, vat: null, date: '2026-03-05', merchant: 'Glen Lodge' }],
+  ['pre-paid line before total', ['Glen Lodge', 'Invoice date 05/03/2026', 'Prepaid £100.00', 'Total £240.00'], { amount: 14000, vat: null, date: '2026-03-05', merchant: 'Glen Lodge' }],
+  ['amount already settled before total', ['Glen Lodge', 'Invoice date 05/03/2026', 'Already settled £100.00', 'Total £240.00'], { amount: 14000, vat: null, date: '2026-03-05', merchant: 'Glen Lodge' }],
+  ['Paypal line after', ['Bookshop', '05/03/2026', 'Order total £33.99', 'PayPal £23.99'], { amount: 2399, vat: null, date: '2026-03-05', merchant: 'Bookshop' }],
+  ['reprinted receipt: the bare date is the sale', ['Shop', 'Printed 05/03/2026', '04/03/2026', 'TOTAL £8.75'], { amount: 875, vat: null, date: '2026-03-04', merchant: 'Shop' }],
+  ['show in merchant name', ['Showcase Cinema', 'Showcase 05/03/2026', '06/03/2026', 'TOTAL £8.75'], { amount: 875, vat: null, date: '2026-03-05', merchant: 'Showcase Cinema' }],
+  ['order date vs order date', ['Shop Online', 'Order date 01/03/2026', 'Dispatched 03/03/2026', 'Invoice date 04/03/2026', 'Total £30.00'], { amount: 3000, vat: null, date: '2026-03-04', merchant: 'Shop Online' }],
+  ['order date with invoice date', ['Shop Online', 'Order date 01/03/2026', 'Invoice date 04/03/2026', 'Total £30.00'], { amount: 3000, vat: null, date: '2026-03-04', merchant: 'Shop Online' }],
+  ['order date then a reorder date', ['Shop Online', 'Order date 01/03/2026', 'Order date of last order 01/02/2026', 'Total £30.00'], { amount: 3000, vat: null, date: '2026-03-01', merchant: 'Shop Online' }],
+  ['VAT only line repaired OCR', ['Corner Café', '05/03/2026 12:41', 'TOTAL £8.75', 'Total VAT £1.4S'], { amount: 875, vat: 146, date: '2026-03-05', merchant: 'Corner Café' }],
+  ['VAT only line GBP', ['Glen Lodge', 'Invoice date 11/03/2026', 'Total GBP 240.00', 'Total VAT GBP 40.00'], { amount: 24000, vat: 4000, date: '2026-03-11', merchant: 'Glen Lodge' }],
+  ['tip line labelled tax', ['Diner', '05/03/2026', 'Total £30.00', 'Tax free tip £3.00'], { amount: 3300, vat: null, date: '2026-03-05', merchant: 'Diner' }],
+  ['cash tip after', ['Diner', '05/03/2026', 'Total £30.00', 'Cash tip £3.00'], { amount: 3300, vat: null, date: '2026-03-05', merchant: 'Diner' }],
+  ['change given then extra', ['Diner', '05/03/2026', 'Total £30.00', 'Change for parking £3.00'], { amount: 3300, vat: null, date: '2026-03-05', merchant: 'Diner' }],
+  ...LEGIT_ROUND_4,
 ];
 
 test.each(ADVERSARIAL)('adversarial: %s is right or marked "Please check" on every field', (_name, texts, truth) => {
@@ -309,6 +385,47 @@ test.each(ADVERSARIAL)('adversarial: %s is right or marked "Please check" on eve
   }
 });
 
+test.each(LEGIT_ROUND_4)('round 4: %s is read right and confidently', (_name, texts, truth) => {
+  const p = extractReceipt(texts.map((text) => ({ text, confidence: 0.95 })), { today: '2026-03-31' });
+  expect(p.amountPence).toEqual({ value: truth.amount, confidence: 0.95 });
+  expect(p.vatPence).toEqual({ value: truth.vat, confidence: 0.95 });
+  expect(p.date).toEqual({ value: truth.date, confidence: 0.95 });
+  expect(p.warnings).toEqual([]);
+});
+
+// The cost of Ruling 2: every rule that marks a field "Please check" also catches some honest receipts. This floor stops
+// a future change from quietly turning every field into "Please check" (which would also give zero confidently wrong).
+const ORDINARY: [string, string[], Truth][] = [
+  ['Tesco-like with Clubcard savings', ['Harbour Foods', '1 Quay Street, Anytown AB5 6GH', 'VAT No. GB 987 6543 21', 'Milk 1.25', 'Bread 1.10', 'Wine 9.00', 'Clubcard Price -1.00', 'TOTAL £10.35', 'Contactless £10.35', 'Clubcard points this visit 10', 'VAT A 20% 1.33', '19/03/26 14:02 Store 2231 Till 4'], { amount: 1035, vat: 133, date: '2026-03-19', merchant: 'Harbour Foods' }],
+  ['Sainsbury-like Nectar', ['Market Grocer', 'Anytown AB5 6GH', 'Apples 2.00', 'Cheese 3.50', 'BALANCE DUE £5.50', 'VISA DEBIT £5.50', 'Nectar points earned 5', '19/03/2026 10:12'], { amount: 550, vat: null, date: '2026-03-19', merchant: 'Market Grocer' }],
+  ['cafe card slip', ['Bean There', '4 High St, Anytown AB1 1AA', 'Latte 3.20', 'Muffin 2.50', 'Total £5.70', 'Card £5.70', 'VAT 20% £0.95', '05/03/2026 08:41'], { amount: 570, vat: 95, date: '2026-03-05', merchant: 'Bean There' }],
+  ['pub with service', ['The Red Lion', 'Anytown AB1 2BB', '19/03/2026 21:03', '2 x Pint £11.00', 'Burger £14.50', 'Subtotal £25.50', 'Service 10% £2.55', 'Total £28.05', 'VAT £4.67'], { amount: 2805, vat: 467, date: '2026-03-19', merchant: 'The Red Lion' }],
+  ['petrol station', ['Fuel Stop', 'Ring Road AB7 8JK', '23/03/2026 08:15', 'Pump 2 Diesel', '30.12 L @ 149.9p £45.15', 'TOTAL £45.15', 'VAT @ 20% £7.53', 'Contactless £45.15'], { amount: 4515, vat: 753, date: '2026-03-23', merchant: 'Fuel Stop' }],
+  ['taxi simple', ['Northside Taxis', '12/03/2026 22:05', 'Fare £15.00', 'Total £15.00', 'Paid by card'], { amount: 1500, vat: null, date: '2026-03-12', merchant: 'Northside Taxis' }],
+  ['parking machine', ['City Car Park', 'Pay & Display', '05/03/2026 09:12', 'Tariff 3 hrs', 'Amount paid £4.50'], { amount: 450, vat: null, date: '2026-03-05', merchant: 'City Car Park' }],
+  ['train ticket office', ['Fictional Rail Ltd', 'Anytown to Otherville', 'Off-Peak Return', 'Price £12.40', 'Total £12.40', 'Date 02/03/2026'], { amount: 1240, vat: null, date: '2026-03-02', merchant: 'Fictional Rail Ltd' }],
+  ['hotel with total VAT line', ['Glen Lodge', 'Invoice date 11/03/2026', 'Room 2 nights £200.00', 'Breakfast £40.00', 'Total £240.00', 'Total VAT £40.00', 'Paid by card £240.00'], { amount: 24000, vat: 4000, date: '2026-03-11', merchant: 'Glen Lodge' }],
+  ['online order', ['Shop Online Ltd', 'Order date 01/03/2026', 'Items £30.00', 'Delivery £3.99', 'Order total £33.99', 'VAT included £5.67'], { amount: 3399, vat: 567, date: '2026-03-01', merchant: 'Shop Online Ltd' }],
+  ['restaurant VAT amount line', ['Harbour Deli', '19/03/2026 20:15', 'Food £19.99', 'Total £19.99', 'VAT amount £3.33', 'Card £19.99'], { amount: 1999, vat: 333, date: '2026-03-19', merchant: 'Harbour Deli' }],
+  ['cash cafe', ['Corner Café', '05/03/2026 12:41', 'Tea 1.80', 'TOTAL £1.80', 'Cash paid £2.00', 'Change £0.20'], { amount: 180, vat: null, date: '2026-03-05', merchant: 'Corner Café' }],
+  ['hardware store till line', ['Hammer & Co', '12 Mill Lane AB1 2CD', 'Screws 4.99', 'TOTAL £4.99', 'VAT 0.83', 'Till 3 Op 12 05/03/2026 12:41'], { amount: 499, vat: 83, date: '2026-03-05', merchant: 'Hammer & Co' }],
+];
+/** Confident-and-correct fields (amount, VAT, date; the merchant is never confident) measured in fix round 4. */
+const ORDINARY_FLOOR = 28;
+
+test('ordinary receipts: never confidently wrong, and at least the measured number of fields confident and correct', () => {
+  let confidentAndRight = 0;
+  for (const [name, texts, truth] of ORDINARY) {
+    const p = extractReceipt(texts.map((text) => ({ text, confidence: 0.95 })), { today: '2026-03-31' });
+    for (const [field, right] of [[p.amountPence, truth.amount], [p.vatPence, truth.vat], [p.date, truth.date], [p.merchant, truth.merchant]] as const) {
+      if (!field || field.confidence < CONFIDENT) continue;
+      expect(field.value, name).toBe(right);
+      confidentAndRight += 1;
+    }
+  }
+  expect(confidentAndRight).toBeGreaterThanOrEqual(ORDINARY_FLOOR);
+});
+
 test('"Total incl. VAT £8.75" with "VAT £1.46" is now confident and correct', () => {
   const p = extractReceipt([...CAFE_TOP, 'Total incl. VAT £8.75', 'VAT £1.46'].map((text) => ({ text, confidence: 0.95 })), { today: '2026-03-31' });
   expect(p.amountPence).toEqual({ value: 875, confidence: 0.95 });
@@ -322,10 +439,12 @@ test('a 4-column VAT table that adds up is read confidently', () => {
   expect(p.vatPence).toEqual({ value: 333, confidence: 0.95 });
 });
 
-test('Ruling (Task 2, round 3): any owed word after the total with a different amount makes it unsure, even "VAT TOTAL"', () => {
-  const p = extractReceipt([...MIXED_TOP, 'A 20% 16.66 3.33 19.99', 'B 0% 3.50 0.00 3.50', 'VAT TOTAL 3.33'].map((text) => ({ text, confidence: 0.95 })), { today: '2026-03-31' });
+// Ruling (Task 2, round 4) replaces round 3's "even VAT TOTAL": a VAT-only line after the total leaves the total
+// confident only when its amount is exactly the VAT that fits (see LEGIT_ROUND_4); any other VAT TOTAL still does not.
+test('Ruling (Task 2, round 4): a "VAT TOTAL" after the total that is not the fitting VAT makes the total unsure', () => {
+  const p = extractReceipt([...MIXED_TOP, 'A 20% 16.66 3.33 19.99', 'B 0% 3.50 0.00 3.50', 'VAT TOTAL 3.30'].map((text) => ({ text, confidence: 0.95 })), { today: '2026-03-31' });
   expect(p.amountPence).toEqual({ value: 2349, confidence: 0.6 });
-  expect(p.vatPence).toEqual({ value: 333, confidence: 0.8 });
+  expect(p.vatPence).toEqual({ value: 333, confidence: 0.5 });
 });
 
 test('a zero balance due beside a real total shows the real total, never confidently', () => {

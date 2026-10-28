@@ -36,6 +36,12 @@ const NET_OF_VAT = /\b(?:excl(?:uding|\.)?|exc\.?|ex|before|less|without)\s*(?:o
 const OWED_WORD = /total|\bpay|paid|payable|charged|balance|due|amount/i;
 // Lines that are clearly not money owed (money handed over, change, savings, VAT, net) — unless they carry an owed word.
 const CLEARLY_NOT_OWED = /tender|change|cash|\bsav(e|ed|es|ing|ings)\b|\bvat\b|\btax\b|\bnet\b/i;
+// After the total, a line is clearly not money owed only when it has no other words than these ("VAT @ 20% 1.46",
+// "CASH 30.00", "Change 6.51", "Net 7.29"). "Cash tip", "Service incl. VAT" or "Change for parking" may add to the total.
+const NOT_OWED_LINE_WORDS = new Set([
+  'vat', 'tax', 'net', 'cash', 'cashback', 'back', 'change', 'given', 'tender', 'tendered', 'you', 'save', 'saved', 'saving', 'savings',
+  'incl', 'inc', 'included', 'including', 'rate', 'code', 'gbp', 'at', 'a', 'b', 'c', 'd', 'e', 's', 'z',
+]);
 // Money taken off: after the total it means the total may not be what was paid; before it, it explains a subtotal.
 const DISCOUNT_WORD = /\bless\b|voucher|discount|promo|offer|coupon|\bsav|reduction|deduct|points|loyalty|staff/i;
 const SUBTOTAL = /\bsub/i;
@@ -57,6 +63,18 @@ const DATE_LINE_WORDS = new Set([
 ]);
 // A line that is only a label, printed above its date ("Last visit" then "01/03/2026" on the next line).
 const LABEL_ENDING = /(:|\b(until|by|since|visit|from|to|on|before|after|ends?|expires|expiry|exp|due|date|opened|packed|valid))\s*$/i;
+// "Order date 01/03/2026" is the date of an online purchase (the word "order" alone is not on the allow-list).
+const ORDER_DATE = /\border\s+date\b/gi;
+// Labels known to mark a date that is not the transaction date. A date with any other label ("Booked", "Till 2",
+// "Trans 2231") is not shown as certain, but it still competes: a confident date needs exactly one distinct date left.
+// Whole words or word starts only: a stray match inside another word ("Showcase") would wrongly drop a competitor.
+const NOT_TRANSACTION_DATE =
+  /\b(?:due|reprint|print|return|exchange|expir|exp\b|valid|until|collect|deliver|dispatch|best before|use by|display|sell by|ends?\b|perform|travel|arriv|depart|check|since|member|opened|packed|appointment|next\b|guarantee|warranty|birth|visit|slot|events?\b|shows?\b|showing)/i;
+// Money that changed hands other than the total: a payment, a deposit. If it differs from the total, the total is unsure.
+const PAYMENT_WORD = /paid|payment|received|deposit|settled|on account/i;
+// A line that is only the VAT and its label ("Total VAT £40.00", "VAT amount £3.33", "VAT TOTAL 3.33").
+const VAT_ONLY_LINE =
+  /^\s*(?:total\s+(?:vat|tax)|(?:vat|tax)\s+(?:total|amount|due))\s*(?:@\s*\d{1,2}(?:\.\d{1,2})?\s*%)?\s*:?\s*(?:£|GBP)?\s*\d[\d,]*\.\d{2}\s*$/i;
 // "V.A.T.", "V A T" -> "VAT", before any other test.
 const SPELLED_VAT = /\bV[.\s]?A[.\s]?T\b\.?/gi;
 const POSTCODE = /\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/i;
@@ -98,6 +116,11 @@ function isNotTotalLine(l: Line): boolean {
 
 function isTotalLine(l: Line): boolean {
   return TOTAL_WORD.test(l.words) && !isNotTotalLine(l);
+}
+
+function isOnlyNotOwedWords(words: string): boolean {
+  const found = words.match(/\p{L}+/gu) ?? [];
+  return found.length > 0 && found.every((w) => NOT_OWED_LINE_WORDS.has(w.toLowerCase()));
 }
 
 /** True when a subtotal is explained: it is no more than the total, or the total plus the money taken off. */
@@ -142,15 +165,18 @@ function findTotal(lines: readonly Line[]): Scored<Pence> | null {
     .filter((l) => !SUBTOTAL.test(l.words) || !l.money.every((t) => subtotalExplained(t.pence, total.value, lines)))
     .flatMap((l) => l.money.filter((t) => !t.signed).map((t) => t.pence));
   if (total.value !== Math.max(...owedAmounts)) unsure();
-  // Anything after the total that may change what was paid: another owed amount, money taken off, a bare amount.
+  // Anything after the total that may change what was paid: any other amount (a tip, a share, a surcharge, a bare
+  // amount, another owed amount), unless its line is clearly not money owed, a VAT summary row, or only the VAT that
+  // fits this total; and any money taken off.
   for (const l of lines.slice(winner.at + 1)) {
-    const unsigned = l.money.filter((t) => !t.signed);
-    const bare = !/\p{L}/u.test(l.text.replace(/\bGBP\b/i, ''));
-    if (OWED_WORD.test(l.words) && unsigned.some((t) => t.pence !== total.value)) unsure();
+    const differs = l.money.some((t) => !t.signed && t.pence !== total.value);
+    const notOwed = !OWED_WORD.test(l.words) && (isOnlyNotOwedWords(l.words) || VAT_ROW.test(l.text));
+    if (differs && !notOwed && !isFittingVatOnlyLine(l, total.value, lines)) unsure();
     if (l.money.some((t) => t.signed)) unsure();
     if (DISCOUNT_WORD.test(l.words) && l.money.length > 0) unsure();
-    if (bare && unsigned.some((t) => t.pence !== total.value)) unsure();
   }
+  // A payment or deposit of a different amount anywhere (before or after the total): the total may not be what was paid.
+  if (lines.some((l) => PAYMENT_WORD.test(l.words) && l.money.some((t) => !t.signed && t.pence !== total.value))) unsure();
   // The card was charged a different amount.
   if (lines.some((l) => l.cardMoney.some((t) => t.pence !== total.value))) unsure();
   if (total.value === 0) total = capped(total, DOUBTFUL);
@@ -227,19 +253,42 @@ function findVat(lines: readonly Line[], amount: Scored<Pence> | null, warnings:
   return vat;
 }
 
+/**
+ * True for a line after the total that is only the VAT ("Total VAT £40.00"): one unsigned amount, nothing else on
+ * the line, and that amount is exactly the VAT this total would be read with confidently. Such a line does not make
+ * the total unsure. Anything looser (a second amount, "VAT total incl service", a VAT that disagrees) still does.
+ */
+function isFittingVatOnlyLine(l: Line, total: Pence, lines: readonly Line[]): boolean {
+  const [token, ...others] = l.money;
+  if (!token || others.length > 0 || token.signed || !VAT_ONLY_LINE.test(l.text)) return false;
+  const warnings: string[] = [];
+  const vat = findVat(lines, scored(total, 1), warnings);
+  return warnings.length === 0 && vat !== null && vat.value === token.pence && vat.confidence >= CONFIDENT;
+}
+
 /** True when every word left on the line, once its dates and times are taken out, is on the allow-list. */
 function onlyDateWords(text: string): boolean {
-  return (withoutDatesAndTimes(text).match(/\p{L}+/gu) ?? []).every((w) => DATE_LINE_WORDS.has(w.toLowerCase()));
+  const words = withoutDatesAndTimes(text).replace(ORDER_DATE, ' ').match(/\p{L}+/gu) ?? [];
+  return words.every((w) => DATE_LINE_WORDS.has(w.toLowerCase()));
 }
 
 function findDate(lines: readonly OcrLine[], today: string, currency: ReceiptProposal['currency']): Scored<string> | null {
-  const all: { value: string; confidence: number; preferred: boolean; plausible: boolean }[] = [];
+  const all: { value: string; confidence: number; preferred: boolean; plausible: boolean; competes: boolean }[] = [];
   lines.forEach((l, at) => {
-    const prev = lines[at - 1]?.text ?? '';
-    // A bare date under a label-only line ("Last visit" / "01/03/2026") belongs to that label.
-    const labelAbove = prev !== '' && !/\d/.test(prev) && LABEL_ENDING.test(prev.trim()) && !onlyDateWords(prev);
+    // A date under a line of words with no digits belongs to that line ("Last visit" / "01/03/2026", "Your delivery
+    // slot" / "Thursday 12 March 2026"), looking past lines that are only "Date" or a weekday. The first line (usually
+    // the merchant's name) counts only when it ends like a label or is a known non-transaction label.
+    let above = at - 1;
+    while (above >= 0 && !/\d/.test(lines[above]?.text ?? '') && onlyDateWords(lines[above]?.text ?? '')) above -= 1;
+    const prev = lines[above]?.text ?? '';
+    const labelAbove =
+      prev !== '' && !/\d/.test(prev) && (above > 0 || LABEL_ENDING.test(prev.trim()) || NOT_TRANSACTION_DATE.test(prev));
+    const plausible = onlyDateWords(l.text) && !labelAbove;
+    const label = labelAbove && onlyDateWords(l.text) ? prev : l.text;
+    // Every date competes unless its label is known to mark something other than the transaction (due, delivery …).
+    const competes = plausible || !NOT_TRANSACTION_DATE.test(withoutDatesAndTimes(label));
     for (const value of findDates(l.text)) {
-      all.push({ value, confidence: l.confidence, preferred: DATE_PREFERRED.test(l.text), plausible: onlyDateWords(l.text) && !labelAbove });
+      all.push({ value, confidence: l.confidence, preferred: DATE_PREFERRED.test(l.text), plausible, competes });
     }
   });
   const first = all[0];
@@ -249,8 +298,8 @@ function findDate(lines: readonly OcrLine[], today: string, currency: ReceiptPro
   // Only labelled dates (a delivery date, a best-before date): offer the first, never confidently.
   if (!best) return capped(scored(first.value, first.confidence), UNSURE);
   let date = scored(best.value, best.confidence);
-  // Confident only when exactly one plausible date is left, on a receipt not in another currency (day-first order).
-  if (new Set(plausible.map((d) => d.value)).size !== 1 || currency === 'other') date = capped(date, UNSURE);
+  // Confident only when exactly one distinct date competes, on a receipt not in another currency (day-first order).
+  if (new Set(all.filter((d) => d.competes).map((d) => d.value)).size !== 1 || currency === 'other') date = capped(date, UNSURE);
   const unlikely = daysBetween(today, date.value) > 0 || daysBetween(date.value, today) > 400;
   return unlikely ? capped(date, DOUBTFUL) : date;
 }
