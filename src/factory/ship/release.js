@@ -13,7 +13,7 @@ import { parseVersion, compareVersions } from '../foundationLog.js';
 import { runCommand } from '../../exec.js';
 import { childEnv, strictChildEnv, redact } from '../../secrets.js';
 import { findBin } from '../../council/tools.js';
-import { RELEASE_FILES } from './releaseContent.js';
+import { RELEASE_FILES, releaseContentProblem } from './releaseContent.js';
 
 // Ruling S20's set of release files, exported for Plan 11 (src/factory/change/mainline.js).
 export { RELEASE_FILES };
@@ -90,6 +90,15 @@ export async function findRelease(appDir, sha, { env = process.env, run = runCom
   return best;
 }
 
+// A release commit (one parent) changes the release files only as a release does (final review item 1): the
+// version numbers, never scripts, dependencies or file types. null when fine, otherwise the plain reason.
+async function releaseCommitProblem(g, appDir, sha, base = null) {
+  const parents = (await g.out(appDir, ['rev-list', '--parents', '-n', '1', sha])) ?? '';
+  const p = parents.split(' ');
+  if (p.length !== 2 || !SHA_RE.test(p[1]) || (base !== null && p[1] !== base)) return NOT_EXPECTED;
+  return releaseContentProblem(appDir, p[1], sha, { git: g.git });
+}
+
 async function identityOf(g, appDir) {
   const name = await g.out(appDir, ['config', 'user.name']);
   const email = await g.out(appDir, ['config', 'user.email']);
@@ -125,10 +134,16 @@ export async function releaseApp({ projectDir, bump, runId, expectedMain = null 
   const subject = await g.out(appDir, ['log', '-1', '--format=%s', main]);
   const adopted = /^release: v(\d+\.\d+\.\d+)$/.exec(subject ?? '');
   if (adopted && plainVersion(adopted[1]) && pkgAtMain.version === adopted[1]) {
-    await tidyAfterCrash(g, appDir, main);
     const version = adopted[1];
     const tag = `v${version}`;
-    if (!(await g.ok(appDir, ['rev-parse', '--verify', '-q', `refs/tags/${tag}`]))) {
+    const untagged = !(await g.ok(appDir, ['rev-parse', '--verify', '-q', `refs/tags/${tag}`]));
+    // Only a commit that is exactly a release is adopted and tagged.
+    if (untagged) {
+      const problem = await releaseCommitProblem(g, appDir, main);
+      if (problem) return no(problem);
+    }
+    await tidyAfterCrash(g, appDir, main);
+    if (untagged) {
       const made = await g.git(appDir, ['-c', `user.name=${identity.name}`, '-c', `user.email=${identity.email}`, 'tag', '-a', tag, '-m', tag, main]);
       if (made.code !== 0) return no(`The release ${tag} is on main but its tag could not be added: ${lastLine(made)}.`);
       return { ok: true, version, sha: main, tag };
@@ -154,14 +169,17 @@ export async function releaseApp({ projectDir, bump, runId, expectedMain = null 
     // 6. first only: one preparation commit (the app's own name, a changelog line naming the foundation), and, because
     // Plan 8's createApp removed every tag, a placeholder tag the foundation's release script needs (Ruling S1). The
     // placeholder stays in the scratch clone: step 9 fetches only the new release tag.
+    let prepared = null;
     if (bump === 'first') {
-      const prepared = prepareFirst(clone, project);
-      if (prepared) return no(prepared);
+      const refusal = prepareFirst(clone, project);
+      if (refusal) return no(refusal);
       const files = ['package.json', 'CHANGELOG.md', ...(existsSync(path.join(clone, 'package-lock.json')) ? ['package-lock.json'] : [])];
       if (!(await g.ok(clone, ['add', '--', ...files]))
         || !(await g.ok(clone, ['commit', '-q', '-m', `Start ${project.client}'s own releases`]))) {
         return no('Conductor could not prepare the app\'s first release.');
       }
+      prepared = await g.out(clone, ['rev-parse', '--verify', 'HEAD']);
+      if (!prepared || !SHA_RE.test(prepared)) return no('Conductor could not prepare the app\'s first release.');
       const tags = await g.out(clone, ['tag', '--list', 'v*']);
       const current = plainVersion(pkgAtMain.version);
       if (tags === '' && current && !(await g.ok(clone, ['tag', `v${current}`, main]))) {
@@ -195,6 +213,10 @@ export async function releaseApp({ projectDir, bump, runId, expectedMain = null 
       const named = stray.slice(0, 5).join(', ') + (stray.length > 5 ? ` and ${stray.length - 5} more` : '');
       return no(`The app's release script changed files a release should not touch (${named}), so nothing was added.`);
     }
+    // And only as a release changes them, checked before main moves or a tag is added (final review item 1). The
+    // release commit sits on main, or on the first release's own preparation commit (whose renaming is Conductor's).
+    const contentProblem = await releaseCommitProblem(g, clone, sha, prepared ?? main);
+    if (contentProblem) return no(contentProblem);
 
     // 9. Into the app repo: objects first, then main by compare-and-swap, then the tag.
     const fetched = await g.git(appDir, ['fetch', '-q', '--no-tags', clone, `+refs/heads/main:${tmpRef}`]);
@@ -283,6 +305,9 @@ export async function approvedRelease(projectDir, { runId, env = process.env, ru
 
   const found = await findRelease(appDir, approved, { env, run });
   if (found) {
+    // A tag made before releases were checked for content is not trusted either (final review item 1).
+    const problem = await releaseCommitProblem(g, appDir, found.sha);
+    if (problem) return no(`The release ${found.tag} cannot be used: ${problem}`);
     // Ruling S16: what is built and tagged must carry the tag's version in package.json.
     const pkgVersion = (await readPackageAt(g, appDir, found.sha))?.version;
     if (pkgVersion !== found.version) return no(`The release tag ${found.tag} does not match the version in package.json (${pkgVersion ?? 'none'}).`);

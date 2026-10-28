@@ -237,3 +237,59 @@ test('a file whose name only looks like a release file after trimming is still r
   assert.equal(r.reason, 'The app\'s release script changed files a release should not touch ( CHANGELOG.md), so nothing was added.');
   assert.equal(execFileSync('git', ['-C', p.appDir, 'rev-parse', 'main'], { encoding: 'utf8' }).trim(), before);
 });
+
+// Final review item 1: a release whose content is more than a release (scripts, dependencies) never moves main or
+// adds a tag, whether the release script made it now or a crash left it untagged on main; a tag made before this
+// check existed is refused too.
+const SETTINGS_REFUSAL = 'The release step changed more than the version numbers in package.json, so nothing was shipped.';
+const commitFiles = (dir, files, message) => {
+  for (const [name, body] of Object.entries(files)) execFileSync('sh', ['-c', `cat > '${name}'`], { cwd: dir, input: body });
+  git(dir, 'add', '-A');
+  git(dir, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', message);
+  return git(dir, 'rev-parse', 'HEAD');
+};
+const withUnreleased = (p) => commitFiles(p.appDir, {
+  'CHANGELOG.md': git(p.appDir, 'show', 'main:CHANGELOG.md').replace('## [Unreleased]\n', '## [Unreleased]\n- A fix.\n') + '\n',
+}, 'A change');
+
+test('a release script that edits package.json\'s scripts is refused: main and the tags stay as they were', async () => {
+  const d = tmp();
+  const p = makeShipProject(d);
+  const before = withUnreleased(p);
+  const tags = git(p.appDir, 'tag', '--list');
+  const r = await releaseApp({ projectDir: p.projectDir, bump: 'patch', runId: RUN_ID },
+    { env: fakeNpm(d, { pkgExtra: { scripts: { images: 'true', bundle: 'true', postinstall: 'node steal.js' } } }).env() });
+  assert.deepEqual(r, { ok: false, reason: SETTINGS_REFUSAL });
+  assert.equal(git(p.appDir, 'rev-parse', 'main'), before);
+  assert.equal(git(p.appDir, 'tag', '--list'), tags);
+  assert.equal(git(p.appDir, 'for-each-ref', 'refs/conductor'), '');
+  // The first release too: its own preparation (the package's name) is Conductor's, the script's extra edit is not.
+  const d2 = tmp();
+  const fresh = makeShipProject(d2, { released: false });
+  const freshMain = git(fresh.appDir, 'rev-parse', 'main');
+  const first = await releaseApp({ projectDir: fresh.projectDir, bump: 'first', runId: RUN_ID }, { env: fakeNpm(d2, { pkgExtra: { dependencies: { leftpad: '1.0.0' } } }).env() });
+  assert.deepEqual(first, { ok: false, reason: SETTINGS_REFUSAL });
+  assert.equal(git(fresh.appDir, 'rev-parse', 'main'), freshMain);
+  assert.equal(git(fresh.appDir, 'tag', '--list'), '');
+});
+
+test('an untagged release commit on main that changed the dependencies is not adopted or tagged', async () => {
+  const d = tmp();
+  const p = makeShipProject(d);
+  const pkg = JSON.parse(git(p.appDir, 'show', 'main:package.json'));
+  const bad = commitFiles(p.appDir, { 'package.json': JSON.stringify({ ...pkg, version: '0.1.4', dependencies: { leftpad: '1.0.0' } }, null, 2) + '\n' }, 'release: v0.1.4');
+  const npm = fakeNpm(d);
+  const r = await releaseApp({ projectDir: p.projectDir, bump: 'patch', runId: RUN_ID }, { env: npm.env() });
+  assert.deepEqual(r, { ok: false, reason: SETTINGS_REFUSAL });
+  assert.equal(git(p.appDir, 'rev-parse', 'main'), bad);
+  assert.equal(git(p.appDir, 'tag', '--list', 'v0.1.4'), '');
+  assert.equal(npm.calls().length, 0);
+});
+
+test('approvedRelease refuses a release tag whose commit changed more than the version numbers', async () => {
+  const p = makeShipProject(tmp());
+  const pkg = JSON.parse(git(p.appDir, 'show', 'main:package.json'));
+  commitFiles(p.appDir, { 'package.json': JSON.stringify({ ...pkg, version: '0.1.4', scripts: { ...pkg.scripts, postinstall: 'node steal.js' } }, null, 2) + '\n' }, 'release: v0.1.4');
+  git(p.appDir, '-c', 'user.name=t', '-c', 'user.email=t@t', 'tag', '-a', 'v0.1.4', '-m', 'v0.1.4', 'main');
+  assert.deepEqual(await approvedRelease(p.projectDir, { runId: RUN_ID }), { ok: false, problem: `The release v0.1.4 cannot be used: ${SETTINGS_REFUSAL}` });
+});
