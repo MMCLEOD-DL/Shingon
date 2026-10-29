@@ -8,9 +8,9 @@ import { sampleBrief } from './helpers/factoryFixtures.js';
 const home = '/home/op';
 const cfg = (factory) => factoryConfig({ factory }, { env: {}, home });
 
-test('defaults: static provider, foundation v0.1.0, the real verify, browser gate on, 2 check fixes and 3 council fixes', () => {
+test('defaults: static provider, foundation v0.2.0, the real verify, browser gate on, 2 check fixes and 3 council fixes', () => {
   const f = cfg({});
-  assert.deepEqual(f.foundation, { repo: '/root/highland-foundation', tag: 'v0.1.0' });
+  assert.deepEqual(f.foundation, { repo: '/root/highland-foundation', tag: 'v0.2.0' });
   assert.deepEqual(f.build, { testCommand: null, browserGate: true, fixRounds: 2, councilFixRounds: 3 });
   assert.equal(f.machines.provider, 'static');
   assert.equal(f.machines.sweepAfterMs, 6 * 3600_000);

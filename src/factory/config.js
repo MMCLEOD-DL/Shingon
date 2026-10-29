@@ -42,7 +42,7 @@ function foundationSection(raw, { home }) {
   if (typeof repo === 'string') repo = expandHome(repo, home);
   const ok = typeof repo === 'string' && (path.isAbsolute(repo) || /^file:\/\/\S+$/.test(repo) || /^https:\/\/\S+$/.test(repo));
   if (!ok) throw new Error(`factory.foundation.repo must be a local folder, a file:// or an https:// address (got ${JSON.stringify(s.repo)})`);
-  const tag = s.tag ?? 'v0.1.0';
+  const tag = s.tag ?? 'v0.2.0';
   if (typeof tag !== 'string' || !/^v\d+\.\d+\.\d+$/.test(tag)) throw new Error('factory.foundation.tag must be a release tag such as v0.1.0');
   return Object.freeze({ repo, tag });
 }

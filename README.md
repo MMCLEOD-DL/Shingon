@@ -306,8 +306,9 @@ Once a client's brief is approved, Conductor can build the app.
   it labelled itself. Keep that number range free of any other container, and if a container
   was made but left without its label (a crash half way), remove it by hand in Proxmox.
 - **Optional modules.** A brief that needs optional modules (OCR, PDF or spreadsheet export,
-  scheduled jobs) is built only on foundation `v0.2.0` or later: set `factory.foundation.tag` to
-  `"v0.2.0"`. On an older release the build refuses it, because the modules are not there.
+  scheduled jobs) is built only on foundation `v0.2.0` or later. New projects use `v0.2.0` by
+  default (`factory.foundation.tag`); a project already pinned to an older release refuses such a
+  brief until it takes `conductor foundation-upgrade <slug> --to v0.2.0`.
   Rebuilding an app that is already approved goes through `conductor change`.
 - **The acceptance test.** The factory's acceptance test (one real app, from the meeting notes
   to an update on a test box) is run by hand over several sessions. Its criteria, the steps with

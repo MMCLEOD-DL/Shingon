@@ -27,7 +27,7 @@
   "factory": {
     "projectsRoot": "~/highland-projects",
     "operatorName": "Malcolm",
-    "foundation": { "repo": "/root/highland-foundation", "tag": "v0.1.0" },
+    "foundation": { "repo": "/root/highland-foundation", "tag": "v0.2.0" },
     "build": { "browserGate": true, "fixRounds": 2, "councilFixRounds": 3 },
     "machines": {
       "provider": "static",
