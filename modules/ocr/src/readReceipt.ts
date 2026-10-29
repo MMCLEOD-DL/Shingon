@@ -1,4 +1,4 @@
-import { type ReceiptProposal, type Scored } from '@hf/shared';
+import { CONFIDENT, type ReceiptProposal, type Scored } from '@hf/shared';
 import { checkVat, extractReceipt, VAT_MISMATCH_WARNING } from './extract.js';
 import type { OcrResult } from './types.js';
 
@@ -15,9 +15,12 @@ const ENGINE_FIELD_CAP = 0.8;
 
 const clamp = <T>(s: Scored<T>): Scored<T> => ({ value: s.value, confidence: Math.min(1, Math.max(0, s.confidence)) });
 const capped = <T>(s: Scored<T>): Scored<T> => ({ value: s.value, confidence: Math.min(clamp(s).confidence, ENGINE_FIELD_CAP) });
-/** An engine field, kept as it is only when the lines read the same value; otherwise capped. */
+/**
+ * An engine field, kept as it is only when the lines read the same value confidently; otherwise capped. A guess from
+ * the lines (below CONFIDENT) agreeing with the engine is not corroboration.
+ */
 const checkedByLines = <T>(engine: Scored<T>, lines: Scored<T> | null): Scored<T> =>
-  (lines !== null && lines.value === engine.value ? clamp(engine) : capped(engine));
+  (lines !== null && lines.value === engine.value && lines.confidence >= CONFIDENT ? clamp(engine) : capped(engine));
 
 /**
  * The proposal for one reading: the fields the engine read directly win, the extraction from the lines fills the

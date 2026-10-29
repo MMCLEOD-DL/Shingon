@@ -14,7 +14,8 @@ test('engine fields win, and lines fill the gaps', () => {
     }),
     TODAY,
   );
-  expect(p.amountPence).toEqual({ value: 1240, confidence: 0.97 });
+  // The lines read the same total, but unsurely (its line was read at 0.7), so that is no corroboration: capped.
+  expect(p.amountPence).toEqual({ value: 1240, confidence: 0.8 });
   // The lines' VAT was checked against the lines' own unsure total, so it stays marked; the value comes from the lines.
   expect(p.vatPence).toMatchObject({ value: 207 });
   expect(p.date).toMatchObject({ value: '2026-03-12' });
@@ -121,6 +122,15 @@ test('an engine total or date is capped at 0.8 unless the lines read the same va
   }), TODAY);
   expect(agree.amountPence).toEqual({ value: 1240, confidence: 0.99 });
   expect(agree.date).toEqual({ value: '2026-03-12', confidence: 0.98 });
+});
+
+test('a guess from the lines agreeing with the engine is not corroboration', () => {
+  // The lines find the same total, but on a line read at 0.6, so below CONFIDENT: the engine stays capped.
+  const p = readReceipt(result({
+    lines: [line('Northside Taxis'), line('Total to pay £12.40', 0.6)],
+    fields: { amountPence: { value: 1240, confidence: 0.99 } },
+  }), TODAY);
+  expect(p.amountPence).toEqual({ value: 1240, confidence: 0.8 });
 });
 
 test('an engine merchant is never certain, even when the lines agree', () => {

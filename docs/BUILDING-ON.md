@@ -117,17 +117,16 @@ Reading receipts in the cloud (Azure Document Intelligence) is allowed **only wh
 
 ```bash
 git fetch foundation --tags
-git merge v0.1.1
+git merge v0.2.0   # the release you are taking
 ```
 
-Before merging, read the foundation's `CHANGELOG.md` for the versions in between.
+Before merging, read the foundation's `CHANGELOG.md` for the versions in between. Entries marked `[security]` must be taken promptly. Resolve any conflicts (they should be rare if the foundation's files were left alone), run `npm run verify:full`, and ship the result through the normal change-request path (spec §4.8): a release, then the update path in each deployment's runbook.
 
 ### Upgrading an app from v0.1.0 to v0.2.0
 
 - **`foundation.json`.** v0.1.0's release script stamped `foundation.json` with the app's own version at every app release (fixed in v0.2.0, which stamps it only in the foundation itself). An app built on v0.1.0 **that has made a release** therefore carries a wrong `foundation.json`, and the merge may keep it. After merging, restore it from the tag and commit: `git checkout v0.2.0 -- foundation.json && git commit -m "Restore foundation.json from v0.2.0"`. It must then read version `0.2.0`. (An app that never released can run the same command; it changes nothing.)
 - **Pages.** v0.2.0 builds the router with `routeObjectsFor(modules)` in `apps/web/src/routes.tsx` and the page list from `ALL_APP_PATHS` in `apps/web/src/appPaths.ts` (`APP_PATHS` is now worked out from it for the modules in the build). A page an app added to v0.1.0's `routeObjects` array goes into the `signedIn` list inside `routeObjectsFor` (or beside the public pages), and its `APP_PATHS` entry goes into `ALL_APP_PATHS`. Expect merge conflicts in those two files; resolve them by moving the app's lines, not by keeping the old arrays.
 - **`sendReport`** now takes the config as its second argument (`sendReport(reply, config, report, format, baseName)`).
- Entries marked `[security]` must be taken promptly. Resolve any conflicts (they should be rare if the foundation's files were left alone), run `npm run verify:full`, and ship the result through the normal change-request path (spec §4.8): a release, then the update path in each deployment's runbook.
 
 ## The quality gates
 
