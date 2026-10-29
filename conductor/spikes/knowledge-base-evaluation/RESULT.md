@@ -1,6 +1,6 @@
 # Knowledge-base evaluation spike — result
 
-**Status:** RUN on 30 October 2026, cloud Linux, PostgreSQL 16.15, Python 3.13.17. Keyword retrieval only.
+**Status:** RUN on 29 October 2026, cloud Linux, PostgreSQL 16.15, Python 3.13.17. Keyword retrieval only.
 
 Run: `pip install -r requirements.txt && bash run.sh`. It needs PostgreSQL 16 server binaries and LibreOffice. It starts a throwaway cluster on a Unix socket, generates the synthetic corpus, writes `results/results.json`, and deletes everything else.
 

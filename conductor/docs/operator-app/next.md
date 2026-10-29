@@ -1,6 +1,6 @@
 # Next-phase backlog (after the two-week operator-app milestone)
 
-**Packet:** P09. **Status:** proposal for review by Codex and prioritisation by Malcolm. Written 30 October 2026 at baseline `3e696db`. Nothing in this file is started, approved or in scope for the fortnight ([00-index §1](../superpowers/plans/2026-10-29-two-week-product/00-index.md#explicitly-outside-the-fortnight)). Each item states what the repo already has, with paths verified at that commit, what is missing, dependencies, and acceptance examples in the factory's given/when/then style.
+**Packet:** P09. **Status:** proposal for review by Codex and prioritisation by Malcolm. Written 29 October 2026 at baseline `3e696db`. Nothing in this file is started, approved or in scope for the fortnight ([00-index §1](../superpowers/plans/2026-10-29-two-week-product/00-index.md#explicitly-outside-the-fortnight)). Each item states what the repo already has, with paths verified at that commit, what is missing, dependencies, and acceptance examples in the factory's given/when/then style.
 
 **Sources:** the five items named in [P09](../superpowers/plans/2026-10-29-two-week-product/01-task-packets.md#p09--bring-earlier-notes-into-an-actionable-next-backlog), the repository, `2026-10-27-factory-acceptance/FOLLOW-UPS.md` and the [knowledge-base research](../knowledge-base/README.md). The older Windows project's records are in the Library of Babel `shingon` project. They describe a different code base and were treated as history only; no claim below relies on them.
 

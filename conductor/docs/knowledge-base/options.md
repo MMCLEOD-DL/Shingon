@@ -1,6 +1,6 @@
 # Knowledge-base options comparison
 
-**Packet:** P06, steps 2–3. **Sources retrieved:** 29–30 October 2026. Every claim carries a link.
+**Packet:** P06, steps 2–3. **Sources retrieved:** 29–29 October 2026. Every claim carries a link.
 
 **Evidence tags:**
 - **[F]** official page, repository file or price list fetched directly.

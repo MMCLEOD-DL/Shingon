@@ -4,7 +4,7 @@
 
 Recorded: 29 October 2026. Status: research requested; architecture not selected and implementation not started.
 
-**Update, 30 October 2026:** the P06 research outputs are in [`knowledge-base/`](knowledge-base/README.md) and are awaiting review. The recommendation is not yet accepted, and no implementation or migration has started. Still open: the hybrid-retrieval experiment (it needs a host with local models) and the source-operator questions in the inventory.
+**Update, 29 October 2026:** the P06 research outputs are in [`knowledge-base/`](knowledge-base/README.md) and are awaiting review. The recommendation is not yet accepted, and no implementation or migration has started. Still open: the hybrid-retrieval experiment (it needs a host with local models) and the source-operator questions in the inventory.
 
 ### User need
 

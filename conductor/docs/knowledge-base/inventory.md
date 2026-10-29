@@ -1,6 +1,6 @@
 # Library of Babel: inventory
 
-**Packet:** P06, step 1. **Collected:** 30 October 2026 by Claude, through the Library of Babel MCP connector already attached to the session. It is read-only use of an existing connector: no export, no writes, no change to the system.
+**Packet:** P06, step 1. **Collected:** 29 October 2026 by Claude, through the Library of Babel MCP connector already attached to the session. It is read-only use of an existing connector: no export, no writes, no change to the system.
 
 **Evidence levels used below:**
 - **Observed:** returned by a tool call in this session.
@@ -21,7 +21,7 @@ No document content from personal projects is reproduced here. Personal data cat
 | `list_project_documents` | read | Returns id, title, `visibility`, `created_at`. It does not return `updated_at`, source, size or tags. |
 | `search` | read | Hybrid "semantic + fulltext". Optional `project` scope and `limit`. Returns id, title, project, excerpt and score. |
 | `read_document` | read | Returns full Markdown `content`, tags, `visibility`, `created_at` and `updated_at`. It returns no source URL, original-file reference, version id or chunk/page provenance. |
-| `ask_librarian` | read (RAG) | **Timed out twice at the 60 s MCP limit** (30 Oct 2026). |
+| `ask_librarian` | read (RAG) | **Timed out twice at the 60 s MCP limit** (29 Oct 2026). |
 | `list_databases` / `query_view` | read | One structured database (`tasks`, displayed as "Reading", 35 rows). The tool says private rows are excluded from counts and results. |
 | `create_document`, `update_document`, `delete_document`, `move_document(s)`, `create_project`, `create_row`, `update_row_properties` | **write** | Present on the same connector. **Not called.** |
 
@@ -49,7 +49,7 @@ No document content from personal projects is reproduced here. Personal data cat
 - **Embeddings:** documented as `nomic-embed-text` with a 0.6 cosine threshold, tuned on 30 March 2026 [doc `91c4e05f`, `0be55f04`]. The same note says "384-dimensional". The upstream nomic-embed-text v1/v1.5 models output 768 dimensions natively ([fastembed model registry](https://github.com/qdrant/fastembed/blob/main/fastembed/text/pooled_normalized_embedding.py), retrieved 29 Oct 2026; v1.5 can be truncated by Matryoshka, so 384 is possible but only if deliberate). The stored dimension is therefore **unknown until the column type is checked**. It matters for migration: re-embedding versus reuse.
 - **Provenance:** URL-sourced documents put `Source: <url>` in the body text. Uploaded files and the original/derived relationship are not visible through MCP. Page, sheet and cell provenance does not exist in what was observed.
 
-## 3. Scale and data categories (observed via `list_projects`, 30 Oct 2026)
+## 3. Scale and data categories (observed via `list_projects`, 29 Oct 2026)
 
 `doc_count` across all projects is **7,495**. It is unclear whether this includes private documents: `list_databases` says its own counts exclude private rows, and `list_projects` does not say. One document is not one source file: imported reference manuals are split one page per document.
 

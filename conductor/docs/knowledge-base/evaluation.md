@@ -1,6 +1,6 @@
 # Evaluation: synthetic retrieval and permission experiment
 
-**Packet:** P06, steps 6–7. **Run:** 30 October 2026, cloud Linux container (x86_64, 4 CPU, 15 GB RAM), PostgreSQL 16.15, Python 3.13.17, psycopg 3.2.10. Code and fixtures: [`conductor/spikes/knowledge-base-evaluation/`](../../spikes/knowledge-base-evaluation/). Raw results: `results/results.json`. Reproduce with `bash run.sh` after `pip install -r requirements.txt`. PostgreSQL 16 server binaries and LibreOffice are needed.
+**Packet:** P06, steps 6–7. **Run:** 29 October 2026, cloud Linux container (x86_64, 4 CPU, 15 GB RAM), PostgreSQL 16.15, Python 3.13.17, psycopg 3.2.10. Code and fixtures: [`conductor/spikes/knowledge-base-evaluation/`](../../spikes/knowledge-base-evaluation/). Raw results: `results/results.json`. Reproduce with `bash run.sh` after `pip install -r requirements.txt`. PostgreSQL 16 server binaries and LibreOffice are needed.
 
 ## What was and was not tested
 
