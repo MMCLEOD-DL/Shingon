@@ -9,7 +9,7 @@ import { refsOf, makeRepo } from './helpers/gitRepo.js';
 import { makeFoundation, makeProject } from './helpers/changeFixtures.js';
 import { MAX_INSTRUCTIONS } from '../src/factory/split.js';
 import {
-  MAX_CONFLICT_FILES, NOT_FROM_FOUNDATION, upgradeTargetProblem, resolveVersionHunks, prepareUpgradeMerge, upgradeUnit, upgradeChangelogLines,
+  MAX_CONFLICT_FILES, NOT_FROM_FOUNDATION, foundationJsonFromFoundation, upgradeTargetProblem, resolveVersionHunks, prepareUpgradeMerge, upgradeUnit, upgradeChangelogLines,
 } from '../src/factory/change/upgradeMerge.js';
 
 const ID = ['-c', 'user.name=Test', '-c', 'user.email=test@example.com'];
@@ -99,7 +99,7 @@ test('a clean upgrade with only mechanical conflicts: merge committed on a new b
   const show = (q) => git(appDir, ['show', `${r.mergeSha}:${q}`]).then((x) => x.stdout);
   assert.equal(JSON.parse(await show('package.json')).version, '0.2.0', 'the app keeps its own version');
   assert.equal(JSON.parse(await show('package-lock.json')).version, '0.2.0');
-  // Ruling C1: the app's foundation.json is kept (the foundation's release script needs it to match package.json).
+  // Ruling C1: below v0.2.0 the app's foundation.json is kept (that release script needs it to match package.json).
   assert.equal(JSON.parse(await show('foundation.json')).version, '0.2.0', 'foundation.json keeps the app\'s copy');
   assert.match(await show('CHANGELOG.md'), /## \[0\.2\.0\]/);
   assert.equal(await head(appDir, `${r.mergeSha}^1`), before, 'first parent is the app main');
@@ -111,6 +111,42 @@ test('a clean upgrade with only mechanical conflicts: merge committed on a new b
   assert.equal((await git(appDir, ['for-each-ref', 'refs/conductor'])).stdout, '', 'no temporary refs are left');
   assert.equal(existsSync(p.scratchDir), false, 'the scratch clone is removed');
   assert.equal((await git(appDir, ['status', '--porcelain'])).stdout, '', 'the app checkout is untouched');
+});
+
+// An app whose own releases stamped its version into foundation.json (v0.1.x release.ts did), committed on top.
+async function stampedApp(f) {
+  const p = await appWithHistory(f);
+  writeFiles(p.appDir, { 'foundation.json': fjson('1.3.0') });
+  await commitAll(p.appDir, 'release: v1.3.0');
+  return p;
+}
+
+test('foundationJsonFromFoundation: from v0.2.0 on, the foundation\'s copy', () => {
+  assert.deepEqual(['v0.1.0', 'v0.1.1', 'v0.1.9'].map(foundationJsonFromFoundation), [false, false, false]);
+  assert.deepEqual(['v0.2.0', 'v0.2.1', 'v0.10.0', 'v1.0.0'].map(foundationJsonFromFoundation), [true, true, true, true]);
+});
+
+test('an upgrade to v0.1.1 keeps the app\'s foundation.json in a conflict', async () => {
+  const f = await makeFoundation({ versions: ['0.1.0', '0.1.1'] });
+  const p = await stampedApp(f);
+  const r = await prepare(f, p);
+  assert.equal(r.status, 'ready', r.reason);
+  assert.ok(r.autoResolved.includes('foundation.json'));
+  const fj = JSON.parse((await git(p.appDir, ['show', `${r.mergeSha}:foundation.json`])).stdout);
+  assert.deepEqual([fj.version, fj.commit], ['1.3.0', 'v1.3.0']);
+});
+
+test('an upgrade to v0.2.0 takes the foundation\'s foundation.json in a conflict, repairing a stamped one', async () => {
+  const f = await makeFoundation({ versions: ['0.1.0', '0.2.0'] });
+  const p = await stampedApp(f);
+  const r = await prepare(f, p, { toTag: 'v0.2.0' });
+  assert.equal(r.status, 'ready', r.reason);
+  assert.ok(r.autoResolved.includes('foundation.json'));
+  assert.deepEqual(r.conflicts, []);
+  const show = (q) => git(p.appDir, ['show', `${r.mergeSha}:${q}`]).then((x) => x.stdout);
+  assert.equal(await show('foundation.json'), await git(f.dir, ['show', 'v0.2.0:foundation.json']).then((x) => x.stdout), 'byte for byte the foundation\'s');
+  assert.equal(JSON.parse(await show('package.json')).version, '0.2.0', 'package.json keeps the app\'s version');
+  assert.match(await show('CHANGELOG.md'), /## \[0\.2\.0\] - 2026-10-20\n- The app feature\./, 'CHANGELOG.md keeps the app\'s copy');
 });
 
 test('an existing refs/foundation/<tag> at the same commit is kept (created only if missing)', async () => {

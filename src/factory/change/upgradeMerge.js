@@ -1,4 +1,5 @@
-// The git side of a foundation upgrade (Plan 11, Task 6; index Ruling 5 as amended by Rulings C1 and C8).
+// The git side of a foundation upgrade (Plan 11, Task 6; index Ruling 5 as amended by Rulings C1 and C8,
+// and by Plan 12's final ruling: from v0.2.0 a foundation.json conflict takes the foundation's copy).
 // The merge happens in a scratch clone of the app, never in the app folder. The foundation repo is only read
 // (a fetch *from* it). The app gains exactly refs/foundation/<toTag> at the release's commit (if it is missing,
 // recorded first) and a new upgrade branch (landed create-only by the core's land()). The app's main is never touched.
@@ -71,6 +72,13 @@ const BASE = /^\|{7}(?: |\r?$)/;
 const MID = /^={7}\r?$/;
 const CLOSE = /^>{7}(?: |\r?$)/;
 const VERSION_LINE = /^"version":\s*"[^"]*",?$/;
+
+// The first foundation release whose release script leaves an app's foundation.json alone.
+export const FOUNDATION_JSON_THEIRS_SINCE = 'v0.2.0';
+/** True when an upgrade to `toTag` should take the foundation's foundation.json in a conflict. */
+export function foundationJsonFromFoundation(toTag) {
+  return compareVersions(toTag.slice(1), FOUNDATION_JSON_THEIRS_SINCE.slice(1)) >= 0;
+}
 
 /** Settles conflict hunks whose two sides are each only a `"version"` line by keeping the app's (ours) side. */
 export function resolveVersionHunks(text) {
@@ -169,12 +177,16 @@ export async function prepareUpgradeMerge({ projectDir, appDir, foundationRepo, 
     }
     if (problems.length) return { status: 'stopped', reason: UNRESOLVABLE(problems.join(' ')) };
 
-    // 6. The mechanical rules (Ruling 5 with C1: foundation.json and CHANGELOG.md keep the app's copy).
+    // 6. The mechanical rules (Ruling 5 with C1): CHANGELOG.md keeps the app's copy. foundation.json keeps the app's
+    //    copy only for targets before v0.2.0, whose release script refused when it differed from package.json; from
+    //    v0.2.0 the release script no longer reads or writes it for apps, so the app takes the foundation's copy
+    //    (Plan 12 final ruling), which also repairs v0.1.x apps whose releases stamped the app's version into it.
     const autoResolved = [];
     const conflicts = [];
     for (const file of [...unmerged.keys()].sort()) {
       if (file === 'foundation.json' || file === 'CHANGELOG.md') {
-        await run(scratch, ['checkout', '--ours', '--', file]);
+        const side = file === 'foundation.json' && foundationJsonFromFoundation(toTag) ? '--theirs' : '--ours';
+        await run(scratch, ['checkout', side, '--', file]);
         await run(scratch, ['add', '--', file]);
         autoResolved.push(file);
       } else if (file === 'package.json' || file === 'package-lock.json') {
