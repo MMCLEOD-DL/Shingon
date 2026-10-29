@@ -11,7 +11,7 @@ The loop is event-driven, not timed. A merged PR, a review comment or a message 
 
 - **One task per PR.** No task starts until the previous PR is **merged**. A closed, unmerged PR means "rejected": stop and ask.
 - **Approval is a merge into `main`.** It happens one of two ways:
-  - **Auto-merge,** for PRs that touch no high-risk path, once every required check (`foundation`, `conductor`, `operator-web`, `risk-gate`) is green.
+  - **Auto-merge,** for PRs that touch no high-risk path, once every required check (`foundation`, `knowledge`, `conductor`, `operator-web`, `risk-gate`) is green.
   - **Malcolm, for high-risk PRs.** High-risk paths are the list in `.github/workflows/risk-gate.yml`: the updater and ops, the approval and landing service, secrets, releases and shipping, CI, and the loop rules. Malcolm either merges the PR or adds the `malcolm-approved` label.
   - A chat message from Malcolm such as "approved" means: merge that PR yourself.
   - **Never add or remove the `malcolm-approved` label. Never edit `.github/` or these rules to loosen the gate.**

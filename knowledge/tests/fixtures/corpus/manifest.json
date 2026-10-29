@@ -1,0 +1,102 @@
+{
+  "tenants": {
+    "company": {
+      "principals": {},
+      "groups": {}
+    },
+    "acme": {
+      "principals": {
+        "alice": {},
+        "andy": {}
+      },
+      "groups": {
+        "finance": [
+          "alice"
+        ]
+      }
+    },
+    "birch": {
+      "principals": {
+        "bella": {}
+      },
+      "groups": {}
+    }
+  },
+  "collections": {
+    "standards": {
+      "tenant": "company",
+      "kind": "reference",
+      "destinations": [
+        "local-model",
+        "claude-subscription",
+        "codex-subscription"
+      ]
+    },
+    "acme-policies": {
+      "tenant": "acme",
+      "kind": "client-runtime",
+      "destinations": [
+        "foundation-app:acme"
+      ]
+    },
+    "birch-handbook": {
+      "tenant": "birch",
+      "kind": "client-runtime",
+      "destinations": [
+        "foundation-app:birch"
+      ]
+    }
+  },
+  "sources": [
+    {
+      "key": "standards/api-errors.md",
+      "collection": "standards"
+    },
+    {
+      "key": "standards/release-checklist.md",
+      "collection": "standards"
+    },
+    {
+      "key": "standards/logging.md",
+      "collection": "standards"
+    },
+    {
+      "key": "acme/expenses-policy.docx",
+      "collection": "acme-policies"
+    },
+    {
+      "key": "acme/travel-policy-2025.pdf",
+      "collection": "acme-policies",
+      "supersededBy": "acme/expenses-policy.docx"
+    },
+    {
+      "key": "acme/receipts-guidance-scan.pdf",
+      "collection": "acme-policies"
+    },
+    {
+      "key": "acme/board-minutes-locked.pdf",
+      "collection": "acme-policies"
+    },
+    {
+      "key": "acme/salary-bands.docx",
+      "collection": "acme-policies",
+      "acl": {
+        "groups": [
+          "finance"
+        ]
+      }
+    },
+    {
+      "key": "acme/budget-2026.xlsx",
+      "collection": "acme-policies"
+    },
+    {
+      "key": "acme/installer.bin",
+      "collection": "acme-policies"
+    },
+    {
+      "key": "birch/staff-handbook.md",
+      "collection": "birch-handbook"
+    }
+  ]
+}
