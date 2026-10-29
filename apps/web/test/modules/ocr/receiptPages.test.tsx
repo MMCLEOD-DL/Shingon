@@ -51,7 +51,7 @@ test('Check the details: a manager looking at a team member\'s receipt cannot co
   mockApi('getReading', TAXI);
   mockReply('GET /api/files/f1', 200, { file: FILE });
   renderAt('/receipts/r1');
-  expect(await screen.findByText('Only the person who uploaded this receipt can confirm it.')).toBeVisible();
+  expect(await screen.findByText('Only the person who uploaded this receipt, or an admin, can confirm it.')).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Confirm' })).toBeNull();
 });
 

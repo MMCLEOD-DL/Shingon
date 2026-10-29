@@ -17,7 +17,6 @@ let alice: U, bob: U, mN: U, mS: U, admin: U;
 let aliceAuth: { cookie: string };
 
 const ALREADY = 'This receipt has already been confirmed.';
-const STILL_READING = 'Still reading this receipt. Try again in a moment.';
 const GENERAL = "This receipt couldn't be read automatically. Please type the details.";
 const TAXI = { amountPence: 1240, vatPence: 207, date: '2026-03-12', merchant: 'Northside Taxis' };
 
@@ -89,17 +88,23 @@ test('asking again for an unconfirmed reading starts it afresh with the same id'
   expect(await row(String(first.json.reading.id))).toMatchObject({ status: 'read', problem: null });
 });
 
-test('confirming while still reading is refused with 409', async () => {
+test('confirming while still reading is accepted, every field counts as corrected, and the reading finishing later changes nothing', async () => {
   const f = await upload(t, alice, 'taxi-photo.jpg');
   const held = t.fakeOcr.hold();
   const r = await call(t, aliceAuth, 'POST', `/api/files/${f.id}/reading`, {});
-  const c = await call(t, aliceAuth, 'POST', `/api/readings/${String(r.json.reading.id)}/confirm`, TAXI);
-  expect(c.status).toBe(409);
-  expect(c.json.error).toBe(STILL_READING);
-  expect(await row(String(r.json.reading.id))).toMatchObject({ status: 'pending', confirmed: null });
+  const id = String(r.json.reading.id);
+  // Staff gave up waiting (the page's 90 seconds) and typed the details themselves.
+  const typed = { amountPence: 999, vatPence: null, date: '2026-03-11', merchant: 'Typed by hand' };
+  const c = await call(t, aliceAuth, 'POST', `/api/readings/${id}/confirm`, typed);
+  expect(c.status).toBe(200);
+  expect(c.json.reading).toMatchObject({ status: 'confirmed', confirmed: typed, corrected: ['amount', 'vat', 'date', 'merchant'] });
+  expect((await lastAudit(t.db, 'reading.confirmed')).details).toEqual({ corrected: ['amount', 'vat', 'date', 'merchant'] });
+  const confirmed = await row(id);
+  // The queue then finishes reading the receipt: the confirmed row is never overwritten.
   held.release();
   await t.readings.idle();
-  expect(await row(String(r.json.reading.id))).toMatchObject({ status: 'read' });
+  expect(await row(id)).toEqual(confirmed);
+  expect(confirmed).toMatchObject({ status: 'confirmed', confirmed: typed, proposal: null });
 });
 
 test('VAT above the total and extra keys are refused with 400 and nothing changes', async () => {

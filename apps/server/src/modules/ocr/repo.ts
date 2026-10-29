@@ -18,7 +18,6 @@ import { conflict, forbidden, notFound } from '../../http/errors.js';
 export const READING_PARENT_TYPE = 'receipt-reading';
 
 export const ALREADY_CONFIRMED = 'This receipt has already been confirmed.';
-export const STILL_READING = 'Still reading this receipt. Try again in a moment.';
 
 export interface ReadingDeps { ip?: string; now?: Date }
 
@@ -71,17 +70,18 @@ export async function requestReading(db: Db, actor: Actor, fileId: string, deps:
 
 /**
  * Records what a person confirmed. 404 when the actor cannot see the reading, 403 when they can see it but may not change it,
- * 409 while it is still being read or once it has been confirmed. The audit row holds the corrected field names only.
+ * 409 once it has been confirmed. A reading still being read may be confirmed (staff typed the details after the page gave up
+ * waiting): there is no proposal, so every field counts as corrected, and the queue's writes are all conditional on the row
+ * still being pending, so the reading finishing later never changes it. The audit row holds the corrected field names only.
  */
 export async function confirmReading(db: Db, actor: Actor, id: string, input: ConfirmReadingInput, deps: ReadingDeps = {}): Promise<ReadingView> {
   return db.transaction(async (tx) => {
     const [current] = await tx.select().from(receiptReadings).where(and(eq(receiptReadings.id, id), visible(actor))).for('update');
     if (!current) throw notFound();
     if (!canEdit(actor, current)) throw forbidden();
-    if (current.status === 'pending') throw conflict(STILL_READING);
     if (current.status === 'confirmed') throw conflict(ALREADY_CONFIRMED);
     const confirmed = { amountPence: input.amountPence, vatPence: input.vatPence, date: input.date, merchant: input.merchant };
-    const corrected = correctedFields(current.proposal, confirmed);
+    const corrected = correctedFields(current.status === 'pending' ? null : current.proposal, confirmed);
     const [row] = await tx.update(receiptReadings)
       .set({ status: 'confirmed', confirmed, corrected, confirmedAt: stamp(deps.now), updatedAt: stamp(deps.now) })
       .where(eq(receiptReadings.id, id)).returning();

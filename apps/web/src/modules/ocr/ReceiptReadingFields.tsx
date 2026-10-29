@@ -165,7 +165,7 @@ export function ReceiptReadingFields({ reading, canConfirm, onConfirmed }: {
           </Alert>
         ) : null}
         {!confirmed && !canConfirm ? (
-          <Alert color="blue" variant="light" icon={<IconInfoCircle size={18} />}>Only the person who uploaded this receipt can confirm it.</Alert>
+          <Alert color="blue" variant="light" icon={<IconInfoCircle size={18} />}>Only the person who uploaded this receipt, or an admin, can confirm it.</Alert>
         ) : null}
         {field('Total', 'amount', { needsCheck: unsure(proposal?.amountPence), money: true })}
         <Stack gap="xs">

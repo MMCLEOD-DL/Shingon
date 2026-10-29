@@ -2,7 +2,7 @@ import { test, expect, vi, afterEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import { ReceiptReadingFields } from '../../../src/modules/ocr/index.js';
 import { Wrap, user } from '../../helpers.js';
-import { Refusal, confirmedView, fieldOf, mockApi, readWith, resetApi } from './testHelpers.js';
+import { Refusal, confirmedView, fieldOf, mockApi, pendingView, readWith, resetApi } from './testHelpers.js';
 
 afterEach(() => { vi.unstubAllGlobals(); resetApi(); });
 
@@ -125,17 +125,17 @@ test('VAT above the total is caught before sending, with the server\'s sentence'
 });
 
 test('a refusal from the server is shown in its own words and the form stays open', async () => {
-  mockApi('confirmReading', new Refusal(409, 'Still reading this receipt. Try again in a moment.'));
+  mockApi('confirmReading', new Refusal(409, 'This receipt has already been confirmed.'));
   show(<ReceiptReadingFields reading={readWith({ amount: [1240, 0.97], vat: [207, 0.9], date: ['2026-03-12', 0.95], merchant: ['Northside Taxis', 0.9] })} canConfirm onConfirmed={vi.fn()} />);
   await user.click(screen.getByRole('button', { name: 'Confirm' }));
-  expect(await screen.findByText('Still reading this receipt. Try again in a moment.')).toBeVisible();
+  expect(await screen.findByText('This receipt has already been confirmed.')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Confirm' })).toBeEnabled();
   expect(screen.queryByText('Receipt confirmed.')).toBeNull();
 });
 
 test('a manager sees read-only fields and the explanation, with no Confirm button', () => {
   show(<ReceiptReadingFields reading={readWith({ amount: [1240, 0.97], vat: [270, 0.5], date: ['2026-03-12', 0.95], merchant: ['Northside Taxis', 0.6] })} canConfirm={false} onConfirmed={vi.fn()} />);
-  expect(screen.getByText('Only the person who uploaded this receipt can confirm it.')).toBeVisible();
+  expect(screen.getByText('Only the person who uploaded this receipt, or an admin, can confirm it.')).toBeVisible();
   for (const label of ['Total', 'VAT', 'Date', 'Shop or supplier']) expect(screen.getByLabelText(label)).toHaveAttribute('readonly');
   expect(screen.getByLabelText('Total')).toHaveValue('12.40');
   expect(screen.getByLabelText('No VAT shown')).toBeDisabled();
@@ -150,4 +150,16 @@ test('a confirmed reading is shown read-only', () => {
   for (const label of ['Total', 'VAT', 'Date', 'Shop or supplier']) expect(screen.getByLabelText(label)).toHaveAttribute('readonly');
   expect(screen.queryByText('Please check')).toBeNull();
   expect(screen.queryByRole('button', { name: 'Confirm' })).toBeNull();
+});
+
+test('a reading still pending (the page stopped waiting) can be typed in and confirmed, with no Please check marks', async () => {
+  const confirm = mockApi('confirmReading', confirmedView());
+  show(<ReceiptReadingFields reading={pendingView()} canConfirm onConfirmed={vi.fn()} />);
+  expect(screen.queryByText('Please check')).toBeNull();
+  await user.type(screen.getByLabelText('Total'), '12.40');
+  await user.type(screen.getByLabelText('VAT'), '2.07');
+  await user.type(screen.getByLabelText('Date'), '2026-03-12');
+  await user.type(screen.getByLabelText('Shop or supplier'), 'Northside Taxis');
+  await user.click(screen.getByRole('button', { name: 'Confirm' }));
+  expect(confirm).toHaveBeenCalledWith('r1', { amountPence: 1240, vatPence: 207, date: '2026-03-12', merchant: 'Northside Taxis' });
 });

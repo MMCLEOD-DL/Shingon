@@ -198,3 +198,76 @@ test('asking again for a reading that is being read does not read it a second ti
   expect(rec.order).toEqual(['once']);
   expect(await statuses()).toEqual([{ id, status: 'read' }]);
 });
+
+/** The test database, but the first `failures` selects fail as a dropped connection would. */
+function flakyDb(failures: number) {
+  let calls = 0;
+  let left = failures;
+  const proxy = new Proxy(db.db, {
+    get(target, prop, recv) {
+      if (prop === 'select') {
+        return (...args: Parameters<typeof target.select>) => {
+          calls++;
+          if (left > 0) {
+            left--;
+            throw Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:5432'), { name: 'ConnectionError' });
+          }
+          return target.select(...args);
+        };
+      }
+      const v: unknown = Reflect.get(target, prop, recv);
+      return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+    },
+  });
+  return { db: proxy, calls: () => calls };
+}
+
+test('the start-up load is tried again with a short backoff when the database is not ready yet', async () => {
+  const id = await pending('late db', new Date());
+  const flaky = flakyDb(2);
+  const rec = recordingEngine();
+  queue = startReadingQueue({ db: flaky.db, storage, engine: rec.engine, concurrency: 1, maxBytes: 1024 * 1024, log, loadRetryMs: [5, 5, 5] });
+  await queue.idle();
+  expect(rec.order).toEqual(['late db']);
+  expect(await statuses()).toEqual([{ id, status: 'read' }]);
+  // Each failed try is logged by the error's name only.
+  expect(errors).toEqual([
+    [{ errName: 'ConnectionError', attempt: 1 }, expect.any(String)],
+    [{ errName: 'ConnectionError', attempt: 2 }, expect.any(String)],
+  ]);
+});
+
+test('the start-up load gives up after a bounded number of tries', async () => {
+  const id = await pending('never', new Date());
+  const flaky = flakyDb(100);
+  const rec = recordingEngine();
+  queue = startReadingQueue({ db: flaky.db, storage, engine: rec.engine, concurrency: 1, maxBytes: 1024 * 1024, log, loadRetryMs: [1, 1] });
+  await queue.idle();
+  expect(flaky.calls()).toBe(3);
+  expect(rec.order).toEqual([]);
+  expect(await statuses()).toEqual([{ id, status: 'pending' }]);
+  expect(errors).toHaveLength(3);
+  expect(JSON.stringify(errors)).not.toContain('ECONNREFUSED');
+});
+
+test('stop during the start-up backoff does not wait for the backoff to run out', async () => {
+  const flaky = flakyDb(100);
+  const rec = recordingEngine();
+  queue = startReadingQueue({ db: flaky.db, storage, engine: rec.engine, concurrency: 1, maxBytes: 1024 * 1024, log, loadRetryMs: [60_000] });
+  await new Promise((r) => setTimeout(r, 20));
+  const t0 = Date.now();
+  await queue.stop();
+  expect(Date.now() - t0).toBeLessThan(1000);
+  expect(flaky.calls()).toBe(1);
+});
+
+test('a reading confirmed while the engine is reading it is left confirmed', async () => {
+  const id = await pending('confirmed meanwhile', new Date());
+  const typed = { amountPence: 500, vatPence: null, date: '2026-03-01', merchant: 'Typed' };
+  const rec = recordingEngine({ gate: async () => {
+    await db.db.update(receiptReadings).set({ status: 'confirmed', confirmed: typed, corrected: ['amount', 'vat', 'date', 'merchant'] }).where(eq(receiptReadings.id, id));
+  } });
+  await start(rec.engine).idle();
+  const [r] = await db.db.select().from(receiptReadings).where(eq(receiptReadings.id, id));
+  expect(r).toMatchObject({ status: 'confirmed', confirmed: typed, proposal: null, readAt: null });
+});

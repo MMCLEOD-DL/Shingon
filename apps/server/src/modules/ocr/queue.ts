@@ -31,7 +31,15 @@ export interface ReadingQueueOptions {
   maxBytes: number;
   log: { error(obj: object, msg: string): void };
   now?: () => Date;
+  /**
+   * How long to wait before each further try of the start-up load, in milliseconds (the database may still be starting).
+   * One try plus one per entry; then the waiting readings are left for the next start.
+   */
+  loadRetryMs?: readonly number[];
 }
+
+/** 1 s, 2 s, 5 s, 10 s and 30 s: about 48 seconds in all, then the queue gives up on the start-up load. */
+export const LOAD_RETRY_MS: readonly number[] = [1000, 2000, 5000, 10000, 30000];
 
 /** Today's date in the UK, as YYYY-MM-DD: the reading uses it to refuse dates in the future. */
 export function londonToday(now: Date = new Date()): string {
@@ -135,26 +143,54 @@ export function startReadingQueue(opts: ReadingQueueOptions): ReadingQueue {
     }
   };
 
-  const loaded: Promise<void> = db.select({ id: receiptReadings.id, engine: receiptReadings.engine }).from(receiptReadings).where(eq(receiptReadings.status, 'pending'))
-    .orderBy(asc(receiptReadings.createdAt), asc(receiptReadings.id))
-    .then(async (rows) => {
-      // A reading that was started before the last stop but never finished may be what stopped the process: it is not read again.
-      for (const r of rows.filter((x) => x.engine !== null)) {
-        log.error({ readingId: r.id }, 'A receipt reading was interrupted, so it will not be tried again; staff will type the details');
-        await finish(r.id, { status: 'unreadable', proposal: null, problem: GENERAL_PROBLEM, readAt: now() });
+  /** Cancels the wait between start-up load tries when the queue is stopped. */
+  let wakeEarly: (() => void) | undefined;
+  const pause = (ms: number): Promise<void> => new Promise<void>((resolve) => {
+    const timer = setTimeout(() => { wakeEarly = undefined; resolve(); }, ms);
+    wakeEarly = () => { clearTimeout(timer); wakeEarly = undefined; resolve(); };
+  });
+
+  const loadPending = async (): Promise<void> => {
+    const rows = await db.select({ id: receiptReadings.id, engine: receiptReadings.engine }).from(receiptReadings).where(eq(receiptReadings.status, 'pending'))
+      .orderBy(asc(receiptReadings.createdAt), asc(receiptReadings.id));
+    // A reading that was started before the last stop but never finished may be what stopped the process: it is not read again.
+    for (const r of rows.filter((x) => x.engine !== null)) {
+      log.error({ readingId: r.id }, 'A receipt reading was interrupted, so it will not be tried again; staff will type the details');
+      await finish(r.id, { status: 'unreadable', proposal: null, problem: GENERAL_PROBLEM, readAt: now() });
+    }
+    if (stopped) return;
+    // Readings left from before go first (they are older); any enqueued while loading follow.
+    const early = waiting.splice(0);
+    const ids = rows.filter((x) => x.engine === null).map((r) => r.id);
+    waiting.push(...ids, ...early.filter((id) => !ids.includes(id)));
+  };
+
+  // The database may not be ready the moment the app starts, so the load is tried again a few times, waiting longer each time.
+  const retryMs = opts.loadRetryMs ?? LOAD_RETRY_MS;
+  // Read through a function: `stop()` changes it while the load awaits.
+  const isStopped = (): boolean => stopped;
+  const loaded: Promise<void> = (async () => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await loadPending();
+        return;
+      } catch (e) {
+        const errName = (e as { name?: string } | null)?.name ?? 'unknown';
+        const wait = retryMs[attempt - 1];
+        if (wait === undefined || isStopped()) {
+          log.error({ errName, attempt }, 'The waiting receipt readings could not be loaded; they will be read at the next start');
+          return;
+        }
+        log.error({ errName, attempt }, 'The waiting receipt readings could not be loaded yet; trying again shortly');
+        await pause(wait);
+        if (isStopped()) return;
       }
-      if (stopped) return;
-      // Readings left from before go first (they are older); any enqueued while loading follow.
-      const early = waiting.splice(0);
-      const ids = rows.filter((x) => x.engine === null).map((r) => r.id);
-      waiting.push(...ids, ...early.filter((id) => !ids.includes(id)));
-    })
-    .catch((e: unknown) => { log.error({ errName: (e as { name?: string } | null)?.name ?? 'unknown' }, 'The waiting receipt readings could not be loaded'); })
-    .finally(() => {
-      loading = false;
-      pump();
-      settleIdle();
-    });
+    }
+  })().finally(() => {
+    loading = false;
+    pump();
+    settleIdle();
+  });
 
   return {
     enqueue(id) {
@@ -175,6 +211,7 @@ export function startReadingQueue(opts: ReadingQueueOptions): ReadingQueue {
     async stop() {
       stopped = true;
       waiting.length = 0;
+      wakeEarly?.();
       await loaded;
       while (running.size > 0) await Promise.allSettled([...running]);
       settleIdle();
