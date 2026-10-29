@@ -410,3 +410,9 @@ Live / fake / skipped / unrun: synthetic corpus only. No HTTP API, vectors, OCR 
 Open: Malcolm should add `knowledge` to the required checks in branch protection.
 Next: K3 (hybrid) needs a host with local models; K6 (HTTP API) can follow once P03 patterns are reused.
 ```
+
+### 29 October 2026 — Claude task 6 (claude-lane): post-merge review of PR #10
+
+- **Verdict:** approved, no findings. Review: [`reviews/2026-10-29-claude-review-database-url-redaction.md`](reviews/2026-10-29-claude-review-database-url-redaction.md).
+- **Evidence:** 32/32 for `status.test.ts` and `alerts.test.ts` on `3bc22a6`, even with a database password of literally `postgres`. Five of the new tests fail against the pre-merge `alerts.ts`.
+- **Correction recorded:** Claude had called the CI failure a CI-only artefact; Codex showed the production ordering defect.
