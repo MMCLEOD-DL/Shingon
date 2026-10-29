@@ -23,7 +23,7 @@ async function setup(t, options = {}) {
     { name: 'local', adapter: 'local-agent', model: 'synthetic', roles: ['grunt'], capabilities: { can_edit_files: true } },
   ], routing: { allowApi: false }, options: { testCommand: 'node --test' }, factory: { operatorName: 'preserved' } };
   writeFileSync(configFile, JSON.stringify(config));
-  const app = await createAppServer({ dataDir, configFile, port: 0, workerFile, ...options });
+  let app = await createAppServer({ dataDir, configFile, port: 0, workerFile, ...options });
   let cookie = '';
   const call = async (p, { method = 'GET', body, headers = {} } = {}) => {
     const res = await fetch(app.origin + '/api/v1' + p, { method, headers: { origin: app.origin,
@@ -38,7 +38,13 @@ async function setup(t, options = {}) {
     for (let i = 0; i < 100; i++) { const r = await call('/runs/' + runId); if (r.json.status === status) return r.json; await new Promise(r => setTimeout(r, 20)); }
     throw new Error('run never reached ' + status);
   };
-  return { root, dataDir, configFile, config, repo, app, call, login, register, start, wait, stream: p => fetch(app.origin + '/api/v1' + p, { headers: { cookie, origin: app.origin } }) };
+  const restart = async () => {
+    await app.close();
+    app = await createAppServer({ dataDir, configFile, port: 0, workerFile, ...options });
+    cookie = ''; await login();
+  };
+  return { root, dataDir, configFile, config, repo, get app() { return app; }, call, login, register, start, wait, restart,
+    stream: p => fetch(app.origin + '/api/v1' + p, { headers: { cookie, origin: app.origin } }) };
 }
 
 test('session bootstrap is single use, cookies are HttpOnly, and unauthenticated reads fail', async t => {
@@ -95,6 +101,35 @@ for (const choice of ['approve', 'reject']) test(`fake IPC journey: ${choice}, e
   assert.doesNotMatch(execFileSync('git', ['-C', s.repo, 'branch'], { encoding: 'utf8' }), /conductor\/synthetic/);
   assert.equal((await s.call('/runs/' + run.id + '/review')).json.diff, '+synthetic change');
 });
+for (const requestId of ['__proto__', 'constructor', 'prototype', 'toString', 'hasOwnProperty']) {
+  for (const choice of ['approve', 'reject']) test(`decision receipt ${requestId}: ${choice} replays once after restart (N5)`, async t => {
+    const s = await setup(t); await s.login();
+    const before = execFileSync('git', ['-C', s.repo, 'show-ref'], { encoding: 'utf8' });
+    const initial = await s.start(await s.register());
+    const run = await s.wait(initial.json.id, 'awaiting-decision'); const d = run.decision;
+    const input = { choiceId: choice, expectedRevision: d.revision, reviewedCommit: d.evidence.commit, clientRequestId: requestId };
+    const endpoint = `/runs/${run.id}/decisions/${d.id}`;
+    const first = await s.call(endpoint, { method: 'POST', body: input });
+    assert.equal(first.status, 200);
+    await s.wait(run.id, choice === 'approve' ? 'completed' : 'rejected');
+    assert.deepEqual((await s.call(endpoint, { method: 'POST', body: input })).json, first.json);
+    const receipts = s.app.runs.get(run.id).decisionReceipts;
+    assert.equal(Object.getPrototypeOf(receipts), Object.prototype);
+    assert.equal(Object.hasOwn(receipts, requestId), true);
+    const saved = JSON.parse(readFileSync(path.join(s.dataDir, 'service-state.json'), 'utf8')).runs.find(r => r.id === run.id);
+    assert.equal(Object.hasOwn(saved.decisionReceipts, requestId), true);
+    await s.restart();
+    const replay = await s.call(endpoint, { method: 'POST', body: input });
+    assert.equal(replay.status, 200); assert.deepEqual(replay.json, first.json);
+    const conflict = await s.call(endpoint, { method: 'POST', body: { ...input, choiceId: choice === 'approve' ? 'reject' : 'approve' } });
+    assert.equal(conflict.status, 409); assert.equal(conflict.json.error.code, 'conflict');
+    assert.equal(s.app.runs.get(run.id).events.filter(e => e.type === 'decision-resolved').length, 1);
+    assert.equal(s.app.runs.active, null);
+    // This is a transport fixture, so it must not be mistaken for real Git landing.
+    assert.equal(execFileSync('git', ['-C', s.repo, 'show-ref'], { encoding: 'utf8' }), before);
+  });
+}
+
 test('cancel acknowledges the request before reporting worker interruption', async t => {
   const s = await setup(t); await s.login(); const r = await s.start(await s.register());
   const run = await s.wait(r.json.id, 'awaiting-decision');
