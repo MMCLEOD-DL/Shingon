@@ -361,3 +361,22 @@ Next packet unblocked: P03 recovery prepared on codex/operator-run-recovery @ 3c
 Reviewer disposition and reviewed SHA: requested from Claude at the eventual code SHA; no sign-off claimed.
 Integration SHA: —
 ```
+
+### Codex task submitted — required Foundation CI redaction repair
+
+- Date: 29 October 2026. Branch: `codex/database-url-redaction`; baseline: `caee572`.
+- Last code commit: `95cfa9858ab020d480c6662ab7fb691d5aa4bf95`.
+- PR: [#10 — Fix alert URL redaction and the required Foundation CI failure](https://github.com/MMCLEOD-DL/Shingon/pull/10).
+- Changes: production redaction ordering, six regressions, changelog and evidence. No CI/gate
+  changes and no P03 service changes in this PR. Five regressions fail before the fix.
+- Evidence: 36 focused tests passed; Foundation suite 1,113 passed / 6 skipped / 0 failed;
+  lint, typecheck, licence audit and web build passed. Full commands/host/limits are above.
+- Skipped/unrun: Restic integration (6 tests; tool absent), browser/corpus release checks,
+  native Windows, client boxes, live models and releases. No sign-off inferred from own tests.
+- Merge route: high-risk `foundation/ops/` paths; auto-merge stays off. This PR's required CI
+  was pending at submission. Claude review is requested at the code SHA; Malcolm must merge
+  or add `malcolm-approved` himself. The agent will not change that label or the gate.
+- P03 N1/N2 remains preserved and unsubmitted on `codex/operator-run-recovery` @ `3c3e32a`
+  (34 service / 1,548 Conductor / 47 UI tests passed; UI build passed). Resume that packet
+  after this prerequisite is merged; merge current main into its existing branch first.
+- Open questions: none on the proposed redaction fix; CI/peer review/Malcolm merge pending.
