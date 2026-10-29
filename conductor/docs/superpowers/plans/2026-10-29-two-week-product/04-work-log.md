@@ -222,37 +222,32 @@ Final combined validation for the PR #2 update: **1,541 Conductor tests passed, 
 - **P04:** fixed `RunView` so it offers no stale question or Stop between an accepted answer and the next snapshot. The new unit test fails without the fix.
 - **Loop:** added `.claude/skills/claude-lane/SKILL.md` (one task per PR; merge = approval; read the repo between tasks).
 
-### 29 October 2026 — shared engine seam: git env config in `strictChildEnv` (Claude)
+### 29 October 2026 — Claude task 2 (claude-lane): P07 UI-side adversarial checks
 
 ```
-Packet/subpacket: engine seam fix for the environment finding of 29 October (13 baseline failures)
-Owner and reviewer: Claude (at Malcolm's request); reviewer: Codex
+Packet/subpacket: P07, Claude's part (UI-owned files): browser adversarial checks
+Owner and reviewer: Claude; reviewer Codex (P07 coordinator)
 Status: IN_REVIEW
-Baseline SHA: 13a86f7
-Result commit(s) / patch artifact: branch claude/great-shannon-w5pzve
-Owned files and shared seams changed: SHARED src/secrets.js (strictChildEnv only); test/secrets.test.js
-Contract version: unchanged (no service/API surface)
-What now works: strictChildEnv removes GIT_CONFIG_COUNT, GIT_CONFIG_KEY_<n>, GIT_CONFIG_VALUE_<n> and
-  GIT_CONFIG_PARAMETERS as one group. Strict children (test command, checks, gates, council tools, wake,
-  ssh, the app's npm release script, the foundation ls-remote/clone) no longer inherit host git config,
-  which could carry credentials (http.extraHeader), and git no longer dies on a dangling COUNT.
-  childEnv is unchanged: agents and Conductor's own workspace/release/landing git keep host git config.
-Checks (cloud Linux, Node 22.22.0, cwd conductor/):
-  node --test test/factory-release.test.js test/factory-status.test.js test/secrets*.test.js
-    host GIT_CONFIG_COUNT=3: 63/63; trio COUNT=1/user.name/x only: 63/63; no GIT_CONFIG_*: 63/63.
-    Before the fix with host vars: release+status 38/51 (the 13 recorded failures).
-  New regression test fails on 13a86f7 and passes after.
-  node --test --test-concurrency=4: 1,542 tests, 1,541 pass, 0 fail, 1 skipped (workerMemory, root).
-Live / fake / skipped / unrun: no remote git exercised; foundation fetch covered by its local-repo tests.
-Open defects or unknowns:
-  - A host that reaches the foundation repo only through GIT_CONFIG_* (e.g. a url.insteadOf rewrite) loses
-    that rewrite in latestFoundation; ~/.gitconfig still applies. Intended: that fetch is credential-free.
-  - An app release script whose git identity comes only from GIT_CONFIG_* will now fail to commit; identity
-    should live in ~/.gitconfig or the app repo.
-  - secretValues still treats GIT_CONFIG_KEY_<n> values (config names) as secrets and does not redact
-    GIT_CONFIG_VALUE_<n> values. Not changed here; needs an owner decision.
-External blocker: none
-Next packet unblocked: none blocked on this; removes the 13 environment failures from cloud runs.
-Reviewer disposition and reviewed SHA: pending (Codex)
-Integration SHA: —
+Baseline SHA: 42efa16 (main after PR #3)
+Owned files: conductor/operator-web/e2e/{journey,serve-fixture}.mjs, operator-web/src/views/RunView.jsx,
+  operator-web/tests/views.spec.jsx, conductor/docs/operator-app/ux.md
+What now works / was checked:
+  - Two tabs, one question. Tab B's live stream is cut; tab A approves; tab B's approve is refused
+    (stale); exactly one decision-resolved event; the run is completed.
+  - Abrupt kill. The service runs as its own process and is killed with SIGKILL during a pending
+    question, then restarted on the same data and port. The open tab cannot answer and says the
+    sign-in ended. After the new bootstrap link the run is `interrupted` with decision null and no
+    landed branch.
+  - UI defect found and fixed. A refused (stale) answer's message lived inside the decision panel,
+    so the reload that followed removed the panel and the message with it: the operator's answer
+    silently didn't count. The error is now shown by the run view. A new unit test fails without the
+    fix and passes with it.
+Checks (cloud Linux, Node 22.22.0, Chromium via Playwright 1.63.0): `npm test` 47/47; build passed;
+  `node e2e/journey.mjs` 17/17 on three consecutive runs, no leftover processes.
+Live / fake / skipped / unrun: fixture workers only (no real engine, no models, no native Windows).
+  Workspace-changed-after-review is covered by Codex's real-engine test, not repeated here.
+  Not done here: secrets-in-responses/assets inspection, foreign-origin launch (Codex's server tests
+  cover the latter).
+Open defects: none found in the service in this pass.
+Next: Codex (P07 coordinator) to review and fold into the acceptance matrix.
 ```

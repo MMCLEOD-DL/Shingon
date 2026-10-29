@@ -270,3 +270,21 @@ test('after an approval is accepted, neither the old question nor Stop is offere
   expect(screen.queryByRole('button', { name: 'Approve: create a branch' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Stop run…' })).toBeNull();
 });
+
+test('a refused answer is still reported after the reload removes the question (another tab answered first)', async () => {
+  const svc = fakeService({ run: fixtures.awaitingResult });
+  const fetchImpl = async (url, init = {}) => {
+    if (url.includes('/decisions/')) {
+      svc.state.run = { ...fixtures.completedRun, id: fixtures.awaitingResult.id }; // the other tab's answer landed
+      return { ok: false, status: 409, json: async () => fixtures.staleDecision };
+    }
+    return svc.fetchImpl(url, init);
+  };
+  render(<RunView api={createApi({ fetchImpl })} runId={fixtures.awaitingResult.id} go={() => {}} />);
+  const approve = await screen.findByRole('button', { name: 'Approve: create a branch' });
+  await waitFor(() => expect(approve.disabled).toBe(false));
+  await userEvent.click(approve);
+  expect(await screen.findByText('Branch created')).toBeTruthy();
+  expect(screen.getByText(/This question changed or was already answered/)).toBeTruthy();
+  expect(screen.queryByText(/Answer saved/)).toBeNull();
+});

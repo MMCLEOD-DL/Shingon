@@ -44,8 +44,10 @@ function Decision({ api, run, review, onAnswered, onStale }) {
       setSent(true);
       onAnswered(choiceId);
     } catch (e) {
-      setError(e);
-      if (e instanceof ApiError && (e.code === 'stale-decision' || e.status === 409)) onStale();
+      // A refused (stale) answer is reported by the run view: reloading may remove this panel, and the
+      // operator must still see that their answer did not count.
+      if (e instanceof ApiError && (e.code === 'stale-decision' || e.status === 409)) onStale(e);
+      else setError(e);
     } finally { setSending(null); }
   };
 
@@ -172,7 +174,7 @@ export function RunView({ api, runId, go }) {
       {run.status === 'interrupted' && <div className="outcome bad"><p>The run was interrupted (stopped, or the service restarted). Any question it was asking has been withdrawn. {run.recoveryRequired ? 'The approved result may already be in the repository. Inspect its branches before recovering this run; automatic resume is disabled.' : run.resumable ? 'Resume to continue from its saved work.' : 'It has no saved work to resume.'}</p></div>}
       {run.status === 'paused' && <div className="outcome"><p>Paused. {run.resumable ? 'Resume when ready.' : ''}</p></div>}
 
-      {pending && !answered && <Decision api={api} run={run} review={review} onStale={refresh}
+      {pending && !answered && <Decision api={api} run={run} review={review} onStale={(e) => { setError(e); refresh(); }}
         onAnswered={() => { answeredAt.current = run.lastEventSeq; setAnswered(true); setNotice('Answer saved. Waiting for Conductor to continue — this does not yet mean the work is finished.'); refresh(); }} />}
 
       <Coverage coverage={run.coverage} />

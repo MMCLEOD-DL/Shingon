@@ -62,14 +62,14 @@ The UI tests live in `operator-web/tests/*.spec.*`, deliberately outside Node's 
 
 | Check | Result |
 |---|---|
-| `npm test` (unit and render, against `contract-v1.json`) | 46/46 passed (re-run 29 Oct on `main` with the P3-1 fixtures). Also covers landing and uncertain-landing states, and no stale question or Stop after an accepted answer. Covers every fixture run state, each decision kind, stale decisions, failed/unrun/missing checks, malicious content, focus, reconnect and resync, cancel wording, setup probes and saving, new-task idempotency, repository confirmation, history, and the signed-out state. |
+| `npm test` (unit and render, against `contract-v1.json`) | 47/47 passed (re-run 29 Oct on `main` with the P3-1 fixtures). Also covers landing and uncertain-landing states, and no stale question or Stop after an accepted answer. Covers every fixture run state, each decision kind, stale decisions, failed/unrun/missing checks, malicious content, focus, reconnect and resync, cancel wording, setup probes and saving, new-task idempotency, repository confirmation, history, and the signed-out state. |
 | `npm run build` | Passed. 250 kB JS, 79 kB gzipped. The bundle contains no "Simulated" or fake transport. |
-| `e2e/journey.mjs` in Chromium (Playwright 1.63.0) against the **real P03 service** at `a8c97bc` (13/13), then in-tree on `main` with `93e65b3` (15/15), with Codex's deterministic fixture workers | 15/15 passed: bootstrap and fragment removal; single-use link; repository confirmation; start; decision with evidence; literal untrusted text with nothing executed; focus; reload without answering; approve → branch created; reject → no branch; history; Connections with no "verified" and no secret fields; phone width; no Stop offered during an approved landing; worker lost after approval → inspect-repository message with no Resume; no console errors or CSP violations. |
+| `e2e/journey.mjs` in Chromium (Playwright 1.63.0) against the **real P03 service** at `a8c97bc` (13/13), then in-tree on `main` with `93e65b3` (15/15), then with the P07 adversarial steps (17/17, three consecutive runs), with Codex's deterministic fixture workers | 17/17 passed: bootstrap and fragment removal; single-use link; repository confirmation; start; decision with evidence; literal untrusted text with nothing executed; focus; reload without answering; approve → branch created; reject → no branch; history; Connections with no "verified" and no secret fields; phone width; no Stop offered during an approved landing; worker lost after approval → inspect-repository message with no Resume; two tabs answering one question (only one answer recorded; the stale tab is told); the service killed with SIGKILL during a question and restarted on the same data (question withdrawn, never answered, sign-in guidance shown, run `interrupted` with no branch); no console errors or CSP violations. |
 
 **Not shown by this evidence:**
 - The fixture worker reports a branch without running Git, so this is not a real coding run. The real engine, live models and native Windows belong to P07 and P08.
 - No automated accessibility audit (axe) was run; the checks above are manual.
-- Stale-answer and reconnect behaviour were tested in unit tests only, not in the browser journey.
+- Stale answers, stream loss and abrupt restart are now covered in the browser journey too (P07 UI side). Workspace changes after review need the real engine, so Codex's `engine.test.js` covers them.
 
 ## Known limitations and dependencies
 
