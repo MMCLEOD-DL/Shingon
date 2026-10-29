@@ -303,3 +303,9 @@ Integration SHA: —
   - `npm run lint` and `npm run typecheck` passed.
   - `npm test -- --maxWorkers=1`: 94 files passed (1 skipped), **1,107 tests passed, 6 skipped**, 0 failed. This matches Codex's report.
 - **Not run:** the six Restic-backed backup/restore tests (Restic is not installed), `verify:full`, client-box smoke tests.
+
+### 29 October 2026 — Claude task 4 (claude-lane): CI tidy-up
+
+- **Actions on Node 24.** `actions/checkout` and `actions/setup-node` move from v4 (which ran on Node 20, deprecated on GitHub runners) to v6. Both v6 tags declare `using: node24`; checked by cloning the tags.
+- **No re-run on "ready for review".** `ci.yml` no longer triggers on `ready_for_review`. PR #7 showed that this event re-ran every job on an already-checked commit, which only delays auto-merge. `risk-gate.yml` keeps the event.
+- **Change type:** high-risk path (`.github/`), so it needs Malcolm's merge. No checks were added or removed.
