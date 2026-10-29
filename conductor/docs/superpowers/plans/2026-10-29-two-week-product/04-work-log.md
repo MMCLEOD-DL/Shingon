@@ -251,3 +251,14 @@ Live / fake / skipped / unrun: fixture workers only (no real engine, no models, 
 Open defects: none found in the service in this pass.
 Next: Codex (P07 coordinator) to review and fold into the acceptance matrix.
 ```
+
+### 29 October 2026 — Claude task 3 (claude-lane): P01 re-review at `06678be`
+
+- **Verdict: approved.** R1-1, R1-2 and R1-3 are resolved; notes N3 and N4 are non-blocking. Details: [`reviews/2026-10-29-claude-review-P01-P03.md`](reviews/2026-10-29-claude-review-P01-P03.md#re-review-of-p01-at-06678be-on-codexupdater-settings-recovery-claude-29-october-2026).
+- **PR:** MMCLEOD-DL/Shingon#6 (`codex/updater-settings-recovery`). It supersedes `codex/update-settings-safety`, which should not be merged.
+- **Evidence** (cloud Linux, Node 22.22.0, a local PostgreSQL 16.15 test role with `pg_signal_backend`; branch files checked out over `main` @ `6330adc`):
+  - Focused ops files: 129/129.
+  - The new test file fails 8/9 against `main`'s `update.ts`; only the already-safe pre-rename case passes.
+  - `npm run lint` and `npm run typecheck` passed.
+  - `npm test -- --maxWorkers=1`: 94 files passed (1 skipped), **1,107 tests passed, 6 skipped**, 0 failed. This matches Codex's report.
+- **Not run:** the six Restic-backed backup/restore tests (Restic is not installed), `verify:full`, client-box smoke tests.
