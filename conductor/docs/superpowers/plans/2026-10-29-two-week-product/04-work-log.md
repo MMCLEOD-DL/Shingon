@@ -602,3 +602,42 @@ Integration SHA: —
   label and gate untouched. N6 UI remains Claude-owned.
 - Open questions: none on the implementation; CI/peer review/merge pending. Address any own
   failures on this branch. The next "carry on" after merge starts the next task from current main.
+
+### 29 October 2026 — Claude task 8 (claude-lane): recovery control in the operator UI (N6)
+
+```
+Packet/subpacket: P04 follow-up N6 (from the P03 recovery review) — UI control for POST /runs/:id/recover.
+Owner and reviewer: Claude; reviewer Codex.
+Status: IN_REVIEW.
+Baseline SHA: d9e88e2 (main after PR #13).
+Owned files: conductor/operator-web/{src/api.js, src/views/RunView.jsx, src/styles.css, tests/*, e2e/journey.mjs,
+  e2e/inspect-worker.cjs (new)}; conductor/docs/operator-app/ux.md; this ledger. No service, contract, fixture or CI change.
+What now works: a run with recoveryRequired (interrupted or failed) shows the registered repository, the full approved
+  commit and three read-only Git commands. "Record inspection" needs an explicit tick bound to the current snapshot and
+  sends repositoryInspected:true with lastEventSeq, workspaceCommit and one request id per snapshot. It starts nothing;
+  Resume then appears as a separate step. Refusals (stale-recovery, not-recoverable, not-resumable) are shown and the
+  run reloads. The failed-run text no longer says "cannot be resumed" when inspection is what is needed.
+Checks (cloud Linux, Node 22.22.0), from conductor/operator-web/:
+  npm test: 54 passed (47 before). 7 of the 8 new or extended tests fail against the previous UI source; the 8th is
+    the guard that ordinary interrupted runs get no control.
+  npm run build: passed.
+  NODE_PATH=$(npm root -g) node e2e/journey.mjs: 19 passed / 0 failed (Playwright 1.63.0) against the real service.
+    New steps: (a) Codex's slow-land worker (no workspace): the real service refuses the inspection
+    with not-resumable, and the UI shows it; (b) the UI's inspect worker: a real engine workspace via Workspace.create,
+    the branch fetched into the source repository and the worker killed before reporting; inspection recorded only after
+    the tick, no worker started, panel fits 360 px; Resume reconciles to "Branch created" with exactly one branch.
+Live / fake / skipped / unrun: real service, real Git and engine Workspace; deterministic fixture workers, no models.
+  Conductor service suite not re-run (no service change); CI runs it. Native Windows unrun.
+Open defects or unknowns: none found. Handoff to Codex (docs owner): setup.md "Recover an uncertain approved result"
+  step 2 can now point at the run page's "Record inspection" control instead of the developer-console snippet.
+Reviewer disposition and reviewed SHA: —
+```
+
+_Restored 29 October 2026: this entry was dropped when `main` was merged into `codex/decision-receipt-keys` (`03b0468`); text unchanged from `cad2502`._
+
+### 29 October 2026 — Claude task 9 (claude-lane): review of PR #14 (P03 N5 decision-receipt keys)
+
+- **Verdict:** approved at `88b8a07`; Malcolm merges (high-risk path). Review: [`reviews/2026-10-29-claude-review-P03-N5-receipts.md`](reviews/2026-10-29-claude-review-P03-N5-receipts.md).
+- **Evidence:** service tests 45/45 at `88b8a07`. With `main`'s `runs.js`, 9 fail (8 HTTP prototype-name cases and the real-engine concurrent case), and the 2 `prototype` controls pass, as Codex reported.
+- **Correction:** my N5 note understated the defect. The inherited-member read refused the *first* valid request (409) for four IDs. It did not only lose idempotency for `__proto__`.
+- **Outcome:** Codex merged `main` in (`03b0468`) and #14 was merged as `01350f7`. The service code on `main` is identical to the reviewed `88b8a07`. That merge dropped Claude task 8's entry, which is restored above. N7 (optional, for Codex): add a test for a prototype-named ID on `/recover`.
