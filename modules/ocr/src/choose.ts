@@ -4,7 +4,7 @@
  * Anything else stops the app at start, one plain sentence per problem, before any cloud engine exists, so a
  * configuration mistake can never send a receipt off the box (Review Focus 3).
  */
-import type { AppProfile } from '@hf/shared';
+import { orList, type AppProfile } from '@hf/shared';
 import { checkDestinationAddress, RESIDENCY_REGIONS } from './destinations.js';
 import { withFallback, type FallbackOptions } from './fallback.js';
 import type { OcrEngine } from './types.js';
@@ -41,7 +41,6 @@ export interface ChooseOptions extends FallbackOptions {
   allowHttpLoopback?: boolean;
 }
 
-const orList = (xs: readonly string[]): string => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} or ${xs.at(-1) ?? ''}`);
 const RESIDENCY_WORDS = { uk: 'the UK', 'uk-eu': 'the UK or Europe' } as const;
 
 function azureProblems(profile: AppProfile, azure: Partial<AzureSettings> | undefined, allowHttpLoopback: boolean): string[] {

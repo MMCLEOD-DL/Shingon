@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { CloudEngineError, UnreadableError, withFallback, type OcrEngine } from '../src/index.js';
+import { CloudEngineError, UnreadableError, fallbackMessage, withFallback, type OcrEngine } from '../src/index.js';
 import { fakeEngine } from './helpers/fakeEngine.js';
 
 const bytes = Buffer.from('a fictional receipt');
@@ -75,4 +75,15 @@ test('onFallback hears the reason, and a throwing hook does not lose the reading
   expect(r.warnings).toEqual([FELL_BACK]);
   const r2 = await withFallback(failing(new CloudEngineError('network')), local, { onFallback: () => { throw new Error('logger down'); } }).read({ bytes, type: 'image/jpeg' });
   expect(r2.engine).toBe('local-tesseract');
+});
+
+test('a refused key or endpoint (401 or 403) is told as a plain sentence; other failures as unreachable', () => {
+  for (const reason of ['http-401', 'http-403'] as const) {
+    expect(fallbackMessage(reason)).toBe(
+      'The cloud receipt reader refused the box: the key or endpoint is wrong. Check OCR_AZURE_KEY and OCR_AZURE_ENDPOINT. A receipt was read on the box instead.',
+    );
+  }
+  for (const reason of ['timeout', 'network', 'failed', 'bad-response', 'http-500', 'http-429'] as const) {
+    expect(fallbackMessage(reason)).toBe('The cloud receipt reader could not be reached, so a receipt was read on the box instead.');
+  }
 });

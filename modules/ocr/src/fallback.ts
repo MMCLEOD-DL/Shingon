@@ -4,6 +4,17 @@ export const FELL_BACK_WARNING = 'The cloud reader was unavailable, so this rece
 const MUST_STAY_ON_BOX = 'A fallback must keep receipts on the box.';
 
 /**
+ * The sentence the app logs for one fall-back to the box. A 401 or 403 means the cloud turned the box away, which no
+ * retry will fix, so it says plainly that the key or endpoint is wrong; anything else is the cloud being unreachable.
+ */
+export function fallbackMessage(reason: CloudFailure): string {
+  if (reason === 'http-401' || reason === 'http-403') {
+    return 'The cloud receipt reader refused the box: the key or endpoint is wrong. Check OCR_AZURE_KEY and OCR_AZURE_ENDPOINT. A receipt was read on the box instead.';
+  }
+  return 'The cloud receipt reader could not be reached, so a receipt was read on the box instead.';
+}
+
+/**
  * Reads with `primary` (a cloud engine) and, only when the cloud can't be reached, with `fallback` (a local one).
  * A receipt that can't be read is not retried elsewhere, and nothing ever falls back towards the cloud. The wrapper
  * carries the primary's identity, so the app reports what it was set up to use. `onFallback` lets the app log or

@@ -6,4 +6,4 @@ export { benchCorpus, writeAccuracyReport, type BenchCase, type BenchReport } fr
 export { checkDestinationAddress, OUTBOUND_DESTINATIONS, RESIDENCY_REGIONS, type OutboundDestination } from './destinations.js';
 export { createAzureReceiptEngine, type AzureReceiptOptions } from './azure.js';
 export { chooseEngine, OcrPolicyError, type AzureSettings, type ChooseOptions, type EngineMakers, type OcrSettings } from './choose.js';
-export { FELL_BACK_WARNING, withFallback, type FallbackOptions } from './fallback.js';
+export { FELL_BACK_WARNING, fallbackMessage, withFallback, type FallbackOptions } from './fallback.js';

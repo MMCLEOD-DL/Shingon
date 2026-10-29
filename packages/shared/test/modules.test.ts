@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { AppProfileSchema, DEFAULT_PROFILE, MODULES, checkAppProfile } from '../src/modules.js';
+import { AppProfileSchema, DEFAULT_PROFILE, MODULES, checkAppProfile, orList } from '../src/modules.js';
 
 test('the default profile turns nothing on and lets nothing out', () => {
   expect(DEFAULT_PROFILE).toEqual({ schema: 1, modules: [], policy: { outbound: [], residency: 'uk' } });
@@ -16,4 +16,8 @@ test('a repeated outbound service and a wrongly shaped policy get plain sentence
     .toEqual({ ok: false, problems: ['app-profile.json lists the outbound service "azure-document-intelligence" twice.'] });
   expect(checkAppProfile({ ...DEFAULT_PROFILE, policy: [] }))
     .toEqual({ ok: false, problems: ['app-profile.json must give the policy in braces, like "policy": { "outbound": [], "residency": "uk" } (residency is uk, uk-eu or any).'] });
+});
+
+test('orList joins choices for a plain sentence', () => {
+  expect([orList([]), orList(['uk']), orList(['uk', 'uk-eu']), orList(['a', 'b', 'c'])]).toEqual(['', 'uk', 'uk or uk-eu', 'a, b or c']);
 });

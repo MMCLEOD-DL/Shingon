@@ -32,7 +32,8 @@ export function moduleOn(cfg: { profile: AppProfile }, m: ModuleName): boolean {
 export type AppProfileResult = { ok: true; profile: AppProfile } | { ok: false; problems: string[] };
 
 const FILE = 'app-profile.json';
-const orList = (xs: readonly string[]): string => `${xs.slice(0, -1).join(', ')} or ${xs.at(-1) ?? ''}`;
+/** "a, b or c" (one item as it is), for the choices in a plain sentence. */
+export const orList = (xs: readonly string[]): string => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} or ${xs.at(-1) ?? ''}`);
 
 const valueAt = (data: unknown, path: readonly PropertyKey[]): unknown => {
   let v = data;

@@ -98,3 +98,32 @@ test('an engine amount on a receipt that never says its currency is capped like 
   expect(p.currency).toBe('unknown');
   expect(p.amountPence).toEqual({ value: 875, confidence: 0.8 });
 });
+
+test('an engine total or date is capped at 0.8 unless the lines read the same value', () => {
+  const lines = [line('Northside Taxis'), line('12 Mar 2026 22:05'), line('Total to pay £12.40')];
+  const disagree = readReceipt(result({
+    lines,
+    fields: { amountPence: { value: 1500, confidence: 0.99 }, date: { value: '2026-03-13', confidence: 0.99 } },
+  }), TODAY);
+  expect(disagree.amountPence).toEqual({ value: 1500, confidence: 0.8 });
+  expect(disagree.date).toEqual({ value: '2026-03-13', confidence: 0.8 });
+
+  const nothingOnTheLines = readReceipt(result({
+    lines: [line('Northside Taxis'), line('Paid in £')],
+    fields: { amountPence: { value: 1240, confidence: 0.99 }, date: { value: '2026-03-12', confidence: 0.99 } },
+  }), TODAY);
+  expect(nothingOnTheLines.amountPence!.confidence).toBeLessThanOrEqual(0.8);
+  expect(nothingOnTheLines.date).toEqual({ value: '2026-03-12', confidence: 0.8 });
+
+  const agree = readReceipt(result({
+    lines,
+    fields: { amountPence: { value: 1240, confidence: 0.99 }, date: { value: '2026-03-12', confidence: 0.98 } },
+  }), TODAY);
+  expect(agree.amountPence).toEqual({ value: 1240, confidence: 0.99 });
+  expect(agree.date).toEqual({ value: '2026-03-12', confidence: 0.98 });
+});
+
+test('an engine merchant is never certain, even when the lines agree', () => {
+  const p = readReceipt(result({ lines: [line('Northside Taxis'), line('Total £12.40')], fields: { merchant: { value: 'Northside Taxis', confidence: 0.99 } } }), TODAY);
+  expect(p.merchant).toEqual({ value: 'Northside Taxis', confidence: 0.8 });
+});

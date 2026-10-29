@@ -3,7 +3,7 @@ import { createDb, runMigrations } from './db/client.js';
 import { buildApp } from './app.js';
 import { ensureInstance, InstanceModeError } from './instance.js';
 import { startFailure } from './startup.js';
-import { OcrPolicyError, type OcrEngine } from '@hf/ocr';
+import { OcrPolicyError, fallbackMessage, type OcrEngine } from '@hf/ocr';
 import { createReadingEngine } from './modules/ocr/index.js';
 
 let config: Config;
@@ -24,8 +24,9 @@ let app: Awaited<ReturnType<typeof buildApp>> | undefined;
 let ocrEngine: OcrEngine | null = null;
 try {
   ocrEngine = await createReadingEngine(config, {
-    // Each fall-back to the box is logged as a warning with its reason only (no key, address or receipt).
-    onFallback: (reason) => { app?.log.warn({ reason }, 'The cloud receipt reader could not be reached, so a receipt was read on the box instead.'); },
+    // Each fall-back to the box is logged as a warning with its reason only (no key, address or receipt); a refused key or
+    // endpoint (401/403) says so in plain words.
+    onFallback: (reason) => { app?.log.warn({ reason }, fallbackMessage(reason)); },
   });
 } catch (e) {
   if (e instanceof OcrPolicyError) {

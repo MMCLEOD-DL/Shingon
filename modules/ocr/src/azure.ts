@@ -9,7 +9,7 @@
  * its caps and cross-checks to them (Ruling 2).
  */
 import { setTimeout as sleep } from 'node:timers/promises';
-import { toPence, type Pence, type Scored } from '@hf/shared';
+import { IsoDate, toPence, type Pence, type Scored } from '@hf/shared';
 import { z } from 'zod';
 import { OcrPolicyError } from './choose.js';
 import { checkDestinationAddress } from './destinations.js';
@@ -69,12 +69,6 @@ export interface AzureReceiptOptions {
   fetchImpl?: typeof fetch;
 }
 
-const realDate = (s: string): boolean => {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
-  const d = new Date(`${s}T00:00:00Z`);
-  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
-};
-
 /** Maps Azure's fields to the engine's proposals. A field Azure couldn't read is left for the lines to fill. */
 function fieldsOf(analysis: Analysis): { fields: EngineFields; warnings: string[] } {
   const f = analysis.documents?.[0]?.fields ?? {};
@@ -96,7 +90,7 @@ function fieldsOf(analysis: Analysis): { fields: EngineFields; warnings: string[
   const vat = money(f.TotalTax);
   if (vat) fields.vatPence = vat;
   const date = f.TransactionDate?.valueDate;
-  if (date !== undefined && realDate(date)) fields.date = { value: date, confidence: f.TransactionDate?.confidence ?? 0 };
+  if (date !== undefined && IsoDate.safeParse(date).success) fields.date = { value: date, confidence: f.TransactionDate?.confidence ?? 0 };
   const merchant = f.MerchantName?.valueString?.replace(/\p{Cc}+/gu, ' ').trim().slice(0, MAX_MERCHANT);
   if (merchant) fields.merchant = { value: merchant, confidence: f.MerchantName?.confidence ?? 0 };
   return { fields, warnings: [...new Set(warnings)] };
