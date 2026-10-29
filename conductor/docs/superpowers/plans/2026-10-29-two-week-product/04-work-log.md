@@ -221,3 +221,33 @@ Final combined validation for the PR #2 update: **1,541 Conductor tests passed, 
   - Still fixture workers: no real engine, models or native Windows.
 - **P04:** fixed `RunView` so it offers no stale question or Stop between an accepted answer and the next snapshot. The new unit test fails without the fix.
 - **Loop:** added `.claude/skills/claude-lane/SKILL.md` (one task per PR; merge = approval; read the repo between tasks).
+
+### 29 October 2026 — Claude task 2 (claude-lane): P07 UI-side adversarial checks
+
+```
+Packet/subpacket: P07, Claude's part (UI-owned files): browser adversarial checks
+Owner and reviewer: Claude; reviewer Codex (P07 coordinator)
+Status: IN_REVIEW
+Baseline SHA: 42efa16 (main after PR #3)
+Owned files: conductor/operator-web/e2e/{journey,serve-fixture}.mjs, operator-web/src/views/RunView.jsx,
+  operator-web/tests/views.spec.jsx, conductor/docs/operator-app/ux.md
+What now works / was checked:
+  - Two tabs, one question. Tab B's live stream is cut; tab A approves; tab B's approve is refused
+    (stale); exactly one decision-resolved event; the run is completed.
+  - Abrupt kill. The service runs as its own process and is killed with SIGKILL during a pending
+    question, then restarted on the same data and port. The open tab cannot answer and says the
+    sign-in ended. After the new bootstrap link the run is `interrupted` with decision null and no
+    landed branch.
+  - UI defect found and fixed. A refused (stale) answer's message lived inside the decision panel,
+    so the reload that followed removed the panel and the message with it: the operator's answer
+    silently didn't count. The error is now shown by the run view. A new unit test fails without the
+    fix and passes with it.
+Checks (cloud Linux, Node 22.22.0, Chromium via Playwright 1.63.0): `npm test` 47/47; build passed;
+  `node e2e/journey.mjs` 17/17 on three consecutive runs, no leftover processes.
+Live / fake / skipped / unrun: fixture workers only (no real engine, no models, no native Windows).
+  Workspace-changed-after-review is covered by Codex's real-engine test, not repeated here.
+  Not done here: secrets-in-responses/assets inspection, foreign-origin launch (Codex's server tests
+  cover the latter).
+Open defects: none found in the service in this pass.
+Next: Codex (P07 coordinator) to review and fold into the acceptance matrix.
+```

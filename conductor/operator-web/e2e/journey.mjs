@@ -8,7 +8,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -46,7 +46,7 @@ const browser = await chromium.launch();
 const results = [];
 const step = async (name, fn) => {
   try { await fn(); results.push(['pass', name]); console.log(`pass  ${name}`); }
-  catch (e) { results.push(['FAIL', name, e.message]); console.log(`FAIL  ${name}\n      ${e.message.split('\n')[0]}`); }
+  catch (e) { results.push(['FAIL', name, e.message]); console.log(`FAIL  ${name}\n      ${e.message.split('\n').slice(0, 4).join(' | ')}`); }
 };
 try {
   const context = await browser.newContext();
@@ -186,6 +186,88 @@ try {
     });
     await lp.context().close();
   } finally { await landing.close(); }
+
+  // ---- P07 adversarial checks (UI side) ----
+  const runIdFrom = (p) => new URL(p.url()).pathname.split('/').pop();
+  const apiGet = async (p, pathname) => p.evaluate(async (u) => { const r = await fetch(u); return { status: r.status, body: await r.json() }; }, pathname);
+
+  await step('two tabs, one question: only the first answer counts; the stale tab is told and sends nothing that lands', async () => {
+    const ctx = await browser.newContext({ storageState: await context.storageState() });
+    const a = await ctx.newPage(), b = await ctx.newPage();
+    await a.goto(`${app.origin}/`);
+    await a.getByLabel(/Describe the change/).fill('two-tab race');
+    await a.getByRole('button', { name: 'Start' }).click();
+    await a.getByRole('heading', { name: 'Review the finished work' }).waitFor({ timeout: 15000 });
+    const runId = runIdFrom(a);
+    // Tab B's live stream is cut, so it keeps showing the question after tab A has answered it.
+    await b.route('**/events?**', (route) => route.abort());
+    await b.goto(`${app.origin}/runs/${runId}`);
+    await b.getByRole('heading', { name: 'Review the finished work' }).waitFor();
+    await b.getByText(/Connection lost — reconnecting/).waitFor();
+    await a.getByRole('button', { name: 'Approve: create a branch' }).click();
+    await a.getByText('Branch created').waitFor({ timeout: 15000 });
+    await b.getByRole('button', { name: 'Approve: create a branch' }).click();
+    await b.getByText(/This question changed or was already answered/).waitFor();
+    assert.equal(await b.getByText(/Answer saved/).count(), 0);
+    const { body } = await apiGet(a, `/api/v1/runs/${runId}`);
+    assert.equal(body.status, 'completed');
+    // Count resolutions from the replayed event stream: read it for one second, then abort (it never ends by itself).
+    const resolved = await a.evaluate(async (u) => {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 1000);
+      let text = '';
+      try {
+        const reader = (await fetch(u, { signal: ctl.signal })).body.getReader();
+        for (;;) { const { value, done } = await reader.read(); if (done) break; text += new TextDecoder().decode(value); }
+      } catch { /* aborted after the replay */ } finally { clearTimeout(timer); }
+      return text.split('\n').filter((l) => l.startsWith('data:') && l.includes('"decision-resolved"')).length;
+    }, `/api/v1/runs/${runId}/events?after=0`);
+    assert.equal(resolved, 1, `expected one recorded answer, found ${resolved}`);
+    await ctx.close();
+  });
+
+  await step('abrupt service kill during a question, then restart: the question is withdrawn, never answered, and the UI says how to sign in again', async () => {
+    const dataDir = path.join(root, 'data-kill');
+    const serve = (port) => new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [path.join(here, 'serve-fixture.mjs'), '--service', conductorDir, '--data', dataDir, '--config', configFile,
+        '--ui', uiDir, '--worker', workerFile, '--port', String(port)], { stdio: ['ignore', 'pipe', 'inherit'] });
+      let out = '';
+      child.stdout.on('data', (c) => { out += c; const line = out.split('\n')[0]; if (out.includes('\n')) resolve({ child, ...JSON.parse(line) }); });
+      child.on('exit', (code) => reject(new Error(`fixture service exited (${code})`)));
+    });
+    const first = await serve(0);
+    const port = new URL(first.origin).port;
+    const ctx = await browser.newContext();
+    const p = await ctx.newPage();
+    try {
+      await p.goto(`${first.origin}/#bootstrap=${first.bootstrapToken}`);
+      await p.getByLabel(/Full path/).fill(repo);
+      await p.getByRole('button', { name: 'Continue' }).click();
+      await p.getByRole('button', { name: 'Add repository' }).click();
+      await p.getByLabel(/Describe the change/).fill('killed mid-question');
+      await p.getByRole('button', { name: 'Start' }).click();
+      await p.getByRole('heading', { name: 'Review the finished work' }).waitFor({ timeout: 15000 });
+      const runId = runIdFrom(p);
+      first.child.kill('SIGKILL');
+      await new Promise((r) => first.child.once('exit', r));
+      await p.getByText(/Connection lost — reconnecting/).waitFor({ timeout: 15000 });
+      const second = await serve(port);
+      try {
+        // The old session died with the process: the open tab must not answer, and must say what to do.
+        await p.getByRole('button', { name: 'Approve: create a branch' }).click();
+        await p.getByText(/Your sign-in has ended/).waitFor({ timeout: 15000 });
+        await p.goto(`${second.origin}/#bootstrap=${second.bootstrapToken}`);
+        await p.goto(`${second.origin}/runs/${runId}`);
+        await p.getByText('Interrupted', { exact: true }).waitFor({ timeout: 15000 });
+        await p.getByText(/Any question it was asking has been withdrawn/).waitFor();
+        assert.equal(await p.getByRole('button', { name: 'Approve: create a branch' }).count(), 0);
+        const { body } = await apiGet(p, `/api/v1/runs/${runId}`);
+        assert.equal(body.status, 'interrupted');
+        assert.equal(body.decision, null);
+        assert.equal(body.landedBranch, null);
+      } finally { second.child.kill('SIGTERM'); await new Promise((r) => second.child.once('exit', r)); }
+    } finally { await ctx.close(); if (first.child.exitCode === null) first.child.kill('SIGKILL'); }
+  });
 
   await step('no browser errors and no CSP violations during the journey', async () => {
     assert.deepEqual(consoleErrors.filter((t) => !/Failed to load resource: the server responded with a status of 401/.test(t)), []);
