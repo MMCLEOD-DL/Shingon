@@ -1,0 +1,69 @@
+import { spawn } from 'node:child_process';
+import { childEnv } from './secrets.js';
+
+const LIVE = new Set(); // every running child, for Ctrl-C
+
+export function runCommand({ cmd, args = [], cwd, input = null, timeoutMs = 120000, env } = {}) {
+  // Default: the parent env minus SCRUB_ENV keys (see secrets.js). Callers that need a key pass env explicitly.
+  env = env ?? childEnv();
+  return new Promise((resolve) => {
+    let stdout = '', stderr = '', timedOut = false, settled = false;
+    let timer = null, grace = null, child;
+
+    const finish = (code) => {
+      if (settled) return;
+      settled = true;
+      LIVE.delete(child);
+      if (timer) clearTimeout(timer);
+      if (grace) clearTimeout(grace);
+      resolve({ stdout, stderr, code: code ?? -1, timedOut });
+    };
+
+    try {
+      child = spawn(cmd, args, { cwd, env, detached: true });
+    } catch (err) {
+      resolve({ stdout, stderr: String(err?.message ?? err), code: -1, timedOut });
+      return;
+    }
+    LIVE.add(child);
+
+    timer = setTimeout(() => {
+      timedOut = true;
+      try { process.kill(-child.pid, 'SIGKILL'); }
+      catch { try { child.kill('SIGKILL'); } catch {} }
+      // a descendant may hold the pipes open after the child dies; force-resolve after a grace period
+      grace = setTimeout(() => {
+        try { child.stdout?.destroy(); child.stderr?.destroy(); } catch {}
+        finish(-1);
+      }, 2000);
+    }, timeoutMs);
+
+    child.stdout?.setEncoding('utf8');
+    child.stderr?.setEncoding('utf8');
+    child.stdout?.on('data', (d) => { stdout += d; });
+    child.stderr?.on('data', (d) => { stderr += d; });
+    child.on('error', (err) => { stderr += String(err?.message ?? err); finish(-1); });
+    child.on('close', (code) => finish(code));
+
+    child.stdin?.on('error', () => {});
+    if (input != null) child.stdin?.write(input);
+    child.stdin?.end();
+  });
+}
+
+// A long-lived child the caller wires up itself (streams): tracked so Ctrl-C ends it with its process group.
+export function spawnTracked(cmd, args, opts = {}) {
+  const child = spawn(cmd, args, { ...opts, detached: true });
+  LIVE.add(child);
+  const done = () => LIVE.delete(child);
+  child.on('close', done);
+  child.on('error', done);
+  return child;
+}
+
+// Ctrl-C (bin/conductor.js): end every agent we started, with its whole process group.
+export function killAllChildren(signal = 'SIGKILL') {
+  for (const child of LIVE) {
+    try { process.kill(-child.pid, signal); } catch { try { child.kill(signal); } catch {} }
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "client": "Council Smoke Ltd",
+  "purpose": "Staff record business mileage and a manager checks the month's claims. A small app, used only to prove the full council end to end.",
+  "kind": "web-app",
+  "roles": [
+    { "name": "Staff", "whatTheyDo": "Record the miles they drove for work", "sees": "Only their own claims", "mapsTo": "member" },
+    { "name": "Manager", "whatTheyDo": "Check the claims from their team", "sees": "Their team's claims", "mapsTo": "manager" },
+    { "name": "Office", "whatTheyDo": "Look after users and settings", "sees": "All claims", "mapsTo": "admin" }
+  ],
+  "records": [
+    { "name": "Mileage claim", "description": "One journey claimed at a rate per mile", "holdsFiles": false, "personalData": true }
+  ],
+  "features": [
+    {
+      "id": "mileage-claims",
+      "title": "Mileage claims",
+      "story": "A member of staff records the miles for a journey and sees the amount they can claim, worked out in whole pence at 45p a mile.",
+      "roles": ["Staff", "Manager"],
+      "data": ["Mileage claim"],
+      "acceptance": [
+        { "id": "mileage-claims#1", "given": "Alice is signed in as Staff", "when": "she records a journey of 120 miles at 45p a mile", "then": "the claim shows £54.00 (5400 pence)" },
+        { "id": "mileage-claims#2", "given": "Alice has claimed 10 miles and 15 miles", "when": "she opens her claims list", "then": "the claims show £4.50 and £6.75, and the total shows £11.25 (1125 pence)" }
+      ]
+    }
+  ],
+  "outputs": [],
+  "integrations": [],
+  "modules": [],
+  "policy": {
+    "hosting": "client-box",
+    "outbound": [],
+    "residency": "uk",
+    "retention": { "text": "Claims are kept for 6 years, then deleted", "days": 2190 },
+    "backupDestination": { "kind": "client-owned", "detail": "A USB disk kept in the office safe" },
+    "operatorAccess": true
+  },
+  "assumptions": ["All amounts are in pounds sterling and held as whole pence"],
+  "openQuestions": [],
+  "exampleSeq": { "mileage-claims": 2 },
+  "slug": "council-smoke-ltd",
+  "version": 1,
+  "createdAt": "2026-10-27T09:00:00.000Z",
+  "revisedFrom": null,
+  "approvedAt": "2026-10-27T10:00:00.000Z",
+  "approvedBy": "Malcolm"
+}

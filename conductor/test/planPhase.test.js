@@ -1,0 +1,176 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { runPlanPhase } from '../src/planPhase.js';
+import { fakeParticipant, approve, block, makeCtx } from './helpers/fakes.js';
+
+const PLAN = { summary: 'S', chunks: [{ title: 'A', instructions: 'do a' }] };
+const planReply = () => ({ text: 'Plan:\n```json\n' + JSON.stringify(PLAN) + '\n```' });
+
+function team({ author, reviewer }) {
+  return {
+    author: fakeParticipant({ name: 'claude', kind: 'claude-code', script: author }),
+    reviewer: fakeParticipant({ name: 'codex', kind: 'codex', script: reviewer }),
+    local: fakeParticipant({ name: 'local', kind: 'local-agent', roles: ['grunt'], script: () => ({}) }),
+  };
+}
+
+test('clean approval returns the plan with no note; agents run read-only in the workspace', async () => {
+  const t = team({ author: planReply, reviewer: approve });
+  const ctx = await makeCtx({ team: t });
+  const r = await runPlanPhase(ctx);
+  assert.equal(r.status, 'ok');
+  assert.deepEqual(r.plan, PLAN);
+  assert.equal(r.note, null);
+  assert.equal(t.author.calls[0].opts.cwd, ctx.ws.dir);
+  assert.equal(t.author.calls[0].opts.write, false);
+  assert.equal(t.reviewer.calls[0].role, 'reviewer');
+  assert.equal(t.reviewer.calls[0].opts.write, false);
+  assert.equal(t.reviewer.calls[0].opts.cwd, ctx.ws.dir);
+});
+
+test('an unparsable plan is fed back to the author and not sent for review', async () => {
+  const t = team({
+    author: (role, task, c, o, n) => (n === 0 ? { text: 'no json here' } : planReply()),
+    reviewer: approve,
+  });
+  const r = await runPlanPhase(await makeCtx({ team: t }));
+  assert.equal(r.status, 'ok');
+  assert.equal(t.reviewer.calls.length, 1);
+  assert.match(t.author.calls[1].task, /Your previous reply could not be used as a plan: no ```json plan block/);
+  assert.doesNotMatch(t.author.calls[1].task, /blocked your previous plan/);
+});
+
+test('a reversible deadlock is accepted with a note', async () => {
+  const t = team({ author: planReply, reviewer: () => block('I would name it differently') });
+  const ctx = await makeCtx({ team: t, options: { planRounds: 2 } });
+  const r = await runPlanPhase(ctx);
+  assert.equal(r.status, 'ok');
+  assert.match(r.note, /name it differently/);
+  assert.equal(ctx.hookCalls.filter((h) => h.name === 'escalate').length, 0);
+});
+
+test('an irreversible deadlock escalates; reject stops the run', async () => {
+  const t = team({ author: planReply, reviewer: () => block('IRREVERSIBLE: deletes the user table') });
+  const ctx = await makeCtx({ team: t, options: { planRounds: 2 } });
+  const r = await runPlanPhase(ctx);
+  assert.equal(r.status, 'stopped');
+  const esc = ctx.hookCalls.find((h) => h.name === 'escalate');
+  assert.match(esc.arg.message, /deletes the user table/);
+});
+
+test('an irreversible deadlock the user approves continues with a note', async () => {
+  const t = team({ author: planReply, reviewer: () => block('IRREVERSIBLE: deletes the user table') });
+  const ctx = await makeCtx({ team: t, options: { planRounds: 1 }, hooks: { escalate: async () => 'approve' } });
+  const r = await runPlanPhase(ctx);
+  assert.equal(r.status, 'ok');
+  assert.match(r.note, /approved/i);
+});
+
+test('an author that never produces a valid plan fails without asking the user', async () => {
+  const t = team({ author: () => ({ ok: false, error: 'rate limited' }), reviewer: approve });
+  const ctx = await makeCtx({ team: t, options: { planRounds: 2 } });
+  const r = await runPlanPhase(ctx);
+  assert.equal(r.status, 'failed');
+  assert.match(r.reason, /rate limited/);
+  assert.equal(ctx.hookCalls.length, 0);
+});
+
+test('a valid plan followed by a broken retry settles on the valid plan', async () => {
+  const t = team({
+    author: (role, task, c, o, n) => (n === 0 ? planReply() : { text: 'oops' }),
+    reviewer: () => block('minor ordering preference'),
+  });
+  const r = await runPlanPhase(await makeCtx({ team: t, options: { planRounds: 2 } }));
+  assert.equal(r.status, 'ok');
+  assert.deepEqual(r.plan, PLAN);
+  assert.match(r.note, /minor ordering preference/);
+});
+
+test('bad JSON, zero chunks and too many chunks are each fed back as a round, never a crash', async () => {
+  const fence = (s) => ({ text: '```json\n' + s + '\n```' });
+  const bad = [
+    fence('{"summary": "S", "chunks": [ oops'),
+    fence(JSON.stringify({ summary: 'S', chunks: [] })),
+    fence(JSON.stringify({ summary: 'S', chunks: [1, 2, 3].map((i) => ({ title: `t${i}`, instructions: 'x' })) })),
+  ];
+  const t = team({ author: (role, task, c, o, n) => (n < bad.length ? bad[n] : planReply()), reviewer: approve });
+  const r = await runPlanPhase(await makeCtx({ team: t, options: { planRounds: 4, maxChunks: 2 } }));
+  assert.equal(r.status, 'ok');
+  assert.deepEqual(r.plan, PLAN);
+  assert.equal(t.reviewer.calls.length, 1);
+  assert.match(t.author.calls[1].task, /not valid JSON/);
+  assert.match(t.author.calls[2].task, /no chunks/);
+  assert.match(t.author.calls[3].task, /3 chunks \(max 2\)/);
+});
+
+test('a reviewer that throws every round escalates once and never auto-accepts', async () => {
+  const t = team({ author: planReply, reviewer: () => { throw new Error('codex crashed'); } });
+  const ctx = await makeCtx({ team: t, options: { planRounds: 2 } });
+  const r = await runPlanPhase(ctx);
+  assert.equal(r.status, 'stopped');
+  assert.equal(t.reviewer.calls.length, 2);
+  const escs = ctx.hookCalls.filter((h) => h.name === 'escalate');
+  assert.equal(escs.length, 1);
+  assert.match(escs[0].arg.message, /codex crashed/);
+});
+
+test('an accepted plan deadlock does not claim "no tests configured" (m3)', async () => {
+  const t = team({ author: planReply, reviewer: () => block('I would name it differently') });
+  const r = await runPlanPhase(await makeCtx({ team: t, options: { planRounds: 1, testCommand: 'npm test' } }));
+  assert.equal(r.status, 'ok');
+  assert.match(r.note, /tests do not apply to a plan/);
+  assert.doesNotMatch(r.note, /no tests configured/);
+});
+
+const NOBODY = { ok: false, error: 'no AI model is available for claude (claude: rate-limited; codex: rate-limited)', failure: 'no-participant' };
+
+test('an author seat with nothing left pauses the plan phase', async () => {
+  const t = team({ author: () => NOBODY, reviewer: approve });
+  const r = await runPlanPhase(await makeCtx({ team: t }));
+  assert.equal(r.status, 'paused');
+  assert.match(r.reason, /claude: rate-limited/);
+  assert.equal(t.author.calls.length, 1);
+  assert.equal(t.reviewer.calls.length, 0);
+});
+
+test('a reviewer seat with nothing left pauses the plan phase', async () => {
+  const t = team({ author: planReply, reviewer: () => NOBODY });
+  const r = await runPlanPhase(await makeCtx({ team: t }));
+  assert.equal(r.status, 'paused');
+});
+
+test('plan-agreed names the chunks, rounds, author and reviewer', async () => {
+  const events = [];
+  const reviews = [block('too big'), approve()];
+  const t = team({ author: planReply, reviewer: () => reviews.shift() });
+  const ctx = await makeCtx({ team: t, hooks: { onEvent: (e) => events.push(e) } });
+  const r = await runPlanPhase(ctx);
+  assert.equal(r.status, 'ok');
+  const agreed = events.filter((e) => e.type === 'plan-agreed');
+  assert.equal(agreed.length, 1);
+  assert.deepEqual({ chunks: agreed[0].chunks, rounds: agreed[0].rounds, author: agreed[0].author, reviewer: agreed[0].reviewer },
+    { chunks: ['A'], rounds: 2, author: 'claude', reviewer: 'codex' });
+});
+
+const FIRST = { title: 'Acceptance tests', instructions: 'write the tagged tests' };
+
+test('firstChunk: the author plans the rest, the fixed step comes first, and the limit counts it', async () => {
+  const many = { summary: 'S', chunks: Array.from({ length: 12 }, (_, i) => ({ title: `C${i}`, instructions: 'x' })) };
+  const t = team({
+    author: (role, task, c, o, n) => (n === 0 ? { text: '```json\n' + JSON.stringify(many) + '\n```' } : planReply()),
+    reviewer: approve,
+  });
+  const r = await runPlanPhase(await makeCtx({ team: t, options: { firstChunk: FIRST } }));
+  assert.equal(r.status, 'ok');
+  assert.deepEqual(r.plan.chunks.map((c) => c.title), ['Acceptance tests', 'A']);
+  assert.match(t.author.calls[0].task, /Step 1 is already fixed and runs first:\nAcceptance tests: write the tagged tests/);
+  assert.match(t.author.calls[0].task, /At most 11 chunks/);
+  assert.match(t.author.calls[1].task, /plan has 12 chunks \(max 11\)/);
+  assert.match(t.reviewer.calls[0].task, /Step 1, fixed in advance: Acceptance tests/);
+});
+
+test('validateFirstChunk refuses a malformed fixed step', async () => {
+  const { validateFirstChunk } = await import('../src/planPhase.js');
+  assert.doesNotThrow(() => validateFirstChunk({ firstChunk: null }));
+  assert.throws(() => validateFirstChunk({ firstChunk: { title: '' } }), /firstChunk needs a title and instructions/);
+});

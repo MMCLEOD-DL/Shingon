@@ -1,0 +1,102 @@
+# Task 11: Reliability member
+
+Reliability checks spec §2 item 4 ("it must not break") with the smoke result from Task 5, gathered on a machine in Task 6 (`input.evidence`). It blocks when a step of the app's own foundation smoke failed. When the smoke could not prove anything, it says so with a locked warning and never stays silent (index Ruling 7).
+
+It has one ToolRun, `smoke`:
+
+| Smoke result | Finding |
+|---|---|
+| passed | a **note**: `Deployed on a fresh test machine (<machine>), backed up and restored, stopped and restarted with the alert sent and cleared, and a broken update undone automatically` |
+| a step failed, not timed out | a **locked blocking** finding: `The reliability test failed at: <SMOKE_STEPS[failedStep]>`. Detail: the `FAILED:` line, then the log tail |
+| timed out | a **locked warning**: `Reliability was not proven: the test took longer than the time allowed (it stopped at: <step title>)` |
+| refused (the machine looked like a client box, leftovers, no Docker, no smoke script) | ToolRun status `error`, with the **locked warning** `Reliability was not proven: <refusal>` |
+| no smoke result (no machine, no SSH, the push failed) | ToolRun status `missing` / `error` (copied from `evidence.smokeStatus`), with the **locked warning** `Reliability was not proven: <evidence.smokeNote>` |
+
+A timeout does not block, because a slow machine is not proof that the app is broken. The operator sees it at the top of the warnings.
+
+`context` lists each step as `✓`/`✗ <title>`, then always the line `Not covered: a sudden crash of the database or the box (the test stops and starts the app and ops cleanly).`. That gap is stated, not hidden (index Ruling 13).
+
+**Files:**
+- Create: `src/council/reliability.js`
+- Test: `test/council-reliability.test.js` (new)
+
+**Interfaces:**
+- Consumes: `parseSmokeLog`, `SMOKE_STEPS` (Task 5); `Evidence` (Task 6); `makeFinding`, `TOOL_LABEL` (Plan 5 plus the index entries); `applyInterpretation` (Plan 5); the smoke fixtures.
+- Produces:
+  - `smokeFindings(smoke, { machine }) -> Finding[]`;
+  - `RELIABILITY = { member: 'reliability', label: 'Reliability', alwaysInterpret: false, collect(input) }`, returning `[]` when `!input.brief` and `[smokeRun]` otherwise.
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `test/council-reliability.test.js`:
+
+```js
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { parseSmokeLog } from '../src/council/smoke.js';
+import { smokeFindings, RELIABILITY } from '../src/council/reliability.js';
+import { applyInterpretation } from '../src/council/interpret.js';
+
+const log = (f) => readFileSync(new URL(`./fixtures/council-full/${f}`, import.meta.url), 'utf8');
+
+test('a passing smoke is a note naming what was proven', () => {
+  const [f] = smokeFindings(parseSmokeLog(log('smoke-passed.log'), 0), { machine: 'ct111' });
+  assert.equal(f.grade, 'note');
+  assert.equal(f.title, 'Deployed on a fresh test machine (ct111), backed up and restored, stopped and restarted with the alert sent and cleared, and a broken update undone automatically');
+});
+
+test('a failed step blocks, locked, in plain words', () => {
+  const [f] = smokeFindings(parseSmokeLog(log('smoke-failed-step5.log'), 1), { machine: 'ct111' });
+  assert.deepEqual([f.title, f.grade, f.locked, f.tool], ['The reliability test failed at: back up, then test a restore', 'blocking', true, 'smoke']);
+  assert.match(f.detail, /^restore-test: Restore test failed: 2 tables differ\n/);
+});
+
+test('timed out or refused: "not proven", a locked warning', () => {
+  const [t] = smokeFindings(parseSmokeLog('== Step 8: update\n', 124, { timedOut: true }), { machine: 'ct111' });
+  assert.deepEqual([t.title, t.grade, t.locked], ['Reliability was not proven: the test took longer than the time allowed (it stopped at: update, then undo a broken update automatically)', 'warning', true]);
+  const [r] = smokeFindings(parseSmokeLog(log('smoke-refused-images.log'), 2), { machine: 'ct111' });
+  assert.match(r.title, /^Reliability was not proven: This machine already has highland\/app or highland\/ops images/);
+  assert.equal(r.grade, 'warning');
+});
+
+test('RELIABILITY.collect: no machine → not proven; ordinary repo → nothing', async () => {
+  const [run] = await RELIABILITY.collect({ brief: {}, evidence: { smoke: null, smokeStatus: 'missing', smokeNote: 'No test machine is set up (factory.machines in the config), so the reliability test did not run.', machine: null } });
+  assert.equal(run.status, 'missing');
+  assert.deepEqual(run.findings.map((f) => [f.grade, f.locked]), [['warning', true]]);
+  assert.match(run.findings[0].title, /^Reliability was not proven: No test machine is set up/);
+  assert.deepEqual(await RELIABILITY.collect({ brief: null, evidence: null }), []);
+  const [ok] = await RELIABILITY.collect({ brief: {}, evidence: { smokeStatus: 'ran', machine: 'ct111', smoke: parseSmokeLog(log('smoke-passed.log'), 0), smokeNote: null } });
+  assert.match(ok.context, /✓ back up, then test a restore/);
+  assert.match(ok.context, /Not covered: a sudden crash of the database or the box/);
+});
+
+test('the interpreter cannot clear or lower a failed step, nor set aside "not proven"', () => {
+  const fail = smokeFindings(parseSmokeLog(log('smoke-failed-step5.log'), 1), { machine: 'm' });
+  const unproven = smokeFindings(parseSmokeLog(log('smoke-refused-images.log'), 2), { machine: 'm' });
+  const out = applyInterpretation([...fail, ...unproven], ['R1', 'R2'], {
+    findings: [{ id: 'R1', decision: 'dismiss', grade: 'note', why: 'flaky' }, { id: 'R2', decision: 'dismiss', why: 'machine problem' }], extra: [] }, { member: 'reliability' });
+  assert.deepEqual(out.map((f) => [f.grade, f.dismissed]), [['blocking', false], ['warning', false]]);
+});
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `node --test test/council-reliability.test.js`
+Expected: FAIL with `Cannot find module '../src/council/reliability.js'`.
+
+- [ ] **Step 3: Implement `src/council/reliability.js`** to the table above. Use `makeFinding({ member: 'reliability', tool: 'smoke', … })` for every finding, so a "not proven" warning has evidence but a warning grade and is capped at warning.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `node --test test/council-reliability.test.js && npm test`
+Expected: all PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/council/reliability.js test/council-reliability.test.js
+git commit -m "feat(council): Reliability member (a failed smoke step blocks; anything unproven is a locked warning)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```

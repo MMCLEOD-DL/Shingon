@@ -1,0 +1,50 @@
+ RUN  apps/server/test/file1.test.ts
+ RUN  apps/server/test/file2.test.ts
+ RUN  apps/server/test/file3.test.ts
+ RUN  apps/server/test/file4.test.ts
+ RUN  apps/server/test/file5.test.ts
+ RUN  apps/server/test/file6.test.ts
+ ✓ apps/server/test/notes.test.ts (7 tests) 7ms
+ RUN  apps/server/test/file8.test.ts
+ RUN  apps/server/test/file9.test.ts
+ RUN  apps/server/test/file10.test.ts
+ RUN  apps/server/test/file11.test.ts
+ RUN  apps/server/test/file12.test.ts
+ RUN  apps/server/test/file13.test.ts
+ ✓ apps/server/test/notes.test.ts (14 tests) 14ms
+ RUN  apps/server/test/file15.test.ts
+ RUN  apps/server/test/file16.test.ts
+ RUN  apps/server/test/file17.test.ts
+ RUN  apps/server/test/file18.test.ts
+ RUN  apps/server/test/file19.test.ts
+ RUN  apps/server/test/file20.test.ts
+ ✓ apps/server/test/notes.test.ts (21 tests) 21ms
+ RUN  apps/server/test/file22.test.ts
+ RUN  apps/server/test/file23.test.ts
+ RUN  apps/server/test/file24.test.ts
+ RUN  apps/server/test/file25.test.ts
+ RUN  apps/server/test/file26.test.ts
+ RUN  apps/server/test/file27.test.ts
+ ✓ apps/server/test/notes.test.ts (28 tests) 28ms
+ RUN  apps/server/test/file29.test.ts
+ RUN  apps/server/test/file30.test.ts
+ RUN  apps/server/test/file31.test.ts
+ RUN  apps/server/test/file32.test.ts
+ RUN  apps/server/test/file33.test.ts
+ RUN  apps/server/test/file34.test.ts
+ ✓ apps/server/test/notes.test.ts (35 tests) 35ms
+ RUN  apps/server/test/file36.test.ts
+ RUN  apps/server/test/file37.test.ts
+ RUN  apps/server/test/file38.test.ts
+ RUN  apps/server/test/file39.test.ts
+ RUN  apps/server/test/file40.test.ts
+ RUN  apps/server/test/file41.test.ts
+ ✓ apps/server/test/notes.test.ts (42 tests) 42ms
+ RUN  apps/server/test/file43.test.ts
+ RUN  apps/server/test/file44.test.ts
+ RUN  apps/server/test/file45.test.ts
+ RUN  apps/server/test/file46.test.ts
+ RUN  apps/server/test/file47.test.ts
+ RUN  apps/server/test/file48.test.ts
+ ✓ apps/server/test/notes.test.ts (49 tests) 49ms
+FAIL  apps/server/test/claims.test.ts > [mileage-claims#1] 120 miles at 45p comes to £54.00

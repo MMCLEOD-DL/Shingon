@@ -1,0 +1,37 @@
+== Step 1: build the images for 0.1.0, retag 0.1.1, build a broken 0.1.2
+   ok: highland/app and highland/ops 0.1.0 built; 0.1.1 saved to a file; broken 0.1.2 built
+== Step 2: start the restic REST server and the alert catcher on 172.17.0.1
+   ok: REST server at http://172.17.0.1:8000, catcher at http://172.17.0.1:8099
+== Step 3: make /tmp/hf-smoke from the bundle and run ops init
+   ok: bundle unpacked (RUNBOOK.md compose.yaml ), .env made by ops init (mode 600)
+== Step 4: docker compose up -d, wait for /healthz, seed the demo data
+   Seeded the demo data
+   ok: /healthz ok, demo data seeded, /sign-in serves the app
+== Step 5: ops backup, then ops restore-test
+   Restore test passed
+   ok: backup saved to the REST server; restore test passed
+== Step 6: ops check
+   ✓ database
+   ok: every line ✓
+== Step 6a: stop app and ops, ops restore latest, start, sign in and upload
+   Done.
+   UPLOAD-AFTER-RESTORE-OK
+   ok: restored (12 notes kept); upload after restore works
+== Step 7: stop the app, check the front door's 'being updated' page, wait for the alert (up to 180 s), then start it and wait for Fixed
+   ok: front door shows the 'being updated' page (status 502) while the app is stopped
+   ok: alert received: Problem: The app is not answering.
+   ok: alert received: Fixed: The app is not answering. (now back to normal).
+== Step 8: update to 0.1.1 (from the image file), then to the broken 0.1.2
+   ok: updated to 0.1.1; 0.1.2 undone automatically; APP_TAG=0.1.1; 12 notes unchanged; no 'not answering' alert during the updates
+== Step 9: ops backup and ops restore-test again
+   ok: backup and restore test pass after the rollback
+== Secrets: none of the .env secrets appear in the alerts or the container logs
+   ok: no secret found
+== Alerts received during the run:
+   Problem: The app is not answering.
+   Fixed: The app is not answering.
+== Step 10: tear down
+   Removed the containers, volumes, network and the highland images this run built. The alert log is kept at /tmp/hf-smoke-alerts.log.
+   Pulled third-party images (postgres, caddy, restic/rest-server:0.14.0, axllent/mailpit:v1.21.8) are left; remove them with docker rmi if you like.
+SMOKE PASSED in 14 min 3 s
+COUNCIL-SMOKE-EXIT 0

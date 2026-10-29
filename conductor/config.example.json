@@ -1,0 +1,41 @@
+{
+  "participants": [
+    { "name": "claude", "adapter": "claude-code", "bin": "claude",
+      "roles": ["author", "reviewer"], "capabilities": { "is_agentic": true, "can_edit_files": true } },
+    { "name": "codex", "adapter": "codex", "bin": "codex",
+      "roles": ["author", "reviewer"], "capabilities": { "is_agentic": true, "can_edit_files": true } },
+    { "name": "local", "adapter": "local-agent", "bin": "codex", "model": "shingon-qwen3.8-27b-q4",
+      "baseUrl": "http://192.168.1.110:8081/v1", "contextWindow": 32768,
+      "wake": { "method": "warn", "hint": "Turn on the desktop PC (192.168.1.109) and start its LocalAI worker." },
+      "roles": ["grunt"], "capabilities": { "is_agentic": true, "can_edit_files": true } }
+  ],
+  "routing": {
+    "allowApi": false,
+    "preferTwoVendors": false,
+    "localDown": "ask",
+    "cooldownMs": 60000,
+    "maxWaitMs": 300000
+  },
+  "options": {
+    "council": false,
+    "councilFixRounds": 3,
+    "councilGatesTimeoutMs": 2400000,
+    "councilSmokeTimeoutMs": 2400000,
+    "councilAcceptLicences": [],
+    "councilTools": {}
+  },
+  "factory": {
+    "projectsRoot": "~/highland-projects",
+    "operatorName": "Malcolm",
+    "foundation": { "repo": "/root/highland-foundation", "tag": "v0.2.0" },
+    "build": { "browserGate": true, "fixRounds": 2, "councilFixRounds": 3 },
+    "machines": {
+      "provider": "static",
+      "static": { "hosts": [ { "id": "ct111", "name": "hf-build", "host": "192.168.1.111", "user": "root",
+                               "keyPath": "~/.ssh/id_ed25519", "previewPort": 8080, "workRoot": "/srv/hf-factory" } ] },
+      "proxmox": null
+    },
+    "alerts": { "matrix": { "homeserver": "https://matrix.example.org", "roomId": "!alerts:example.org" } },
+    "ship": { "updateTimeoutMs": 2700000, "pollMs": 5000, "startTimeoutMs": 300000, "buildTimeoutMs": 3600000 }
+  }
+}

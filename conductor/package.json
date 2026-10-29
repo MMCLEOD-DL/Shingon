@@ -1,0 +1,13 @@
+{
+  "name": "conductor",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Coordinate local and frontier models with adversarial cross-review.",
+  "engines": { "node": ">=20" },
+  "bin": { "conductor": "bin/conductor.js", "conductor-probe": "bin/conductor-probe.js" },
+  "scripts": {
+    "test": "node --test",
+    "start": "node bin/conductor-probe.js"
+  }
+}

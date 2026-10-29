@@ -1,0 +1,211 @@
+// src/chunkPhase.js
+import { reviewLoop } from './review.js';
+import * as prompts from './prompts.js';
+import { settleDeadlock } from './deadlock.js';
+import { callAgent, noteSameVendor } from './runlog.js';
+import { vendorOf } from './vendors.js';
+import { clip } from './text.js';
+import { askUser } from './askUser.js';
+import { checkHealth } from './health.js';
+import { redact } from './secrets.js';
+import { LOCAL_DOWN_WARNING } from './team.js';
+
+// Local failures that the same prompt to the same backend cannot fix: go to the fallback now.
+export const LOCAL_FATAL = new Set(['infrastructure', 'timeout', 'context-overflow', 'no-participant']);
+
+// The local model cannot be reached at all: the frontier may not cover for it without consent (factory spec §4.2).
+export const LOCAL_UNREACHABLE = new Set(['infrastructure', 'no-participant']);
+export const LOCAL_DECLINED_REASON = 'the local model stopped answering, and you chose not to use your subscription for its steps';
+export const LOCAL_PAUSE_SETTING_REASON = 'the local model stopped answering, and your settings say to pause instead of using your subscription';
+const LOCAL_RECHECK_TIMEOUT_MS = 60000; // the same budget as the pre-run local probe
+
+// A Seat's real adapter sits on its first candidate; a plain Participant carries it directly.
+const localAdapterOf = (local) => (local.candidates?.[0] ?? local).adapter;
+
+// Is the local model down, rather than failing at the work? Sure for an unreachable failure; for an
+// ambiguous one (a hang ends as 'timeout') ask the model server once. A context overflow is always the work.
+async function localWentDown(ctx, index, artifact) {
+  if (artifact?.localDown) return true;
+  if (!artifact?.localFailed || artifact.localFailure === 'context-overflow') return false;
+  let h;
+  try {
+    h = await checkHealth(localAdapterOf(ctx.team.local), { timeoutMs: LOCAL_RECHECK_TIMEOUT_MS });
+  } catch {
+    h = { ok: false, reason: 'unavailable' };
+  }
+  const down = h?.ok !== true;
+  ctx.log.event('local-recheck', { index, ok: !down, reason: down ? (h?.reason || 'unavailable') : '' });
+  if (down) artifact.localDown = true;
+  return down;
+}
+
+// Rotate vendors: the frontier that reviews a chunk is never the one that implements its fallback.
+export function chunkRoles(index, team) {
+  return index % 2 === 0
+    ? { reviewer: team.reviewer, fallback: team.author }
+    : { reviewer: team.author, fallback: team.reviewer };
+}
+
+const join = (a, b) => (a ? `${a} ${b}` : b);
+
+// Review Focus 3: whatever happens, the workspace ends either as exactly one
+// squashed commit on top of the chunk base or exactly at the base.
+export async function runChunk(ctx, chunk, index) {
+  const base = await ctx.ws.head();
+  // Ignored paths present at the chunk base (deps, caches) survive every reset; new ones do not (T8-M4).
+  const keepIgnored = await ctx.ws.ignoredPaths();
+  const reset = (sha = base) => ctx.ws.resetHard(sha, { keepIgnored });
+  try {
+    return await runChunkFrom(ctx, chunk, index, base, reset);
+  } catch (e) {
+    let resetError = null;
+    try { await reset(); } catch (re) { resetError = String(re?.message ?? re); }
+    ctx.log.event('chunk-error', { index, error: String(e?.message ?? e), resetError });
+    throw e;
+  }
+}
+
+async function runChunkFrom(ctx, chunk, index, base, reset) {
+  const { request, team, options, ws, log, state } = ctx;
+  const plan = state.plan;
+  const total = plan.chunks.length;
+  const step = `Step ${index + 1} (${chunk.title})`;
+  const { reviewer, fallback } = chunkRoles(index, team);
+  const writeOpts = (who) => ({ cwd: ws.dir, write: true, timeoutMs: who === team.local ? options.localTimeoutMs : options.agentTimeoutMs });
+  const readOpts = { cwd: ws.dir, write: false, timeoutMs: options.agentTimeoutMs };
+  log.event('chunk', { index, title: chunk.title, base });
+
+  const attempt = (who, role) => {
+    // The last state that was successfully inspected in this loop: a later round
+    // that leaves an uninspectable mess goes back here, not all the way to base.
+    let snap = null;
+    return async (round, feedback, feedbackKind) => {
+      const r = await callAgent(ctx, who, role, prompts.chunkExec({ request, plan, chunk, index, total, feedback, feedbackKind }), writeOpts(who));
+      // An agent that switched or detached the branch: put the run's branch back (T9).
+      if (!(await ws.onOwnBranch())) {
+        log.event('branch-switched', { index, participant: who.name, found: await ws.currentBranch() });
+        await ws.returnToBranch(snap ?? base);
+        await reset(snap ?? base);
+        return { error: `${who.name} switched the workspace off its branch; that attempt was discarded` };
+      }
+      if (r.gitdirTampered) {
+        // Redirect files were removed; reset whatever the agent left to the round base (N3).
+        await reset(snap ?? base);
+        return { error: r.error };
+      }
+      // A local failure the same prompt cannot fix ends the local loop; the frontier
+      // fallback keeps its retries (a 429 there may be a short per-minute limit).
+      if (!r.ok) {
+        // A frontier seat with no model left pauses the run; the local seat just falls back.
+        if (r.failure === 'no-participant' && who !== team.local) return { error: r.error, pause: r.error };
+        const isLocal = who === team.local;
+        return {
+          error: `${who.name} failed: ${r.error}`,
+          fatal: isLocal && LOCAL_FATAL.has(r.failure),
+          localFailed: isLocal,
+          localFailure: isLocal ? r.failure : null,
+          localDown: isLocal && LOCAL_UNREACHABLE.has(r.failure),
+        };
+      }
+      // Nothing an agent leaves behind may crash the run: a workspace we cannot
+      // inspect is a blocked round, and the bad state is reset away before the next.
+      // A failing reset is real infrastructure trouble and throws to runChunk's catch.
+      try {
+        const tests = await ws.runTests(options.testCommand, { timeoutMs: options.testTimeoutMs });
+        const diff = await ws.diff(base);
+        snap = await ws.snapshot();
+        return { diff, tests, base, producedBy: r.servedBy ?? who.name, vendor: vendorOf(r.servedKind ?? who.adapter.kind) };
+      } catch (e) {
+        const msg = String(e?.message ?? e);
+        log.event('inspect-failed', { index, participant: who.name, error: msg, resetTo: snap ?? base });
+        await reset(snap ?? base);
+        return { error: `could not inspect the workspace: ${msg}` };
+      }
+    };
+  };
+  const review = async (a) => {
+    const rv = await callAgent(ctx, reviewer, 'reviewer',
+      prompts.chunkReview({ request, plan, chunk, index, total, diff: a.diff, tests: a.tests, base }), readOpts);
+    noteSameVendor(ctx, { phase: 'chunk', index, producerVendor: a.vendor, result: rv, participant: reviewer });
+    return rv;
+  };
+
+  let note = null;
+  let loop = await reviewLoop({ maxRounds: options.localRounds, produce: attempt(team.local, 'grunt'), review });
+  if (loop.status === 'paused') {
+    await reset();
+    return { status: 'paused', reason: loop.lastReason };
+  }
+
+  // Mid-run consent (factory spec §4.2): the local model went down, so covering for it spends the
+  // operator's subscription. Asked once per run; only exactly true goes ahead.
+  if (loop.status !== 'approved' && options.confirmLocalFallback && !state.flags?.localFallbackOk && (await localWentDown(ctx, index, loop.artifact))) {
+    let answer;
+    try {
+      answer = await ctx.hooks.confirmLocalFallback(redact({ index, title: chunk.title, reason: loop.lastReason }));
+    } catch (e) {
+      log.event('hook-error', { hook: 'confirmLocalFallback', error: String(e?.message ?? e) });
+      answer = undefined;
+    }
+    if (answer !== true) {
+      log.event('local-fallback-declined', { index });
+      await reset();
+      const why = typeof answer?.reason === 'string' && answer.reason ? answer.reason : LOCAL_DECLINED_REASON;
+      return { status: 'paused', reason: why };
+    }
+    state.flags ??= {};
+    state.flags.localFallbackOk = true;
+    state.warnings ??= [];
+    if (!state.warnings.includes(LOCAL_DOWN_WARNING)) state.warnings.push(LOCAL_DOWN_WARNING);
+    log.event('local-fallback-approved', { index });
+  }
+
+  if (loop.status !== 'approved') {
+    log.event('chunk-fallback', { index, to: fallback.name, reason: loop.lastReason });
+    await reset();
+    loop = await reviewLoop({ maxRounds: options.frontierRounds, produce: attempt(fallback, 'author'), review });
+    if (loop.status === 'paused') {
+      await reset();
+      return { status: 'paused', reason: loop.lastReason };
+    }
+    note = `${step} was done by ${loop.artifact?.producedBy ?? fallback.name} because the local model could not finish it.`;
+  }
+
+  if (loop.status !== 'approved') {
+    // The workspace reflects the LAST attempt, so judge that one.
+    const last = loop.artifact;
+    if (!last || last.error) {
+      // Nothing usable exists, so there is no real choice to put to the user (I4):
+      // its edits are partial, never commit them, and fail so the step can be resumed.
+      log.event('deadlock', { phase: 'chunk', index, action: 'fail', note: loop.lastReason });
+      await reset();
+      return {
+        status: 'failed',
+        reason: `Step ${index + 1} (${chunk.title}) could not be completed: neither the local model nor ${fallback.name} produced a usable result. ` +
+          'Your repository is unchanged; you can resume to retry this step.',
+      };
+    }
+    const settle = settleDeadlock({ reason: loop.lastReason, tests: last.tests ?? null });
+    log.event('deadlock', { phase: 'chunk', index, action: settle.action, situation: settle.situation, note: settle.note });
+    if (settle.action === 'accept') {
+      note = join(note, `${step}: ${settle.note}`);
+    } else {
+      const decision = await askUser(ctx, {
+        kind: 'chunk', title: `step ${index + 1}: ${chunk.title}`, reason: loop.lastReason,
+        recommendation: settle.recommendation, situation: settle.situation,
+      });
+      if (decision !== 'approve') {
+        await reset();
+        return { status: 'stopped', reason: `You stopped the run at step ${index + 1} (${chunk.title}).` };
+      }
+      note = join(note, `${step}: you approved it over the concern: ${loop.lastReason}`);
+    }
+  }
+
+  await ws.assertOnBranch(); // never squash onto a branch an agent (or reviewer) switched to
+  const sha = await ws.squashSince(base, `conductor: step ${index + 1}/${total} — ${chunk.title}`);
+  const done = { index, sha, files: await ws.filesRange(base, sha ?? base), by: loop.artifact?.producedBy ?? null };
+  if (options.watchDiffs) done.diff = clip(await ws.diffRange(base, sha ?? base), 20000);
+  log.event('chunk-done', done);
+  return { status: 'done', sha, note, tests: loop.artifact?.tests ?? null, vendor: loop.artifact?.vendor ?? null };
+}

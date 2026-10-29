@@ -1,0 +1,115 @@
+{
+  "config": {},
+  "suites": [
+    {
+      "title": "responsive.spec.ts",
+      "file": "responsive.spec.ts",
+      "specs": [],
+      "suites": [
+        {
+          "title": "responsive",
+          "file": "responsive.spec.ts",
+          "specs": [
+            {
+              "title": "notes works at this width",
+              "ok": false,
+              "tests": [
+                {
+                  "projectName": "mobile-webkit",
+                  "expectedStatus": "passed",
+                  "status": "unexpected",
+                  "results": [
+                    {
+                      "status": "failed",
+                      "error": {
+                        "message": "the page scrolls sideways"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "people works at this width",
+              "ok": true,
+              "tests": [
+                {
+                  "projectName": "mobile-chromium",
+                  "expectedStatus": "passed",
+                  "status": "expected",
+                  "results": [
+                    {
+                      "status": "passed"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "flows.spec.ts",
+      "file": "flows.spec.ts",
+      "specs": [],
+      "suites": [
+        {
+          "title": "flows",
+          "file": "flows.spec.ts",
+          "specs": [
+            {
+              "title": "a member adds a note with a photo",
+              "ok": false,
+              "tests": [
+                {
+                  "projectName": "desktop-chromium",
+                  "expectedStatus": "passed",
+                  "status": "unexpected",
+                  "results": [
+                    {
+                      "status": "failed",
+                      "error": {
+                        "message": "Timed out 10000ms waiting for expect(locator).toBeVisible()"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "registry.spec.ts",
+      "file": "registry.spec.ts",
+      "specs": [],
+      "suites": [
+        {
+          "title": "registry",
+          "file": "registry.spec.ts",
+          "specs": [
+            {
+              "title": "every app path has at least one page in the screenshot registry",
+              "ok": true,
+              "tests": [
+                {
+                  "projectName": "desktop-chromium",
+                  "expectedStatus": "passed",
+                  "status": "expected",
+                  "results": [
+                    {
+                      "status": "passed"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": []
+}

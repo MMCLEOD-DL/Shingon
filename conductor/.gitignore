@@ -1,0 +1,5 @@
+# workspace / transcripts / local config (future)
+/workspace/
+/transcripts/
+*.log
+!test/fixtures/**/*.log
