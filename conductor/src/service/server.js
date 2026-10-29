@@ -85,7 +85,7 @@ export async function createAppServer({ dataDir, configFile, port = 4318, uiDir 
           return json(200, { runs: list.slice(offset, offset + 50).map(summary), nextCursor: offset + 50 < list.length ? String(offset + 50) : null });
         }
         if (req.method === 'POST' && p === '/api/v1/runs') return json(202, runs.create(await body(req)));
-        const match = /^\/api\/v1\/runs\/([\w-]{1,80})(?:\/(review|events|cancel|resume|decisions)(?:\/([\w-]{1,80}))?)?$/.exec(p);
+        const match = /^\/api\/v1\/runs\/([\w-]{1,80})(?:\/(review|events|cancel|resume|recover|decisions)(?:\/([\w-]{1,80}))?)?$/.exec(p);
         if (match) {
           const run = runs.get(match[1]);
           if (req.method === 'GET' && !match[2]) return json(200, { ...summary(run), decision: run.activeDecisionId ? run.decision : null });
@@ -109,6 +109,7 @@ export async function createAppServer({ dataDir, configFile, port = 4318, uiDir 
           if (req.method === 'POST' && match[2] === 'decisions' && match[3]) return json(200, await runs.answer(run, match[3], await body(req)));
           if (req.method === 'POST' && match[2] === 'cancel') return json(202, runs.cancel(run));
           if (req.method === 'POST' && match[2] === 'resume') return json(202, runs.resume(run));
+          if (req.method === 'POST' && match[2] === 'recover') return json(200, runs.recover(run, await body(req)));
         }
         throw new ServiceError(404, 'not-found', 'Endpoint not found.');
       }

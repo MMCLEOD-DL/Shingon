@@ -35,7 +35,18 @@ process.on('message', async msg => {
     try {
       if (question.snapshot && digest(await currentEvidence()) !== digest(question.snapshot)) throw new Error('The reviewed commit or files changed; resume for a fresh review.');
       question.resolve(msg.value);
-    } catch (e) { question.reject(e); }
+    } catch (e) {
+      if (question.kind === 'result' && msg.value === true) {
+        // Approval has not reached the engine: land() cannot have run. Rejecting
+        // the hook would be treated as a user rejection and archive/delete the
+        // workspace. Leave that hook unresolved and exit after delivering this
+        // explicit refusal, preserving engine state for a fresh review instead.
+        process.send(redact({ type: 'finished', outcome: { status: 'failed',
+          reasonCode: 'review-changed', landingState: 'not-started',
+          reason: 'The reviewed commit or files could not be confirmed; nothing was landed. The work is kept. Resume for a fresh review.', workspaceDir } }),
+        () => { if (process.connected) process.disconnect(); });
+      } else question.reject(e);
+    }
     return;
   }
   if (msg?.type !== 'start' || started) return;

@@ -14,7 +14,7 @@ const choices = kind => kind === 'fallback'
   ? [{ id: 'pause', label: 'Pause', consequence: 'No subscription fallback.' }, { id: 'continue', label: 'Use subscriptions', consequence: 'Uses more subscription allowance.' }]
   : [{ id: 'reject', label: 'Reject', consequence: 'Do not proceed.' }, { id: 'approve', label: 'Approve', consequence: kind === 'result' ? 'Create a new branch; do not merge or deploy.' : 'Continue this step.' }];
 export function summary(run) {
-  const { events, decision, review, request, workspaceDir, clientRequestId, requestIdentity, decisionReceipts, ...out } = run;
+  const { events, decision, review, request, workspaceDir, clientRequestId, requestIdentity, decisionReceipts, recoveryReceipts, ...out } = run;
   return out;
 }
 export class Runs {
@@ -108,11 +108,15 @@ export class Runs {
             choices: choices(msg.kind), evidence, revision: id(), resolvedAt: null };
           run.review = redact({ ...msg.payload, commit: evidence.commit, diffId: evidence.diffId, testReportIds: evidence.testReportIds });
           run.workspaceCommit = evidence.commit; run.activeDecisionId = msg.id; run.status = 'awaiting-decision';
+          // A fresh result question proves the engine has reconciled any older
+          // landing record. Its next source write still requires a new approval.
+          if (msg.kind === 'result' && evidence.commit !== null) run.landingPending = false;
           this.event(run, 'decision-pending', run.decision.prompt, { decisionId: msg.id });
         } else if (msg.type === 'finished') {
           finished = true; const outcome = msg.outcome;
           run.status = terminal(outcome.status); run.landedBranch = outcome.branch ?? null;
-          run.recoveryRequired = Boolean(run.landingPending && !['landed', 'rejected'].includes(outcome.status));
+          const reviewRefused = outcome.status === 'failed' && outcome.reasonCode === 'review-changed' && outcome.landingState === 'not-started';
+          run.recoveryRequired = Boolean(run.landingPending && !reviewRefused && !['landed', 'rejected'].includes(outcome.status));
           run.landingPending = false;
           run.resumable = !run.recoveryRequired && ['paused', 'failed', 'interrupted'].includes(run.status) && Boolean(run.workspaceDir);
           run.activeDecisionId = null;
@@ -197,6 +201,32 @@ export class Runs {
     this.event(run, 'cancel-requested', 'Stopping the owned worker; cancellation is not yet confirmed.');
     if (this.active?.runId === run.id) this.active.child.disconnect();
     return { requested: true, status: run.status };
+  }
+  recover(run, body) {
+    this.available();
+    requireValue(opaqueId(body?.clientRequestId) && body.repositoryInspected === true,
+      'Inspect the source repository and explicitly confirm repositoryInspected before recovery.');
+    const identity = JSON.stringify([body.expectedEventSeq, body.reviewedCommit, body.repositoryInspected]);
+    const receipt = Object.hasOwn(run.recoveryReceipts ?? {}, body.clientRequestId) ? run.recoveryReceipts[body.clientRequestId] : null;
+    if (receipt) { requireValue(receipt.identity === identity, 'Request ID conflict.', 'conflict', 409); return receipt.result; }
+    this.idle();
+    requireValue(run.recoveryRequired && ['interrupted', 'failed'].includes(run.status),
+      'This run is not waiting for repository inspection.', 'not-recoverable', 409);
+    requireValue(Number.isInteger(body.expectedEventSeq) && body.expectedEventSeq === run.lastEventSeq
+      && /^[a-f0-9]{40}$/.test(body.reviewedCommit ?? '') && body.reviewedCommit === run.workspaceCommit,
+    'Read the current run and approved commit before acknowledging inspection.', 'stale-recovery', 409);
+    requireValue(run.workspaceDir, 'This run has no resumable workspace. Preserve its records and recover through the CLI.', 'not-resumable', 409);
+    requireValue(run.events.length < 5000, 'The event limit was reached; recover through the CLI.', 'event-limit', 409);
+    run.recoveryAcknowledged = { at: now(), commit: body.reviewedCommit, eventSeq: body.expectedEventSeq };
+    run.recoveryRequired = false; run.resumable = true; run.status = 'interrupted'; run.activeDecisionId = null;
+    // Keep the earlier landing boundary through another crash until the engine
+    // reconciles its saved landing or offers a fresh review.
+    run.landingPending = true;
+    if (run.decision) run.decision.status = 'invalidated';
+    const result = { accepted: true, runId: run.id };
+    run.recoveryReceipts = { ...run.recoveryReceipts, [body.clientRequestId]: { identity, result } };
+    this.event(run, 'recovery-acknowledged', 'Repository inspection recorded. Resume explicitly to reconcile the approved result; no worker has started.');
+    return result;
   }
   resume(run) { this.idle(); requireValue(!run.recoveryRequired, 'The approved result may already be in the source repository. Inspect its branches before recovering this run.', 'recovery-required', 409); requireValue(run.resumable && run.workspaceDir, 'This run has no resumable workspace.', 'not-resumable', 409); appConfig(this.configFile); this.launch(run); return summary(run); }
   async close() {

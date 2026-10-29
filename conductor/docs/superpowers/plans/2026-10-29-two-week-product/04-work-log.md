@@ -5,9 +5,9 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude acknow
 | Packet | Provisional owner | Status | Branch/checkout + baseline | Result/review/integration evidence |
 |---|---|---|---|---|
 | P00 | Codex | IN_REVIEW | codex/operator-app-v1 | Concrete API/ADR/fixtures ready; Claude acknowledgement pending |
-| P01 | Codex | IN_REVIEW | `codex/updater-settings-recovery` from `42efa16` | R1-1/R1-2/R1-3 addressed; 129 focused tests, 1,107 full tests passed (6 Restic tests skipped); lint/types/licences/web build passed; revised peer review and merge pending |
+| P01 | Codex | DONE | `codex/updater-settings-recovery` | Claude approved `06678be`; PR #6 merged as `8e5bf13`; evidence below |
 | P02 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 29 Oct P02 entry; awaiting Codex review |
-| P03 | Codex | IN_REVIEW | codex/operator-app-v1 | Backend a8c97bc; full regression and engine integration pass; UI/peer review pending |
+| P03 | Codex | IN_PROGRESS | `codex/operator-run-recovery` from `c027fe6` | Prior service approved at `93e65b3`; addressing N1/N2 recovery follow-ups |
 | P04 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh`; contract v1 fixtures from `codex/operator-app-v1` @ `a8c97bc` | `conductor/operator-web`: 43/43 unit, 13/13 browser journey against real P03 service; see 29 Oct P04 entry; awaiting Codex review |
 | P05 | Codex | IN_PROGRESS | codex/operator-app-v1 | Setup/probes/launcher implemented; native Windows/live-model acceptance pending |
 | P06 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 29 Oct P06 entry; awaiting Codex review and Malcolm's decisions D1–D5 |
@@ -303,3 +303,35 @@ Integration SHA: —
   - `npm run lint` and `npm run typecheck` passed.
   - `npm test -- --maxWorkers=1`: 94 files passed (1 skipped), **1,107 tests passed, 6 skipped**, 0 failed. This matches Codex's report.
 - **Not run:** the six Restic-backed backup/restore tests (Restic is not installed), `verify:full`, client-box smoke tests.
+
+### 29 October 2026 — Codex claim: P03 explicit recovery and pre-landing refusal
+
+Packet/subpacket: P03 — Claude notes N1/N2.
+Owner: Codex; reviewer: Claude. Status: IN_PROGRESS.
+Branch: `codex/operator-run-recovery`; baseline main: `c027fe6`.
+Owned paths: `conductor/src/service/{runs,server,worker}.js`, `conductor/test/service/**`,
+`conductor/docs/operator-app/{interface,setup,acceptance}.md`, and this ledger.
+Named shared seam: additive authenticated `/runs/:id/recover` operation, bound to the run event
+sequence and approved commit, recording explicit repository inspection without starting work.
+Existing UI can offer its normal Resume after acknowledgment; Claude-owned UI/fixtures stay untouched.
+The worker will distinguish a refused review before handing approval back to the engine from an
+unknown outcome after landing may have started. No shared engine/adapters/config changes planned.
+P01 is approved and merged through PR #6. Read the new merge rules: service changes are high risk,
+so this task waits for Malcolm's merge/approval label; agents do not set that label or loosen CI.
+
+### 29 October 2026 — P03 recovery prepared; CI prerequisite takes priority
+
+The two initial recovery regressions fail on c027fe6 and pass after the service revision.
+Service tests: 34/34. Full Conductor suite: 1,548/1,548 (65.93 seconds). UI tests: 47/47;
+UI production build passed. Actual engine/Git tests use deterministic CLI stand-ins and real
+worker exits before/after branch creation; source edits/index/untracked files are preserved.
+No live models or native Windows. Browser download is blocked at cdn.playwright.dev (403);
+current image's preinstalled Playwright cannot find its pinned browser.
+
+P03 remains unsubmitted. Required Foundation CI on main c027fe6 fails status.test.ts:115:
+a database password of postgres is substituted before URI recognition, leaving a broken
+[hidden]:// URL rather than hiding the whole database address. Main check 123700109780
+records the failure. This is a required-check prerequisite, so isolate its fix in its own PR
+before submitting recovery. Do not weaken the assertion/workflow or mix the fix into P03.
+The recovery source/tests/docs and this handoff are preserved on codex/operator-run-recovery;
+resume that task after the prerequisite is merged. Dedicated recovery UI remains Claude's follow-up.

@@ -185,6 +185,58 @@ test('worker loss after approval requires repository inspection, never automatic
   assert.equal(recovered.resumable, false); assert.equal(recovered.recoveryRequired, true);
 });
 
+test('explicit inspection unlocks recovery once, without starting a worker or changing source refs (N1)', async t => {
+  const s = await setup(t, { workerFile: slowWorker }); await s.login();
+  const repositoryId = await s.register();
+  const initial = await s.call('/runs', { method: 'POST', body: { repositoryId, request: 'crash-after-approval', presetId: 'default', clientRequestId: 'recover-run' } });
+  const run = await s.wait(initial.json.id, 'awaiting-decision'); const d = run.decision;
+  await s.call(`/runs/${run.id}/decisions/${d.id}`, { method: 'POST', body: {
+    choiceId: 'approve', expectedRevision: d.revision, reviewedCommit: d.evidence.commit, clientRequestId: 'approve-recovery',
+  } });
+  const interrupted = await s.wait(run.id, 'interrupted');
+  // This transport fixture has no engine workspace; supply the historical
+  // mapping that a real worker emits (the real-engine recovery test covers it).
+  s.app.runs.get(run.id).workspaceDir = path.join(s.dataDir, 'workspaces', 'synthetic');
+  s.app.store.save();
+  const before = execFileSync('git', ['-C', s.repo, 'show-ref'], { encoding: 'utf8' });
+  const endpoint = `/runs/${run.id}/recover`;
+  const input = { clientRequestId: 'inspect-1', repositoryInspected: true, expectedEventSeq: interrupted.lastEventSeq, reviewedCommit: interrupted.workspaceCommit };
+  assert.equal((await s.call(endpoint, { method: 'POST', body: input, headers: { cookie: '' } })).status, 401);
+  assert.equal((await s.call(endpoint, { method: 'POST', body: input, headers: { origin: 'https://evil.invalid' } })).status, 403);
+  assert.equal((await s.call(endpoint, { method: 'POST', body: { ...input, repositoryInspected: false } })).status, 400);
+  assert.equal((await s.call(endpoint, { method: 'POST', body: { ...input, expectedEventSeq: 0 } })).status, 409);
+  assert.equal((await s.call(endpoint, { method: 'POST', body: { ...input, reviewedCommit: 'b'.repeat(40) } })).status, 409);
+  const result = await s.call(endpoint, { method: 'POST', body: input });
+  assert.equal(result.status, 200);
+  const recovered = (await s.call(`/runs/${run.id}`)).json;
+  assert.equal(recovered.status, 'interrupted'); assert.equal(recovered.recoveryRequired, false);
+  assert.equal(recovered.resumable, true); assert.equal(recovered.landingPending, true);
+  assert.equal(s.app.runs.active, null);
+  assert.equal(recovered.recoveryAcknowledged.commit, interrupted.workspaceCommit);
+  assert.equal('recoveryReceipts' in recovered, false);
+  assert.equal((await s.call(endpoint, { method: 'POST', body: input })).status, 200);
+  assert.equal((await s.call(`/runs/${run.id}`)).json.lastEventSeq, recovered.lastEventSeq);
+  assert.equal((await s.call(endpoint, { method: 'POST', body: { ...input, reviewedCommit: 'b'.repeat(40) } })).status, 409);
+  assert.equal((await s.call(endpoint, { method: 'POST', body: { ...input, clientRequestId: 'inspect-2', expectedEventSeq: recovered.lastEventSeq } })).status, 409);
+  assert.equal(execFileSync('git', ['-C', s.repo, 'show-ref'], { encoding: 'utf8' }), before);
+  const persisted = new StateStore(s.dataDir).data.runs.find(r => r.id === run.id);
+  assert.equal(persisted.recoveryRequired, false); assert.equal(persisted.resumable, true);
+});
+
+test('recovery persistence failure blocks resume and never launches work', async t => {
+  const s = await setup(t); await s.login(); const repositoryId = await s.register();
+  const run = { id: 'recovery-storage', repositoryId, status: 'interrupted', events: [], lastEventSeq: 0,
+    recoveryRequired: true, landingPending: true, resumable: false,
+    workspaceDir: path.join(s.dataDir, 'workspaces', 'synthetic'), workspaceCommit: 'a'.repeat(40) };
+  s.app.store.data.runs.push(run); s.app.store.save();
+  const input = { clientRequestId: 'recover-storage', repositoryInspected: true, expectedEventSeq: 0, reviewedCommit: run.workspaceCommit };
+  const state = path.join(s.dataDir, 'service-state.json'); rmSync(state); mkdirSync(state);
+  const result = await s.call(`/runs/${run.id}/recover`, { method: 'POST', body: input });
+  assert.equal(result.status, 503); assert.equal(result.json.error.code, 'storage-unavailable');
+  assert.equal((await s.call(`/runs/${run.id}/resume`, { method: 'POST' })).status, 503);
+  assert.equal(s.app.runs.active, null);
+});
+
 test('missing and malformed static asset paths are 404, not service errors (P3-2)', async t => {
   const uiDir = mkdtempSync(path.join(tmpdir(), 'conductor-ui-assets-'));
   t.after(() => rmSync(uiDir, { recursive: true, force: true }));
