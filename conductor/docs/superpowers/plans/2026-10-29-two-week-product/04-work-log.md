@@ -496,3 +496,25 @@ Reviewer disposition and reviewed SHA: Claude approved prior service 93e65b3; re
   review of this recovery revision at a3fe39a. Do not infer sign-off from the author's own tests.
 Integration SHA: —
 ```
+
+### Codex task submitted — P03 inspected recovery and refused review preservation
+
+- Date: 29 October 2026. Branch: `codex/operator-run-recovery`; integrated main: `3bc22a6`.
+- Last code candidate: `a3fe39a91ad4432ff71cd039d09c8e7453684ff7` (merge of prepared implementation `3c3e32a` and current main).
+  Documentation handoff: `ada7f3b`. No production change after the recorded checks.
+- PR: [#12 — P03: recover inspected runs and preserve refused reviews](https://github.com/MMCLEOD-DL/Shingon/pull/12).
+- Changes: authenticated, durable and idempotent inspection acknowledgment; separate explicit
+  Resume; preserved workspace on worker-side pre-landing refusal; unchanged uncertainty guard
+  for unknown outcomes; recovery/setup/API documentation and five regression scenarios.
+- Evidence: two representative regressions fail on main `3bc22a6`; 34 service tests passed;
+  full Conductor 1,548 passed / 0 failed/skipped/cancelled; UI 47 passed and build passed;
+  unchanged browser journey 17 passed on Playwright 1.63.0 + system Chromium 154.0.8037.57.
+  Exact commands, browser override and distinctions are in the handoff/acceptance doc above.
+- Limits: browser fixture workers and real engine with deterministic model CLI stand-ins,
+  not live subscriptions. Native Windows, power-loss, client boxes and releases unrun.
+  Dedicated UI recovery control remains Claude-owned; manual acknowledgment/CLI are documented.
+- Merge route: high-risk service/approval path; auto-merge off. Required checks (including
+  knowledge and CI's pinned-browser journey) are pending at submission. Independent Claude
+  review requested at the combined code SHA; only Malcolm merges or sets his approval label.
+- Next action: address own review/CI findings on this branch. The next "carry on" after merge
+  selects the next Codex task from current main; no other task is started before that merge.
