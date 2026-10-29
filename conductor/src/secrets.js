@@ -26,11 +26,17 @@ export function childEnv({ allow = [], env = process.env } = {}) {
   return out;
 }
 
+// Git's env-borne config: GIT_CONFIG_COUNT with numbered GIT_CONFIG_KEY_<n>/GIT_CONFIG_VALUE_<n> pairs, and
+// GIT_CONFIG_PARAMETERS (what `git -c` passes on). SECRET_NAME catches only the KEY_<n> names, which left a
+// dangling COUNT that makes every git call fail; and the values can carry credentials (http.extraHeader).
+const GIT_CONFIG_ENV = /^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+|PARAMETERS)$/;
+
 // For children that need no credentials at all (the test command, N2): also drops
-// every secret-looking name. The frontier CLIs keep using childEnv().
+// every secret-looking name and all of git's env-borne config, as one group.
+// The frontier CLIs keep using childEnv().
 export function strictChildEnv({ env = process.env } = {}) {
   const out = childEnv({ env });
-  for (const k of Object.keys(out)) if (SECRET_NAME.test(k)) delete out[k];
+  for (const k of Object.keys(out)) if (SECRET_NAME.test(k) || GIT_CONFIG_ENV.test(k)) delete out[k];
   return out;
 }
 
