@@ -156,3 +156,52 @@ test('a storage failure blocks approval before it reaches the worker', async t =
   assert.equal(s.app.runs.active, null);
   assert.notEqual(s.app.runs.get(run.id).status, 'completed');
 });
+
+const slowWorker = fileURLToPath(new URL('../fixtures/operator-app/slow-land-worker.cjs', import.meta.url));
+test('cancellation after result approval cannot hide a source branch behind interrupted status (P3-1)', async t => {
+  const s = await setup(t, { workerFile: slowWorker }); await s.login();
+  const initial = await s.start(await s.register()); const run = await s.wait(initial.json.id, 'awaiting-decision'); const d = run.decision;
+  assert.equal((await s.call(`/runs/${run.id}/decisions/${d.id}`, { method: 'POST', body: {
+    choiceId: 'approve', expectedRevision: d.revision, reviewedCommit: d.evidence.commit, clientRequestId: 'slow-approve',
+  } })).status, 200);
+  const cancel = await s.call(`/runs/${run.id}/cancel`, { method: 'POST' });
+  assert.equal(cancel.status, 409); assert.equal(cancel.json.error.code, 'landing-in-progress');
+  const completed = await s.wait(run.id, 'completed');
+  assert.equal(completed.landedBranch, 'conductor/landed');
+  assert.match(execFileSync('git', ['-C', s.repo, 'branch', '--list', 'conductor/landed'], { encoding: 'utf8' }), /conductor\/landed/);
+});
+test('worker loss after approval requires repository inspection, never automatic resume (P3-1)', async t => {
+  const s = await setup(t, { workerFile: slowWorker }); await s.login(); const repositoryId = await s.register();
+  const initial = await s.call('/runs', { method: 'POST', body: { repositoryId, request: 'crash-after-approval', presetId: 'default', clientRequestId: 'crash-run' } });
+  const run = await s.wait(initial.json.id, 'awaiting-decision'); const d = run.decision;
+  assert.equal((await s.call(`/runs/${run.id}/decisions/${d.id}`, { method: 'POST', body: {
+    choiceId: 'approve', expectedRevision: d.revision, reviewedCommit: d.evidence.commit, clientRequestId: 'crash-approve',
+  } })).status, 200);
+  const interrupted = await s.wait(run.id, 'interrupted');
+  assert.equal(interrupted.resumable, false); assert.equal(interrupted.recoveryRequired, true);
+  assert.equal((await s.call(`/runs/${run.id}/resume`, { method: 'POST' })).json.error.code, 'recovery-required');
+  assert.match(execFileSync('git', ['-C', s.repo, 'branch', '--list', 'conductor/landed'], { encoding: 'utf8' }), /conductor\/landed/);
+  const recovered = new StateStore(s.dataDir).data.runs.find(r => r.id === run.id);
+  assert.equal(recovered.resumable, false); assert.equal(recovered.recoveryRequired, true);
+});
+
+test('missing and malformed static asset paths are 404, not service errors (P3-2)', async t => {
+  const uiDir = mkdtempSync(path.join(tmpdir(), 'conductor-ui-assets-'));
+  t.after(() => rmSync(uiDir, { recursive: true, force: true }));
+  writeFileSync(path.join(uiDir, 'index.html'), '<html>synthetic UI</html>');
+  const s = await setup(t, { uiDir });
+  for (const path of ['/assets/missing.js', '/assets/%ZZ.js']) {
+    const res = await fetch(s.app.origin + path);
+    assert.equal(res.status, 404); assert.equal((await res.json()).error.code, 'not-found');
+  }
+});
+test('restart during approved landing preserves uncertainty and disables automatic resume', t => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'conductor-landing-recovery-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const store = new StateStore(dir);
+  store.data.repositories.push({ id: 'repo', path: '/synthetic' });
+  store.data.runs.push({ id: 'run', repositoryId: 'repo', status: 'running', landingPending: true, workspaceDir: '/synthetic-workspace', events: [] });
+  store.save();
+  const recovered = new StateStore(dir).data.runs[0];
+  assert.equal(recovered.status, 'interrupted'); assert.equal(recovered.recoveryRequired, true); assert.equal(recovered.resumable, false);
+});

@@ -55,7 +55,8 @@ export class StateStore {
     for (const run of this.data.runs) {
       if (['running', 'awaiting-decision', 'queued', 'cancelling'].includes(run.status)) {
         run.status = 'interrupted'; run.updatedAt = now();
-        run.resumable = Boolean(run.workspaceDir);
+        run.recoveryRequired = Boolean(run.landingPending);
+        run.resumable = !run.recoveryRequired && Boolean(run.workspaceDir);
         if (run.decision?.status === 'pending') run.decision.status = 'invalidated';
         run.activeDecisionId = null;
       }

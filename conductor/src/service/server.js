@@ -118,8 +118,14 @@ export async function createAppServer({ dataDir, configFile, port = 4318, uiDir 
         return res.end('Conductor service is running. The operator UI has not been built; see docs/operator-app/setup.md.');
       }
       const root = realpathSync(uiDir);
-      const relative = url.pathname.startsWith('/assets/') ? decodeURIComponent(url.pathname).slice(1) : 'index.html';
-      const file = realpathSync(path.join(root, relative));
+      let file;
+      try {
+        const relative = url.pathname.startsWith('/assets/') ? decodeURIComponent(url.pathname).slice(1) : 'index.html';
+        file = realpathSync(path.join(root, relative));
+      } catch (e) {
+        if (e instanceof URIError || ['ENOENT', 'ENOTDIR'].includes(e.code)) throw new ServiceError(404, 'not-found', 'Asset not found.');
+        throw e;
+      }
       requireValue(file.startsWith(root + path.sep) && statSync(file).isFile(), 'Asset not found.', 'not-found', 404);
       const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
       requireValue(types[path.extname(file)], 'Asset type not supported.', 'not-found', 404);

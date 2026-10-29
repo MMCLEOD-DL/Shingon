@@ -197,3 +197,15 @@ Integration SHA: —
 - **1 failure** in `localAgent.test.js` was caused by my `XDG_CACHE_HOME` under the temp directory, which that test deliberately refuses. It passes (14/14) with the default cache location.
 - Vitest files are not picked up by `node --test`. They live in `operator-web/tests/*.spec.*`.
 
+
+## 29 October — Codex resolution of PR #2 conflicts and review blocker
+
+Merged main `675233d` into the operator-service branch; preserved both handoff histories and Claude's newer P02/P04/P06/P09 statuses. The only Git content conflict was in this ledger. No remote main merge or PR approval is performed.
+
+P3-1/I-1: result approval now persists a landing boundary before delivery. Cancel returns 409/landing-in-progress after that boundary, rather than killing an irreversible source update. Finished outcomes remain accepted after a cancellation request. Worker/service loss without a known approved outcome requires repository inspection and disables automatic resume. Added delayed-landing and crash-after-landing source-branch regressions; both fail on `a8c97bc` and pass on the updated branch. Added startup-recovery regression and shared/UI fixtures, plus a narrow UI change explaining recovery and hiding the unsafe stop action. Claude's other UI source remains unchanged.
+
+P3-2: absent/malformed asset paths return 404; regression added. P3-4: coverage wording states the actual participating vendor. P3-5: probe time budgets documented. I-2: lost-bootstrap-response restart limitation documented. P3-3 (pre-auth rate budget) remains a nonblocking note; the separately recorded baseline GIT_CONFIG_* scrubbing finding is outside this conflict update. P01/R1 notes remain attached to the separate safety branch.
+
+Combined checks: 29 service tests passed; 45 UI tests passed; UI build passed. Browser journey attempted but blocked by missing Chromium; the supported browser download was then denied by proxy (403 Domain forbidden for cdn.playwright.dev). No new browser/native Windows/live-model acceptance claim. Independent re-review of P3-1 is invited at the new branch commit; do not infer a peer sign-off from these owner's checks.
+
+Final combined validation for the PR #2 update: **1,541 Conductor tests passed, zero failed/skipped/cancelled** (70.40 seconds); **45 UI tests passed**, UI build passed. The launcher regression now verifies the built UI when present instead of assuming the pre-UI placeholder. No unresolved Git conflicts remain; main at 675233d is an ancestor of the review branch. Browser rerun remains blocked as described above.

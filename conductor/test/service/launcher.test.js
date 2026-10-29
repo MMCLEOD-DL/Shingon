@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,7 +33,11 @@ test('the real launcher starts, stops and starts again without model calls or WS
     const cookie = login.headers.get('set-cookie').split(';')[0];
     const setup = await fetch(link.origin + '/api/v1/setup', { headers: { cookie } });
     assert.equal((await setup.json()).configured, false);
-    const rootPage = await fetch(link.origin); assert.match(await rootPage.text(), /UI has not been built/);
+    const rootPage = await fetch(link.origin);
+    const pageText = await rootPage.text();
+    const builtUi = path.resolve(path.dirname(cli), '../operator-web/dist/index.html');
+    if (existsSync(builtUi)) assert.equal(pageText, readFileSync(builtUi, 'utf8'));
+    else assert.match(pageText, /UI has not been built/);
     child.kill('SIGTERM');
     assert.equal(await exited, 0);
   }

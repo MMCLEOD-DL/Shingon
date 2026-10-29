@@ -73,7 +73,7 @@ export class Runs {
     this.active = { runId: run.id, child };
     let finished = false;
     child.on('message', msg => {
-      if (finished || run.status === 'cancelling') return;
+      if (finished || (run.status === 'cancelling' && msg.type !== 'finished')) return;
       try {
         if (msg.type === 'event') {
           if (msg.workspaceDir) {
@@ -112,17 +112,20 @@ export class Runs {
         } else if (msg.type === 'finished') {
           finished = true; const outcome = msg.outcome;
           run.status = terminal(outcome.status); run.landedBranch = outcome.branch ?? null;
-          run.resumable = ['paused', 'failed', 'interrupted'].includes(run.status) && Boolean(run.workspaceDir);
+          run.recoveryRequired = Boolean(run.landingPending && !['landed', 'rejected'].includes(outcome.status));
+          run.landingPending = false;
+          run.resumable = !run.recoveryRequired && ['paused', 'failed', 'interrupted'].includes(run.status) && Boolean(run.workspaceDir);
           run.activeDecisionId = null;
           if (run.coverage.local === 'unknown') run.coverage.local = 'not-used';
-          if (run.coverage.vendors.length < 2) { run.coverage.weakened = true; run.coverage.reasons.push('Both subscription vendors did not complete calls in this run.'); }
+          if (run.coverage.vendors.length < 2) { run.coverage.weakened = true; run.coverage.reasons.push(run.coverage.vendors.length ? `Only ${run.coverage.vendors[0]} completed calls in this run.` : 'No subscription vendor completed a call in this run.'); }
           this.event(run, 'finished', outcome.reason ?? outcome.status);
         }
       } catch { run.status = 'failed'; run.activeDecisionId = null; child.disconnect(); child.kill(); }
     });
     child.on('error', () => {
       finished = true; run.status = 'failed'; run.activeDecisionId = null;
-      run.resumable = Boolean(run.workspaceDir);
+      run.recoveryRequired = Boolean(run.landingPending);
+      run.resumable = !run.recoveryRequired && Boolean(run.workspaceDir);
       if (!child.pid && this.active?.child === child) this.active = null;
       if (child.connected) child.disconnect();
       try { this.event(run, 'failed', 'The engine worker could not start or communicate. Check the run before retrying.'); }
@@ -134,9 +137,12 @@ export class Runs {
       exited = true;
       if (this.active?.child === child) this.active = null;
       if (!finished || ACTIVE.has(run.status)) {
-        run.status = 'interrupted'; run.resumable = Boolean(run.workspaceDir); run.activeDecisionId = null;
+        run.status = 'interrupted'; run.recoveryRequired = Boolean(run.landingPending);
+        run.resumable = !run.recoveryRequired && Boolean(run.workspaceDir); run.activeDecisionId = null;
         if (run.decision) run.decision.status = 'invalidated';
-        try { this.event(run, 'interrupted', 'Worker stopped. Check the run before resuming.'); } catch { this.accepting = false; }
+        try { this.event(run, 'interrupted', run.recoveryRequired
+          ? 'The approved result may have reached the source repository. Inspect its branches before recovering this run; automatic resume is disabled.'
+          : 'Worker stopped. Check the run before resuming.'); } catch { this.accepting = false; }
       }
     };
     child.once('exit', onExit); child.once('close', onExit);
@@ -171,6 +177,11 @@ export class Runs {
       : d.kind === 'fallback' ? body.choiceId === 'continue'
         : body.choiceId === 'approve' ? true : d.kind === 'result' && body.feedback ? { note: body.feedback } : false;
     d.status = 'resolved'; d.resolvedAt = now(); run.activeDecisionId = null; run.status = 'running';
+    if (d.kind === 'result' && body.choiceId === 'approve') {
+      // Persist this boundary before sending approval. Landing is irreversible:
+      // cancellation cannot safely claim that nothing reached the source repo.
+      run.landingPending = true; run.resumable = false; run.phase = 'landing';
+    }
     const result = { accepted: true, decisionId };
     run.decisionReceipts[body.clientRequestId] = { identity, result };
     this.event(run, 'decision-resolved', body.choiceId, { decisionId });
@@ -180,13 +191,14 @@ export class Runs {
   cancel(run) {
     this.available();
     if (!ACTIVE.has(run.status)) return { requested: false, status: run.status };
+    requireValue(!run.landingPending, 'The approved result is being added to the source repository. Wait for its outcome; cancellation is no longer safe.', 'landing-in-progress', 409);
     run.status = 'cancelling'; run.activeDecisionId = null;
     if (run.decision) run.decision.status = 'invalidated';
     this.event(run, 'cancel-requested', 'Stopping the owned worker; cancellation is not yet confirmed.');
     if (this.active?.runId === run.id) this.active.child.disconnect();
     return { requested: true, status: run.status };
   }
-  resume(run) { this.idle(); requireValue(run.resumable && run.workspaceDir, 'This run has no resumable workspace.', 'not-resumable', 409); appConfig(this.configFile); this.launch(run); return summary(run); }
+  resume(run) { this.idle(); requireValue(!run.recoveryRequired, 'The approved result may already be in the source repository. Inspect its branches before recovering this run.', 'recovery-required', 409); requireValue(run.resumable && run.workspaceDir, 'This run has no resumable workspace.', 'not-resumable', 409); appConfig(this.configFile); this.launch(run); return summary(run); }
   async close() {
     this.accepting = false;
     if (this.active) {

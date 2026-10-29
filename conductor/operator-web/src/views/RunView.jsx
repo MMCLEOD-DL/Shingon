@@ -164,7 +164,7 @@ export function RunView({ api, runId, go }) {
       )}
       {run.status === 'rejected' && <div className="outcome"><p>Rejected. No branch was created and your repository was not changed.</p></div>}
       {run.status === 'failed' && <div className="outcome bad"><p>The run failed. {run.resumable ? 'You can resume it from its saved work.' : 'It cannot be resumed from here.'} Details are in the activity log below.</p></div>}
-      {run.status === 'interrupted' && <div className="outcome bad"><p>The run was interrupted (stopped, or the service restarted). Any question it was asking has been withdrawn. {run.resumable ? 'Resume to continue from its saved work.' : 'It has no saved work to resume.'}</p></div>}
+      {run.status === 'interrupted' && <div className="outcome bad"><p>The run was interrupted (stopped, or the service restarted). Any question it was asking has been withdrawn. {run.recoveryRequired ? 'The approved result may already be in the repository. Inspect its branches before recovering this run; automatic resume is disabled.' : run.resumable ? 'Resume to continue from its saved work.' : 'It has no saved work to resume.'}</p></div>}
       {run.status === 'paused' && <div className="outcome"><p>Paused. {run.resumable ? 'Resume when ready.' : ''}</p></div>}
 
       {pending && <Decision api={api} run={run} review={review} onStale={refresh}
@@ -174,7 +174,8 @@ export function RunView({ api, runId, go }) {
       {['completed', 'rejected'].includes(run.status) && review && <details><summary>What was reviewed</summary><ReviewDetails review={review} /></details>}
 
       <div className="actions">
-        {active && run.status !== 'cancelling' && (confirmCancel ? (
+        {active && run.landingPending && <p className="warn">Adding the approved result to the repository. Wait for its outcome; it is no longer safe to stop this step.</p>}
+        {active && !run.landingPending && run.status !== 'cancelling' && (confirmCancel ? (
           <>
             <button type="button" className="danger" onClick={cancel}>Yes, stop this run</button>
             <button type="button" onClick={() => setConfirmCancel(false)}>Keep running</button>
