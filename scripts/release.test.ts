@@ -124,20 +124,26 @@ test('a lock file that is present but unreadable is reported, not skipped', () =
 });
 
 const REAL = readReal(new URL('../CHANGELOG.md', import.meta.url), 'utf8');
+// The foundation's own version, so these checks keep working after each release of the foundation itself.
+const CURRENT = (JSON.parse(readReal(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version;
+const [MAJ, MIN, PAT] = CURRENT.split('.').map(Number) as [number, number, number];
 // Work in progress adds lines under Unreleased; these checks are about the released history beneath it.
 const RELEASED_ONLY = REAL.replace(/^## \[Unreleased\]\n(?:- .*\n)*/m, '## [Unreleased]\n');
-test('the real changelog has a dated 0.1.0 under Unreleased, and an empty Unreleased refuses an empty release', () => {
-  expect(RELEASED_ONLY).toMatch(/^## \[Unreleased\]\n\n## \[0\.1\.0\] - \d{4}-\d{2}-\d{2}\n- First foundation release/m);
-  expect(() => planRelease(RELEASED_ONLY, '0.1.0', 'patch', '2026-12-01')).toThrow('There is nothing under "Unreleased"');
+const esc = (v: string): string => v.replace(/\./g, '\\.');
+test('the real changelog has the current version dated under Unreleased, 0.1.0 at the bottom, and an empty Unreleased refuses', () => {
+  expect(RELEASED_ONLY).toMatch(new RegExp(`^## \\[Unreleased\\]\\n\\n## \\[${esc(CURRENT)}\\] - \\d{4}-\\d{2}-\\d{2}\\n`, 'm'));
+  expect(RELEASED_ONLY).toMatch(/^## \[0\.1\.0\] - \d{4}-\d{2}-\d{2}\n- First foundation release/m);
+  expect(() => planRelease(RELEASED_ONLY, CURRENT, 'patch', '2026-12-01')).toThrow('There is nothing under "Unreleased"');
 });
-test('the next release from 0.1.0 is 0.1.1 or 0.2.0 and 0.1.0 stays as released', () => {
+test('the next release from the current version is the next patch or minor, and the released history stays as it was', () => {
   const withEntry = RELEASED_ONLY.replace('## [Unreleased]\n', '## [Unreleased]\n- Added Z.\n');
-  const patch = planRelease(withEntry, '0.1.0', 'patch', '2026-12-01');
-  const minor = planRelease(withEntry, '0.1.0', 'minor', '2026-12-01');
-  expect([patch.version, minor.version]).toEqual(['0.1.1', '0.2.0']);
-  const released = REAL.slice(REAL.indexOf('## [0.1.0]'));
+  const patch = planRelease(withEntry, CURRENT, 'patch', '2026-12-01');
+  const minor = planRelease(withEntry, CURRENT, 'minor', '2026-12-01');
+  const nextPatch = [MAJ, MIN, PAT + 1].join('.');
+  expect([patch.version, minor.version]).toEqual([nextPatch, [MAJ, MIN + 1, 0].join('.')]);
+  const released = REAL.slice(REAL.indexOf(`## [${CURRENT}]`));
   expect(patch.changelog.endsWith(released)).toBe(true);
-  expect(patch.changelog).toContain('## [Unreleased]\n\n## [0.1.1] - 2026-12-01\n- Added Z.\n\n## [0.1.0]');
+  expect(patch.changelog).toContain(`## [Unreleased]\n\n## [${nextPatch}] - 2026-12-01\n- Added Z.\n\n## [${CURRENT}]`);
 });
 
 test('a patch, minor or major release before any release refuses and points at the first release', () => {
@@ -213,10 +219,10 @@ describe('the first release (npm run release -- first)', () => {
     expect(() => runFirstRelease(s.deps)).toThrow('Git does not know who you are');
     untouched(s.root);
   });
-  test('the real repository is ready for its first release: versions match and 0.1.0 is dated', () => {
+  test('the real repository\'s versions match (package.json and foundation.json) and 0.1.0 is dated', () => {
     const pkg = JSON.parse(readReal(new URL('../package.json', import.meta.url), 'utf8')) as { version: string; scripts: Record<string, string> };
     const found = JSON.parse(readReal(new URL('../foundation.json', import.meta.url), 'utf8')) as { version: string };
-    expect([pkg.version, found.version]).toEqual(['0.1.0', '0.1.0']);
+    expect(found.version).toBe(pkg.version);
     expect(REAL).toMatch(/^## \[0\.1\.0\] - \d{4}-\d{2}-\d{2}$/m);
     expect(pkg.scripts['release']).toBe('tsx scripts/release.ts');
   });
