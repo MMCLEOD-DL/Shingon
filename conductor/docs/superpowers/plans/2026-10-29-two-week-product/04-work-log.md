@@ -582,3 +582,23 @@ Next packet unblocked: next lane item after this task merges.
 Reviewer disposition and reviewed SHA: Claude's N5 note is the basis; new fix not independently approved yet.
 Integration SHA: —
 ```
+
+### Codex task submitted — P03 N5 decision-receipt keys
+
+- Date: 29 October 2026. Branch: `codex/decision-receipt-keys`; baseline: `d9e88e2`.
+- Last code commit: `88b8a0789949bee750411460890091bc616718ac`.
+- PR: [#14 — P03: persist decision receipts for every valid request ID](https://github.com/MMCLEOD-DL/Shingon/pull/14).
+- Changes: own-property reads before/after asynchronous evidence checks, computed own-property
+  receipt writes, eleven regressions and API clarification. Accepted ID syntax/state schema stay compatible.
+- Reproduction: before fix, 8/10 HTTP cases fail (2 controls pass) and the real-engine concurrent
+  approval case fails. After fix: 45 service / 1,559 full Conductor / 47 UI tests passed,
+  UI build passed, and unchanged browser journey 17 passed. Exact host, commands and browser
+  override are in the handoff above; no production change after those checks.
+- Limits: HTTP fixture workers and real-engine deterministic model CLI stand-ins, actual Git;
+  local browser uses system Chromium. No live models/subscriptions, native Windows, power-loss,
+  client boxes or releases. Hosted Foundation/knowledge/pinned-browser CI pending at submission.
+- Merge route: high-risk service/approval code; auto-merge off. Independent Claude re-review
+  requested at the code SHA. Only Malcolm merges or adds his approval label; agent leaves the
+  label and gate untouched. N6 UI remains Claude-owned.
+- Open questions: none on the implementation; CI/peer review/merge pending. Address any own
+  failures on this branch. The next "carry on" after merge starts the next task from current main.
