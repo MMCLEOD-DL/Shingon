@@ -24,11 +24,11 @@ runs it over several sessions (Tasks 12 to 15 of Plan 12). This folder gives you
 | C7 | §2.3, §2.5 | On a real iPhone (Safari) and a real Android phone (Chrome): **Take a photo** opens the camera and uploads; **Choose a file** uploads a photo from the library and a PDF; the reading appears; correcting a field and confirming works; nothing scrolls sideways. | operator |
 | C8 | §2.4 | On the test box: a manual backup, then `restore-test`, pass; then a real restore drill from the runbook returns a record count known beforehand. | operator |
 | C9 | §2.4 | Stopping the app container sends a Matrix alert within 5 minutes, and starting it sends the recovery message. | operator |
-| C10 | §2.4, §4.8 | The change request went out as an **update**: the deployment's `history` has an `installed` entry followed later by an `updated` or `confirmed` entry at the `currentVersion` (a trailing `already-on` is ignored), that version is newer than the installed one (`compareVersions`), and the last update that reached the box (outcomes that changed nothing are skipped) was not rolled back, urgent or lost contact. | auto |
+| C10 | §2.4, §4.8 | The change request went out as an **update**: the deployment's `history` has an `installed` entry followed later by an `updated` or `confirmed` entry at the `currentVersion` (a trailing `already-on` is ignored), that version is newer than the installed one (`compareVersions`), and the last update that reached the box (outcomes that changed nothing are skipped) was not rolled back, urgent or lost contact. The `currentVersion` must be the version the change run released (its `change.json`). | auto |
 | C11 | §2.5 | A member gets from "open the app" to a confirmed receipt in under 60 seconds on a phone, with no step that needs help. | operator |
 | C12 | §3, §6 | The app's `app-profile.json` matches the approved brief: `policy.outbound` holds the same `OUTBOUND_SERVICES` ids (Contract 7.4), `residency` is equal, and `modules` contains every module the brief lists (here `ocr`). (Task 14 also checks `OCR_ENGINE=local` on the box by hand.) | auto |
 | C13 | §5a | The latest council report has no blocking or warning item with `member: 'legal'` from the `licences` or `scancode` tool, and every entry in the app's `licence-exceptions.json` has a reason (Plan 9's Legal accepts those entries, Contract 7.7). | auto |
-| C14 | §4.8 | The change run's own council report meets C2's rule, and every example id that is new in the current brief version (absent from `brief-v<N-1>.json`) is proven by a passing test in the change run's report. | auto |
+| C14 | §4.8 | The change run's own council report meets C2's rule, and every example id that is new in the current brief version (absent from `brief-v<N-1>.json`) is proven by a passing test in the change run's report. A change brief with no new example is a FAIL. | auto |
 | C15 | §1 | The operator never edited the app's code by hand (Ruling 9). Any hand edit is recorded with its reason, and counts as a FAIL for the factory. | operator |
 | C16 | §3 | No paid-API spend unless opted in; frontier cost recorded per stage. | operator |
 | C17 | Contract 7.5 | `project.json` records `foundation.tag` equal to the expected tag (`foundationTag`, `v0.2.0`, the value of `factory.foundation.tag` for this run) and status `shipped` at the end. | auto |
@@ -61,14 +61,18 @@ a test, a fixture, a preview or a screenshot; phone tests use fictional printed 
 ## Running the checker
 
     node /root/conductor/spikes/acceptance/check-acceptance.mjs <projectDir> --build <runId> [--change <runId>] \
-      [--deployment <name>] [--tests <file>] [--change-tests <file>] [--foundation-tag <vX.Y.Z>] \
-      [--foundation-routes <n>] [--out <file>]
+      [--deployment <name>] [--foundation-tag <vX.Y.Z>] [--foundation-routes <n>] [--out <file>]
 
-- `--build` is the approved build's run id (the folder name under `builds/`); `--change` the change run's.
-- `--deployment` is the deployment name (for example `test-box`); it is needed for C10.
-- The Vitest report comes from the run's own checks. If a run has none, make one by hand in the app with
-  `npx vitest run --reporter=json --outputFile=<file>` and pass it with `--tests` (build) or `--change-tests`
-  (change).
+- `--build` is the approved build's run id; `--change` the change run's. A run id is the folder name under
+  `<projectsRoot>/<slug>/builds/` (like `20261028-143205-a1b2`). Find it in `project.json` (`approved.runId` is the
+  latest approved run), in what `conductor build` or `conductor change` printed at the gate, or with
+  `ls ~/highland-projects/<slug>/builds/` (the newest sorts last).
+- `--deployment` is the deployment name (for example `test-box`); C10 needs it and `--change`.
+- The Vitest report always comes from the run's own checks; there is no way to pass another file, so a report made
+  by hand can never stand in for a run's own (failing) one. If a run has none, fix the factory's settings (below) and
+  run the build again. Never run tests by hand inside `app/`: the files they leave there stop `conductor change`.
+- Until Stage 4, C10, C14 and C17's `shipped` part have nothing to read yet: the checker shows them as FAIL and exits
+  1. That is expected in Stages 1 to 3; only the Stage 4 run must exit 0.
 - `--foundation-tag` (default `v0.2.0`) and `--foundation-routes` (default 31, the foundation's own routes at
   v0.2.0) are only for a later foundation.
 - It prints the criteria table (or writes it to `--out`) and exits 0 when every automated criterion passes,
@@ -82,6 +86,8 @@ a test, a fixture, a preview or a screenshot; phone tests use fictional printed 
       build refuses a brief that needs them).
 - [ ] A factory machine is set up (the `static` provider pointing at CT 111, or the `proxmox` provider), and the
       models are awake (Conductor checks them before each run; see "Waking the local model" in the README).
+- [ ] `factory.build.testCommand` is not set in Conductor's config (the checker needs each run's own Vitest report,
+      which only the factory's own checks write).
 - [ ] Note the Conductor commit for the results header: `git -C /root/conductor rev-parse --short HEAD`.
 
 ## Stage 1 (Task 12): dress rehearsal on fictional notes
@@ -180,6 +186,10 @@ once as in the README's "Before the first ship (once per box)": Docker with the 
 and an Uptime Kuma push monitor. The first `conductor ship … --to test-box` asks for the rest and creates
 `deployments/test-box.json`.
 
+**Backups.** Choose a backup destination for the test in a separate place, for example an SFTP folder on the
+operator's NAS, never the box itself. Store the `BACKUP_PASSWORD` in the password manager **before** the first
+backup: without it no backup can ever be restored.
+
 On the box, run every `docker compose` command below from the bundle folder: `cd <bundleDir>` first
 (for example `cd /opt/highland/test-box`).
 
@@ -218,8 +228,22 @@ node /root/conductor/spikes/acceptance/check-acceptance.mjs ~/highland-projects/
 
 ## Stage 4 (Task 15): one change request and the verdict
 
-Criteria: C10, C14, C15, C16, C17 (status), and the verdict. Use a change the client asked for, or the mileage change
-in Task 15, written into `notes/change-mileage.md`.
+Criteria: C10, C14, C15, C16, C17 (status), and the verdict. Use a change the client asked for (with its own new
+worked examples: C14 fails a change brief that brings none), or this one, which has a number rule to prove. Write it
+into `~/highland-projects/<slug>/notes/change-mileage.md` (it is not client data):
+
+```markdown
+**Mileage claims.** Staff can claim business miles driven in their own car at the HMRC approved rates: 45p a mile for
+the first 10,000 business miles in the tax year (6 April to 5 April), 25p a mile after that. A claim records the date,
+from, to, the purpose and the miles. Mileage appears in the monthly report under its own category, "Mileage", with no
+VAT.
+
+Worked examples:
+- 132 miles on 12 March 2026 → **£59.40**.
+- A member who has already claimed 9,950 miles this tax year claims 100 more → 50 at 45p + 50 at 25p = **£35.00**.
+- The first claim on 6 April 2026 starts a new tax year: 9,950 miles claimed before 6 April do not count, so 100
+  miles → **£45.00**.
+```
 
 ```bash
 conductor change <slug> --notes ~/highland-projects/<slug>/notes/change-mileage.md

@@ -10,6 +10,7 @@ import { writeCouncilReport } from '../../src/council/reportFile.js';
 import { newDeployment, addHistory, saveDeployment, loadDeployment } from '../../src/factory/deployments/store.js';
 import { approvedBrief } from './briefFixtures.js';
 import { git } from '../../src/workspace.js';
+import { saveChangeRun } from '../../src/factory/change/run.js';
 
 export const SLUG = 'acme-expenses';
 // Real run ids: Plan 11's readCouncilReport reads only a report whose run id Conductor could have made.
@@ -111,6 +112,9 @@ export async function makeAcceptanceProject(root, { mutate } = {}) {
   const correctness = { member: 'correctness', tool: 'ai', title: 'A long merchant name may wrap on a phone', grade: 'warning' };
   await writeRun(projectDir, RUNS.build, { kind: 'build', tests: BASE_TESTS, verdict: 'approved-with-warnings', warnings: [correctness], sha: buildSha });
   await writeRun(projectDir, RUNS.change, { kind: 'change', tests: [...BASE_TESTS, 'miles are paid at 45p [mileage#1]'], verdict: 'approved', warnings: [], sha: changeSha });
+  // Plan 11's record of the change run: it released 1.1.0 (a minor release, Contract 7.11).
+  saveChangeRun(projectDir, { schema: 1, runId: RUNS.change, kind: 'change', slug: SLUG, mainAtStart: buildSha, baseRef: 'main', stage: 'done', status: 'done',
+    createdAt: '2026-10-28T14:00:00.000Z', release: { version: '1.1.0', sha: changeSha, tag: 'v1.1.0' } }, { now: new Date('2026-10-28T16:00:00Z') });
 
   let dep = newDeployment({
     name: 'test-box', project: SLUG, host: '192.168.1.111', ssh: { user: 'hf', port: null, keyPath: null }, bundleDir: '/opt/acme',

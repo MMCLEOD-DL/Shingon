@@ -13,7 +13,7 @@ fi
 docker ps -aq --filter label=com.docker.compose.project=hfsmoke 2>/dev/null | xargs -r docker rm -f >/dev/null 2>&1 || true
 docker volume ls -q --filter label=com.docker.compose.project=hfsmoke 2>/dev/null | xargs -r docker volume rm -f >/dev/null 2>&1 || true
 docker network ls -q --filter label=com.docker.compose.project=hfsmoke 2>/dev/null | xargs -r docker network rm >/dev/null 2>&1 || true
-docker rm -f hf-smoke-rest </dev/null >/dev/null 2>&1 || true
-docker rm -f hfsmoke-rest </dev/null >/dev/null 2>&1 || true
+docker rm -f -v hf-smoke-rest </dev/null >/dev/null 2>&1 || true
+docker rm -f -v hfsmoke-rest </dev/null >/dev/null 2>&1 || true
 rm -rf "$SMOKE_TMP/hf-smoke" "$SMOKE_TMP/hf-smoke-cookies" "$SMOKE_TMP"/hf-smoke-images-*.tar \
   "$SMOKE_TMP/hf-smoke-alerts.log" "$SMOKE_TMP/hf-smoke-catcher.out" || true

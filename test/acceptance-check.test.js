@@ -64,14 +64,22 @@ test('a missing test report is a fail that says which run and how to supply one'
   // build.json checks.reports without a Vitest JSON entry
   const r = await checkAcceptance(await fx('no-vitest-report'), { build: RUNS.build });
   assert.equal(byId(r).C3.status, 'fail');
-  assert.match(byId(r).C3.evidence, new RegExp(`builds/${RUNS.build} has no Vitest report in its checks\\. Re-run the build's checks, or pass --tests <file> made with: npx vitest run --reporter=json --outputFile=<file>`));
+  assert.match(byId(r).C3.evidence, new RegExp(`builds/${RUNS.build} has no Vitest report in its checks\\. Leave factory\\.build\\.testCommand unset \\(the factory's own checks write the report\\), then run the build again\\.`));
 });
 
-test('--tests replaces the build\'s own Vitest report', async () => {
-  const dir = await fx('no-vitest-report');
-  const tests = path.join(buildDirOf(dir, RUNS.build), 'reports', 'vitest.json');
-  const r = await checkAcceptance(dir, { build: RUNS.build, tests, deps: { loadBrief: () => approvedBrief() } });
-  assert.match(byId(r).C3.evidence, /upload-receipt#1: no test carries \[upload-receipt#1\]/);
+test('a failing run report cannot be replaced by a hand-made one: there is no flag for it', async () => {
+  const dir = await fx('example-failed');
+  const good = path.join(dir, 'good-vitest.json');
+  writeFileSync(good, JSON.stringify({ testResults: [{ assertionResults: ['expense-entry#1', 'expense-entry#2', 'monthly-report#1', 'mileage#1'].map((id) => ({ title: `[${id}]`, fullName: `[${id}]`, status: 'passed' })) }] }));
+  const r = await checkAcceptance(dir, { ...OPTS, tests: good, changeTests: good });   // unknown options are ignored
+  assert.equal(byId(r).C3.status, 'fail');
+  assert.match(byId(r).C3.evidence, /monthly-report#1: its test failed/);
+  const cli = new URL('../spikes/acceptance/check-acceptance.mjs', import.meta.url).pathname;
+  for (const flag of ['--tests', '--change-tests']) {
+    const out = spawnSync(process.execPath, [cli, dir, '--build', RUNS.build, '--change', RUNS.change, flag, good], { encoding: 'utf8' });
+    assert.equal(out.status, 2, flag);
+    assert.match(out.stderr, /Usage:/, flag);
+  }
 });
 
 test('a council report that is missing or not this run\'s is a fail', async () => {
@@ -222,4 +230,43 @@ test('C10 walks back past outcomes that changed nothing: a bad landing is never 
   }
   const ok = await history([...start, { version: '1.1.0', outcome: 'busy' }, { version: '1.1.0', outcome: 'already-on' }], '1.1.0');
   assert.equal(ok.status, 'pass', ok.evidence);
+});
+
+// ---- final review fixes ----
+
+test('C14 fails when the change brief brings no new worked examples', async () => {
+  const dir = await fx();
+  const brief = JSON.parse(readFileSync(path.join(dir, 'brief', 'brief-v2.json'), 'utf8'));
+  brief.features = brief.features.filter((f) => f.id !== 'mileage');
+  const s = byId(await checkAcceptance(dir, { ...OPTS, deps: { loadBrief: () => brief } }));
+  assert.equal(s.C14.status, 'fail');
+  assert.match(s.C14.evidence, /Brief v2 brings no new worked examples .* so the change has nothing new to prove/);
+});
+
+test('C10 names the version the change released and fails when the box is not on it', async () => {
+  const good = byId(await checkAcceptance(await fx(), OPTS)).C10;
+  assert.match(good.evidence, new RegExp(`current version 1\\.1\\.0, the version builds/${RUNS.change} released`));
+  const dir = await fx();
+  const run = JSON.parse(readFileSync(path.join(buildDirOf(dir, RUNS.change), 'change.json'), 'utf8'));
+  writeFileSync(path.join(buildDirOf(dir, RUNS.change), 'change.json'), JSON.stringify({ ...run, release: { ...run.release, version: '1.2.0', tag: 'v1.2.0' } }));
+  const off = byId(await checkAcceptance(dir, OPTS)).C10;
+  assert.equal(off.status, 'fail');
+  assert.match(off.evidence, /the box is on 1\.1\.0, but the change .* released 1\.2\.0/);
+  const none = await fx();
+  writeFileSync(path.join(buildDirOf(none, RUNS.change), 'change.json'), JSON.stringify({ ...run, release: undefined }));
+  assert.match(byId(await checkAcceptance(none, OPTS)).C10.evidence, /has not released a version yet/);
+});
+
+test('C6 fails on a manifest entry with no page, and when no page has a usable screenshot', async () => {
+  const dir = await fx();
+  const manifest = path.join(buildDirOf(dir, RUNS.build), 'reports', 'screenshots', 'manifest.json');
+  const m = JSON.parse(readFileSync(manifest, 'utf8'));
+  writeFileSync(manifest, JSON.stringify([...m, { project: 'mobile-webkit', file: 'x.png' }]));
+  const one = byId(await checkAcceptance(dir, OPTS)).C6;
+  assert.equal(one.status, 'fail');
+  assert.match(one.evidence, /an entry in the manifest names no page/);
+  writeFileSync(manifest, JSON.stringify(m.map((e) => ({ ...e, file: 'gone.png' }))));
+  const none = byId(await checkAcceptance(dir, OPTS)).C6;
+  assert.equal(none.status, 'fail');
+  assert.match(none.evidence, /no page has a usable screenshot/);
 });

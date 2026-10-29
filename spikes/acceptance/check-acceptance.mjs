@@ -17,6 +17,7 @@ import { loadBuild, buildDirOf } from '../../src/factory/buildState.js';
 import { readCouncilReport, councilPassed } from '../../src/factory/change/gate.js';
 import { isSha } from '../../src/factory/change/gitSafe.js';
 import { RUN_ID_RE } from '../../src/factory/ids.js';
+import { loadChangeRun } from '../../src/factory/change/run.js';
 
 export const FOUNDATION_V020_ROUTES = 31;   // v0.1.0's 28 + Task 5's 3; Task 10's hand-off confirms the figure
 
@@ -30,11 +31,11 @@ export const CRITERIA = Object.freeze([
   { id: 'C7', spec: '§2.3, §2.5', how: 'operator', title: 'On a real iPhone (Safari) and a real Android phone (Chrome): **Take a photo** opens the camera and uploads; **Choose a file** uploads a photo from the library and a PDF; the reading appears; correcting a field and confirming works; nothing scrolls sideways.' },
   { id: 'C8', spec: '§2.4', how: 'operator', title: 'On the test box: a manual backup, then `restore-test`, pass; then a real restore drill from the runbook returns a record count known beforehand.' },
   { id: 'C9', spec: '§2.4', how: 'operator', title: 'Stopping the app container sends a Matrix alert within 5 minutes, and starting it sends the recovery message.' },
-  { id: 'C10', spec: '§2.4, §4.8', how: 'auto', title: "The change request went out as an **update**: the deployment's `history` has an `installed` entry followed later by an `updated` or `confirmed` entry at the `currentVersion` (a trailing `already-on` is ignored), that version is newer than the installed one (`compareVersions`), and the last update that reached the box (outcomes that changed nothing are skipped) was not rolled back, urgent or lost contact." },
+  { id: 'C10', spec: '§2.4, §4.8', how: 'auto', title: "The change request went out as an **update**: the deployment's `history` has an `installed` entry followed later by an `updated` or `confirmed` entry at the `currentVersion` (a trailing `already-on` is ignored), that version is newer than the installed one (`compareVersions`), and the last update that reached the box (outcomes that changed nothing are skipped) was not rolled back, urgent or lost contact. The `currentVersion` must be the version the change run released (its `change.json`)." },
   { id: 'C11', spec: '§2.5', how: 'operator', title: 'A member gets from "open the app" to a confirmed receipt in under 60 seconds on a phone, with no step that needs help.' },
   { id: 'C12', spec: '§3, §6', how: 'auto', title: "The app's `app-profile.json` matches the approved brief: `policy.outbound` holds the same `OUTBOUND_SERVICES` ids (Contract 7.4), `residency` is equal, and `modules` contains every module the brief lists (here `ocr`). (Task 14 also checks `OCR_ENGINE=local` on the box by hand.)" },
   { id: 'C13', spec: '§5a', how: 'auto', title: "The latest council report has no blocking or warning item with `member: 'legal'` from the `licences` or `scancode` tool, and every entry in the app's `licence-exceptions.json` has a reason (Plan 9's Legal accepts those entries, Contract 7.7)." },
-  { id: 'C14', spec: '§4.8', how: 'auto', title: "The change run's own council report meets C2's rule, and every example id that is new in the current brief version (absent from `brief-v<N-1>.json`) is proven by a passing test in the change run's report." },
+  { id: 'C14', spec: '§4.8', how: 'auto', title: "The change run's own council report meets C2's rule, and every example id that is new in the current brief version (absent from `brief-v<N-1>.json`) is proven by a passing test in the change run's report. A change brief with no new example is a FAIL." },
   { id: 'C15', spec: '§1', how: 'operator', title: "The operator never edited the app's code by hand (Ruling 9). Any hand edit is recorded with its reason, and counts as a FAIL for the factory." },
   { id: 'C16', spec: '§3', how: 'operator', title: 'No paid-API spend unless opted in; frontier cost recorded per stage.' },
   { id: 'C17', spec: 'Contract 7.5', how: 'auto', title: '`project.json` records `foundation.tag` equal to the expected tag (`foundationTag`, `v0.2.0`, the value of `factory.foundation.tag` for this run) and status `shipped` at the end.' },
@@ -43,7 +44,6 @@ export const CRITERIA = Object.freeze([
 const PASSING_VERDICTS = new Set(['approved', 'approved-with-warnings']);
 const NOT_LANDING = new Set(['already-on', 'busy', 'cancelled', 'settings-error']);
 const SHOT_PROJECTS = [['desktop-chromium', 'desktop screenshot in Chromium'], ['mobile-chromium', 'phone screenshot in Chromium'], ['mobile-webkit', 'phone screenshot in WebKit']];
-const TESTS_HOW = 'npx vitest run --reporter=json --outputFile=<file>';
 const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const pass = (evidence) => ({ status: 'pass', evidence });
@@ -118,14 +118,13 @@ function testsIn(file, shown) {
     .filter(isObj).map((t) => ({ title: String(t.title ?? ''), fullName: String(t.fullName ?? ''), status: t.status }));
 }
 
-// The Vitest report for a run: the operator's own file when given, else the one the run's checks listed.
-function testsFor(ctx, run, override, flag) {
-  if (override) {
-    const file = path.resolve(override);
-    return { tests: testsIn(file, display(ctx.projectDir, file)), source: display(ctx.projectDir, file) };
-  }
+// The Vitest report the run's own checks listed. There is deliberately no way to pass another file instead: a report
+// made by hand could replace a run's failing one.
+function testsFor(ctx, run) {
   const file = run.report('vitest.json');
-  if (!file) throw new Missing(`${run.shown} has no Vitest report in its checks. Re-run the build's checks, or pass ${flag} <file> made with: ${TESTS_HOW}`);
+  if (!file) {
+    throw new Missing(`${run.shown} has no Vitest report in its checks. Leave factory.build.testCommand unset (the factory's own checks write the report), then run the build again.`);
+  }
   const shown = display(ctx.projectDir, file);
   return { tests: testsIn(file, shown), source: shown };
 }
@@ -209,7 +208,7 @@ function screenshots(ctx, run) {
   const pages = new Map();
   const problems = [];
   for (const e of m) {
-    if (!isObj(e) || typeof e.page !== 'string') continue;
+    if (!isObj(e) || typeof e.page !== 'string' || !e.page) { problems.push(`an entry in the manifest names no page (${JSON.stringify(e)})`); continue; }
     const ok = typeof e.file === 'string' && e.file === path.basename(e.file) && e.file.endsWith('.png') && existsSync(path.join(dir, e.file));
     if (!ok) { problems.push(`the screenshot ${JSON.stringify(e.file)} of "${e.page}" is missing`); continue; }
     (pages.get(e.page) ?? pages.set(e.page, new Set()).get(e.page)).add(e.project);
@@ -217,12 +216,20 @@ function screenshots(ctx, run) {
   for (const [page, projects] of pages) {
     for (const [project, words] of SHOT_PROJECTS) if (!projects.has(project)) problems.push(`"${page}" has no ${words}`);
   }
+  if (pages.size === 0) problems.push('no page has a usable screenshot');
   if (problems.length) return fail(`${run.shown}: ${problems.join('; ')}.`);
   return pass(`${run.shown}: ${plural(pages.size, 'page')}, each at desktop and phone width in Chromium and at phone width in WebKit.`);
 }
 
-function update(ctx) {
+function update(ctx, change) {
   if (!ctx.opts.deployment) return fail('No deployment was named, so the update could not be checked. Pass --deployment <name>.');
+  if (change.error) return fail(change.error);
+  // The version the change released, from Plan 11's own record of the change run (change.json).
+  let released;
+  try { released = loadChangeRun(ctx.projectDir, change.value.runId).release?.version; } catch (e) { return fail(e.message); }
+  if (typeof released !== 'string' || !released) {
+    return fail(`${change.value.shown} has not released a version yet (its change record has no release), so the update cannot be checked. Carry on with conductor change <slug> --resume.`);
+  }
   const name = ctx.opts.deployment;
   let dep;
   try { dep = loadDeployment(ctx.projectDir, name); } catch (e) { return fail(e.message); }
@@ -248,7 +255,8 @@ function update(ctx) {
   let newer;
   try { newer = compareVersions(cv, installed.version) > 0; } catch (e) { return fail(`${shown}: ${e.message}`); }
   if (!newer) return fail(`${shown}: the current version ${cv} is not newer than the installed ${installed.version}.`);
-  return pass(`${shown}: installed ${installed.version}, then ${h[j].outcome} ${cv} (current version ${cv}).`);
+  if (cv !== released) return fail(`${shown}: the box is on ${cv}, but the change ${change.value.shown} released ${released}, so the change did not reach it.`);
+  return pass(`${shown}: installed ${installed.version}, then ${h[j].outcome} ${cv} (current version ${cv}, the version ${change.value.shown} released).`);
 }
 
 function profile(ctx, brief) {
@@ -348,8 +356,8 @@ export async function checkAcceptance(projectDir, opts = {}) {
     return out.every((o) => o.status === 'pass') ? pass(out.map((o) => o.evidence).join(' ')) : fail(out.filter((o) => o.status === 'fail').map((o) => o.evidence).join(' '));
   };
   const latest = () => (change.value
-    ? testsFor(ctx, change.value, opts.changeTests, '--change-tests')
-    : testsFor(ctx, build.value, opts.tests, '--tests'));
+    ? testsFor(ctx, change.value)
+    : testsFor(ctx, build.value));
 
   const auto = {
     C1: () => guard(named, () => each((r) => crossing(ctx, r))),
@@ -363,7 +371,7 @@ export async function checkAcceptance(projectDir, opts = {}) {
       return pass(`${ids.length} of ${ids.length} examples proven by passing tests: ${ids.join(', ')} (${source}).`);
     }),
     C6: () => guard(named, () => each((r) => screenshots(ctx, r))),
-    C10: () => guard([], () => update(ctx)),
+    C10: () => guard([], () => update(ctx, change)),
     C12: () => guard([brief, ...named], () => profile(ctx, brief.value)),
     C13: () => guard(named, () => licences(ctx, runs())),
     C14: () => guard([brief, change], () => {
@@ -372,7 +380,10 @@ export async function checkAcceptance(projectDir, opts = {}) {
       if (idProblems.length) return fail(`${idProblems.join('; ')}.`);
       const before = previousIds(dir, brief.value.version);
       const fresh = ids.filter((id) => !before.has(id));
-      const { tests, source } = testsFor(ctx, change.value, opts.changeTests, '--change-tests');
+      if (fresh.length === 0) {
+        return fail(`Brief v${brief.value.version} brings no new worked examples (every example id was already in brief v${brief.value.version - 1}), so the change has nothing new to prove. A change brief must add the change's worked examples, each with a new id.`);
+      }
+      const { tests, source } = testsFor(ctx, change.value);
       const problems = proof(fresh, tests);
       const what = fresh.length ? `${plural(fresh.length, 'new example')} (${fresh.join(', ')})` : `no new examples in brief v${brief.value.version}`;
       if (council.status !== 'pass' || problems.length) {
@@ -423,7 +434,7 @@ export function renderResults(project, results) {
 // ---- command line ----
 
 const USAGE = `Usage: node spikes/acceptance/check-acceptance.mjs <projectDir> --build <runId> [--change <runId>] [--deployment <name>]
-       [--tests <file>] [--change-tests <file>] [--foundation-tag <vX.Y.Z>] [--foundation-routes <n>] [--out <file>]
+       [--foundation-tag <vX.Y.Z>] [--foundation-routes <n>] [--out <file>]
 
 Reads the project folder and the app's own reports, and fills in every automated acceptance criterion.
 It exits 0 when every automated criterion passes, 1 when one fails, and 2 when the arguments are wrong.`;
@@ -432,13 +443,13 @@ function cliArgs(argv) {
   const { values, positionals } = parseArgs({
     args: argv, allowPositionals: true, strict: true,
     options: {
-      build: { type: 'string' }, change: { type: 'string' }, deployment: { type: 'string' }, tests: { type: 'string' },
-      'change-tests': { type: 'string' }, 'foundation-tag': { type: 'string' }, 'foundation-routes': { type: 'string' }, out: { type: 'string' },
+      build: { type: 'string' }, change: { type: 'string' }, deployment: { type: 'string' },
+      'foundation-tag': { type: 'string' }, 'foundation-routes': { type: 'string' }, out: { type: 'string' },
     },
   });
   if (positionals.length !== 1) throw new Error('Give exactly one project folder.');
   if (!values.build) throw new Error('Name the build run with --build <runId>.');
-  const opts = { build: values.build, change: values.change, deployment: values.deployment, tests: values.tests, changeTests: values['change-tests'] };
+  const opts = { build: values.build, change: values.change, deployment: values.deployment };
   if (values['foundation-tag'] !== undefined) {
     if (!/^v\d+\.\d+\.\d+$/.test(values['foundation-tag'])) throw new Error('The foundation tag must look like v0.2.0.');
     opts.foundationTag = values['foundation-tag'];

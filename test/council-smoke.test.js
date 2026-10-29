@@ -74,7 +74,8 @@ test('runSmoke: pre-clean, the app\'s own smoke, the exit line; cleanSmoke remov
   const script = calls[0].script;
   assert.match(script, /export SMOKE_SECONDS='3300'/);
   assert.match(script, /label=com\.docker\.compose\.project=hfsmoke/);
-  assert.match(script, /docker rm -f hf-smoke-rest/);
+  assert.match(script, /^docker rm -f -v hf-smoke-rest </m);
+  assert.match(script, /^docker rm -f -v hfsmoke-rest </m);
   assert.match(script, /bash deploy\/smoke\/run-smoke\.sh/);
   assert.equal(await cleanSmoke({ ssh, machine: fakeMachine(), remoteDir: REMOTE }), null);
   assert.match(calls.at(-1).script, /rm -rf '\/srv\/hf-factory\/runs\/acme-r1\/smoke-app'/);
@@ -132,8 +133,8 @@ test('the generated script, run locally: cleans only the smoke\'s own names, the
     assert.match(r.stdout, /COUNCIL-SMOKE-EXIT 0/);
     assert.deepEqual(r.leftovers, []);
     assert.match(r.docker, /ps -aq --filter label=com\.docker\.compose\.project=hfsmoke/);
-    assert.match(r.docker, /rm -f hf-smoke-rest/);
-    assert.match(r.docker, /rm -f hfsmoke-rest/, "foundation v0.2.0's smoke names its rest container hfsmoke-rest (Plan 12 Ruling P7)");
+    assert.match(r.docker, /^rm -f -v hf-smoke-rest$/m, 'the rest container and its anonymous volumes, by exact name');
+    assert.match(r.docker, /^rm -f -v hfsmoke-rest$/m, "foundation v0.2.0's smoke names its rest container hfsmoke-rest (Plan 12 Ruling P7)");
     assert.doesNotMatch(r.docker, /rmi|prune|system/);
     assert.equal(parseSmokeLog(r.stdout, 0).steps[0].ok, true);
   } finally { rmSync(root, { recursive: true, force: true }); }
