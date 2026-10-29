@@ -518,3 +518,9 @@ Integration SHA: —
   review requested at the combined code SHA; only Malcolm merges or sets his approval label.
 - Next action: address own review/CI findings on this branch. The next "carry on" after merge
   selects the next Codex task from current main; no other task is started before that merge.
+
+### 29 October 2026 — Claude task 6 (claude-lane): post-merge review of PR #10
+
+- **Verdict:** approved, no findings. Review: [`reviews/2026-10-29-claude-review-database-url-redaction.md`](reviews/2026-10-29-claude-review-database-url-redaction.md).
+- **Evidence:** 32/32 for `status.test.ts` and `alerts.test.ts` on `3bc22a6`, even with a database password of literally `postgres`. Five of the new tests fail against the pre-merge `alerts.ts`.
+- **Correction recorded:** Claude had called the CI failure a CI-only artefact; Codex showed the production ordering defect.
