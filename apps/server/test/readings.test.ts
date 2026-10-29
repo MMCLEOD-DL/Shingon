@@ -7,8 +7,9 @@ import { createTestApp, call, signInAs, type TestApp } from './helpers/testApp.j
 import { makeTeam, makeUser } from './helpers/factories.js';
 import { fixtureLines } from './helpers/fakeOcr.js';
 import { lastAudit, readingFor, upload } from './helpers/readings.js';
-import { files, receiptReadings } from '../src/db/schema/index.js';
-import { sweepOrphans } from '../src/files/repo.js';
+import { files, receiptReadings, users } from '../src/db/schema/index.js';
+import { reattachFile, sweepOrphans } from '../src/files/repo.js';
+import type { Actor } from '../src/auth/sessions.js';
 import { LocalDiskStorage } from '../src/files/storage.js';
 
 let t: TestApp;
@@ -166,6 +167,49 @@ test('a file used by a reading is attached to it, and survives sweepOrphans 25 h
   expect(await row(id)).toBeDefined();
   // The same sweep does remove an upload nothing uses, so the cut-off really was passed.
   expect((await t.db.select().from(files).where(eq(files.id, loose.id)))).toHaveLength(0);
+});
+
+/** The signed-in actor for a test user, as the session would build it. */
+async function actorOf(u: U): Promise<Actor> {
+  const [r] = await t.db.select().from(users).where(eq(users.id, u.id));
+  return { id: r!.id, email: r!.email, name: r!.name, role: r!.role, teamId: r!.teamId };
+}
+
+test('reading, confirm, then reattachFile moves the photo to the expense, which keeps it through sweepOrphans', async () => {
+  const id = await readingFor(t, alice, 'taxi.txt');
+  expect((await call(t, aliceAuth, 'POST', `/api/readings/${id}/confirm`, TAXI)).status).toBe(200);
+  const fileId = (await row(id))!.fileId;
+  const fromReading = { type: 'receipt-reading', id };
+  const expense = { type: 'expense', id: '7f6e0f5e-2b7a-4c1e-9f55-0f0c0de0a001' };
+  const fileRow = async () => (await t.db.select().from(files).where(eq(files.id, fileId)))[0];
+
+  // Someone who cannot change the file gets 404, as with attachFile; a manager who can see it too.
+  for (const who of [bob, mN, mS]) {
+    await expect(t.db.transaction(async (tx) => { await reattachFile(tx, await actorOf(who), fileId, fromReading, expense); }))
+      .rejects.toMatchObject({ status: 404 });
+  }
+  // `from` must be where the file is now attached.
+  await expect(t.db.transaction(async (tx) => { await reattachFile(tx, await actorOf(alice), fileId, { type: 'receipt-reading', id: expense.id }, expense); }))
+    .rejects.toMatchObject({ status: 409 });
+  expect(await fileRow()).toMatchObject({ attachedType: 'receipt-reading', attachedId: id });
+
+  // A move inside a transaction that fails leaves the file where it was.
+  await expect(t.db.transaction(async (tx) => {
+    await reattachFile(tx, await actorOf(alice), fileId, fromReading, expense);
+    throw new Error('the expense was not saved');
+  })).rejects.toThrow('the expense was not saved');
+  expect(await fileRow()).toMatchObject({ attachedType: 'receipt-reading', attachedId: id });
+
+  await t.db.transaction(async (tx) => { await reattachFile(tx, await actorOf(alice), fileId, fromReading, expense); });
+  expect(await fileRow()).toMatchObject({ attachedType: 'expense', attachedId: expense.id });
+  // Moving it again from the reading is refused now: the file has moved on.
+  await expect(t.db.transaction(async (tx) => { await reattachFile(tx, await actorOf(admin), fileId, fromReading, expense); }))
+    .rejects.toMatchObject({ status: 409 });
+
+  const storage = new LocalDiskStorage(t.config.uploadDir);
+  await sweepOrphans(t.db, storage, new Date(Date.now() + 3600e3));
+  expect(await fileRow()).toMatchObject({ attachedType: 'expense', attachedId: expense.id });
+  expect(await row(id)).toMatchObject({ status: 'confirmed' });
 });
 
 test('a photo attached to something else cannot be read', async () => {

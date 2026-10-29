@@ -21,6 +21,7 @@
 - App jobs get `ctx.signal`, aborted when ops stops waiting (30 minutes) or begins to stop; once ops is stopping a job failure is only logged, not alerted; a run the timer holds back is reported as skipped and never started.
 - `deploy/smoke/ocr-modest-box.sh` checks local OCR in the app image on a 2-CPU, 2 GB box with no network; the measured figures are in `deploy/smoke/OCR-RESULT.md`.
 - A reading still being read can be confirmed (after 90 seconds the Check the details page invites typing): every field counts as corrected, and the queue finishing later never changes a confirmed reading. The queue tries its start-up load again (1, 2, 5, 10 and 30 seconds) if the database is not ready yet.
+- `reattachFile(tx, actor, fileId, from, to)` moves a file from one record to another (a receipt photo from its reading to the expense), in the caller's transaction: the row is locked, only the owner or an admin may (others get 404) and the file must still be attached to `from` (otherwise 409). `attachFile` still never moves a file.
 
 ## [0.1.0] - 2026-10-26
 - First foundation release: accounts, roles, role-crossing harness, files, email, audit, visual system, backups, monitoring, safe update.

@@ -23,7 +23,7 @@ export async function getVisibleFile(db: Db | Tx, actor: Actor, id: string): Pro
  * Links an uploaded file to the record it belongs to. Only the owner (or an admin) may; anything else is a 404.
  * A file the actor can see but does not own (a manager looking at a team member's file) is a 404 too, deliberately:
  * attaching changes the file, so only an owner or admin may, and the answer must not hint that the file exists. Client features copy this.
- * A file already attached to a different record is a 409: it is never moved from one parent to another.
+ * A file already attached to a different record is a 409: attachFile never moves a file from one parent to another (reattachFile does).
  */
 export async function attachFile(tx: Tx, actor: Actor, fileId: string, parent: { type: string; id: string }): Promise<void> {
   const [row] = await tx.select().from(files).where(eq(files.id, fileId)).for('update');
@@ -32,6 +32,21 @@ export async function attachFile(tx: Tx, actor: Actor, fileId: string, parent: {
     throw conflict('That file is already attached to something else.');
   }
   await tx.update(files).set({ attachedType: parent.type, attachedId: parent.id }).where(eq(files.id, fileId));
+}
+
+/**
+ * Moves a file from one record to another, for example a receipt photo from its reading to the expense that takes it over.
+ * Call it in the same transaction as the new record, so a failure leaves the file where it was. The same rules as
+ * `attachFile`: the row is locked, and only the owner (or an admin) may (anyone else gets 404). The file must still be
+ * attached to `from`, otherwise 409: a file is never taken from a record the caller did not name.
+ */
+export async function reattachFile(
+  tx: Tx, actor: Actor, fileId: string, from: { type: string; id: string }, to: { type: string; id: string },
+): Promise<void> {
+  const [row] = await tx.select().from(files).where(eq(files.id, fileId)).for('update');
+  if (!row || !canEdit(actor, row)) throw notFound("We couldn't find that file.");
+  if (row.attachedType !== from.type || row.attachedId !== from.id) throw conflict('That file is already attached to something else.');
+  await tx.update(files).set({ attachedType: to.type, attachedId: to.id }).where(eq(files.id, fileId));
 }
 
 /**
