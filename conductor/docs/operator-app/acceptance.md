@@ -43,3 +43,47 @@ Validation of the combined branch: 29 service tests pass; 45 operator-web tests 
 The browser journey was attempted, but this instance lacks Playwright Chromium. Installation to the writable workspace cache was refused by the network proxy with HTTP 403 Domain forbidden for cdn.playwright.dev. No browser journey is claimed for this update. Claude's historical 13/13 journey on another instance remains historical evidence, not a rerun here. Native Windows and live models are still unverified.
 
 Final combined validation for the PR #2 update: **1,541 Conductor tests passed, zero failed/skipped/cancelled** (70.40 seconds); **45 UI tests passed**, UI build passed. The launcher regression now verifies the built UI when present instead of assuming the pre-UI placeholder. No unresolved Git conflicts remain; main at 675233d is an ancestor of the review branch. Browser rerun remains blocked as described above.
+
+
+## P03 recovery follow-up — 29 October 2026
+
+Combined candidate `a3fe39a`: prepared recovery `3c3e32a` merged with main `3bc22a6`.
+The ledger conflict was resolved by preserving both assistants' entries; main's knowledge,
+CI and browser-journey changes are inherited unchanged.
+
+- N1: the authenticated `POST /runs/:id/recover` records explicit source-repository inspection,
+  bound to the current event sequence and approved commit. It is idempotent, does not start a
+  worker or alter source refs, and requires a separate Resume. Another loss before reconciliation
+  reinstates the guard. The real engine detects an already-created branch without a duplicate;
+  if the crash happened before branch creation, a fresh decision is required.
+- N2: if the worker refuses changed/unreadable evidence before passing approval to the engine,
+  it reports a failed pre-landing refusal, preserves the workspace and offers fresh review.
+  This avoids the previous user-rejection/cleanup path. Unknown post-approval failures still
+  require inspection. Tests preserve source HEAD, index, operator edits and untracked files.
+- The two representative new regressions fail against main `3bc22a6`: recovery is 404, and
+  worker-side drift becomes rejected/nonresumable. They pass on the combined candidate.
+
+Checks on Debian 13, Node 24.19.0 / npm 11.9.0:
+
+- `node --test test/service/*.test.js` through the cloud subreaper: **34 passed**.
+- `python3 /workspace/shingon-dev/reap.py node --test --test-concurrency=4` from `conductor/`
+  after sourcing the development helper: **1,548 passed**, no failures/skips/cancellations,
+  72.37 seconds.
+- `npm test` and `npm run build` from `conductor/operator-web/`: **47 passed**, build passed.
+- The unchanged `e2e/journey.mjs`: **17 passed**, zero failed, with Playwright **1.63.0**
+  selecting system Chromium **154.0.8037.57** through the supported `executablePath` option.
+  Command from `operator-web/`:
+  `NODE_PATH=/workspace/shingon-dev/browser-tools/node_modules node --import /workspace/shingon-dev/system-chromium.mjs e2e/journey.mjs`.
+  The external preload only sets `chromium.launch({executablePath:'/usr/bin/chromium',...options})`;
+  it changes no journey assertion, transport or provider. This is a system-browser result,
+  separate from CI's pinned Playwright browser. The pinned browser download was blocked by the
+  cloud proxy in the earlier attempt.
+
+The browser journey uses fixture workers; real-engine recovery tests use deterministic model
+CLI stand-ins and real Git/worker exits. Neither proves live model/subscription or native Windows
+acceptance. No Foundation code changed in this packet; its full gate was verified for merged
+PR #10 and remains a required CI check. No paid calls, remote machines or client releases.
+
+The manual inspection/acknowledgment procedure and CLI fallback are in setup.md. A dedicated
+browser recovery control remains a Claude-owned UI follow-up; no UI files or fixture copies
+were changed. Independent Claude review of this recovery revision is requested before integration.

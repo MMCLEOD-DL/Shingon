@@ -7,7 +7,7 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude acknow
 | P00 | Codex | IN_REVIEW | codex/operator-app-v1 | Concrete API/ADR/fixtures ready; Claude acknowledgement pending |
 | P01 | Codex | DONE | `codex/updater-settings-recovery` | Claude approved `06678be`; PR #6 merged as `8e5bf13`; evidence below |
 | P02 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 29 Oct P02 entry; awaiting Codex review |
-| P03 | Codex | IN_PROGRESS | `codex/operator-run-recovery` | N1/N2 prepared at `3c3e32a`; resumed after PR #10 and main `3bc22a6`; fresh validation/review due |
+| P03 | Codex | IN_REVIEW | `codex/operator-run-recovery` | N1/N2 on `a3fe39a` (main `3bc22a6` included); 34 service / 1,548 Conductor / 47 UI / 17 browser checks passed; revised peer review and merge due |
 | P04 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh`; contract v1 fixtures from `codex/operator-app-v1` @ `a8c97bc` | `conductor/operator-web`: 43/43 unit, 13/13 browser journey against real P03 service; see 29 Oct P04 entry; awaiting Codex review |
 | P05 | Codex | IN_PROGRESS | codex/operator-app-v1 | Setup/probes/launcher implemented; native Windows/live-model acceptance pending |
 | P06 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 29 Oct P06 entry; awaiting Codex review and Malcolm's decisions D1–D5 |
@@ -454,3 +454,45 @@ journey fix are inherited unchanged from main. Owned paths remain the service, s
 crash fixture, setup/interface/acceptance docs and this ledger; no UI/knowledge edits planned.
 Next: rerun affected service, full Conductor, UI and browser checks on the combined branch;
 submit one high-risk P03 PR with auto-merge off and fresh peer-review evidence.
+
+### 29 October 2026 — Codex P03 recovery handoff
+
+```
+Packet/subpacket: P03 — N1 explicit inspected recovery; N2 pre-landing evidence refusal.
+Owner and reviewer: Codex; reviewer Claude.
+Status: IN_REVIEW.
+Baseline SHA: 3bc22a6; original prepared code: 3c3e32a; combined code candidate: a3fe39a.
+Owned files: conductor/src/service/{runs,server,worker}.js; conductor/test/service/{server,engine}.test.js;
+  conductor/test/fixtures/operator-app/crash-land-worker.js; docs/operator-app/{setup,interface,acceptance}.md;
+  this ledger. No changes relative to main in UI, knowledge, CI, ownership rules, or shared engine/config.
+Contract: additive v1 POST /runs/:id/recover and optional recoveryAcknowledged metadata. Input is
+  bound to the current event sequence and approved commit; a separate Resume still starts work.
+What now works: inspection has a durable, idempotent path out of an uncertain landing guard.
+  A second crash reinstates that guard until the engine reconciles its old landing record or
+  offers fresh result evidence. Existing branches are reconciled without duplicate landing;
+  a crash before landing requires fresh approval. A worker-side pre-landing evidence refusal
+  now preserves the workspace instead of treating it as a user rejection and deleting it.
+Checks (Debian 13, Node 24.19.0 / npm 11.9.0):
+  Two representative regressions fail on archived main 3bc22a6 (404 recovery; rejected drift),
+    and pass here. No reset of the working checkout was used for baseline reproduction.
+  node --test test/service/*.test.js with the cloud subreaper: 34 passed.
+  source /workspace/shingon-dev/env.sh, then from conductor/:
+    python3 /workspace/shingon-dev/reap.py node --test --test-concurrency=4:
+    1,548 passed / 0 failed / 0 skipped / 0 cancelled; 72.37 seconds.
+  From conductor/operator-web/: npm test: 47 passed; npm run build: passed.
+  Unchanged node e2e/journey.mjs via an external browser-path preload: 17 passed / 0 failed;
+    Playwright 1.63.0, system Chromium 154.0.8037.57. Exact command and wrapper purpose are
+    in docs/operator-app/acceptance.md. No assertion or provider was changed.
+Live / fake / skipped / unrun: real engine, real Git and process exits with deterministic model
+  CLI stand-ins for recovery tests; browser journey uses fixture workers. This local browser
+  result uses system Chromium, not CI's pinned browser. No live models/subscriptions, native
+  Windows, power-loss simulation, client boxes or releases. No Foundation change/rerun locally;
+  merged PR #10's full gate and this PR's required CI supply that integration check.
+Open defects or unknowns: dedicated recovery UI control remains a Claude follow-up; the manual
+  authenticated acknowledgment and CLI recovery procedures are documented. No new blocker found.
+External blocker: high-risk service path needs Malcolm's merge or approval label; auto-merge off.
+Next packet unblocked: further lane work after this task merges, subject to current main/reviews.
+Reviewer disposition and reviewed SHA: Claude approved prior service 93e65b3; request independent
+  review of this recovery revision at a3fe39a. Do not infer sign-off from the author's own tests.
+Integration SHA: —
+```
