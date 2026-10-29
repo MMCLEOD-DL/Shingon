@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+- A PDF receipt of more than three pages is now refused with "This PDF has more than 3 pages, so it can't be read automatically. Please type the details." Before, only its first three pages were read and the reading said nothing of the rest, so a total or date on a later page (a corrected total, say) was lost and an earlier one could be proposed with full confidence.
 
 ## [0.2.0] - 2026-10-29
 - **Upgrading an app from 0.1.0** (details in BUILDING-ON, "Upgrading an app from v0.1.0 to v0.2.0"): an app that has made a release on 0.1.0 has a `foundation.json` its own releases overwrote, so after merging restore it with `git checkout v0.2.0 -- foundation.json` and commit.

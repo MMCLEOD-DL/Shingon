@@ -6,11 +6,11 @@ Created 29 October 2026. Planning only: no packets have started, no interface is
 |---|---|---|---|---|
 | P00 | Codex | NOT_STARTED | — | — |
 | P01 | Codex | NOT_STARTED | — | — |
-| P02 | Claude | NOT_STARTED | — | — |
+| P02 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 30 Oct entry; awaiting Codex review |
 | P03 | Codex | NOT_STARTED | — | — |
 | P04 | Claude | NOT_STARTED | — | — |
 | P05 | Codex | NOT_STARTED | — | — |
-| P06 | Claude | NOT_STARTED | — | — |
+| P06 | Claude | IN_PROGRESS | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 30 Oct entry |
 | P07 | Codex + Claude review | NOT_STARTED | — | — |
 | P08 | Codex + Claude review | NOT_STARTED | — | — |
 | P09 | Claude | NOT_STARTED | — | — |
@@ -38,3 +38,38 @@ Created 29 October 2026. Planning only: no packets have started, no interface is
 ## Session entries
 
 Append dated entries using the handoff template in `03-parallel-working.md`. Capture owner, exact SHA, evidence, reviewer and next action. Do not copy credentials or historical automation prompts into this ledger.
+
+### 30 October 2026 — P02 (Claude)
+
+```
+Packet/subpacket: P02 — refuse incomplete PDF extraction
+Owner and reviewer: Claude; reviewer Codex
+Status: IN_REVIEW
+Baseline SHA: a8ffb91 (planning commit on top of 8c712e9)
+Result commit(s) / patch artifact: the P02 commit on claude/adoring-carson-gaa3xh (see git log)
+Owned files and shared seams changed: foundation/modules/ocr/src/pdfWorker.ts, src/pdfText.ts,
+  test/helpers.ts (new textPdf builder), test/pdf-text.test.ts, foundation/CHANGELOG.md. No ops/P01 files.
+Contract version: n/a (Foundation module; no operator-app contract)
+What now works: the reader checks numPages before reading any page. More than 3 pages -> worker
+  replies {ok:false, problem:'too-many-pages'} -> UnreadableError(TOO_MANY_PAGES_PDF), which the server
+  queue already stores as the reading's problem (status 'unreadable'). 1-3 page PDFs read every page.
+  Chose the plan's preferred refusal over incomplete-document metadata: no consumer changes needed and
+  no partial read exists to carry a confidence.
+Checks (cloud Linux, Node v22.22.0, npm 10.9.4, cwd foundation/, npm ci from lockfile):
+  - Reproduced before fix: 4-page synthetic PDF -> lines of pages 1-3 only, readReceipt amount
+    {value:1000, confidence:1}, no warning.
+  - New tests with src/ stashed: 3 failed (4-page total, 4-page date, 200-page) / 2 passed (1- and 3-page).
+  - npx vitest run --project @hf/ocr --maxWorkers=1 -> 7 files, 316 tests passed, exit 0
+    (includes existing compression-bomb, memory-ceiling, deadline and queue tests, unchanged).
+  - npm run lint -> exit 0; npm run typecheck -> exit 0.
+Live / fake / skipped / unrun distinctions: synthetic PDFs only. Full Foundation suite (needs
+  PostgreSQL), licences, web build and verify:full NOT run here; the plan runs them after P01 integrates.
+  No server-level test added: apps/server already maps any UnreadableError to its userMessage.
+Open defects or unknowns: product trade-off - legitimate 4+ page receipts (invoices with T&Cs pages)
+  now need manual entry where they previously got a (possibly wrong) partial reading. Raising the page
+  cap is a separate resource-limit decision; the memory/deadline watchdogs would bound it.
+External blocker and exact owner/action: none.
+Next packet unblocked: none directly; P07 integrates it with P01.
+Reviewer disposition and reviewed SHA: pending (Codex).
+Integration SHA: —
+```

@@ -7,13 +7,14 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import { inflateSync } from 'node:zlib';
 
-export type PdfWorkerReply = { ok: true; lines: string[] } | { ok: false; problem: 'unopenable' };
+export type PdfWorkerReply = { ok: true; lines: string[] } | { ok: false; problem: 'unopenable' | 'too-many-pages' };
 /** What the thread is given: the PDF, and whether to check it first (always, except in tests of the watchdogs). */
 export interface PdfWorkerInput {
   data: Uint8Array;
   preScan: boolean;
 }
 
+/** The most pages read. A longer PDF is refused whole: a total or date on a later page must not go unseen. */
 const MAX_PAGES = 3;
 /** The most all the compressed streams of one PDF may inflate to, together. A receipt needs far less. */
 const INFLATE_BUDGET = 32 * 1024 * 1024;
@@ -275,8 +276,9 @@ async function read({ data, preScan }: PdfWorkerInput): Promise<PdfWorkerReply> 
   });
   try {
     const doc = await task.promise;
+    if (doc.numPages > MAX_PAGES) return { ok: false, problem: 'too-many-pages' };
     const lines: string[] = [];
-    for (let n = 1; n <= Math.min(doc.numPages, MAX_PAGES); n += 1) {
+    for (let n = 1; n <= doc.numPages; n += 1) {
       const content = await (await doc.getPage(n)).getTextContent();
       const items = content.items.flatMap((i) =>
         'str' in i && i.str.trim() !== '' ? [{ str: i.str, x: i.transform[4] as number, y: i.transform[5] as number, height: i.height }] : [],
