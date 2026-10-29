@@ -118,7 +118,7 @@ export async function runUpdate(deps: UpdateDeps, opts: { to: string }): Promise
       ...(result.snapshotId !== undefined ? { snapshotId: result.snapshotId } : {}),
     }).catch(() => false);
     // The record of the update in progress goes only once its outcome is safely written down.
-    if (stored !== false && deps.journal !== undefined && result.clearJournal) await deps.journal.clear().catch(() => undefined);
+    if (stored !== false && deps.journal !== undefined && result.clearJournal && result.outcome !== 'rollback-failed') await deps.journal.clear().catch(() => undefined);
     if (result.alert) {
       await deps.alert.send(result.message).catch((e: unknown) => { deps.log?.(`The alert could not be sent: ${sentence(e)}`); });
     }
@@ -305,6 +305,11 @@ async function updateLocked(deps: UpdateDeps, to: string): Promise<Result> {
       // the monitor, so it watches the box while the operator responds.
       await markAfterChange('undo-failed');
       try { await startOps(); } catch { /* ignored */ }
+      const actualTag = await compose.readTag().catch(() => null);
+      const tagState = done.tag ? `names ${from} again`
+        : actualTag === to ? `still names ${to}`
+          : actualTag !== null ? `currently names ${actualTag}, but its safe restoration could not be confirmed`
+            : 'could not be read, so its version is unknown';
       const restored = done.database && done.uploads ? 'The database and the uploaded files were put back from it'
         : done.database ? 'The database was put back from it, but the uploaded files were not'
           : 'The database and the uploaded files were not put back from it';
@@ -312,7 +317,7 @@ async function updateLocked(deps: UpdateDeps, to: string): Promise<Result> {
         outcome: 'rollback-failed',
         message: `[${client}] ${ROLLBACK_FAILED_MARK} ${to} failed (${reason}) and the automatic undo also failed (${clause(e)}). The app may be down. Backup ${id} holds the data from before the update. `
           // Exactly where the undo stopped, so the operator knows where to start.
-          + `${restored}, and .env ${done.tag ? `names ${from} again` : `still names ${to}`}. `
+          + `${restored}, and .env ${tagState}. `
           + 'See the runbook, section "Recovering from a failed update".',
         alert: true,
         snapshotId: snap,
@@ -330,8 +335,12 @@ async function updateLocked(deps: UpdateDeps, to: string): Promise<Result> {
   try {
     await compose.writeTag(to);
   } catch (e) {
-    // The rename is atomic: the settings still name the old version and the database is untouched.
-    return cancelAndRestart(sentence(e));
+    // A directory flush may fail after rename, with the new tag already visible.
+    // Only a read-back of the old tag permits the pre-change restart. Otherwise
+    // recover first; never launch the new image without its migrations.
+    const actualTag = await compose.readTag().catch(() => null);
+    if (actualTag === from) return cancelAndRestart(sentence(e));
+    return rollback(`the deployment settings could not be safely switched (${clause(e)})`);
   }
   await markAfterChange('migrating');
   let migrated = false;
