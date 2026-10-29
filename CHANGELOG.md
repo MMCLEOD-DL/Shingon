@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+- **Upgrading an app from 0.1.0** (details in BUILDING-ON, "Upgrading an app from v0.1.0 to v0.2.0"): an app that has made a release on 0.1.0 has a `foundation.json` its own releases overwrote, so after merging restore it with `git checkout v0.2.0 -- foundation.json` and commit.
+- **Upgrading an app from 0.1.0:** pages now come from `routeObjectsFor(modules)` (`apps/web/src/routes.tsx`) and `ALL_APP_PATHS` (`apps/web/src/appPaths.ts`); move any page added to 0.1.0's `routeObjects` or `APP_PATHS` arrays into them. `sendReport` takes the config as its second argument.
 - Optional modules: app-profile.json chooses modules and the data policy; money helpers in whole pence.
 - Node 22.13 or later is now needed (`engines.node` `>=22.13`), because the PDF reader the receipt module uses requires it.
 - Receipt reading on the box itself: Tesseract (tesseract.js, model read from disk, never downloaded), the text of PDF receipts, a corpus of fictional rendered receipts, and `npm run test:ocr` with an accuracy report in `reports/`.

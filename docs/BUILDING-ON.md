@@ -86,12 +86,12 @@ The factory writes this file from the approved brief: Plan 8's `nameApp` at the 
 
 ### Reading receipts (`ocr`)
 
-Copy the receipts pages' pattern (`apps/web/src/pages/ocr/`: `ReceiptNew`, `ReceiptCheck` and `ReceiptReadingFields`, with the server side in `apps/server/src/modules/ocr/`):
+Copy the receipts pages' pattern (`apps/web/src/modules/ocr/`: `ReceiptNew`, `ReceiptCheck` and `ReceiptReadingFields`, with the server side in `apps/server/src/modules/ocr/`):
 
-- **Staff always confirm.** The reading only *proposes* a total, VAT, date and merchant, each with a confidence; fields below 0.85 say "Please check". Nothing is saved as an expense value until a person presses Confirm.
+- **Staff always confirm.** The reading only *proposes* a total, VAT, date and merchant, each with a confidence; fields below 0.85 say "Please check". Nothing is saved as an expense value until a person presses Confirm. A reading still being read can be confirmed too (after 90 seconds the page invites typing the details): every field then counts as corrected, and the reading finishing later never changes a confirmed reading.
 - **Store the confirmed values, never the proposal.** A client expense row takes the values from the confirm step and keeps the reading's id. Nothing reads `proposal` after confirmation: it is what the machine guessed, not what the person agreed.
 - **Corrected field names are audited** (names only, never the values), as the confirm route already does.
-- **The receipt file belongs to its reading** (attached with the parent type `receipt-reading` in the same transaction, so the orphan sweep keeps it). When your expense row takes over the photo, attach the file to the expense with `attachFile` in the same transaction as the expense, re-pointing it, so the photo follows the expense's rules from then on.
+- **The receipt file belongs to its reading** (attached with the parent type `receipt-reading` in the same transaction, so the orphan sweep keeps it). When your expense row takes over the photo, move the file to the expense with `reattachFile(tx, actor, fileId, { type: 'receipt-reading', id: readingId }, { type: 'expense', id: expenseId })` (from `apps/server/src/files/repo.ts`) in the same transaction as the expense, so the photo follows the expense's rules from then on. It locks the file's row, needs edit rights on the file (owner or admin; anyone else gets 404, as with `attachFile`) and refuses with 409 unless the file is still attached to the `from` record. `attachFile` itself never moves a file from one record to another.
 - A reading keeps no recognised text (it is personal data) and is deleted with its file.
 - **Memory.** Each reader (`OCR_CONCURRENCY`, default 1) can use about 500 MB while it reads a large photo (up to 25 megapixels), and keeps it. One reader fits a 2 GB box with room to spare; each extra one needs about 500 MB more.
 
@@ -99,7 +99,7 @@ Copy the receipts pages' pattern (`apps/web/src/pages/ocr/`: `ReceiptNew`, `Rece
 
 - Build **one** `MoneyReport` with `buildMoneyReport` (from `@hf/shared`) and hand the same object to `renderPdf`, `renderXlsx` and the screen. The exports never calculate: every subtotal and total is worked out once, in whole pence, by `buildMoneyReport`.
 - **Pin it with worked examples** like `W1_MARCH` in `packages/shared/test/worked-examples.ts` (totals worked out by hand from the client's brief) before the feature counts as done.
-- Serve it with `sendReport(reply, report, 'pdf' | 'xlsx', baseName)` from a `defineRoute` route, with its permission and crossing case like any other route.
+- Serve it with `sendReport(reply, config, report, 'pdf' | 'xlsx', baseName)` from a `defineRoute` route, with its permission and crossing case like any other route. **Register export routes only inside `if (moduleOn(config, 'pdf-export'))` (or `'xlsx-export'`)**, as the server does for `ocr` (Ruling 7). As a second line of defence `sendReport` answers 404 when the module for the asked-for format is off, so a route registered by mistake still serves nothing. It makes one file at a time; other downloads wait their turn, so a burst of exports cannot exhaust a small box's memory.
 
 ### Scheduled jobs (`scheduled-jobs`)
 
@@ -120,7 +120,14 @@ git fetch foundation --tags
 git merge v0.1.1
 ```
 
-Before merging, read the foundation's `CHANGELOG.md` for the versions in between. Entries marked `[security]` must be taken promptly. Resolve any conflicts (they should be rare if the foundation's files were left alone), run `npm run verify:full`, and ship the result through the normal change-request path (spec §4.8): a release, then the update path in each deployment's runbook.
+Before merging, read the foundation's `CHANGELOG.md` for the versions in between.
+
+### Upgrading an app from v0.1.0 to v0.2.0
+
+- **`foundation.json`.** v0.1.0's release script stamped `foundation.json` with the app's own version at every app release (fixed in v0.2.0, which stamps it only in the foundation itself). An app built on v0.1.0 **that has made a release** therefore carries a wrong `foundation.json`, and the merge may keep it. After merging, restore it from the tag and commit: `git checkout v0.2.0 -- foundation.json && git commit -m "Restore foundation.json from v0.2.0"`. It must then read version `0.2.0`. (An app that never released can run the same command; it changes nothing.)
+- **Pages.** v0.2.0 builds the router with `routeObjectsFor(modules)` in `apps/web/src/routes.tsx` and the page list from `ALL_APP_PATHS` in `apps/web/src/appPaths.ts` (`APP_PATHS` is now worked out from it for the modules in the build). A page an app added to v0.1.0's `routeObjects` array goes into the `signedIn` list inside `routeObjectsFor` (or beside the public pages), and its `APP_PATHS` entry goes into `ALL_APP_PATHS`. Expect merge conflicts in those two files; resolve them by moving the app's lines, not by keeping the old arrays.
+- **`sendReport`** now takes the config as its second argument (`sendReport(reply, config, report, format, baseName)`).
+ Entries marked `[security]` must be taken promptly. Resolve any conflicts (they should be rare if the foundation's files were left alone), run `npm run verify:full`, and ship the result through the normal change-request path (spec §4.8): a release, then the update path in each deployment's runbook.
 
 ## The quality gates
 
