@@ -1,13 +1,15 @@
 /**
  * Sends a money report as a download. The report is already built (buildMoneyReport, Ruling 4), so this only lays it
  * out and sets the headers. Call it from a route declared with defineRoute whose rows were read through visibleTo,
- * and register that route only when the export module is on (moduleOn, Ruling 7).
+ * and register that route only when the export module is on (moduleOn, Ruling 7). As a second line of defence it
+ * answers 404 when the module for the asked-for format is off.
  */
 import type { FastifyReply } from 'fastify';
-import type { MoneyReport } from '@hf/shared';
+import { moduleOn, type AppProfile, type MoneyReport } from '@hf/shared';
 import { renderPdf } from '@hf/pdf-export';
 import { renderXlsx } from '@hf/xlsx-export';
 import { encodeName } from '../../files/routes.js';
+import { notFound } from '../../http/errors.js';
 
 const XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 /** The longest download name, in characters, extension included. */
@@ -20,16 +22,25 @@ function downloadName(baseName: string, ext: string): string {
   return `${base === '' ? 'report' : base}.${ext}`;
 }
 
-export async function sendReport(reply: FastifyReply, report: MoneyReport, format: 'pdf' | 'xlsx', baseName: string): Promise<void> {
-  let body: Buffer;
-  let type: string;
-  if (format === 'xlsx') {
-    body = await renderXlsx(report);
-    type = XLSX_TYPE;
-  } else {
-    body = await renderPdf(report);
-    type = 'application/pdf';
-  }
+/** The export still being made; the next one waits for it. */
+let lastExport: Promise<unknown> = Promise.resolve();
+
+/**
+ * Runs `make` once every export started before it has finished (or failed), so only one report file is built at a time
+ * and a burst of downloads cannot exhaust a small box's memory.
+ */
+export function oneExportAtATime<T>(make: () => Promise<T>): Promise<T> {
+  const turn = lastExport.then(make, make);
+  lastExport = turn.catch(() => undefined);
+  return turn;
+}
+
+export async function sendReport(
+  reply: FastifyReply, config: { profile: AppProfile }, report: MoneyReport, format: 'pdf' | 'xlsx', baseName: string,
+): Promise<void> {
+  if (!moduleOn(config, format === 'xlsx' ? 'xlsx-export' : 'pdf-export')) throw notFound();
+  const type = format === 'xlsx' ? XLSX_TYPE : 'application/pdf';
+  const body = await oneExportAtATime(() => (format === 'xlsx' ? renderXlsx(report) : renderPdf(report)));
   // Built in full before any header is set, so a failure is an ordinary plain error, never half a download.
   await reply
     .header('content-type', type)

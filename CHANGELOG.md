@@ -22,6 +22,7 @@
 - `deploy/smoke/ocr-modest-box.sh` checks local OCR in the app image on a 2-CPU, 2 GB box with no network; the measured figures are in `deploy/smoke/OCR-RESULT.md`.
 - A reading still being read can be confirmed (after 90 seconds the Check the details page invites typing): every field counts as corrected, and the queue finishing later never changes a confirmed reading. The queue tries its start-up load again (1, 2, 5, 10 and 30 seconds) if the database is not ready yet.
 - `reattachFile(tx, actor, fileId, from, to)` moves a file from one record to another (a receipt photo from its reading to the expense), in the caller's transaction: the row is locked, only the owner or an admin may (others get 404) and the file must still be attached to `from` (otherwise 409). `attachFile` still never moves a file.
+- `sendReport` now takes the config: `sendReport(reply, config, report, format, baseName)`. It answers 404 when the module for that format (`pdf-export` or `xlsx-export`) is off, and makes one export at a time (others wait their turn). Register export routes inside `moduleOn` (BUILDING-ON).
 
 ## [0.1.0] - 2026-10-26
 - First foundation release: accounts, roles, role-crossing harness, files, email, audit, visual system, backups, monitoring, safe update.
