@@ -5,7 +5,7 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude acknow
 | Packet | Provisional owner | Status | Branch/checkout + baseline | Result/review/integration evidence |
 |---|---|---|---|---|
 | P00 | Codex | IN_REVIEW | codex/operator-app-v1 | Concrete API/ADR/fixtures ready; Claude acknowledgement pending |
-| P01 | Codex | IN_REVIEW | codex/update-settings-safety | b25e2bf; 110 focused tests + types/lint passed; review/integrated Foundation checks pending |
+| P01 | Codex | IN_REVIEW | `codex/updater-settings-recovery` from `42efa16` | R1-1/R1-2/R1-3 addressed; 129 focused tests, 1,107 full tests passed (6 Restic tests skipped); lint/types/licences/web build passed; revised peer review and merge pending |
 | P02 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 29 Oct P02 entry; awaiting Codex review |
 | P03 | Codex | IN_REVIEW | codex/operator-app-v1 | Backend a8c97bc; full regression and engine integration pass; UI/peer review pending |
 | P04 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh`; contract v1 fixtures from `codex/operator-app-v1` @ `a8c97bc` | `conductor/operator-web`: 43/43 unit, 13/13 browser journey against real P03 service; see 29 Oct P04 entry; awaiting Codex review |
@@ -221,3 +221,53 @@ Final combined validation for the PR #2 update: **1,541 Conductor tests passed, 
   - Still fixture workers: no real engine, models or native Windows.
 - **P04:** fixed `RunView` so it offers no stale question or Stop between an accepted answer and the next snapshot. The new unit test fails without the fix.
 - **Loop:** added `.claude/skills/claude-lane/SKILL.md` (one task per PR; merge = approval; read the repo between tasks).
+
+### 29 October 2026 — Codex claim: P01 settings recovery
+
+Packet/subpacket: P01 — R1-1 settings-only undo, R1-2 changelog and R1-3 recovery coverage.
+Owner: Codex; reviewer: Claude.
+Status: IN_PROGRESS.
+Branch: `codex/updater-settings-recovery`; baseline: `42efa16` (current main).
+Owned paths: `foundation/ops/src/update.ts`, `foundation/ops/test/update-settings-safety.test.ts`,
+`foundation/CHANGELOG.md`, and this ledger.
+Carries forward the unmerged `codex/update-settings-safety` @ `b25e2bf` as `2e994db` on current main;
+the new branch supersedes that earlier submission candidate without rewriting it.
+Scope: restore and confirm the previous settings before falling back to database/uploads restore,
+retain truthful recovery evidence, and run the Foundation gate. P03 and other packets stay separate.
+
+### 29 October 2026 — Codex P01 revised handoff
+
+```
+Packet/subpacket: P01 — update/settings safety, Claude R1-1/R1-2/R1-3.
+Owner and reviewer: Codex; reviewer Claude.
+Status: IN_REVIEW.
+Baseline SHA: 42efa16; carried-forward safety fix: 2e994db (original b25e2bf).
+Owned files: foundation/ops/src/update.ts; foundation/ops/test/update-settings-safety.test.ts;
+  foundation/CHANGELOG.md; this ledger.
+What now works: a post-rename settings failure first attempts a durable settings-only undo and
+  checks the tag before starting the old app; no database or uploads restore on that success path.
+  Failure to confirm that undo falls back to full restore. Failure of full recovery keeps the
+  undo-failed journal and backup reference, with a truthful observed/unknown tag message.
+  Cancellation after settings recovery records the backup and says the settings were restored.
+Checks (cloud Linux, Node 24.19.0 / npm 11.9.0; local development PostgreSQL 17):
+  Reproduction on 2e994db: three new recovery expectations failed, four passed, before source fix.
+  From foundation/, sourcing the local development helper and umask 022:
+  npx vitest run --project @hf/ops update-settings-safety.test.ts update.test.ts compose.test.ts
+    set-env.test.ts journal.test.ts update-cli.test.ts --maxWorkers=1: 129/129 passed (9 in new file).
+  npm run lint: passed. npm run typecheck: passed.
+  npm run licences: passed; 449 installed packages and 553 lock entries permissive.
+  npm test -- --maxWorkers=1: 1,107 passed, 6 skipped; 94 files passed, 1 skipped; 234.52 seconds.
+  npm -w @hf/web run build: passed (dependency annotation/chunk-size warnings only).
+Live / fake / skipped / unrun: new filesystem tests use real temporary .env files and injected
+  failures with deterministic Compose stand-ins; full suite uses local development PostgreSQL.
+  Six real Restic backup/restore integration tests skipped because restic is absent. Browser and
+  OCR-corpus release checks, native Windows and client-box smoke tests not run. No live models,
+  subscription probes, external machines or releases.
+Open defects or unknowns: no new P01 defect found; revised peer review remains due. The Restic
+  integration gap is explicit and the stand-ins do not prove a real client-box restore.
+External blocker: none for review; native/client-box acceptance requires the appropriate host.
+Next packet unblocked: none until Malcolm merges this task under the lane loop.
+Reviewer disposition and reviewed SHA: Claude approved the original b25e2bf subject to R1-1;
+  this revision addresses the notes but does not claim a new independent sign-off.
+Integration SHA: —
+```

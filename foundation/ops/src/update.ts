@@ -102,7 +102,8 @@ const minutes = (ms: number): string => {
 
 /**
  * `ops update --to <version>`: stop the app and the monitor, take an encrypted backup, switch the image tag, migrate, start,
- * and wait for the new version to be healthy. Any failure after the backup puts the backup and the previous version back.
+ * and wait for the new version to be healthy. Before migrations, a failed tag switch restores just the settings when
+ * possible; later failures put the backup and the previous version back.
  * Every outcome except "already running"/"already on" reaches the operator as a plain-English alert, and is recorded once.
  */
 export async function runUpdate(deps: UpdateDeps, opts: { to: string }): Promise<UpdateOutcome> {
@@ -248,18 +249,21 @@ async function updateLocked(deps: UpdateDeps, to: string): Promise<Result> {
     }
   }
 
-  /** Before anything has changed: bring the old app and the monitor back, and say so truthfully. */
-  const cancelAndRestart = async (reason: string): Promise<Result> => {
+  /** Before migrations: bring the old app and monitor back, after restoring settings if needed. */
+  const cancelAndRestart = async (reason: string, restoredSnapshot?: string): Promise<Result> => {
     await mark('finishing');
     let appBack = true;
     try { await compose.up('app'); } catch { appBack = false; }
     try { await startOps(); } catch { appBack = false; }
+    const state = restoredSnapshot === undefined ? 'Nothing was changed'
+      : `The previous deployment settings were restored without changing the database or uploaded files; backup ${restoredSnapshot.slice(0, 8)} was kept`;
     return {
       outcome: 'cancelled',
       message: appBack
-        ? `[${client}] Update to ${to} cancelled: ${reason} Nothing was changed; the app is running ${from} again.`
-        : `[${client}] Update to ${to} cancelled: ${reason} Nothing was changed, but the app could not be started again: run docker compose up -d app ops`,
+        ? `[${client}] Update to ${to} cancelled: ${reason} ${state}; the app is running ${from} again.`
+        : `[${client}] Update to ${to} cancelled: ${reason} ${state}, but the app could not be started again: run docker compose up -d app ops`,
       alert: true,
+      ...(restoredSnapshot !== undefined ? { snapshotId: restoredSnapshot } : {}),
     };
   };
 
@@ -336,11 +340,19 @@ async function updateLocked(deps: UpdateDeps, to: string): Promise<Result> {
     await compose.writeTag(to);
   } catch (e) {
     // A directory flush may fail after rename, with the new tag already visible.
-    // Only a read-back of the old tag permits the pre-change restart. Otherwise
-    // recover first; never launch the new image without its migrations.
+    // Only a read-back of the old tag permits the pre-change restart. Otherwise,
+    // no migration has run: undo just the settings first to avoid an unnecessary
+    // database/uploads restore. A successful durable write AND read-back are
+    // required; a second flush failure is not a confirmed restoration.
     const actualTag = await compose.readTag().catch(() => null);
     if (actualTag === from) return cancelAndRestart(sentence(e));
-    return rollback(`the deployment settings could not be safely switched (${clause(e)})`);
+    try {
+      await compose.writeTag(from);
+      if (await compose.readTag() !== from) throw new Error('the previous version could not be confirmed in .env');
+    } catch (undoError) {
+      return rollback(`the deployment settings could not be safely switched (${clause(e)}) and the previous settings could not be safely restored (${clause(undoError)})`);
+    }
+    return cancelAndRestart(sentence(e), snap);
   }
   await markAfterChange('migrating');
   let migrated = false;
