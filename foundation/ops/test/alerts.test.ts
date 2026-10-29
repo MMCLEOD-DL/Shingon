@@ -123,3 +123,21 @@ test('only path segments that look like tokens are hidden, so ordinary words sta
   for (const w of ['webhook', 'database', 'notify', 'api', 'push']) expect(looksLikeToken(w), w).toBe(false);
   for (const w of ['Ab3dE6gH9j', '0123abcd', 'aVeryLongPlainWordX']) expect(looksLikeToken(w), w).toBe(true);
 });
+
+for (const secret of ['postgres', 'postgresql', 'post']) {
+  test(`a secret matching the database URI scheme cannot prevent whole-address hiding (${secret})`, () => {
+    const out = redactAlert(`Failure: postgres://app:unknown-pw@private-db/a postgresql://user:other-pw@other-db/b ${secret}`, [secret]);
+    expect(out).toBe('Failure: [database address hidden] [database address hidden] [hidden]');
+  });
+}
+
+test('a secret matching another URI scheme cannot expose an inline password', () => {
+  const out = redactAlert('Failure: https://app:unknown-pw@private-host/path https', ['https']);
+  expect(out).toBe('Failure: [hidden]://app:***@private-host/path [hidden]');
+  expect(out).not.toContain('unknown-pw');
+});
+
+test('configured credential-bearing URLs are still hidden whole', () => {
+  const url = 'https://app:inline-pw@hooks.example/private-path?token=token-value';
+  expect(redactAlert(`Failure: ${url} https`, [url, 'https'])).toBe('Failure: [hidden] [hidden]');
+});

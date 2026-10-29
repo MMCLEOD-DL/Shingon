@@ -1,0 +1,22 @@
+[project]
+name = "shingon-knowledge"
+version = "0.1.0"
+description = "Shingon knowledge service: permission-filtered, versioned, cited document retrieval (K2 skeleton)."
+requires-python = ">=3.11"
+# Exact pins, all permissive (repository licence policy): pg8000 BSD-3-Clause, pypdf BSD-3, python-docx MIT, openpyxl MIT.
+dependencies = [
+  "pg8000==1.31.5",
+  "pypdf==6.17.0",
+  "python-docx==1.2.0",
+  "openpyxl==3.1.5",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+shingon_knowledge = ["migrations/*.sql"]

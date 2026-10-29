@@ -257,6 +257,8 @@ try {
         await p.getByRole('button', { name: 'Approve: create a branch' }).click();
         await p.getByText(/Your sign-in has ended/).waitFor({ timeout: 15000 });
         await p.goto(`${second.origin}/#bootstrap=${second.bootstrapToken}`);
+        // Wait for sign-in to finish: navigating away at once can cancel the session POST before its cookie is set.
+        await p.getByRole('heading', { name: 'New coding task' }).waitFor({ timeout: 15000 });
         await p.goto(`${second.origin}/runs/${runId}`);
         await p.getByText('Interrupted', { exact: true }).waitFor({ timeout: 15000 });
         await p.getByText(/Any question it was asking has been withdrawn/).waitFor();

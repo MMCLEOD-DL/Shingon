@@ -1,0 +1,30 @@
+{
+  "_note": "Labelled questions over the synthetic corpus (corpus.py). 'expect.key' is the source that must be cited; 'locator' fields must match the cited passage. 'none' means the service must return evidence 'none' (or no results). Categories: exact-fact, table, pdf-page, absent, conflict, restricted, cross-tenant, scope, injection, ingest-failure, paraphrase, calculation.",
+  "questions": [
+    {"id": "q01", "cred": "alice", "category": "exact-fact", "query": "mileage rate pence per mile own car", "expect": {"key": "acme/expenses-policy.docx", "version": 2, "locator": {"sectionPath": ["Acme Expenses Policy", "3 Mileage"]}}},
+    {"id": "q02", "cred": "andy", "category": "exact-fact", "query": "What is the mileage rate for using my own car?", "expect": {"key": "acme/expenses-policy.docx", "version": 2, "locator": {"sectionPath": ["Acme Expenses Policy", "3 Mileage"]}}},
+    {"id": "q03", "cred": "alice", "category": "exact-fact", "query": "Which claims need a finance manager's approval?", "expect": {"key": "acme/expenses-policy.docx", "version": 2, "locator": {"sectionPath": ["Acme Expenses Policy", "2 Approval"]}}},
+    {"id": "q04", "cred": "alice", "category": "exact-fact", "query": "daily meal allowance overnight travel", "expect": {"key": "acme/expenses-policy.docx", "locator": {"sectionPath": ["Acme Expenses Policy", "4 Meals"]}}},
+    {"id": "q05", "cred": "alice", "category": "pdf-page", "query": "hotel cap London per night", "expect": {"key": "acme/travel-policy-2025.pdf", "locator": {"page": 2}}},
+    {"id": "q06", "cred": "andy", "category": "pdf-page", "query": "how far ahead should rail travel be booked", "expect": {"key": "acme/travel-policy-2025.pdf", "locator": {"page": 1}}},
+    {"id": "q07", "cred": "alice", "category": "table", "query": "Sales travel budget Q3", "expect": {"key": "acme/budget-2026.xlsx", "locator": {"sheet": "Budget", "cellRange": "A4:E4"}}},
+    {"id": "q08", "cred": "andy", "category": "table", "query": "Marketing budget for Q4", "expect": {"key": "acme/budget-2026.xlsx", "locator": {"sheet": "Budget", "cellRange": "A2:E2"}}},
+    {"id": "q09", "cred": "alice", "category": "calculation", "query": "total budget across all departments in Q1", "expect": {"key": "acme/budget-2026.xlsx"}, "note": "The total is a formula with no saved result: retrieval can only offer the rows; the answer needs a calculation the KB does not do."},
+    {"id": "q10", "cred": "alice", "category": "restricted", "query": "salary band Senior Analyst", "expect": {"key": "acme/salary-bands.docx", "locator": {"sectionPath": ["Salary Bands 2026", "Analyst grades"]}}},
+    {"id": "q11", "cred": "andy", "category": "restricted", "query": "salary band Senior Analyst", "expect": "none"},
+    {"id": "q12", "cred": "bella", "category": "cross-tenant", "query": "mileage rate pence per mile own car", "expect": {"key": "birch/staff-handbook.md", "locator": {"sectionPath": ["Birch Staff Handbook", "Mileage"]}}},
+    {"id": "q13", "cred": "alice", "category": "cross-tenant", "query": "Birch hybrid working days from home", "expect": "none"},
+    {"id": "q14", "cred": "bella", "category": "cross-tenant", "query": "Acme salary bands senior analyst", "expect": "none"},
+    {"id": "q15", "cred": "alice", "category": "absent", "query": "parental leave entitlement", "expect": "none"},
+    {"id": "q16", "cred": "andy", "category": "absent", "query": "company car lease policy electric vehicles", "expect": "none"},
+    {"id": "q17", "cred": "alice", "category": "ingest-failure", "query": "how long must original receipts be kept", "expect": "none", "note": "The answer is only in a scanned PDF that could not be indexed; the import status must show why."},
+    {"id": "q18", "cred": "alice", "category": "ingest-failure", "query": "board approved office lease", "expect": "none", "note": "Only in a password-protected PDF."},
+    {"id": "q19", "cred": "conductor", "category": "scope", "query": "how should API errors be returned", "expect": {"key": "standards/api-errors.md", "locator": {"sectionPath": ["API conventions", "Error responses"]}}},
+    {"id": "q20", "cred": "conductor", "category": "scope", "query": "Acme mileage rate expenses policy", "expect": "none", "note": "A Conductor token reaches reference collections only."},
+    {"id": "q21", "cred": "conductor", "category": "injection", "query": "release checklist before tagging", "expect": {"key": "standards/release-checklist.md"}, "mustFlagInstructionLike": "standards/release-checklist.md"},
+    {"id": "q22", "cred": "conductor", "category": "exact-fact", "query": "what must never be written to logs", "expect": {"key": "standards/logging.md"}},
+    {"id": "q23", "cred": "alice", "category": "conflict", "query": "mileage 45 pence per mile", "expect": {"key": "acme/expenses-policy.docx", "version": 2}, "note": "The only '45p' passages are in the superseded 2025 travel policy (and in expenses-policy v1, which must no longer be indexed). The current rate must outrank or the old one must carry supersededBy.", "mustFlagSuperseded": "acme/travel-policy-2025.pdf"},
+    {"id": "q24", "cred": "andy", "category": "paraphrase", "query": "how much do I get back for driving my vehicle for work", "expect": {"key": "acme/expenses-policy.docx", "locator": {"sectionPath": ["Acme Expenses Policy", "3 Mileage"]}}, "note": "Shares almost no words with the passage: a known weakness of keyword retrieval."},
+    {"id": "q25", "cred": "alice", "category": "paraphrase", "query": "accommodation limit in the capital", "expect": {"key": "acme/travel-policy-2025.pdf", "locator": {"page": 2}}, "note": "Synonyms only (accommodation/hotel, capital/London)."}
+  ]
+}

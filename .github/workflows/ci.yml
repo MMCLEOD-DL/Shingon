@@ -1,12 +1,14 @@
 # Checks that gate auto-merge (see .claude/skills/claude-lane/SKILL.md and AGENTS.md).
-# Branch protection on main should require: foundation, conductor, operator-web, risk-gate.
+# Branch protection on main should require: foundation, knowledge, conductor, operator-web, risk-gate.
 # Deliberately not triggered by label events: re-running with skipped jobs would report them
 # as passing on the same commit. Labels re-run only risk-gate.yml.
 name: ci
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    # Not ready_for_review: the commit was already checked when the PR opened (drafts run CI too),
+    # and re-running every job on the same commit only delays auto-merge.
+    types: [opened, synchronize, reopened]
   push:
     branches: [main]
 
@@ -25,18 +27,20 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_PASSWORD: postgres
+          # Not a common word: Foundation hides configured secret values wherever they appear in text, so a
+          # password like "postgres" would also be hidden inside every postgres:// address in its tests.
+          POSTGRES_PASSWORD: ci-db-Kq7xR2
         ports: ['5432:5432']
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
     env:
-      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      TEST_DATABASE_URL: postgres://postgres:ci-db-Kq7xR2@localhost:5432/postgres
     defaults:
       run:
         working-directory: foundation
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '22.22.0'
           cache: npm
@@ -48,6 +52,32 @@ jobs:
       # One worker: several tests are timing-sensitive (05-validation.md). umask 022 for file-mode assertions.
       - run: umask 022 && npm test -- --maxWorkers=1
 
+  knowledge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          # Not a common word: Foundation hides configured secret values wherever they appear in text, so a
+          # password like "postgres" would also be hidden inside every postgres:// address in its tests.
+          POSTGRES_PASSWORD: ci-db-Kq7xR2
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgres://postgres:ci-db-Kq7xR2@localhost:5432/postgres
+    defaults:
+      run:
+        working-directory: knowledge
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - run: python -m pip install -r requirements.lock && python -m pip install --no-deps -e .
+      - run: python -m unittest discover -s tests -v
+
   conductor:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -55,8 +85,8 @@ jobs:
       run:
         working-directory: conductor
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '22.22.0'
       - run: git config --global user.name "ci" && git config --global user.email "ci@example.invalid"
@@ -69,8 +99,8 @@ jobs:
       run:
         working-directory: conductor/operator-web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '22.22.0'
           cache: npm
