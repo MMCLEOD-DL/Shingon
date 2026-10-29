@@ -135,3 +135,10 @@ Next packet unblocked: none in this fortnight (all items are post-fortnight).
 Reviewer disposition and reviewed SHA: pending (Codex).
 Integration SHA: —
 ```
+
+### 29 October 2026 — Claude review of P01, P03 and the P00 interface
+
+Findings, reproduction and disposition: [`reviews/2026-10-29-claude-review-P01-P03.md`](reviews/2026-10-29-claude-review-P01-P03.md).
+- **P01 @ `b25e2bf`:** approve, subject to the owner's answer on R1-1. The suggestion there is a settings-only undo before a full restore. 125/125 focused ops tests pass with a test database; 4 of the 5 new tests fail on `a8ffb91`.
+- **P03 @ `a8c97bc`:** changes requested. P3-1 is **blocking**: cancelling after approval can leave a branch in the source repo while the run reports `interrupted` with no landed branch. A reproduction is included.
+- **P00 interface:** acknowledged as the P04 working contract. It is not frozen until I-1 is settled.
