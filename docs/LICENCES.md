@@ -8,6 +8,7 @@ A test (`deploy/test/docs.test.ts`) fails when it no longer matches `package-loc
 Every package recorded in `package-lock.json` (direct and indirect, including build and test tools, and the platform-specific builds for every operating system and processor, such as `@esbuild/linux-x64`), one row for each package version: 544 rows. The list is the same on every computer.
 `npm run licences` (part of `npm run verify`) fails if any installed package or any lockfile entry is not on the permissive list, unless the operator has written down a reason in `licence-exceptions.json`.
 Vite is held at 7.3.7, because Vite 8 needs `lightningcss`, which is MPL-2.0.
+png-js 2.0.0 (the PNG reader of pdfkit, used by the PDF export) shows "none declared" below: its `package.json` has no licence field, but the LICENSE file it ships is the MIT licence. It is the one entry in `licence-exceptions.json`, approved by the operator on 2026-10-28.
 
 | Package | Version | Licence |
 |---|---|---|

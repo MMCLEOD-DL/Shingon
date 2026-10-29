@@ -296,7 +296,8 @@ export async function startDaemon(deps: OpsDeps, opts: DaemonOptions = {}): Prom
   const startUp = app.startUp().catch((e: unknown) => {
     deps.log(`The app's scheduled jobs could not be checked at start: ${firstLine(scrub(deps, e instanceof Error ? e.message : String(e)))}.`);
   });
-  return { stop: () => { scheduler.stop(); }, startUp };
+  // App jobs are told first, so a job cut short by the stop is only logged, never alerted as a failure.
+  return { stop: () => { app.stop(); scheduler.stop(); }, startUp };
 }
 
 /** `ops daemon`: the long-running scheduler. Resolves when asked to stop (SIGTERM from `docker compose stop`, or SIGINT). */

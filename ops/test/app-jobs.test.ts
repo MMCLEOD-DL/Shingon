@@ -125,7 +125,7 @@ test('a run cut short by an ops restart is never run again for that due time', a
     expect(await runAppJob(deps, job, due)).toBe('already-ran');
     expect(runs).toBe(0);
     expect(await describeAppJobs(deps, [job])).toEqual([
-      'monthly report — "0 7 1 * *" (UK time) — last run 1 May 2026 at 07:00: started but did not finish (ops stopped part-way through).',
+      'monthly report — "0 7 1 * *" (UK time) — last run 1 May 2026 at 07:00: started but did not finish (ops stopped part-way through, or could not record how it went).',
     ]);
   });
 });
@@ -267,6 +267,42 @@ test('a run still going after its time limit is recorded as failed and alerted b
   });
 });
 
+test('a job is told through ctx.signal when ops stops waiting for it at the time limit', async () => {
+  await withJobDeps(async (deps) => {
+    let signal: AbortSignal | undefined;
+    const job: AppJob = { name: 'stuck', label: 'stuck job', cron: '0 7 1 * *', catchUp: 'skip', run: (ctx) => { signal = ctx.signal; return never(); } };
+    await expect(runAppJob(deps, job, new Date('2026-03-01T07:00:00Z'), { timeLimitMs: 1000 })).rejects.toThrow('It did not finish within 1 second.');
+    expect(signal?.aborted).toBe(true);
+  });
+});
+
+test('once ops is stopping, a job is told through ctx.signal and its failure is only logged, never alerted', async () => {
+  await withJobDeps(async (deps) => {
+    const { monitor, sent } = testMonitor();
+    let started!: () => void;
+    const begun = new Promise<void>((r) => { started = r; });
+    const job: AppJob = {
+      name: 'report', label: 'monthly report', cron: '0 7 1 * *', catchUp: 'skip',
+      run: (ctx) => new Promise<string>((_r, reject) => {
+        started();
+        ctx.signal.addEventListener('abort', () => { reject(new Error('Cannot use a pool after calling end on the pool')); });
+      }),
+    };
+    const failure = onJobFailure(deps, monitor);
+    const app = scheduleAppJobs(deps, [job], failure);
+    const fire: Record<string, (at?: Date) => Promise<unknown>> = {};
+    const s = startScheduler(app.jobs, failure, (_c, name, f) => { fire[name] = f; return { stop: () => undefined }; });
+    const run = fire['report']!(new Date('2026-03-01T07:00:00Z'));
+    await begun;
+    app.stop();
+    s.stop();
+    expect(await run).toBe('ran');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(sent).toEqual([]);
+    expect(deps.logged.some((l) => l.includes('monthly report') && l.includes('ops was stopping'))).toBe(true);
+  });
+});
+
 test('a fire skipped because the last run is still going is logged each time and alerted once', async () => {
   await withJobDeps(async (deps) => {
     const { monitor, sent } = testMonitor();
@@ -308,7 +344,7 @@ test('at start, a run cut short by an ops stop is reported once by label and nev
     await claimRun(deps.db, 'monthly-report', due, due);
     deps.now = () => new Date('2026-05-10T12:00:00Z');
     await scheduleAppJobs(deps, [job], onJobFailure(deps, monitor)).startUp();
-    const message = 'It started on 1 May 2026 at 07:00 but ops stopped before it finished, so it has not been run again. Check whether it did its work.';
+    const message = 'It started on 1 May 2026 at 07:00 but ops stopped before it finished (or could not record how it went), so it has not been run again. Check whether it did its work.';
     expect(sent).toEqual([`[Acme] Problem: the scheduled job "monthly report" failed. ${message}`]);
     expect(deps.logged).toContain(`The scheduled job "monthly report" did not work: ${message}`);
     expect(runs).toBe(0);
@@ -326,7 +362,7 @@ test('ops keeps working while an app job hangs: the scheduler starts first, the 
     await deps.db.insert(jobRuns).values({ job: 'hung', dueAt: new Date('2026-01-01T07:00:00Z'), startedAt: new Date('2026-01-01T07:00:00Z'), finishedAt: new Date('2026-01-01T07:00:01Z'), ok: true });
     const fire: Record<string, (at?: Date) => Promise<unknown>> = {};
     const daemon = await startDaemon(deps, {
-      appJobs: [hung], alerting: { channel: { send: async (t) => { sent.push(t); } }, monitor },
+      appJobs: [hung], alerting: { channel: { send: async (t) => { sent.push(t); } }, monitor }, appJobTimeLimitMs: 60_000,
       schedule: (_c, name, f) => { fire[name] = f; return { stop: () => undefined }; },
     });
     try {

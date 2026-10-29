@@ -13,6 +13,11 @@ export interface AppJobContext {
   log: (line: string) => void;
   /** The due time this run is for (a whole minute), such as 07:00 UK time on the 1st for a monthly report. */
   dueAt: Date;
+  /**
+   * Aborted when ops stops waiting for this run (after 30 minutes) or begins to stop. Ops cannot stop a job from outside, so
+   * a long job should check it (or pass it to anything that takes an AbortSignal) and give up cleanly.
+   */
+  signal: AbortSignal;
 }
 
 export interface AppJob {
@@ -26,7 +31,7 @@ export interface AppJob {
   catchUp: 'once' | 'skip';
   /**
    * Does the work. May return a one-line summary for the run history (at most 500 characters are kept). Ops stops waiting
-   * for it after 30 minutes and records the run as failed.
+   * for it after 30 minutes, aborts `ctx.signal` and records the run as failed. Keep it short and safe to run again.
    */
   // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- a job either returns a summary or nothing
   run: (ctx: AppJobContext) => Promise<string | void>;

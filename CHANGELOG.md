@@ -16,6 +16,10 @@
 - ops update --json prints the outcome as one line of JSON, for scripts.
 - New ops commands: status [--json], set-env (from standard input, known settings only) and test-alert.
 - The smoke test takes HF_SMOKE_DIR and HF_SMOKE_PROJECT, and kills the database, app and ops without warning to prove they recover.
+- The app and ops images carry app-profile.json and the optional modules (built before the server), and the app image ships the PDF reader's child process and the demo receipts. The app image leaves out what it never loads (pdfjs-dist's native canvas and browser builds, the browser copies of the Tesseract engines, the legacy English model and source maps).
+- OCR settings for a box: `.env.example` and `ops init` write `OCR_ENGINE=local` and `OCR_CONCURRENCY=1`, with `OCR_TIMEOUT_MS` and the three `OCR_AZURE_*` lines commented out (cloud OCR only when the data policy allows it); `compose.yaml` passes them to the app only, and a stop waits 70 seconds so a reading can finish; `ops set-env` accepts the six `OCR_*` keys.
+- App jobs get `ctx.signal`, aborted when ops stops waiting (30 minutes) or begins to stop; once ops is stopping a job failure is only logged, not alerted; a run the timer holds back is reported as skipped and never started.
+- `deploy/smoke/ocr-modest-box.sh` checks local OCR in the app image on a 2-CPU, 2 GB box with no network; the measured figures are in `deploy/smoke/OCR-RESULT.md`.
 
 ## [0.1.0] - 2026-10-26
 - First foundation release: accounts, roles, role-crossing harness, files, email, audit, visual system, backups, monitoring, safe update.

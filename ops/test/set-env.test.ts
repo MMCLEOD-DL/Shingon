@@ -61,6 +61,10 @@ describe('the settable keys', () => {
     for (const k of BACKEND_ENV_KEYS) expect(SETTABLE_ENV_KEYS).toContain(k);
   });
 
+  test('the OCR settings are settable, so a box can switch OCR engine without editing .env by hand', () => {
+    for (const k of ['OCR_ENGINE', 'OCR_CONCURRENCY', 'OCR_TIMEOUT_MS', 'OCR_AZURE_ENDPOINT', 'OCR_AZURE_KEY', 'OCR_AZURE_REGION']) expect(SETTABLE_ENV_KEYS, k).toContain(k);
+  });
+
   test('the list is sorted, has no repeats and no generated key', () => {
     expect([...SETTABLE_ENV_KEYS]).toEqual([...new Set(SETTABLE_ENV_KEYS)].sort());
     expect(GENERATED_ENV_KEYS).toEqual(['DB_PASSWORD', 'HEALTH_TOKEN', 'BACKUP_PASSWORD', 'HF_BUNDLE_DIR', 'COMPOSE_PROJECT_NAME']);

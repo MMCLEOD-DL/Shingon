@@ -3,17 +3,24 @@ FROM node:22-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
 COPY packages/shared/package.json packages/shared/
+COPY modules/ocr/package.json modules/ocr/
+COPY modules/pdf-export/package.json modules/pdf-export/
+COPY modules/xlsx-export/package.json modules/xlsx-export/
 COPY apps/server/package.json apps/server/
 COPY apps/web/package.json apps/web/
 COPY ops/package.json ops/
 RUN npm ci --ignore-scripts
-COPY tsconfig.base.json foundation.json ./
+# app-profile.json says whether "scheduled-jobs" is on: without it ops runs none of the app's jobs.
+COPY tsconfig.base.json foundation.json app-profile.json ./
 COPY packages packages
-# Ops records its runs in the app's database through the server's schema (apps/server/src/db), so it builds that too.
+# Ops records its runs in the app's database through the server's schema (apps/server/src/db) and runs the app's scheduled
+# jobs (apps/server/src/jobs), so it builds the server too, and the modules the server uses.
+COPY modules modules
 COPY apps/server apps/server
 COPY ops ops
 RUN npm run build --if-present -w @hf/ops \
- && npm prune --omit=dev --ignore-scripts
+ && npm prune --omit=dev --ignore-scripts \
+ && rm -rf node_modules/@napi-rs/canvas node_modules/@napi-rs/canvas-*
 
 FROM node:22-bookworm-slim
 ARG APP_VERSION=0.0.0-dev
@@ -49,9 +56,15 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /app/node_modules node_modules
-COPY --from=build /app/package.json /app/foundation.json ./
+COPY --from=build /app/package.json /app/foundation.json /app/app-profile.json ./
 COPY --from=build /app/packages/shared/package.json packages/shared/package.json
 COPY --from=build /app/packages/shared/dist packages/shared/dist
+COPY --from=build /app/modules/ocr/package.json modules/ocr/package.json
+COPY --from=build /app/modules/ocr/dist modules/ocr/dist
+COPY --from=build /app/modules/pdf-export/package.json modules/pdf-export/package.json
+COPY --from=build /app/modules/pdf-export/dist modules/pdf-export/dist
+COPY --from=build /app/modules/xlsx-export/package.json modules/xlsx-export/package.json
+COPY --from=build /app/modules/xlsx-export/dist modules/xlsx-export/dist
 COPY --from=build /app/apps/server/package.json apps/server/package.json
 COPY --from=build /app/apps/server/dist apps/server/dist
 COPY --from=build /app/ops/package.json ops/package.json

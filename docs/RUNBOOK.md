@@ -119,6 +119,7 @@ Every outbound connection the app and ops can make, and the `.env` setting that 
 | **Matrix homeserver** | ops (and the updater) | `MATRIX_HOMESERVER`, `MATRIX_ACCESS_TOKEN`, `MATRIX_ROOM_ID` | Alert text: the client label, a plain-English problem, version numbers, backup ids, disk figures and counts. No client records. Secrets are removed from every alert. |
 | **Alert webhook** | ops (and the updater) | `ALERT_WEBHOOK_URL` | The same alert text, as JSON `{"text": "…"}`. |
 | **Heartbeat (outside watcher)** | ops, every minute | `HEARTBEAT_URL` | `status=up` and a short message: `OK`, or the number of problems and the first one (at most 100 characters). |
+| **Azure Document Intelligence (cloud OCR)** | app, only with `OCR_ENGINE=azure` and only when the app's data policy allows `azure-document-intelligence` | `OCR_ENGINE`, `OCR_AZURE_ENDPOINT`, `OCR_AZURE_REGION`, `OCR_AZURE_KEY` | The receipt photo or PDF a member of staff asked to have read. With the default `OCR_ENGINE=local` receipts are read on the box and nothing is sent. |
 | **Tunnel provider (Cloudflare)** | tunnel | `TUNNEL_TOKEN` (only with `--profile tunnel`) | All web traffic that comes in through the tunnel, and SSH sessions routed through it. Cloudflare ends the HTTPS connection at its edge, so it can see that traffic. Say so in the data policy, or use the Tailscale alternative. |
 | **Certificate authority (Let's Encrypt or ZeroSSL)** | front door | `SITE_ADDRESS`, when it is a public name | The site's name, to obtain and renew its HTTPS certificate. No client data. |
 | **Image registry** | updater | `APP_IMAGE`, `OPS_IMAGE`, `IMAGE_PULL_POLICY=missing` | Downloads of new app and ops images, only when you use your own registry. No client data. |
@@ -189,12 +190,76 @@ To check that alerts reach you (after setting up a box, or after changing the Ma
 
 - **"TUNNEL_IP (…) is not inside EDGE_SUBNET (…). … The front door stays down until this is fixed."** (critical; also "is the gateway address", "is the network's own address", "is the broadcast address"). See "Remote access". Backups and the rest of ops carry on; only the front door is held back.
 
+### Scheduled jobs
+
+Only for an app with scheduled jobs (`scheduled-jobs` in its `app-profile.json`). Ops runs them; `ops jobs` lists each one with its timetable and how its last run went.
+
+- **"Problem: the scheduled job "monthly report" failed. …"** followed by the job's own one-line reason. Sent at once. Read `docker compose logs --tail 200 ops`; the job is tried again at its next due time, not before.
+- **"… It did not finish within 30 minutes."** Ops stopped waiting for it (it cannot stop the job itself). If it keeps happening, the job needs fixing in the app.
+- **"… The run due on … was skipped because the run due on … is still going."** Sent once per stuck run; later skips are only logged.
+- **"… It started on … but ops stopped before it finished (or could not record how it went), so it has not been run again. Check whether it did its work."** Ops was stopped or restarted (or lost its database) during the run. It is never run again for that due time, because it may have done part or all of its work: check in the app whether it did (for example, whether the monthly email went out).
+
 ### Things the alerts cannot tell you
 
 - **Alert state lives in ops' memory.** After ops restarts (an update, a reboot, `docker compose up -d`), a problem that is still there is announced again as new; a **Fixed** can be lost if the problem cleared while ops was restarting; and a critical settings problem that you fix by changing `.env` stops being reported rather than sending Fixed (the restart that applies the change also clears the memory).
 - **The heartbeat is a dead-man's switch.** While ops is alive it always reports `status=up`, even when there are problems (those go to Matrix or the webhook). The outside watcher (an Uptime Kuma push monitor set to alert after, say, 5 minutes of silence) is what tells you the **box is off, its network is down, or ops itself has stopped**. Nothing on the box can report its own death.
 - **A crash while ops is already stopped** (for example the box loses power in the middle of an update, after the updater has stopped ops) is caught only by the outside heartbeat. Ops stays stopped after such a crash, because the update stopped it on purpose.
 - **A hung disk.** If a network mount stops answering, each disk check gives up after 5 seconds and reports it, but the stuck request can keep one of Node's few background threads busy. Several hung checks in a row can slow ops down until the mount recovers or ops is restarted.
+
+## Reading receipts (OCR)
+
+Only for an app with the `ocr` module. Receipts are read on the box itself by default; nothing is sent anywhere.
+
+### The settings
+
+In `.env` (only the app receives them):
+
+| Setting | Default | What it does |
+|---|---|---|
+| `OCR_ENGINE` | `local` | `local` reads on the box. `azure` reads in the cloud: only when the app's data policy allows it (below). |
+| `OCR_CONCURRENCY` | `1` | How many receipts are read at once, 1 to 4. Each reader can use about **500 MB** of memory while it reads a large photo, and keeps it; 1 suits a 2 GB box. |
+| `OCR_TIMEOUT_MS` | `60000` | How long one reading may take (1 000 to 600 000 milliseconds) before staff are asked to type the receipt in. A stop waits 70 seconds for a reading in progress (`stop_grace_period` in `compose.yaml`). |
+
+Change a setting with `docker compose run --rm -T updater set-env < settings.txt` (or by editing `.env`), then `docker compose up -d app`.
+
+### What staff see when a receipt can't be read
+
+The form never blocks: staff can always type the details themselves. Instead of a proposal they see one plain sentence, such as "This receipt couldn't be read automatically. Please type the details.", "This receipt took too long to read. Please type the details.", "This PDF couldn't be opened. Please type the details." or "Photos in HEIC format can't be read automatically. Please type the details, or take the photo again from this page." Fields the reader was unsure of say "Please check". Nothing is saved until a person presses Confirm.
+
+### A reading is slow
+
+A receipt photo normally takes well under 10 seconds on a small two-core box (`deploy/smoke/OCR-RESULT.md` has the measured figures). If readings are slow or time out:
+
+- Check the box's CPU with `docker stats` while a receipt is read. Other work on the same machine (a backup at night, another service) slows readings down.
+- `OCR_CONCURRENCY` above 1 lets several receipts be read at once, but they then share the same CPUs, and each reader needs about 500 MB more memory. On a small box keep it at 1. Raise `OCR_TIMEOUT_MS` only if readings finish but just too late.
+- A very large photo is read more slowly; the app's own photo page shrinks pictures to 2000 pixels before sending them.
+
+### Setting up cloud OCR
+
+Only when the client's data policy (the app's `app-profile.json`, which comes with the release) already lists `azure-document-intelligence` among its outbound services. If it does not, the app refuses to start with `OCR_ENGINE=azure`: changing the policy is a change request, not a setting.
+
+1. Create the Azure Document Intelligence resource in a region the policy's residency allows (`uksouth` or `ukwest` for UK-only data).
+2. Put its details in `.env` only (the key is a secret: never in a ticket, chat or the notes):
+   ```
+   OCR_ENGINE=azure
+   OCR_AZURE_ENDPOINT=https://<name>.cognitiveservices.azure.com
+   OCR_AZURE_REGION=uksouth
+   OCR_AZURE_KEY=<key>
+   ```
+   `OCR_AZURE_REGION` is the region you declare; the app cannot see the resource's real region, so check that it matches.
+3. `docker compose up -d app`, then `docker compose logs --tail 50 app`. A wrong setting, a policy that does not allow it or a region outside the residency stops the app with one plain sentence naming the setting (never the key); fix it and start again.
+
+If the cloud service cannot be reached, the receipt is read on the box instead. Add the destination to your record of the deployment ("Where data goes").
+
+## Scheduled jobs
+
+Only for an app with the `scheduled-jobs` module. The ops container runs the app's jobs on their timetable (UK time), so they pause during an update and never run twice. To see them and how each last run went:
+
+```bash
+docker compose run --rm ops jobs
+```
+
+One line per job: its label, its timetable and its last run ("worked", "failed (reason)", "started but did not finish …" or "not run yet"). If the module is switched off it says so. What the job alerts mean is under "What the alerts mean".
 
 ## Backups and restoring
 

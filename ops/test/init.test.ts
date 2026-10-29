@@ -53,3 +53,11 @@ test('every backup-destination setting ops reads reaches it: compose passes it t
     expect(env, k).toMatch(new RegExp(`^# ${k}=$`, 'm'));
   }
 });
+
+test('local OCR is on by default with one reading at a time; cloud OCR stays commented out with the data-policy note', () => {
+  const { env } = generateEnv(opts);
+  expect(env).toMatch(/^OCR_ENGINE=local$/m);
+  expect(env).toMatch(/^OCR_CONCURRENCY=1$/m);
+  for (const k of ['OCR_AZURE_ENDPOINT', 'OCR_AZURE_REGION', 'OCR_AZURE_KEY']) expect(env, k).toMatch(new RegExp(`^# ${k}=$`, 'm'));
+  expect(env).toMatch(/data policy allows azure-document-intelligence/);
+});

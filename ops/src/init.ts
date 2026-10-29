@@ -99,6 +99,17 @@ export function generateEnv(opts: InitOptions): { env: string; checklist: string
       ],
     },
     {
+      heading: 'Reading receipts (OCR, used only when the app has the ocr module)',
+      entries: [
+        { key: 'OCR_ENGINE', comment: 'local reads receipts on this box and sends nothing anywhere. azure is cloud OCR: only if the data policy allows it.', value: 'local' },
+        { key: 'OCR_CONCURRENCY', comment: 'How many receipts are read at once (1 to 4). Each extra one needs about 500 MB more memory.', value: '1' },
+        { key: 'OCR_TIMEOUT_MS', comment: 'How long one reading may take, in milliseconds, before staff are asked to type it in.', example: '60000' },
+        { key: 'OCR_AZURE_ENDPOINT', comment: "Cloud OCR (OCR_ENGINE=azure) only, and only when the client's data policy allows azure-document-intelligence: the Azure address,", example: '' },
+        { key: 'OCR_AZURE_REGION', comment: 'its region, inside the data residency (for example uksouth),', example: '' },
+        { key: 'OCR_AZURE_KEY', comment: 'and its key. The app refuses to start if the policy does not allow it.', example: '' },
+      ],
+    },
+    {
       heading: 'Remote access (outbound tunnel)',
       entries: [
         { key: 'TUNNEL_TOKEN', comment: "Token from the tunnel provider's dashboard. Start with `--profile tunnel`. Nothing is opened inbound.", example: '' },

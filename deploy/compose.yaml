@@ -78,6 +78,15 @@ services:
       APP_VERSION: ${APP_TAG}
       WEB_DIST_DIR: /app/apps/web/dist
       TRUST_PROXY_HOPS: "1"   # exactly one proxy (Caddy) in front of the app
+      # Reading receipts (only used with the ocr module). Only the app gets these: OCR_AZURE_KEY is a secret.
+      OCR_ENGINE: ${OCR_ENGINE:-local}
+      OCR_CONCURRENCY: ${OCR_CONCURRENCY:-1}
+      OCR_TIMEOUT_MS: ${OCR_TIMEOUT_MS:-}
+      OCR_AZURE_ENDPOINT: ${OCR_AZURE_ENDPOINT:-}
+      OCR_AZURE_REGION: ${OCR_AZURE_REGION:-}
+      OCR_AZURE_KEY: ${OCR_AZURE_KEY:-}
+    # Long enough for a receipt reading in progress to finish (OCR_TIMEOUT_MS defaults to 60 s) before the app is killed.
+    stop_grace_period: 70s
     volumes: [uploads:/data/uploads]
     depends_on: { migrate: { condition: service_completed_successfully } }
     networks: [backend, frontend]

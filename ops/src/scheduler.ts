@@ -10,15 +10,15 @@ export interface Job {
 }
 
 /**
- * Starts one timer that calls `fire` on a cron schedule, with the time the run was due. The default is croner in UK time;
- * tests pass a manual one.
+ * Starts one timer that calls `fire` on a cron schedule, with the time the run was due, and `skipped` when the timer itself
+ * holds a run back because the last one is still going. The default is croner in UK time; tests pass a manual one.
  */
-export type ScheduleFn = (cron: string, name: string, fire: (at?: Date) => Promise<unknown>) => { stop(): void };
+export type ScheduleFn = (cron: string, name: string, fire: (at?: Date) => Promise<unknown>, skipped: () => void) => { stop(): void };
 
-const cronSchedule: ScheduleFn = (cron, name, fire) =>
-  // croner's `protect` as well as the guard below, so croner itself also never stacks runs. When croner holds a run back,
-  // the guarded `fire` is still called, so the guard counts it as skipped (and an app job says so).
-  new Cron(cron, { timezone: 'Europe/London', protect: () => { void fire(); }, name }, async (self: Cron) => { await fire(self.currentRun() ?? undefined); });
+const cronSchedule: ScheduleFn = (cron, name, fire, skipped) =>
+  // croner's `protect` as well as the guard below, so croner itself also never stacks runs. When croner holds a run back
+  // it is only reported as skipped (an app job says so); nothing is started.
+  new Cron(cron, { timezone: 'Europe/London', protect: () => { skipped(); }, name }, async (self: Cron) => { await fire(self.currentRun() ?? undefined); });
 
 /**
  * One job's run as the scheduler calls it: never overlapping itself (a call while the last run is still going is skipped
@@ -51,7 +51,7 @@ export function guardJob(job: Job, onFailure: (name: string, err: Error) => Prom
 export function startScheduler(jobs: Job[], onFailure: (name: string, err: Error) => Promise<void>, schedule: ScheduleFn = cronSchedule): { stop(): void } {
   const timers: { stop(): void }[] = [];
   try {
-    for (const job of jobs) timers.push(schedule(job.cron, job.name, guardJob(job, onFailure)));
+    for (const job of jobs) timers.push(schedule(job.cron, job.name, guardJob(job, onFailure), () => { job.onSkip?.(); }));
   } catch (e) {
     for (const t of timers) t.stop();
     throw e;

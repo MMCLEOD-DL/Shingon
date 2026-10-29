@@ -218,3 +218,85 @@ test('the production app build leaves out the test-only e2e server', () => {
   const build = JSON.parse(readFileSync(new URL('../../apps/server/tsconfig.build.json', import.meta.url), 'utf8')) as { exclude?: string[] };
   expect(build.exclude).toContain('src/e2e-server.ts');
 });
+
+const OCR_KEYS = ['OCR_ENGINE', 'OCR_CONCURRENCY', 'OCR_TIMEOUT_MS', 'OCR_AZURE_ENDPOINT', 'OCR_AZURE_REGION', 'OCR_AZURE_KEY'];
+
+test('the app receives the OCR settings from .env; ops and the updater receive none of them', () => {
+  for (const k of OCR_KEYS) expect(S.app.environment[k], k).toMatch(new RegExp(`^\\$\\{${k}(:-[^}]*)?\\}$`));
+  expect(S.app.environment.OCR_ENGINE).toBe('${OCR_ENGINE:-local}');
+  expect(S.app.environment.OCR_CONCURRENCY).toBe('${OCR_CONCURRENCY:-1}');
+  for (const n of ['ops', 'updater', 'migrate', 'edge-check']) {
+    expect(Object.keys(S[n]!.environment).filter((k) => k.startsWith('OCR_')), n).toEqual([]);
+  }
+});
+
+test('.env.example switches local OCR on and leaves cloud OCR commented out, with the data-policy note', () => {
+  const env = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
+  expect(env).toMatch(/^OCR_ENGINE=local$/m);
+  expect(env).toMatch(/^OCR_CONCURRENCY=1$/m);
+  for (const k of ['OCR_AZURE_ENDPOINT', 'OCR_AZURE_REGION', 'OCR_AZURE_KEY']) {
+    expect(env, k).toMatch(new RegExp(`^# ${k}=$`, 'm'));
+    expect(env, k).not.toMatch(new RegExp(`^${k}=`, 'm'));
+  }
+  expect(env).toMatch(/data policy/i);
+});
+
+test('OCR_AZURE_KEY is a secret: an empty placeholder in .env.example, and never given to ops', () => {
+  const env = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
+  const m = /^#?\s*OCR_AZURE_KEY=(.*)$/m.exec(env);
+  expect(m?.[1]?.trim()).toBe('');
+  expect(Object.keys(S.ops.environment)).not.toContain('OCR_AZURE_KEY');
+  expect(Object.keys(S.updater.environment)).not.toContain('OCR_AZURE_KEY');
+});
+
+test('a stop waits at least as long as the default OCR time limit, so a reading in progress can finish', () => {
+  const grace = String(S.app.stop_grace_period ?? '');
+  const m = /^(\d+)s$/.exec(grace);
+  expect(m, grace).not.toBeNull();
+  expect(Number(m![1])).toBeGreaterThanOrEqual(60);   // OCR_TIMEOUT_MS defaults to 60000
+});
+
+const appDockerfile = readFileSync(new URL('../Dockerfile', import.meta.url), 'utf8');
+const [buildStage = '', runtimeStage = ''] = appDockerfile.split(/^FROM [^\n]*$/m).slice(1);
+
+test('the app image builds the modules before the server and copies app-profile.json before the web build', () => {
+  expect(buildStage).toMatch(/^COPY modules modules$/m);
+  for (const m of ['ocr', 'pdf-export', 'xlsx-export']) expect(buildStage, m).toContain(`COPY modules/${m}/package.json modules/${m}/`);
+  const build = /^RUN npm run build[^\n]*(\n[^\n]*\\?)*$/m.exec(buildStage)?.[0] ?? '';
+  const order = ['@hf/shared', '@hf/ocr', '@hf/pdf-export', '@hf/xlsx-export', '@hf/server', '@hf/web'].map((w) => build.indexOf(`-w ${w}`));
+  expect(order.every((i) => i >= 0), build).toBe(true);
+  expect([...order].sort((a, b) => a - b)).toEqual(order);
+  // The web build reads app-profile.json to decide which pages it carries; a missing file silently means none.
+  expect(buildStage).toMatch(/^COPY [^\n]*app-profile\.json[^\n]*\.\/$/m);
+  expect(buildStage.search(/^COPY [^\n]*app-profile\.json/m)).toBeLessThan(buildStage.indexOf('RUN npm run build'));
+});
+
+test('the app image carries app-profile.json, the module builds, the PDF child process and the demo receipts', () => {
+  expect(runtimeStage).toMatch(/^COPY --from=build [^\n]*\/app\/app-profile\.json[^\n]*\.\/$/m);
+  for (const m of ['ocr', 'pdf-export', 'xlsx-export']) {
+    expect(runtimeStage, m).toContain(`COPY --from=build /app/modules/${m}/package.json modules/${m}/package.json`);
+    expect(runtimeStage, m).toContain(`COPY --from=build /app/modules/${m}/dist modules/${m}/dist`);
+  }
+  expect(runtimeStage).toContain('COPY --from=build /app/apps/server/src/seed/receipts apps/server/src/seed/receipts');
+  // pdfjs-dist's optional native canvas is not needed for reading text and is left out of the image.
+  expect(appDockerfile).toMatch(/rm -rf [^\n]*node_modules\/@napi-rs\/canvas/);
+  // Only the browser copies of the Tesseract engines go: Node loads tesseract-core*.js with its .wasm file.
+  expect(appDockerfile).toContain("find node_modules/tesseract.js-core -maxdepth 1 -name 'tesseract-core*.wasm.js' -delete");
+  expect(appDockerfile).toMatch(/rm -rf node_modules\/@tesseract\.js-data\/eng\/4\.0\.0 \\$/m);
+  // pdfjs-dist's legacy build is the one the PDF reader imports (modules/ocr/src/pdfWorker.ts); it must stay.
+  expect(appDockerfile).not.toMatch(/rm -rf[^\n]*pdfjs-dist\/legacy\/build/);
+  expect(appDockerfile).toMatch(/rm -rf node_modules\/pdfjs-dist\/build /);
+});
+
+test('the ops image carries app-profile.json, the modules and the server\'s jobs, so it runs the app\'s scheduled jobs', () => {
+  const ops = readFileSync(new URL('../ops.Dockerfile', import.meta.url), 'utf8');
+  const [opsBuild = '', opsRuntime = ''] = ops.split(/^FROM [^\n]*$/m).slice(1);
+  expect(opsBuild).toMatch(/^COPY modules modules$/m);
+  expect(opsBuild).toMatch(/^COPY [^\n]*app-profile\.json[^\n]*\.\/$/m);
+  for (const m of ['ocr', 'pdf-export', 'xlsx-export']) {
+    expect(opsBuild, m).toContain(`COPY modules/${m}/package.json modules/${m}/`);
+    expect(opsRuntime, m).toContain(`COPY --from=build /app/modules/${m}/dist modules/${m}/dist`);
+  }
+  expect(opsRuntime).toMatch(/^COPY --from=build [^\n]*\/app\/app-profile\.json[^\n]*\.\/$/m);
+  expect(opsRuntime).toContain('COPY --from=build /app/apps/server/dist apps/server/dist');   // includes dist/jobs
+});

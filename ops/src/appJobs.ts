@@ -121,13 +121,16 @@ const duration = (ms: number): string => {
 export interface AppJobOptions {
   /** How long one run may take (default 30 minutes). */
   timeLimitMs?: number;
+  /** Aborted when ops begins to stop; passed on to the job as `ctx.signal`. */
+  stopSignal?: AbortSignal;
 }
 
 /**
  * Runs `job` for `dueAt` unless that due time was already claimed: claim, run, then record when it finished, whether it
  * worked and its summary. A failure, or a run still going after the time limit, is recorded with one line and thrown as
  * an AppJobError, so the daemon's failure hook alerts with the job's label. Ops stops waiting for a run past its limit
- * (it cannot be stopped from outside), so a hung job never holds up anything else.
+ * and aborts `ctx.signal` (it cannot stop the job from outside: a job that ignores the signal carries on), so a hung job
+ * never holds up anything else. The signal is aborted when ops begins to stop, too.
  */
 export async function runAppJob(deps: OpsDeps, job: AppJob, dueAt: Date, opts: AppJobOptions = {}): Promise<'ran' | 'already-ran'> {
   let claimed: boolean;
@@ -138,15 +141,24 @@ export async function runAppJob(deps: OpsDeps, job: AppJob, dueAt: Date, opts: A
   }
   if (!claimed) return 'already-ran';
   const limit = opts.timeLimitMs ?? APP_JOB_TIME_LIMIT_MS;
-  const ctx = { db: deps.db, log: (line: string) => { deps.log(`${job.label}: ${clean(deps, line)}`); }, dueAt };
+  const abort = new AbortController();
+  const onStop = (): void => { abort.abort(); };
+  if (opts.stopSignal?.aborted === true) abort.abort();
+  else opts.stopSignal?.addEventListener('abort', onStop, { once: true });
+  const ctx = { db: deps.db, log: (line: string) => { deps.log(`${job.label}: ${clean(deps, line)}`); }, dueAt, signal: abort.signal };
   // Settles either way and never rejects, so a job that fails after its time limit is not an unhandled rejection.
   const settled = Promise.resolve()
     .then(() => job.run(ctx))
     .then((value) => ({ ok: true as const, value }), (error: unknown) => ({ ok: false as const, error }));
   let timer: NodeJS.Timeout | undefined;
-  const timedOut = new Promise<'timed-out'>((resolve) => { timer = setTimeout(() => { resolve('timed-out'); }, limit); });
-  const outcome = await Promise.race([settled, timedOut]).finally(() => { clearTimeout(timer); });
+  // Unref'd: a run ops is waiting for never keeps the process alive on its own once everything else has stopped.
+  const timedOut = new Promise<'timed-out'>((resolve) => { timer = setTimeout(() => { resolve('timed-out'); }, limit); timer.unref(); });
+  const outcome = await Promise.race([settled, timedOut]).finally(() => {
+    clearTimeout(timer);
+    opts.stopSignal?.removeEventListener('abort', onStop);
+  });
   if (outcome === 'timed-out') {
+    abort.abort();
     const line = `It did not finish within ${duration(limit)}.`;
     await finishRun(deps, job, dueAt, false, line);
     throw new AppJobError(job.label, line);
@@ -206,7 +218,7 @@ export async function catchUpAppJobs(
   return ran;
 }
 
-const CUT_SHORT = 'Ops stopped before it finished, so it was not run again.';
+const CUT_SHORT = 'Ops stopped before it finished (or could not record how it went), so it was not run again.';
 
 /**
  * At ops start: a run that started before `before` and never finished was cut short by an ops stop or crash. It is never
@@ -228,7 +240,7 @@ export async function reportUnfinishedRuns(deps: OpsDeps, jobs: AppJob[], onFail
     const latest = rows.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())[0];
     if (latest === undefined) continue;
     reported.push(job.name);
-    const message = `It started on ${ukDate(latest.startedAt)} but ops stopped before it finished, so it has not been run again. Check whether it did its work.`;
+    const message = `It started on ${ukDate(latest.startedAt)} but ops stopped before it finished (or could not record how it went), so it has not been run again. Check whether it did its work.`;
     await onFailure(job.name, new AppJobError(job.label, message)).catch(() => undefined);
   }
   return reported;
@@ -271,33 +283,53 @@ function jobRunner(deps: OpsDeps, job: AppJob, onFailure: (name: string, err: Er
  * The app's jobs as ops scheduler jobs, ready for `startScheduler`, and the start-up work to run once the scheduler is
  * going (never awaited before it: a hung job must not hold up backups or the monitor): report runs cut short by an ops
  * stop, then catch up. With "scheduled-jobs" not on in app-profile.json none run, and one line says how many are written
- * but switched off.
+ * but switched off. `stop` is called when ops begins to stop: each running job's `ctx.signal` is aborted, and from then on
+ * a job failure is only logged (the database pool is closing, so a raw "pool after calling end" must never be alerted).
  */
 export function scheduleAppJobs(
   deps: OpsDeps, jobs: AppJob[], onFailure: (name: string, err: Error) => Promise<void>, opts: AppJobOptions = {},
-): { jobs: Job[]; startUp: () => Promise<void> } {
+): { jobs: Job[]; startUp: () => Promise<void>; stop: () => void } {
   if (!moduleOn(deps.cfg, 'scheduled-jobs')) {
     if (jobs.length > 0) {
       deps.log(`${String(jobs.length)} scheduled ${jobs.length === 1 ? 'job is' : 'jobs are'} written but switched off. Add "scheduled-jobs" to app-profile.json to run them.`);
     }
-    return { jobs: [], startUp: () => Promise.resolve() };
+    return { jobs: [], startUp: () => Promise.resolve(), stop: () => undefined };
   }
   if (jobs.length > 0) deps.log(`Scheduled app jobs (UK time): ${jobs.map((j) => `${j.label} "${j.cron}"`).join('; ')}.`);
   const started = deps.now();
-  const runners = new Map(jobs.map((job) => [job.name, jobRunner(deps, job, onFailure, opts)]));
+  const stopping = new AbortController();
+  const stoppingLine = (err: Error): string => {
+    const label = err instanceof AppJobError ? err.label : 'a scheduled job';
+    return `The scheduled job "${label}" did not finish because ops was stopping: ${scrub(deps, err.message)}`;
+  };
+  // Alerts as usual while running; once ops is stopping, only a log line.
+  const report = async (name: string, err: Error): Promise<void> => {
+    if (stopping.signal.aborted) { deps.log(stoppingLine(err)); return; }
+    await onFailure(name, err);
+  };
+  const runOpts: AppJobOptions = { ...opts, stopSignal: stopping.signal };
+  const runners = new Map(jobs.map((job) => [job.name, jobRunner(deps, job, report, runOpts)]));
   const runnerOf = (job: AppJob): ReturnType<typeof jobRunner> => runners.get(job.name) as ReturnType<typeof jobRunner>;
   return {
     jobs: jobs.map((job) => ({
       name: job.name,
       cron: job.cron,
       // The due time is the slot the timer fired for (the clock's time when a test fires it by hand).
-      run: async (at?: Date) => { await runnerOf(job).run(job, dueAtFor(job.cron, at ?? deps.now())); },
+      run: async (at?: Date) => {
+        try {
+          await runnerOf(job).run(job, dueAtFor(job.cron, at ?? deps.now()));
+        } catch (e) {
+          if (!stopping.signal.aborted) throw e;
+          deps.log(stoppingLine(e instanceof Error ? e : new Error(String(e))));
+        }
+      },
       onSkip: () => { void runnerOf(job).skipped(); },
     })),
     startUp: async () => {
-      await reportUnfinishedRuns(deps, jobs, onFailure, started);
-      await catchUpAppJobs(deps, jobs, onFailure, (job, dueAt) => runnerOf(job).run(job, dueAt));
+      await reportUnfinishedRuns(deps, jobs, report, started);
+      await catchUpAppJobs(deps, jobs, report, (job, dueAt) => runnerOf(job).run(job, dueAt));
     },
+    stop: () => { stopping.abort(); },
   };
 }
 
@@ -312,7 +344,7 @@ export async function describeAppJobs(deps: OpsDeps, jobs: AppJob[]): Promise<st
       continue;
     }
     const outcome = last.finishedAt === null || last.ok === null
-      ? 'started but did not finish (ops stopped part-way through)'
+      ? 'started but did not finish (ops stopped part-way through, or could not record how it went)'
       : `${last.ok ? 'worked' : 'failed'}${last.summary !== null ? ` (${last.summary.replace(/\.+$/, '')})` : ''}`;
     lines.push(`${head} — last run ${ukDate(last.dueAt)}: ${outcome}.`);
   }
