@@ -411,6 +411,114 @@ Open: Malcolm should add `knowledge` to the required checks in branch protection
 Next: K3 (hybrid) needs a host with local models; K6 (HTTP API) can follow once P03 patterns are reused.
 ```
 
+### 29 October 2026 — Codex claim: P03 explicit recovery and pre-landing refusal
+
+Packet/subpacket: P03 — Claude notes N1/N2.
+Owner: Codex; reviewer: Claude. Status: IN_PROGRESS.
+Branch: `codex/operator-run-recovery`; baseline main: `c027fe6`.
+Owned paths: `conductor/src/service/{runs,server,worker}.js`, `conductor/test/service/**`,
+`conductor/docs/operator-app/{interface,setup,acceptance}.md`, and this ledger.
+Named shared seam: additive authenticated `/runs/:id/recover` operation, bound to the run event
+sequence and approved commit, recording explicit repository inspection without starting work.
+Existing UI can offer its normal Resume after acknowledgment; Claude-owned UI/fixtures stay untouched.
+The worker will distinguish a refused review before handing approval back to the engine from an
+unknown outcome after landing may have started. No shared engine/adapters/config changes planned.
+P01 is approved and merged through PR #6. Read the new merge rules: service changes are high risk,
+so this task waits for Malcolm's merge/approval label; agents do not set that label or loosen CI.
+
+### 29 October 2026 — P03 recovery prepared; CI prerequisite takes priority
+
+The two initial recovery regressions fail on c027fe6 and pass after the service revision.
+Service tests: 34/34. Full Conductor suite: 1,548/1,548 (65.93 seconds). UI tests: 47/47;
+UI production build passed. Actual engine/Git tests use deterministic CLI stand-ins and real
+worker exits before/after branch creation; source edits/index/untracked files are preserved.
+No live models or native Windows. Browser download is blocked at cdn.playwright.dev (403);
+current image's preinstalled Playwright cannot find its pinned browser.
+
+P03 remains unsubmitted. Required Foundation CI on main c027fe6 fails status.test.ts:115:
+a database password of postgres is substituted before URI recognition, leaving a broken
+[hidden]:// URL rather than hiding the whole database address. Main check 123700109780
+records the failure. This is a required-check prerequisite, so isolate its fix in its own PR
+before submitting recovery. Do not weaken the assertion/workflow or mix the fix into P03.
+The recovery source/tests/docs and this handoff are preserved on codex/operator-run-recovery;
+resume that task after the prerequisite is merged. Dedicated recovery UI remains Claude's follow-up.
+
+### 29 October 2026 — Codex resumes P03 recovery after the CI prerequisite
+
+Status: IN_PROGRESS. Branch: `codex/operator-run-recovery`.
+Prepared code: `3c3e32a`; integrating current main `3bc22a6` with a merge commit.
+PR #10 merged as `42ced97`; its Foundation/Conductor/operator-web code checks passed.
+The only merge conflict is this append-only ledger: retain Claude's K2/CI entries and all
+Codex redaction and recovery handoffs. Knowledge code, CI/ownership rules and Claude's browser
+journey fix are inherited unchanged from main. Owned paths remain the service, service tests,
+crash fixture, setup/interface/acceptance docs and this ledger; no UI/knowledge edits planned.
+Next: rerun affected service, full Conductor, UI and browser checks on the combined branch;
+submit one high-risk P03 PR with auto-merge off and fresh peer-review evidence.
+
+### 29 October 2026 — Codex P03 recovery handoff
+
+```
+Packet/subpacket: P03 — N1 explicit inspected recovery; N2 pre-landing evidence refusal.
+Owner and reviewer: Codex; reviewer Claude.
+Status: IN_REVIEW.
+Baseline SHA: 3bc22a6; original prepared code: 3c3e32a; combined code candidate: a3fe39a.
+Owned files: conductor/src/service/{runs,server,worker}.js; conductor/test/service/{server,engine}.test.js;
+  conductor/test/fixtures/operator-app/crash-land-worker.js; docs/operator-app/{setup,interface,acceptance}.md;
+  this ledger. No changes relative to main in UI, knowledge, CI, ownership rules, or shared engine/config.
+Contract: additive v1 POST /runs/:id/recover and optional recoveryAcknowledged metadata. Input is
+  bound to the current event sequence and approved commit; a separate Resume still starts work.
+What now works: inspection has a durable, idempotent path out of an uncertain landing guard.
+  A second crash reinstates that guard until the engine reconciles its old landing record or
+  offers fresh result evidence. Existing branches are reconciled without duplicate landing;
+  a crash before landing requires fresh approval. A worker-side pre-landing evidence refusal
+  now preserves the workspace instead of treating it as a user rejection and deleting it.
+Checks (Debian 13, Node 24.19.0 / npm 11.9.0):
+  Two representative regressions fail on archived main 3bc22a6 (404 recovery; rejected drift),
+    and pass here. No reset of the working checkout was used for baseline reproduction.
+  node --test test/service/*.test.js with the cloud subreaper: 34 passed.
+  source /workspace/shingon-dev/env.sh, then from conductor/:
+    python3 /workspace/shingon-dev/reap.py node --test --test-concurrency=4:
+    1,548 passed / 0 failed / 0 skipped / 0 cancelled; 72.37 seconds.
+  From conductor/operator-web/: npm test: 47 passed; npm run build: passed.
+  Unchanged node e2e/journey.mjs via an external browser-path preload: 17 passed / 0 failed;
+    Playwright 1.63.0, system Chromium 154.0.8037.57. Exact command and wrapper purpose are
+    in docs/operator-app/acceptance.md. No assertion or provider was changed.
+Live / fake / skipped / unrun: real engine, real Git and process exits with deterministic model
+  CLI stand-ins for recovery tests; browser journey uses fixture workers. This local browser
+  result uses system Chromium, not CI's pinned browser. No live models/subscriptions, native
+  Windows, power-loss simulation, client boxes or releases. No Foundation change/rerun locally;
+  merged PR #10's full gate and this PR's required CI supply that integration check.
+Open defects or unknowns: dedicated recovery UI control remains a Claude follow-up; the manual
+  authenticated acknowledgment and CLI recovery procedures are documented. No new blocker found.
+External blocker: high-risk service path needs Malcolm's merge or approval label; auto-merge off.
+Next packet unblocked: further lane work after this task merges, subject to current main/reviews.
+Reviewer disposition and reviewed SHA: Claude approved prior service 93e65b3; request independent
+  review of this recovery revision at a3fe39a. Do not infer sign-off from the author's own tests.
+Integration SHA: —
+```
+
+### Codex task submitted — P03 inspected recovery and refused review preservation
+
+- Date: 29 October 2026. Branch: `codex/operator-run-recovery`; integrated main: `3bc22a6`.
+- Last code candidate: `a3fe39a91ad4432ff71cd039d09c8e7453684ff7` (merge of prepared implementation `3c3e32a` and current main).
+  Documentation handoff: `ada7f3b`. No production change after the recorded checks.
+- PR: [#12 — P03: recover inspected runs and preserve refused reviews](https://github.com/MMCLEOD-DL/Shingon/pull/12).
+- Changes: authenticated, durable and idempotent inspection acknowledgment; separate explicit
+  Resume; preserved workspace on worker-side pre-landing refusal; unchanged uncertainty guard
+  for unknown outcomes; recovery/setup/API documentation and five regression scenarios.
+- Evidence: two representative regressions fail on main `3bc22a6`; 34 service tests passed;
+  full Conductor 1,548 passed / 0 failed/skipped/cancelled; UI 47 passed and build passed;
+  unchanged browser journey 17 passed on Playwright 1.63.0 + system Chromium 154.0.8037.57.
+  Exact commands, browser override and distinctions are in the handoff/acceptance doc above.
+- Limits: browser fixture workers and real engine with deterministic model CLI stand-ins,
+  not live subscriptions. Native Windows, power-loss, client boxes and releases unrun.
+  Dedicated UI recovery control remains Claude-owned; manual acknowledgment/CLI are documented.
+- Merge route: high-risk service/approval path; auto-merge off. Required checks (including
+  knowledge and CI's pinned-browser journey) are pending at submission. Independent Claude
+  review requested at the combined code SHA; only Malcolm merges or sets his approval label.
+- Next action: address own review/CI findings on this branch. The next "carry on" after merge
+  selects the next Codex task from current main; no other task is started before that merge.
+
 ### 29 October 2026 — Claude task 6 (claude-lane): post-merge review of PR #10
 
 - **Verdict:** approved, no findings. Review: [`reviews/2026-10-29-claude-review-database-url-redaction.md`](reviews/2026-10-29-claude-review-database-url-redaction.md).
