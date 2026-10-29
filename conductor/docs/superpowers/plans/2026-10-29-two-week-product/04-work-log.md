@@ -210,6 +210,18 @@ Combined checks: 29 service tests passed; 45 UI tests passed; UI build passed. B
 
 Final combined validation for the PR #2 update: **1,541 Conductor tests passed, zero failed/skipped/cancelled** (70.40 seconds); **45 UI tests passed**, UI build passed. The launcher regression now verifies the built UI when present instead of assuming the pre-UI placeholder. No unresolved Git conflicts remain; main at 675233d is an ancestor of the review branch. Browser rerun remains blocked as described above.
 
+### 29 October 2026 — Claude: P03 re-review at `93e65b3`, browser journey in-tree, one UI race fixed
+
+- **P03:** approved by Claude at `93e65b3`. P3-1 and I-1 are resolved; notes N1 and N2 are non-blocking. Details: [`reviews/2026-10-29-claude-review-P01-P03.md`](reviews/2026-10-29-claude-review-P01-P03.md#re-review-of-p03-at-93e65b3-claude-29-october-2026).
+- **Evidence (cloud Linux, Node 22.22.0, `main` @ `13a86f7`):**
+  - service tests 29/29;
+  - Codex's four new regressions fail 4/4 on `a8c97bc`;
+  - `operator-web` `npm test` 46/46 and build passed;
+  - `node e2e/journey.mjs` (in-tree `--service ..`, Chromium via Playwright 1.63.0) passed **15/15**. That covers the browser step that was blocked on Codex's host. Two new landing steps use `slow-land-worker.cjs`.
+  - Still fixture workers: no real engine, models or native Windows.
+- **P04:** fixed `RunView` so it offers no stale question or Stop between an accepted answer and the next snapshot. The new unit test fails without the fix.
+- **Loop:** added `.claude/skills/claude-lane/SKILL.md` (one task per PR; merge = approval; read the repo between tasks).
+
 ### 29 October 2026 — shared engine seam: git env config in `strictChildEnv` (Claude)
 
 ```

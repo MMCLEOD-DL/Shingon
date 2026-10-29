@@ -250,3 +250,23 @@ test('uncertain landing explains repository inspection instead of offering resum
   expect(screen.queryByRole('button', { name: 'Resume' })).toBeNull();
   expect(screen.queryByText(/It has no saved work to resume/)).toBeNull();
 });
+
+test('after an approval is accepted, neither the old question nor Stop is offered while the snapshot is still the pre-answer one', async () => {
+  // The service keeps returning the pre-answer snapshot (as an in-flight refresh would): the UI must not resurrect it.
+  const frozen = fixtures.awaitingResult;
+  const svc = fakeService({ run: frozen });
+  const base = svc.fetchImpl;
+  const fetchImpl = async (url, init = {}) => {
+    const r = await base(url, init);
+    if (/\/runs\/[\w-]+$/.test(url) && (init.method ?? 'GET') === 'GET') return { ok: true, status: 200, json: async () => frozen };
+    return r;
+  };
+  render(<RunView api={createApi({ fetchImpl })} runId={frozen.id} go={() => {}} />);
+  const approve = await screen.findByRole('button', { name: 'Approve: create a branch' });
+  await waitFor(() => expect(approve.disabled).toBe(false));
+  await userEvent.click(approve);
+  await screen.findByText(/Answer saved/);
+  await new Promise((r) => setTimeout(r, 50));
+  expect(screen.queryByRole('button', { name: 'Approve: create a branch' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Stop run…' })).toBeNull();
+});
