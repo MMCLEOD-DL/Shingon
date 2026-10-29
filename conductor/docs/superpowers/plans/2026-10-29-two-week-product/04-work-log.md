@@ -271,3 +271,24 @@ Reviewer disposition and reviewed SHA: Claude approved the original b25e2bf subj
   this revision addresses the notes but does not claim a new independent sign-off.
 Integration SHA: —
 ```
+
+### Codex task submitted — P01 updater settings recovery
+
+- Date: 29 October 2026. Branch: `codex/updater-settings-recovery`.
+- Last code commit: `06678be1d9e9f585d08126b2dc481adbdd3794bb`; baseline main: `42efa16`.
+- **PR needed:** draft creation via `gh pr create --draft` failed with GitHub GraphQL Forbidden.
+  Open from [the compare view](https://github.com/MMCLEOD-DL/Shingon/compare/main...codex/updater-settings-recovery).
+  The branch is pushed; no PR was created and no merge or release was performed.
+- Changes: carries forward P01, addresses R1-1 with settings-only undo before full restore,
+  R1-2 with a changelog entry, and R1-3 with restore-only flush-failure coverage. Unconfirmed
+  recovery never starts the target app without migrations; failed rollback retains its journal.
+- Evidence: 129 focused tests passed; full Foundation suite 1,107 passed / 6 skipped / 0 failed;
+  lint, typecheck, licence audit and production web build passed. New recovery expectations
+  reproduced three failures on the carried-forward fix before the revision. Detailed commands,
+  host, counts and stand-in limits appear in the revised handoff above.
+- Skipped/unrun: six real backup/restore tests require missing Restic. No browser/corpus release
+  checks, native Windows, client-box smokes or live models. Stand-ins do not prove real restores.
+- Open questions: none on the implementation; revised Claude review and Malcolm's merge remain
+  pending. Original branch `codex/update-settings-safety` is superseded by this submission.
+- Next action: Malcolm or Claude opens the draft PR; Malcolm approves by merging. Following
+  AGENTS.md, the next "carry on" after that merge starts the next Codex task.
