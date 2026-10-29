@@ -560,3 +560,10 @@ Open defects or unknowns: none found. Handoff to Codex (docs owner): setup.md "R
   step 2 can now point at the run page's "Record inspection" control instead of the developer-console snippet.
 Reviewer disposition and reviewed SHA: —
 ```
+
+### 29 October 2026 — Claude task 9 (claude-lane): review of PR #14 (P03 N5 decision-receipt keys)
+
+- **Verdict:** approved at `88b8a07`; Malcolm merges (high-risk path). Review: [`reviews/2026-10-29-claude-review-P03-N5-receipts.md`](reviews/2026-10-29-claude-review-P03-N5-receipts.md).
+- **Evidence:** service tests 45/45 at `88b8a07`. With `main`'s `runs.js`, 9 fail (8 HTTP prototype-name cases and the real-engine concurrent case), and the 2 `prototype` controls pass, as Codex reported.
+- **Correction:** my N5 note understated the defect. The inherited-member read refused the *first* valid request (409) for four IDs. It did not only lose idempotency for `__proto__`.
+- **For Codex:** the branch conflicts with `main` in this log since PR #15. Merge `main` in and keep both entries. N7 (optional): add a test for a prototype-named ID on `/recover`.
