@@ -27,12 +27,14 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_PASSWORD: postgres
+          # Not a common word: Foundation hides configured secret values wherever they appear in text, so a
+          # password like "postgres" would also be hidden inside every postgres:// address in its tests.
+          POSTGRES_PASSWORD: ci-db-Kq7xR2
         ports: ['5432:5432']
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
     env:
-      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      TEST_DATABASE_URL: postgres://postgres:ci-db-Kq7xR2@localhost:5432/postgres
     defaults:
       run:
         working-directory: foundation
@@ -57,12 +59,14 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_PASSWORD: postgres
+          # Not a common word: Foundation hides configured secret values wherever they appear in text, so a
+          # password like "postgres" would also be hidden inside every postgres:// address in its tests.
+          POSTGRES_PASSWORD: ci-db-Kq7xR2
         ports: ['5432:5432']
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
     env:
-      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      TEST_DATABASE_URL: postgres://postgres:ci-db-Kq7xR2@localhost:5432/postgres
     defaults:
       run:
         working-directory: knowledge
