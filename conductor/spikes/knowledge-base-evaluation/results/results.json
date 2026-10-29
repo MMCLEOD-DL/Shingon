@@ -1,0 +1,887 @@
+{
+  "summary": {
+    "variants": {
+      "keyword": {
+        "questions": 25,
+        "answerable": 17,
+        "hitAt1": 12,
+        "hitAt3": 15,
+        "citationCorrect": 15,
+        "abstainQuestions": 8,
+        "abstainCorrect": 5,
+        "allCorrect": 17,
+        "byCategory": {
+          "absent": "1/2",
+          "calculation": "1/1",
+          "conflict": "0/1",
+          "cross-tenant": "2/3",
+          "exact-fact": "3/5",
+          "ingest-failure": "1/2",
+          "injection": "1/1",
+          "paraphrase": "0/2",
+          "pdf-page": "2/2",
+          "restricted": "2/2",
+          "scope": "2/2",
+          "table": "2/2"
+        }
+      },
+      "keyword+supersession-demotion": {
+        "questions": 25,
+        "answerable": 17,
+        "hitAt1": 15,
+        "hitAt3": 15,
+        "citationCorrect": 15,
+        "abstainQuestions": 8,
+        "abstainCorrect": 6,
+        "allCorrect": 21,
+        "byCategory": {
+          "absent": "1/2",
+          "calculation": "1/1",
+          "conflict": "1/1",
+          "cross-tenant": "3/3",
+          "exact-fact": "5/5",
+          "ingest-failure": "1/2",
+          "injection": "1/1",
+          "paraphrase": "0/2",
+          "pdf-page": "2/2",
+          "restricted": "2/2",
+          "scope": "2/2",
+          "table": "2/2"
+        }
+      }
+    },
+    "checksPassed": 21,
+    "checks": 21,
+    "latencyMs": {
+      "searches": 350,
+      "p50": 0.33,
+      "p95": 0.69,
+      "max": 2.41
+    },
+    "corpusBuildSeconds": 4.4,
+    "firstIngestSeconds": 0.08,
+    "firstSync": {
+      "added": 8,
+      "updated": 0,
+      "unchanged": 0,
+      "deleted": 0,
+      "failed": 3,
+      "acl": 0
+    },
+    "activeSources": 7,
+    "chunks": 19,
+    "databaseBytes": 8379415,
+    "host": {
+      "python": "3.13.17",
+      "postgres": "16.15 (Ubuntu 16.15-0ubuntu0.24.04.1)",
+      "machine": "x86_64",
+      "psycopg": "3.2.10"
+    },
+    "mode": "keyword (PostgreSQL full-text, OR of lexemes, ts_rank_cd normalised); thresholds strong>=0.25 weak>=0.08"
+  },
+  "questions": {
+    "keyword": [
+      {
+        "id": "q01",
+        "category": "exact-fact",
+        "evidence": "strong",
+        "top": [
+          "acme/travel-policy-2025.pdf",
+          "acme/expenses-policy.docx"
+        ],
+        "ms": 0.8,
+        "kind": "answerable",
+        "hitRank": 2,
+        "citationCorrect": true,
+        "correct": false,
+        "note": null
+      },
+      {
+        "id": "q02",
+        "category": "exact-fact",
+        "evidence": "weak",
+        "top": [
+          "acme/travel-policy-2025.pdf",
+          "acme/expenses-policy.docx"
+        ],
+        "ms": 0.59,
+        "kind": "answerable",
+        "hitRank": 2,
+        "citationCorrect": true,
+        "correct": false,
+        "note": null
+      },
+      {
+        "id": "q03",
+        "category": "exact-fact",
+        "evidence": "strong",
+        "top": [
+          "acme/expenses-policy.docx",
+          "acme/salary-bands.docx",
+          "acme/expenses-policy.docx"
+        ],
+        "ms": 0.6,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "note": null
+      },
+      {
+        "id": "q04",
+        "category": "exact-fact",
+        "evidence": "strong",
+        "top": [
+          "acme/expenses-policy.docx",
+          "acme/travel-policy-2025.pdf",
+          "acme/travel-policy-2025.pdf"
+        ],
+        "ms": 0.66,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "note": null
+      },
+      {
+        "id": "q05",
+        "category": "pdf-page",
+        "evidence": "strong",
+        "top": [
+          "acme/travel-policy-2025.pdf",
+          "acme/travel-policy-2025.pdf",
+          "acme/expenses-policy.docx"
+        ],
+        "ms": 0.72,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "note": null
+      },
+      {
+        "id": "q06",
+        "category": "pdf-page",
+        "evidence": "strong",
+        "top": [
+          "acme/travel-policy-2025.pdf",
+          "acme/travel-policy-2025.pdf",
+          "acme/travel-policy-2025.pdf"
+        ],
+        "ms": 0.71,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "note": null
+      },
+      {
+        "id": "q07",
+        "category": "table",
+        "evidence": "strong",
+        "top": [
+          "acme/budget-2026.xlsx",
+          "acme/travel-policy-2025.pdf",
+          "acme/budget-2026.xlsx"
+        ],
+        "ms": 0.66,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "note": null
+      },
+      {
+        "id": "q08",
+        "category": "table",
+        "evidence": "strong",
+        "top": [
+          "acme/budget-2026.xlsx",
+          "acme/budget-2026.xlsx",
+          "acme/budget-2026.xlsx"
+        ],
+        "ms": 1.1,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "note": null
+      },
+      {
+        "id": "q09",
+        "category": "calculation",
+        "evidence": "strong",
+        "top": [
+          "acme/budget-2026.xlsx",
+          "acme/budget-2026.xlsx",
+          "acme/budget-2026.xlsx"
+        ],
+        "ms": 0.5,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "note": "The total is a formula with no saved result: retrieval can only offer the rows; the answer needs a calculation the KB does not do."
+      },
+      {
+        "id": "q10",
+        "category": "restricted",
+        "evidence": "strong",
+        "top": [
+          "acme/salary-bands.docx",
+          "acme/salary-bands.docx"
+        ],
+        "ms": 0.52,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "note": null
+      },
+      {
+        "id": "q11",
+        "category": "restricted",
+        "evidence": "none",
+        "top": [],
+        "ms": 0.28,
+        "correct": true,
+        "kind": "abstain",
+        "note": null
+      },
+      {
+        "id": "q12",
+        "category": "cross-tenant",
+        "evidence": "strong",
+        "top": [
+          "birch/staff-handbook.md"
+        ],
+        "ms": 0.24,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "note": null
+      },
+      {
+        "id": "q13",
+        "category": "cross-tenant",
+        "evidence": "weak",
+        "top": [
+          "acme/travel-policy-2025.pdf"
+        ],
+        "ms": 0.41,
+        "correct": false,
+        "kind": "abstain",
+        "note": null
+      },
+      {
+        "id": "q14",
+        "category": "cross-tenant",
+        "evidence": "none",
+        "top": [],
+        "ms": 0.39,
+        "correct": true,
+        "kind": "abstain",
+        "note": null
+      },
+      {
+        "id": "q15",
+        "category": "absent",
+        "evidence": "none",
+        "top": [],
+        "ms": 0.29,
+        "correct": true,
+        "kind": "abstain",
+        "note": null
+      },
+      {
+        "id": "q16",
+        "category": "absent",
+        "evidence": "weak",
+        "top": [
+          "acme/travel-policy-2025.pdf",
+          "acme/travel-policy-2025.pdf",
+          "acme/expenses-policy.docx"
+        ],
+        "ms": 0.74,
+        "correct": false,
+        "kind": "abstain",
+        "note": null
+      },
+      {
+        "id": "q17",
+        "category": "ingest-failure",
+        "evidence": "none",
+        "top": [],
+        "ms": 0.48,
+        "correct": true,
+        "kind": "abstain",
+        "note": "The answer is only in a scanned PDF that could not be indexed; the import status must show why."
+      },
+      {
+        "id": "q18",
+        "category": "ingest-failure",
+        "evidence": "weak",
+        "top": [
+          "acme/expenses-policy.docx"
+        ],
+        "ms": 0.41,
+        "correct": false,
+        "kind": "abstain",
+        "note": "Only in a password-protected PDF."
+      },
+      {
+        "id": "q19",
+        "category": "scope",
+        "evidence": "strong",
+        "top": [
+          "standards/api-errors.md",
+          "standards/api-errors.md",
+          "standards/logging.md"
+        ],
+        "ms": 0.43,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "note": null
+      },
+      {
+        "id": "q20",
+        "category": "scope",
+        "evidence": "none",
+        "top": [],
+        "ms": 0.44,
+        "correct": true,
+        "kind": "abstain",
+        "note": "A Conductor token reaches reference collections only."
+      },
+      {
+        "id": "q21",
+        "category": "injection",
+        "evidence": "strong",
+        "top": [
+          "standards/release-checklist.md",
+          "standards/release-checklist.md"
+        ],
+        "ms": 0.37,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "instructionFlagged": true,
+        "note": null
+      },
+      {
+        "id": "q22",
+        "category": "exact-fact",
+        "evidence": "strong",
+        "top": [
+          "standards/logging.md",
+          "standards/api-errors.md"
+        ],
+        "ms": 0.37,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "note": null
+      },
+      {
+        "id": "q23",
+        "category": "conflict",
+        "evidence": "strong",
+        "top": [
+          "acme/travel-policy-2025.pdf",
+          "acme/expenses-policy.docx"
+        ],
+        "ms": 0.48,
+        "kind": "answerable",
+        "hitRank": 2,
+        "citationCorrect": true,
+        "correct": false,
+        "supersededFlagged": true,
+        "note": "The only '45p' passages are in the superseded 2025 travel policy (and in expenses-policy v1, which must no longer be indexed). The current rate must outrank or the old one must carry supersededBy."
+      },
+      {
+        "id": "q24",
+        "category": "paraphrase",
+        "evidence": "none",
+        "top": [],
+        "ms": 0.47,
+        "kind": "answerable",
+        "hitRank": null,
+        "citationCorrect": false,
+        "correct": false,
+        "note": "Shares almost no words with the passage: a known weakness of keyword retrieval."
+      },
+      {
+        "id": "q25",
+        "category": "paraphrase",
+        "evidence": "none",
+        "top": [],
+        "ms": 0.31,
+        "kind": "answerable",
+        "hitRank": null,
+        "citationCorrect": false,
+        "correct": false,
+        "note": "Synonyms only (accommodation/hotel, capital/London)."
+      }
+    ],
+    "keyword+supersession-demotion": [
+      {
+        "id": "q01",
+        "category": "exact-fact",
+        "evidence": "strong",
+        "top": [
+          "acme/expenses-policy.docx",
+          "acme/travel-policy-2025.pdf"
+        ],
+        "ms": 0.67,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "note": null
+      },
+      {
+        "id": "q02",
+        "category": "exact-fact",
+        "evidence": "weak",
+        "top": [
+          "acme/expenses-policy.docx",
+          "acme/travel-policy-2025.pdf"
+        ],
+        "ms": 0.5,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "note": null
+      },
+      {
+        "id": "q03",
+        "category": "exact-fact",
+        "evidence": "strong",
+        "top": [
+          "acme/expenses-policy.docx",
+          "acme/salary-bands.docx",
+          "acme/expenses-policy.docx"
+        ],
+        "ms": 0.6,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "note": null
+      },
+      {
+        "id": "q04",
+        "category": "exact-fact",
+        "evidence": "strong",
+        "top": [
+          "acme/expenses-policy.docx",
+          "acme/travel-policy-2025.pdf",
+          "acme/budget-2026.xlsx"
+        ],
+        "ms": 0.68,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "note": null
+      },
+      {
+        "id": "q05",
+        "category": "pdf-page",
+        "evidence": "weak",
+        "top": [
+          "acme/travel-policy-2025.pdf",
+          "acme/expenses-policy.docx",
+          "acme/travel-policy-2025.pdf"
+        ],
+        "ms": 0.45,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "note": null
+      },
+      {
+        "id": "q06",
+        "category": "pdf-page",
+        "evidence": "weak",
+        "top": [
+          "acme/travel-policy-2025.pdf",
+          "acme/budget-2026.xlsx",
+          "acme/expenses-policy.docx"
+        ],
+        "ms": 0.62,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "note": null
+      },
+      {
+        "id": "q07",
+        "category": "table",
+        "evidence": "strong",
+        "top": [
+          "acme/budget-2026.xlsx",
+          "acme/budget-2026.xlsx",
+          "acme/budget-2026.xlsx"
+        ],
+        "ms": 0.48,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "note": null
+      },
+      {
+        "id": "q08",
+        "category": "table",
+        "evidence": "strong",
+        "top": [
+          "acme/budget-2026.xlsx",
+          "acme/budget-2026.xlsx",
+          "acme/budget-2026.xlsx"
+        ],
+        "ms": 0.36,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "note": null
+      },
+      {
+        "id": "q09",
+        "category": "calculation",
+        "evidence": "strong",
+        "top": [
+          "acme/budget-2026.xlsx",
+          "acme/budget-2026.xlsx",
+          "acme/budget-2026.xlsx"
+        ],
+        "ms": 0.57,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "note": "The total is a formula with no saved result: retrieval can only offer the rows; the answer needs a calculation the KB does not do."
+      },
+      {
+        "id": "q10",
+        "category": "restricted",
+        "evidence": "strong",
+        "top": [
+          "acme/salary-bands.docx",
+          "acme/salary-bands.docx"
+        ],
+        "ms": 0.34,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "note": null
+      },
+      {
+        "id": "q11",
+        "category": "restricted",
+        "evidence": "none",
+        "top": [],
+        "ms": 0.23,
+        "correct": true,
+        "kind": "abstain",
+        "note": null
+      },
+      {
+        "id": "q12",
+        "category": "cross-tenant",
+        "evidence": "strong",
+        "top": [
+          "birch/staff-handbook.md"
+        ],
+        "ms": 0.25,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "note": null
+      },
+      {
+        "id": "q13",
+        "category": "cross-tenant",
+        "evidence": "none",
+        "top": [
+          "acme/travel-policy-2025.pdf"
+        ],
+        "ms": 0.36,
+        "correct": true,
+        "kind": "abstain",
+        "note": null
+      },
+      {
+        "id": "q14",
+        "category": "cross-tenant",
+        "evidence": "none",
+        "top": [],
+        "ms": 0.16,
+        "correct": true,
+        "kind": "abstain",
+        "note": null
+      },
+      {
+        "id": "q15",
+        "category": "absent",
+        "evidence": "none",
+        "top": [],
+        "ms": 0.26,
+        "correct": true,
+        "kind": "abstain",
+        "note": null
+      },
+      {
+        "id": "q16",
+        "category": "absent",
+        "evidence": "weak",
+        "top": [
+          "acme/expenses-policy.docx",
+          "acme/expenses-policy.docx",
+          "acme/expenses-policy.docx"
+        ],
+        "ms": 0.66,
+        "correct": false,
+        "kind": "abstain",
+        "note": null
+      },
+      {
+        "id": "q17",
+        "category": "ingest-failure",
+        "evidence": "none",
+        "top": [],
+        "ms": 0.37,
+        "correct": true,
+        "kind": "abstain",
+        "note": "The answer is only in a scanned PDF that could not be indexed; the import status must show why."
+      },
+      {
+        "id": "q18",
+        "category": "ingest-failure",
+        "evidence": "weak",
+        "top": [
+          "acme/expenses-policy.docx"
+        ],
+        "ms": 0.39,
+        "correct": false,
+        "kind": "abstain",
+        "note": "Only in a password-protected PDF."
+      },
+      {
+        "id": "q19",
+        "category": "scope",
+        "evidence": "strong",
+        "top": [
+          "standards/api-errors.md",
+          "standards/api-errors.md",
+          "standards/logging.md"
+        ],
+        "ms": 0.45,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "note": null
+      },
+      {
+        "id": "q20",
+        "category": "scope",
+        "evidence": "none",
+        "top": [],
+        "ms": 0.73,
+        "correct": true,
+        "kind": "abstain",
+        "note": "A Conductor token reaches reference collections only."
+      },
+      {
+        "id": "q21",
+        "category": "injection",
+        "evidence": "strong",
+        "top": [
+          "standards/release-checklist.md",
+          "standards/release-checklist.md"
+        ],
+        "ms": 0.4,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "instructionFlagged": true,
+        "note": null
+      },
+      {
+        "id": "q22",
+        "category": "exact-fact",
+        "evidence": "strong",
+        "top": [
+          "standards/logging.md",
+          "standards/api-errors.md"
+        ],
+        "ms": 0.36,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "note": null
+      },
+      {
+        "id": "q23",
+        "category": "conflict",
+        "evidence": "weak",
+        "top": [
+          "acme/expenses-policy.docx",
+          "acme/travel-policy-2025.pdf"
+        ],
+        "ms": 0.4,
+        "kind": "answerable",
+        "hitRank": 1,
+        "citationCorrect": true,
+        "correct": true,
+        "supersededFlagged": true,
+        "note": "The only '45p' passages are in the superseded 2025 travel policy (and in expenses-policy v1, which must no longer be indexed). The current rate must outrank or the old one must carry supersededBy."
+      },
+      {
+        "id": "q24",
+        "category": "paraphrase",
+        "evidence": "none",
+        "top": [],
+        "ms": 0.55,
+        "kind": "answerable",
+        "hitRank": null,
+        "citationCorrect": false,
+        "correct": false,
+        "note": "Shares almost no words with the passage: a known weakness of keyword retrieval."
+      },
+      {
+        "id": "q25",
+        "category": "paraphrase",
+        "evidence": "none",
+        "top": [],
+        "ms": 0.36,
+        "kind": "answerable",
+        "hitRank": null,
+        "citationCorrect": false,
+        "correct": false,
+        "note": "Synonyms only (accommodation/hotel, capital/London)."
+      }
+    ]
+  },
+  "checks": [
+    {
+      "check": "version 1 indexed first",
+      "ok": true,
+      "detail": "[{\"chunkId\": 12, \"documentId\": \"acme/travel-policy-2025.pdf\", \"versionId\": 1, \"collectionId\": \"acme-policies\", \"title\": \"Acme Travel Policy 2025\", \"excerpt\": \"Mileage\\nPrivate car mileage is paid at 45 pence per mile.\", \"locator\": {\"page\": 3}, \"scores\": {\"rank\": 1, \"keyword\": 0.375}, \"flags\": {\"supe"
+    },
+    {
+      "check": "changed file becomes version 2 and version 1 passages are gone",
+      "ok": true,
+      "detail": "sync={'added': 0, 'updated': 1, 'unchanged': 7, 'deleted': 0, 'failed': 3, 'acl': 0} v1-chunks=0"
+    },
+    {
+      "check": "repeat import changes nothing",
+      "ok": true,
+      "detail": "sync={'added': 0, 'updated': 0, 'unchanged': 8, 'deleted': 0, 'failed': 3, 'acl': 0} counts (11, 22, 9) -> (11, 22, 9)"
+    },
+    {
+      "check": "import status names each failure with an action",
+      "ok": true,
+      "detail": "{\"acme/board-minutes-locked.pdf\": \"The PDF is password-protected. Remove the password at the source, then import it again.\", \"acme/installer.bin\": \"Files of type \\\".bin\\\" are not supported, so it was not indexed.\", \"acme/receipts-guidance-scan.pdf\": \"The PDF has no text layer (a scan). No OCR engine is configured, so it was not indexed.\"}"
+    },
+    {
+      "check": "formulas without saved results are reported, not silently dropped",
+      "ok": true,
+      "detail": "[import note] 4 cells had formulas with no saved result and were not indexed."
+    },
+    {
+      "check": "no unauthorised result (initial state)",
+      "ok": true,
+      "detail": "0 unauthorised results in 100 searches"
+    },
+    {
+      "check": "restricted original: finance member may download",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "restricted original: non-member gets not-found",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "other tenant original: not-found",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "project token cannot fetch client originals",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "project token over client-runtime data is refused",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "widening scope in the request is refused",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "group revocation takes effect on the next search",
+      "ok": true,
+      "detail": "evidence=none generation 11 -> 12"
+    },
+    {
+      "check": "revoked member can no longer download the original",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "source ACL change is applied without re-parsing",
+      "ok": true,
+      "detail": "{\"added\": 0, \"updated\": 0, \"unchanged\": 7, \"deleted\": 0, \"failed\": 3, \"acl\": 1}"
+    },
+    {
+      "check": "newly granted user sees it",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "no unauthorised result (after permission changes)",
+      "ok": true,
+      "detail": "0 unauthorised results in 100 searches"
+    },
+    {
+      "check": "deleted source: passages removed",
+      "ok": true,
+      "detail": "{\"added\": 0, \"updated\": 0, \"unchanged\": 7, \"deleted\": 1, \"failed\": 3, \"acl\": 0}"
+    },
+    {
+      "check": "deleted source: no longer retrievable",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "deleted source: stored original removed",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "no unauthorised result (after deletion)",
+      "ok": true,
+      "detail": "0 unauthorised results in 100 searches"
+    }
+  ]
+}

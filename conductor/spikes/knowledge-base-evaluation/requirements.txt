@@ -1,0 +1,7 @@
+# Spike only (not a Conductor runtime dependency). Python 3.11+.
+psycopg[binary]==3.2.10
+openpyxl==3.1.5
+python-docx==1.2.0
+pypdf==6.17.0
+pypdfium2==5.13.0
+pillow==12.3.0
