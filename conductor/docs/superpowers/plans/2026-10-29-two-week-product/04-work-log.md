@@ -209,3 +209,38 @@ P3-2: absent/malformed asset paths return 404; regression added. P3-4: coverage 
 Combined checks: 29 service tests passed; 45 UI tests passed; UI build passed. Browser journey attempted but blocked by missing Chromium; the supported browser download was then denied by proxy (403 Domain forbidden for cdn.playwright.dev). No new browser/native Windows/live-model acceptance claim. Independent re-review of P3-1 is invited at the new branch commit; do not infer a peer sign-off from these owner's checks.
 
 Final combined validation for the PR #2 update: **1,541 Conductor tests passed, zero failed/skipped/cancelled** (70.40 seconds); **45 UI tests passed**, UI build passed. The launcher regression now verifies the built UI when present instead of assuming the pre-UI placeholder. No unresolved Git conflicts remain; main at 675233d is an ancestor of the review branch. Browser rerun remains blocked as described above.
+
+### 29 October 2026 — shared engine seam: git env config in `strictChildEnv` (Claude)
+
+```
+Packet/subpacket: engine seam fix for the environment finding of 29 October (13 baseline failures)
+Owner and reviewer: Claude (at Malcolm's request); reviewer: Codex
+Status: IN_REVIEW
+Baseline SHA: 13a86f7
+Result commit(s) / patch artifact: branch claude/great-shannon-w5pzve
+Owned files and shared seams changed: SHARED src/secrets.js (strictChildEnv only); test/secrets.test.js
+Contract version: unchanged (no service/API surface)
+What now works: strictChildEnv removes GIT_CONFIG_COUNT, GIT_CONFIG_KEY_<n>, GIT_CONFIG_VALUE_<n> and
+  GIT_CONFIG_PARAMETERS as one group. Strict children (test command, checks, gates, council tools, wake,
+  ssh, the app's npm release script, the foundation ls-remote/clone) no longer inherit host git config,
+  which could carry credentials (http.extraHeader), and git no longer dies on a dangling COUNT.
+  childEnv is unchanged: agents and Conductor's own workspace/release/landing git keep host git config.
+Checks (cloud Linux, Node 22.22.0, cwd conductor/):
+  node --test test/factory-release.test.js test/factory-status.test.js test/secrets*.test.js
+    host GIT_CONFIG_COUNT=3: 63/63; trio COUNT=1/user.name/x only: 63/63; no GIT_CONFIG_*: 63/63.
+    Before the fix with host vars: release+status 38/51 (the 13 recorded failures).
+  New regression test fails on 13a86f7 and passes after.
+  node --test --test-concurrency=4: 1,542 tests, 1,541 pass, 0 fail, 1 skipped (workerMemory, root).
+Live / fake / skipped / unrun: no remote git exercised; foundation fetch covered by its local-repo tests.
+Open defects or unknowns:
+  - A host that reaches the foundation repo only through GIT_CONFIG_* (e.g. a url.insteadOf rewrite) loses
+    that rewrite in latestFoundation; ~/.gitconfig still applies. Intended: that fetch is credential-free.
+  - An app release script whose git identity comes only from GIT_CONFIG_* will now fail to commit; identity
+    should live in ~/.gitconfig or the app repo.
+  - secretValues still treats GIT_CONFIG_KEY_<n> values (config names) as secrets and does not redact
+    GIT_CONFIG_VALUE_<n> values. Not changed here; needs an owner decision.
+External blocker: none
+Next packet unblocked: none blocked on this; removes the 13 environment failures from cloud runs.
+Reviewer disposition and reviewed SHA: pending (Codex)
+Integration SHA: —
+```
