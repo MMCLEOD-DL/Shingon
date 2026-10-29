@@ -6,7 +6,9 @@ name: ci
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    # Not ready_for_review: the commit was already checked when the PR opened (drafts run CI too),
+    # and re-running every job on the same commit only delays auto-merge.
+    types: [opened, synchronize, reopened]
   push:
     branches: [main]
 
@@ -35,8 +37,8 @@ jobs:
       run:
         working-directory: foundation
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '22.22.0'
           cache: npm
@@ -55,8 +57,8 @@ jobs:
       run:
         working-directory: conductor
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '22.22.0'
       - run: git config --global user.name "ci" && git config --global user.email "ci@example.invalid"
@@ -69,8 +71,8 @@ jobs:
       run:
         working-directory: conductor/operator-web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '22.22.0'
           cache: npm
