@@ -1,0 +1,35 @@
+# Fails when a PR changes high-risk paths, unless Malcolm has added the `malcolm-approved` label.
+# Agents never add or remove that label (.claude/skills/claude-lane/SKILL.md, AGENTS.md).
+# Required by branch protection alongside the ci.yml jobs, so auto-merge waits for Malcolm on these PRs.
+name: risk-gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  risk-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check changed paths against the high-risk list
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'malcolm-approved') }}
+        run: |
+          # Approval/landing, updater/backups, secrets, releases/shipping, and the gate itself (CI and loop rules).
+          RISKY='^(foundation/ops/|conductor/src/service/|conductor/src/secrets\.js$|conductor/src/workspace\.js$|conductor/src/conductor\.js$|conductor/src/factory/ship/|foundation/scripts/release|\.github/|\.claude/|AGENTS\.md$)'
+          changed=$(git diff --name-only "$BASE...$HEAD")
+          hits=$(printf '%s\n' "$changed" | grep -E "$RISKY" || true)
+          if [ -z "$hits" ]; then echo "No high-risk paths changed."; exit 0; fi
+          echo "High-risk paths changed:"; printf '  %s\n' $hits
+          if [ "$APPROVED" = "true" ]; then echo "Label malcolm-approved present: passing."; exit 0; fi
+          echo "::error::This PR changes high-risk paths. It merges only after Malcolm adds the 'malcolm-approved' label (or merges it himself)."
+          exit 1

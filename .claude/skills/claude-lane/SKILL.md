@@ -10,9 +10,11 @@ The loop is event-driven, not timed. A merged PR, a review comment or a message 
 ## 0. The rules this loop never breaks
 
 - **One task per PR.** No task starts until the previous PR is **merged**. A closed, unmerged PR means "rejected": stop and ask.
-- **Approval is Malcolm's.**
-  - Merging the PR is approval.
-  - A chat message such as "approved" means: merge that PR yourself, then continue.
+- **Approval is a merge into `main`.** It happens one of two ways:
+  - **Auto-merge,** for PRs that touch no high-risk path, once every required check (`foundation`, `conductor`, `operator-web`, `risk-gate`) is green.
+  - **Malcolm, for high-risk PRs.** High-risk paths are the list in `.github/workflows/risk-gate.yml`: the updater and ops, the approval and landing service, secrets, releases and shipping, CI, and the loop rules. Malcolm either merges the PR or adds the `malcolm-approved` label.
+  - A chat message from Malcolm such as "approved" means: merge that PR yourself.
+  - **Never add or remove the `malcolm-approved` label. Never edit `.github/` or these rules to loosen the gate.**
   - Nothing else counts, including a reviewer bot, Codex's notes or your own earlier messages.
 - **Branch.** Develop on the session's designated branch. Once its PR is merged, restart the branch from the new `main`: `git fetch origin main && git checkout -B <branch> origin/main`, then push normally. The old branch tip is already in `main`, so this is a fast-forward. Never force-push. If a push would not fast-forward, stop and ask.
 - **Stay in lane.** Claude-owned paths and duties are in `conductor/docs/superpowers/plans/2026-10-29-two-week-product/03-parallel-working.md` (ownership rules). Never edit Codex-owned files without a recorded handoff. Shared engine seams need a named, minimal change and a work-log note.
@@ -49,6 +51,10 @@ Before starting, post a short line in chat: the task, why it is next, the planne
 ## 4. Push and open the PR
 
 - Push the branch. Open a **draft** PR titled for the outcome, with packet ID, what changed, checks run (with counts) and what was not run.
+- **When your own checks pass, decide the merge route:**
+  - **No high-risk path:** mark the PR ready for review and enable auto-merge with the merge-commit method. GitHub merges it once the required checks are green.
+  - **High-risk path:** leave auto-merge off. Mark it ready and tell Malcolm it needs his merge or the `malcolm-approved` label.
+- **A red check is yours.** Diagnose it and push a fix. Never weaken a test or a workflow to get green.
 - Subscribe to the PR's activity and keep one safety-net check-in, per the session's PR rules.
 - Fix your own CI failures and review findings on the PR as they arrive.
 - Tell Malcolm in chat, in one short paragraph: the PR link, what it does, the evidence, and what approving it means.

@@ -15,7 +15,8 @@ Use this loop when Malcolm says "next task", "carry on" or "run the Codex lane".
 ### 0. Rules this loop never breaks
 
 - **One task per PR, and nothing new until the previous one is merged.**
-  - Merged into `main` is the only approval.
+  - Merged into `main` is the only approval. It happens by **auto-merge** for PRs that touch no high-risk path, once the required checks (`foundation`, `conductor`, `operator-web`, `risk-gate`) are green. PRs touching a path in `.github/workflows/risk-gate.yml` wait for **Malcolm**: his merge, or his `malcolm-approved` label.
+  - Never add or remove the `malcolm-approved` label. Never edit `.github/`, `AGENTS.md` or `.claude/` to loosen the gate.
   - An unmerged PR or branch means "waiting": say so and stop.
   - A PR closed without merging means "rejected": stop and ask Malcolm.
 - **Stay in lane.** Codex owns P00, P01, P03 and P05, coordinates P07 and P08, and owns the P01 ops files, the service (`conductor/src/service/**`), CLI service seams, setup scripts and Conductor's root `package.json`/lock.
@@ -65,5 +66,9 @@ Before starting, state the task, why it is next, the PR scope, and what it will 
 
 - Push `codex/<task>` and open a **draft** PR with the packet ID, the changes, the checks run (with counts) and what was not run.
   - If PR creation is forbidden (GitHub API 403), say so and give the compare link: `https://github.com/MMCLEOD-DL/Shingon/compare/main...codex/<task>`. Malcolm or Claude can open the PR from it.
+- **Merge route.**
+  - **No high-risk path:** once your checks pass, mark the PR ready and enable auto-merge (merge commit), for example with `gh pr merge --auto --merge <n>`. If the API refuses, say so; Malcolm or Claude can enable it.
+  - **High-risk path:** leave auto-merge off and say it needs Malcolm.
+  - **A red required check is yours to fix** on the same branch. Never weaken a test or workflow to get green.
 - As the branch's **last** commit, add a work-log entry headed **"Codex task submitted — <task>"**. It gives the branch, the SHA of the last code commit, the PR link (or "PR needed"), the evidence and open questions. Push it.
 - Tell Malcolm, in one short paragraph: what the PR does, the evidence, what approving it means, and that the next "carry on" after his merge starts the next task. Then **stop**.
