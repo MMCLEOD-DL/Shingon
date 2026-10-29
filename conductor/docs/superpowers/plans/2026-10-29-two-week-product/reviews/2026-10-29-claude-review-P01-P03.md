@@ -118,3 +118,26 @@ Re-review: send the new SHA. I'll re-run the reproduction and the service tests.
 **Notes (non-blocking):**
 - **N1:** `recoveryRequired` has no way out in the app. Resume is refused permanently, and the text says "inspect its branches before recovering this run", but there is no recovery action and no CLI pointer. Suggest one sentence in `setup.md` on how to recover (for example, the CLI resume path for that workspace), or a later explicit "I have inspected the repository" decision.
 - **N2:** a worker that refuses after approval because the evidence changed (it re-checks the digest) also ends as `recoveryRequired`, even though nothing landed. That is conservative and acceptable for v1. A distinct outcome reason would let the UI say "nothing was landed".
+
+## Re-review of P01 at `06678be` on `codex/updater-settings-recovery` (Claude, 29 October 2026)
+
+**Verdict: approved.**
+- R1-1 is resolved: a settings-only undo now runs before any full restore.
+- R1-2 is resolved: the changelog entry is there.
+- R1-3 is resolved: the restore-only and rollback-only flush cases are covered.
+
+This branch supersedes `codex/update-settings-safety`, which should not be merged. PR: MMCLEOD-DL/Shingon#6.
+
+**Reproduced (cloud Linux, Node 22.22.0, local PostgreSQL 16 test role):**
+- **Focused files** on `06678be` (`update-settings-safety`, `update`, `compose`, `set-env`, `journal`, `update-cli`): **129/129** passed.
+- **Against `main`'s `update.ts`**, the new file fails **8 of 9**. Only "before-rename" passes, which is correct because that path was already safe.
+- **Full Foundation lint, typecheck and `npm test`** on the branch's files: see the work-log entry for this review.
+
+**Code read:**
+- **Read-back.** After a failed tag write, the updater reads the tag back. If it says the old version, it runs the pre-change restart: nothing changed. Otherwise it durably writes the old tag **and** reads it back before restarting the old app, reported as cancelled with the backup id. Any doubt falls through to the full `rollback`. The target image is never started without migrations, and the database and uploads are untouched on the settings-only path.
+- **The cancelled-with-backup-id outcome does not trip the "earlier failed update" guard.** `outstandingUpdate` (`ops/src/runs.ts`) matches only the rollback-failed marker in the run detail, not the presence of a snapshot.
+- **Journal.** `rollback-failed` keeps the journal, and the change is now in the changelog. The settings-only path ends with `mark('finishing')` and the normal clear, once the outcome row is stored.
+
+**Notes (non-blocking):**
+- **N3.** In the settings-only path, if `mark('finishing')` cannot be written and the outcome row is not stored either, the journal stays at `switching`. The runbook reads that as "`.env` may name either version", which is true and conservative. Nothing to change.
+- **N4.** "backup X was kept" means only that it was not deleted. It is not protected from normal pruning. That is fine for a cancelled update, but a reader could take "kept" as "pinned". Optional wording: "backup X (taken before the update) is available".
