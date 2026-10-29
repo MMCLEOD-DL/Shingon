@@ -184,6 +184,33 @@ export function formFeedPdf(): Buffer {
   return pdfWithRawStream(`<< /Length ${String(content.length)} /Filter /FlateDecode >>`, '\nstream\f\n', content);
 }
 
+/** An ordinary text PDF with one page per entry of `pages`, each line of a page written below the one before. */
+export function textPdf(pages: string[][]): Buffer {
+  const escape = (s: string): string => s.replace(/[\\()]/g, (c) => `\\${c}`);
+  const pageObj = (i: number): number => 4 + i * 2;
+  const objects: string[] = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    `<< /Type /Pages /Kids [${pages.map((_p, i) => `${String(pageObj(i))} 0 R`).join(' ')}] /Count ${String(pages.length)} >>`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  pages.forEach((lines, i) => {
+    const content = lines.map((l, n) => `BT /F1 12 Tf 10 ${String(560 - n * 20)} Td (${escape(l)}) Tj ET`).join('\n');
+    objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 226 600] /Resources << /Font << /F1 3 0 R >> >> /Contents ${String(pageObj(i) + 1)} 0 R >>`);
+    objects.push(`<< /Length ${String(Buffer.byteLength(content, 'latin1'))} >>\nstream\n${content}\nendstream`);
+  });
+  let out = '%PDF-1.7\n';
+  const offsets = objects.map((o, i) => {
+    const at = Buffer.byteLength(out, 'latin1');
+    out += `${String(i + 1)} 0 obj\n${o}\nendobj\n`;
+    return at;
+  });
+  const xref = Buffer.byteLength(out, 'latin1');
+  out += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const o of offsets) out += `${String(o).padStart(10, '0')} 00000 n \n`;
+  out += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  return Buffer.from(out, 'latin1');
+}
+
 /**
  * An ordinary PDF in the compact modern layout: its catalog, page tree, page and font sit in a compressed object
  * stream, and its cross-reference table is a compressed stream with PNG "Up" prediction (/Predictor 12). The

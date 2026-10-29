@@ -4,6 +4,8 @@
 
 Recorded: 29 October 2026. Status: research requested; architecture not selected and implementation not started.
 
+**Update, 29 October 2026:** the P06 research outputs are in [`knowledge-base/`](knowledge-base/README.md) and are awaiting review. The recommendation is not yet accepted, and no implementation or migration has started. Still open: the hybrid-retrieval experiment (it needs a host with local models) and the source-operator questions in the inventory.
+
 ### User need
 
 The current Library of Babel is an ad hoc knowledge base combining work and personal material. Research the best way to evolve or migrate it, and how to provide a company knowledge base for future projects. Document import and everyday maintenance should be straightforward. Both Conductor and the apps it produces must be able to retrieve and use the right information reliably.
@@ -33,5 +35,7 @@ The current Library of Babel is an ad hoc knowledge base combining work and pers
 Conductor's existing [project-folder contract](superpowers/plans/2026-10-27-factory-phases-4-9-roadmap.md#contract-1--the-client-project-folder-call) keeps client data out of factory projects and model prompts. This research must distinguish approved development/reference knowledge from a client app's runtime business knowledge. It does not authorise importing a company's records into Conductor or sending them to either subscription provider. Any proposed change to that boundary needs an explicit design and user decision.
 
 Start with a read-only integration. Write-back, automatic document editing and autonomous promotion of retrieved material into persistent skills are separate capabilities. The knowledge-base project should support future collaboration and validated reusable skills without making retrieved text authoritative over Conductor's approval or release rules.
+
+Next-phase backlog, covering KB implementation order alongside the other post-fortnight items: [`operator-app/next.md`](operator-app/next.md).
 
 Delivery planning: [two-week product plan, 30 October–12 November 2026](superpowers/plans/2026-10-29-two-week-product/00-index.md), especially P06 and P09.
