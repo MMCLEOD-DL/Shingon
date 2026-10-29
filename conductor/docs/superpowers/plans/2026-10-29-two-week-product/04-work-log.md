@@ -10,7 +10,7 @@ Created 29 October 2026. Planning only: no packets have started, no interface is
 | P03 | Codex | NOT_STARTED | — | — |
 | P04 | Claude | NOT_STARTED | — | — |
 | P05 | Codex | NOT_STARTED | — | — |
-| P06 | Claude | IN_PROGRESS | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 30 Oct entry |
+| P06 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 30 Oct P06 entry; awaiting Codex review and Malcolm's decisions D1–D5 |
 | P07 | Codex + Claude review | NOT_STARTED | — | — |
 | P08 | Codex + Claude review | NOT_STARTED | — | — |
 | P09 | Claude | NOT_STARTED | — | — |
@@ -70,6 +70,33 @@ Open defects or unknowns: product trade-off - legitimate 4+ page receipts (invoi
   cap is a separate resource-limit decision; the memory/deadline watchdogs would bound it.
 External blocker and exact owner/action: none.
 Next packet unblocked: none directly; P07 integrates it with P01.
+Reviewer disposition and reviewed SHA: pending (Codex).
+Integration SHA: —
+```
+
+### 30 October 2026 — P06 (Claude)
+
+```
+Packet/subpacket: P06 — knowledge-base research and recommendation
+Owner and reviewer: Claude; reviewer Codex
+Status: IN_REVIEW
+Baseline SHA: a8ffb91
+Result commit(s): the P06 commits on claude/adoring-carson-gaa3xh (see git log)
+Owned files: conductor/docs/knowledge-base/**, conductor/spikes/knowledge-base-evaluation/**,
+  status line in conductor/docs/RESEARCH-BACKLOG.md. No Conductor/Foundation code changed.
+Contract version: retrieval contract v0 (proposal), separate from operator-app contract.
+What now works: inventory, options, recommendation, retrieval contract, migration plan and a synthetic
+  evaluation (`bash run.sh` in the spike folder).
+Checks: spike run on cloud Linux, PostgreSQL 16.15, Python 3.13.17: 21/21 permission/sync/deletion checks;
+  0 unauthorised results in 3 sweeps of 100 searches; keyword retrieval 17/25 (21/25 with superseded
+  demotion). Evidence: spikes/knowledge-base-evaluation/results/results.json.
+Live / fake / skipped / unrun: Babel inventory from live read-only MCP calls (no writes). Hybrid
+  retrieval, reranking, OCR, answer generation and live connectors NOT run (network policy blocks model
+  and extension downloads). Several vendor pricing pages were blocked; such figures are tagged [U]/[S].
+Open defects or unknowns: inventory §6 questions; CPU throughput of parser/embedder/reranker; Onyx price.
+External blocker and exact owner/action: Malcolm — answer inventory §6, decide D1–D5; a host with
+  Ollama for the hybrid experiment (K3/K4).
+Next packet unblocked: P09 (in progress).
 Reviewer disposition and reviewed SHA: pending (Codex).
 Integration SHA: —
 ```

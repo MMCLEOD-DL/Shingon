@@ -30,7 +30,31 @@ The environment's network policy blocked several official sites: Azure and AWS p
 
 ## A. Existing self-hosted KB / RAG products
 
-*(To be filled in from the product research, which is still running.)*
+Vendor sites (docs.onyx.app, ragflow.io, docs.dify.ai and others) were blocked, so these facts come from each project's own repository at its latest tag and from its official documentation-source repository on GitHub. **No product prices were visible.**
+
+| | Onyx 5.0.x | RAGFlow 0.27.3 | Open WebUI 0.12.5 | AnythingLLM 1.19.0 | Dify 1.18.0 |
+|---|---|---|---|---|---|
+| Licence (R8) | MIT core; **`ee/` under the proprietary Onyx Enterprise License**, needing a paid subscription in production [F][onyx-lic] | Apache-2.0; docs imply a commercial edition for finer sharing [F][rf-lic] | BSD-3-style + branding clause (rebranding allowed only at ≤50 users without a licence) [F][owui-lic] | MIT [F][allm-lic] | "Modified Apache 2.0": **no multi-tenant service without written authorisation**; SSO is Enterprise [F][dify-lic] |
+| Stack / minimum host | Postgres, **OpenSearch**, Redis, SeaweedFS, 2 model servers; 4 vCPU/10 GB minimum, 8/16 preferred [F][onyx-res] | Elasticsearch (default), MySQL, MinIO, Redis; 4 CPU/16 GB/50 GB [F][rf-readme] | Chroma default (pgvector option); minimum not stated [F][owui-env] | SQLite + LanceDB; 2 CPU/2 GB [F][allm-hw] | Postgres, Redis, Weaviate; 2 CPU/4 GB [F][dify-hw] |
+| Hybrid + rerank (R4) | OpenSearch hybrid; **no reranker: the configured LLM selects results** [F][onyx-dp] | Weighted keyword + vector, optional rerank [F][rf-ret] | BM25 + vector + cross-encoder (opt-in) [F][owui-kb] | **Vector only**, optional reranker [F][allm-docs] | Vector / full-text / hybrid + optional rerank [F][dify-idx] |
+| Parsing / OCR (R2) | Broad formats; XLSX flattened to CSV text; **no built-in OCR** [F][onyx-x] | **Strongest:** DeepDoc OCR, table structure, per-row XLSX and per-slide chunking; Docling/MinerU options [F][rf-cfg] | Pluggable: Tika, Docling, RapidOCR, Azure DI and others [F][owui-ext] | tesseract.js OCR; broad formats [F][allm-ocr] | Default ETL without OCR; PPTX needs Unstructured [F][dify-env] |
+| M365 / Drive connectors | SharePoint, OneDrive, Outlook, Teams, Drive, Gmail [F][onyx-conn] | SharePoint, OneDrive, Outlook, Drive, Gmail [F][rf-ds] | Per-user file **pickers**, not sync; sync through the separate oikb tool [F][owui-od] | **None** [F][allm-ext] | Drive, OneDrive; no SharePoint or email [F][dify-ds] |
+| Source permission sync (R1, R3) | Yes for M365 and Google, **Business tier and above (paid, price unseen)** [F][onyx-ee] | Not documented | Not documented | No | Not documented |
+| Isolation model (R1) | Public / groups (paid) / synced; otherwise separate instances | Team or "only me"; **no document ACL** [F][rf-share] | Groups per knowledge base; no document ACL [F][owui-rbac] | Workspace-level [F][allm-sec] | Knowledge base per workspace member; no document ACL |
+| API / MCP as the user (R5) | **Official MCP server, OAuth 2.1 + PKCE, `read:search`, searches as the signed-in user** [F][onyx-mcp] | MCP `retrieve` tool with **shared API keys** [F][rf-mcp] | REST with per-user keys; MCP client only [F][owui-api] | Instance-level API key; MCP client only [F][allm-api] | Workspace API keys; app-as-MCP where **the URL is the credential** [F][dify-mcp] |
+| Citations | Numbered document citations; anchors [U] | Chunk positions (page + coordinates) [F][rf-api] | Chunk; pages only if configured [F][owui-rag] | Chunk [U] | Chunk / document [U] |
+| Advisories, last 12 months [F] | 4, incl. **critical cross-user OAuth-token leak** and a cross-group document-disclosure IDOR (Jul 2026) [onyx-sec] | 6, incl. **3 critical RCEs** and an auth bypass [rf-sec] | Many, incl. KB access retained after removal (Sep 2026) [owui-sec] | ~21–30, incl. RCE and cross-tenant IDOR [allm-sec2] | ~21–30, incl. cross-tenant file disclosure (Jul 2026) [dify-sec] |
+
+**Wiki comparators:**
+- **Outline 1.12** has a built-in MCP server with OAuth as the user. But it is BSL 1.1 (no commercial "document service" to third parties until 2030), uses Postgres full-text only, and does not index PDF, XLSX or PPTX [F][outline].
+- **BookStack 26.09** is MIT with per-page permissions, but has keyword search only and no MCP [F][bookstack].
+- Both suit human-written notes, not document retrieval.
+
+**What the product column shows:**
+- **Onyx** is the only product whose documented features cover R1, R2 (M365/Google), R3 and R5 together. But the parts that do (groups, permission sync, multiple SSO providers) are **proprietary and paid at an unseen price**. It needs OpenSearch and 10–16 GB, and it has no OCR and no dedicated reranker.
+- **RAGFlow** parses best, but has no document ACL and a run of critical RCEs.
+- The others are good personal tools, not governed company stores.
+- **Every product had authorisation or IDOR advisories in the last year.** Whatever is chosen must sit behind a private network and be tested by our own permission sweep, not trusted on the vendor's claim.
 
 ## B. Managed retrieval services
 
@@ -113,10 +137,69 @@ The environment's network policy blocked several official sites: Azure and AWS p
 
 ## Summary against requirements
 
-*(Completed together with section A.)*
+Key: ✔ documented and fits; ◐ partly, preview, paid or must be built; ✘ does not fit; ? unknown.
+
+| Req | Onyx (Business) | RAGFlow | Azure AI Search UK | Bedrock Managed KB London | Composable (Postgres) |
+|---|---|---|---|---|---|
+| R1 permissions before retrieval | ◐ paid tier; past IDORs | ✘ team-level only | ◐ GA filters are app-enforced; token enforcement preview | ◐ app-asserted user | ◐ **built by us**; spike shows the design (0 unauthorised) |
+| R2 imports and formats | ✔ connectors; ✘ OCR | ✔ best parsing; connectors without ACL | ◐ no Drive; parsing billed | ◐ ? formats | ◐ Docling + OCRmyPDF; connectors built per need |
+| R3 sync, versions, deletions | ◐ paid perm-sync | ◐ | ◐ manual resync for inherited ACLs | ◐ group changes wait for next ingest | ◐ built; spike shows repeat-safe sync and deletion |
+| R4 hybrid, rerank, citations | ◐ no reranker | ✔ | ✔ | ✔ | ◐ hybrid + reranker not yet measured |
+| R5 API/MCP as user | ✔ OAuth MCP | ◐ API keys | ✔ MCP per KB (perm preview) | ◐ via AgentCore | ◐ built: API + thin MCP adapter |
+| R6 UK residency / client box | ✔ self-host | ✔ self-host | ✔ UK South | ✔ London | ✔ self-host, any box |
+| R7 low effort, predictable cost | ◐ heavy stack; price unknown | ◐ heavy stack; patch cadence | ✔ managed; ~£55–120/mo | ✔ ~£25/mo + parsing | ◐ more code to own; lightest runtime |
+| R8 licence, export | ◐ proprietary `ee/` | ✔ Apache | ✔ / proprietary index | ✔ / opaque index | ✔ PostgreSQL/MIT/Apache; plain SQL export |
+
+None of the options meets every requirement off the shelf. The choice is about **where the unavoidable work lands**:
+- paying for and trusting a product's permission layer (Onyx Business, or preview Azure features);
+- or owning a small, testable permission layer on a stack already used across Shingon (PostgreSQL), with the heavy parts (parsing, embeddings, reranking) taken from permissively licensed libraries.
+
+The recommendation takes the second for the company KB and keeps the first available for clients who already live in Azure or AWS. See [`recommendation.md`](recommendation.md).
 
 ## References
 
+[onyx-res]: https://github.com/onyx-dot-app/documentation/blob/main/snippets/resourcing-overview.mdx
+[onyx-dp]: https://github.com/onyx-dot-app/documentation/blob/main/security/self_hosted/data_processing.mdx
+[onyx-x]: https://github.com/onyx-dot-app/onyx/blob/v5.0.2/backend/onyx/file_processing/extract_file_text.py
+[onyx-conn]: https://github.com/onyx-dot-app/documentation/blob/main/admins/connectors/overview.mdx
+[onyx-ee]: https://github.com/onyx-dot-app/documentation/blob/main/snippets/enterprise-edition.mdx
+[onyx-mcp]: https://github.com/onyx-dot-app/onyx/blob/v5.0.2/backend/onyx/mcp_server/README.md
+[onyx-sec]: https://github.com/onyx-dot-app/onyx/security/advisories
+[rf-lic]: https://github.com/infiniflow/ragflow/blob/v0.27.3/LICENSE
+[rf-readme]: https://github.com/infiniflow/ragflow/blob/v0.27.3/README.md
+[rf-ret]: https://github.com/infiniflow/ragflow/blob/v0.27.3/docs/guides/dataset/retrieval_testing.md
+[rf-cfg]: https://github.com/infiniflow/ragflow/blob/v0.27.3/docs/guides/dataset/configuration.md
+[rf-ds]: https://github.com/infiniflow/ragflow/blob/v0.27.3/docs/guides/data_source/data_source_categories_and_selection.md
+[rf-share]: https://github.com/infiniflow/ragflow/blob/v0.27.3/docs/guides/team/permission_system_overview/resource_sharing_scope.md
+[rf-mcp]: https://github.com/infiniflow/ragflow/blob/v0.27.3/docs/develop/mcp/launch_mcp_server.md
+[rf-api]: https://github.com/infiniflow/ragflow/blob/v0.27.3/docs/references/http_api_reference.md
+[rf-sec]: https://github.com/infiniflow/ragflow/security/advisories
+[owui-lic]: https://github.com/open-webui/open-webui/blob/v0.12.5/LICENSE
+[owui-env]: https://github.com/open-webui/docs/blob/main/docs/reference/env-configuration.mdx
+[owui-kb]: https://github.com/open-webui/docs/blob/main/docs/features/workspace/knowledge.mdx
+[owui-ext]: https://github.com/open-webui/docs/blob/main/docs/features/chat-conversations/rag/document-extraction/index.md
+[owui-od]: https://github.com/open-webui/docs/blob/main/docs/tutorials/integrations/onedrive-sharepoint.mdx
+[owui-rbac]: https://github.com/open-webui/docs/blob/main/docs/features/authentication-access/rbac/groups.md
+[owui-api]: https://github.com/open-webui/docs/blob/main/docs/reference/api-endpoints.md
+[owui-rag]: https://github.com/open-webui/docs/blob/main/docs/features/chat-conversations/rag/index.md
+[owui-sec]: https://github.com/open-webui/open-webui/security/advisories
+[allm-lic]: https://github.com/Mintplex-Labs/anything-llm/blob/v1.19.0/LICENSE
+[allm-hw]: https://github.com/Mintplex-Labs/anythingllm-docs/blob/main/pages/installation-docker/system-requirements.mdx
+[allm-docs]: https://github.com/Mintplex-Labs/anything-llm-docs
+[allm-ocr]: https://github.com/Mintplex-Labs/anything-llm/blob/v1.19.0/collector/utils/OCRLoader/index.js
+[allm-ext]: https://github.com/Mintplex-Labs/anything-llm/tree/v1.19.0/collector/utils/extensions
+[allm-sec]: https://github.com/Mintplex-Labs/anythingllm-docs/blob/main/pages/features/security-and-access.mdx
+[allm-api]: https://github.com/Mintplex-Labs/anythingllm-docs/blob/main/pages/features/api.mdx
+[allm-sec2]: https://github.com/Mintplex-Labs/anything-llm/security/advisories
+[dify-lic]: https://github.com/langgenius/dify/blob/1.18.0/LICENSE
+[dify-hw]: https://github.com/langgenius/dify-docs/blob/main/en/self-host/deploy/quick-start/docker-compose.mdx
+[dify-idx]: https://github.com/langgenius/dify-docs/blob/main/en/self-host/use-dify/knowledge/create-knowledge/setting-indexing-methods.mdx
+[dify-env]: https://github.com/langgenius/dify-docs/blob/main/en/self-host/deploy/configuration/environments.mdx
+[dify-ds]: https://github.com/langgenius/dify-docs/blob/main/en/self-host/use-dify/knowledge/knowledge-pipeline/authorize-data-source.mdx
+[dify-mcp]: https://github.com/langgenius/dify-docs/blob/main/en/self-host/use-dify/publish/publish-mcp.mdx
+[dify-sec]: https://github.com/langgenius/dify/security/advisories
+[outline]: https://github.com/outline/outline/blob/v1.12.0/LICENSE
+[bookstack]: https://github.com/BookStackApp/BookStack/blob/v26.09.2/LICENSE
 [az-region]: https://learn.microsoft.com/azure/search/search-region-support
 [az-free]: https://learn.microsoft.com/azure/search/search-try-for-free
 [az-acl]: https://learn.microsoft.com/azure/search/search-query-access-control-rbac-enforcement

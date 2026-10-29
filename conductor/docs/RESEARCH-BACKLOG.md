@@ -4,6 +4,8 @@
 
 Recorded: 29 October 2026. Status: research requested; architecture not selected and implementation not started.
 
+**Update, 30 October 2026:** the P06 research outputs are in [`knowledge-base/`](knowledge-base/README.md) and are awaiting review. The recommendation is not yet accepted, and no implementation or migration has started. Still open: the hybrid-retrieval experiment (it needs a host with local models) and the source-operator questions in the inventory.
+
 ### User need
 
 The current Library of Babel is an ad hoc knowledge base combining work and personal material. Research the best way to evolve or migrate it, and how to provide a company knowledge base for future projects. Document import and everyday maintenance should be straightforward. Both Conductor and the apps it produces must be able to retrieve and use the right information reliably.
