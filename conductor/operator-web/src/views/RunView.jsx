@@ -83,6 +83,67 @@ function Decision({ api, run, review, onAnswered, onStale }) {
   );
 }
 
+const FULL_SHA = /^[0-9a-f]{40}$/;
+const MAY_HAVE_LANDED = 'The approved result may already be in the repository. Inspect its branches before recovering this run; automatic resume is disabled.';
+
+// After an uncertain landing: the operator inspects the repository, then records that they did. Recording starts
+// nothing and changes no branches; Resume stays a separate step. The confirmation is bound to the snapshot it was
+// given against, so a newer snapshot clears it and needs a fresh look.
+function Recovery({ api, run, repositoryPath, onRecorded, onRefused }) {
+  const [inspectedFor, setInspectedFor] = useState(null); // the snapshot the confirmation was given against
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState(null);
+  const commit = FULL_SHA.test(run.workspaceCommit ?? '') ? run.workspaceCommit : null;
+  const snapshot = `${run.lastEventSeq}:${commit}`;
+  // One request id per snapshot: retrying after a lost response is answered from the service's receipt.
+  const requestId = useRef({ snapshot: null, id: null });
+  if (requestId.current.snapshot !== snapshot) requestId.current = { snapshot, id: newRequestId() };
+  const inspected = inspectedFor === snapshot;
+
+  const record = async () => {
+    setError(null); setSending(true);
+    try {
+      await api.recover(run.id, { clientRequestId: requestId.current.id, repositoryInspected: true, expectedEventSeq: run.lastEventSeq, reviewedCommit: commit });
+      onRecorded();
+    } catch (e) {
+      // A refusal means the run changed or no longer qualifies: the run view reports it and reloads.
+      if (e instanceof ApiError && e.status === 409) onRefused(e);
+      else setError(e);
+    } finally { setSending(false); }
+  };
+
+  const repo = repositoryPath ? plain(repositoryPath, 500) : '<repository folder>';
+  // Never put a path a shell would expand or split into a command meant to be copied.
+  const quoted = repositoryPath && !/["$`\r\n]/.test(repositoryPath) ? repo : '<repository folder>';
+  return (
+    <section className="decision recovery" aria-labelledby="recovery-title">
+      <h2 id="recovery-title">Check the repository before recovering</h2>
+      <p>Conductor lost contact with its worker after you approved this result, so it cannot tell whether the branch was created. Resume stays off until you have looked.</p>
+      {!commit ? <p className="warn">No approved commit is recorded for this run, so it cannot be recovered from here. Keep the repository as it is and follow the command-line recovery steps in the setup guide.</p> : (
+        <>
+          <ol>
+            <li>In the repository <code>{repo}</code>, look for a branch at the approved commit <code>{commit}</code>. These commands only read:
+              <pre className="log">{`git -C "${quoted}" status --short\ngit -C "${quoted}" branch --list "conductor/*"\ngit -C "${quoted}" branch --points-at ${commit}`}</pre>
+            </li>
+            <li>Check that branch&apos;s changes too: a similar name alone does not prove it holds the approved result. Do not delete branches or start the same task again, and leave any other work in the repository as it is.</li>
+          </ol>
+          <label className="check">
+            <input type="checkbox" checked={inspected} onChange={(e) => setInspectedFor(e.target.checked ? snapshot : null)} />
+            {' '}I have inspected the repository&apos;s branches for commit <code>{shortSha(commit)}</code>
+          </label>
+          <ErrorNote error={error} />
+          <div className="choices">
+            <div className="choice">
+              <button type="button" className="primary" disabled={!inspected || sending} onClick={record}>{sending ? 'Recording…' : 'Record inspection'}</button>
+              <span className="consequence">This only records that you looked. It starts nothing and changes no branches. Resume is a separate step afterwards.</span>
+            </div>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 export function RunView({ api, runId, go }) {
   const [run, setRun] = useState(null);
   const [review, setReview] = useState(null);
@@ -91,6 +152,7 @@ export function RunView({ api, runId, go }) {
   const [error, setError] = useState(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [repositoryPath, setRepositoryPath] = useState(null);
   // After an answer is accepted, the shown snapshot is out of date until the next one arrives: offer no actions from it.
   const [answered, setAnswered] = useState(false);
   const answeredAt = useRef(null); // lastEventSeq when the answer was accepted
@@ -131,6 +193,19 @@ export function RunView({ api, runId, go }) {
     return () => { stopped = true; follower.current?.close(); };
   }, [api, runId, refresh]);
 
+  // The inspection steps name the registered repository folder; without it they still work with a placeholder.
+  const needsInspection = Boolean(run?.recoveryRequired);
+  const repositoryId = run?.repositoryId;
+  useEffect(() => {
+    if (!needsInspection || !repositoryId) return undefined;
+    let current = true;
+    api.repositories().then((r) => {
+      const repo = r?.repositories?.find?.((x) => x.id === repositoryId);
+      if (current && typeof repo?.path === 'string') setRepositoryPath(repo.path);
+    }, () => {});
+    return () => { current = false; };
+  }, [api, needsInspection, repositoryId]);
+
   const cancel = async () => {
     setError(null);
     try {
@@ -170,8 +245,15 @@ export function RunView({ api, runId, go }) {
         </div>
       )}
       {run.status === 'rejected' && <div className="outcome"><p>Rejected. No branch was created and your repository was not changed.</p></div>}
-      {run.status === 'failed' && <div className="outcome bad"><p>The run failed. {run.resumable ? 'You can resume it from its saved work.' : 'It cannot be resumed from here.'} Details are in the activity log below.</p></div>}
-      {run.status === 'interrupted' && <div className="outcome bad"><p>The run was interrupted (stopped, or the service restarted). Any question it was asking has been withdrawn. {run.recoveryRequired ? 'The approved result may already be in the repository. Inspect its branches before recovering this run; automatic resume is disabled.' : run.resumable ? 'Resume to continue from its saved work.' : 'It has no saved work to resume.'}</p></div>}
+      {run.status === 'failed' && <div className="outcome bad"><p>The run failed. {run.recoveryRequired ? MAY_HAVE_LANDED : run.resumable ? 'You can resume it from its saved work.' : 'It cannot be resumed from here.'} Details are in the activity log below.</p></div>}
+      {run.status === 'interrupted' && <div className="outcome bad"><p>The run was interrupted (stopped, or the service restarted). Any question it was asking has been withdrawn. {run.recoveryRequired ? MAY_HAVE_LANDED : run.resumable ? 'Resume to continue from its saved work.' : 'It has no saved work to resume.'}</p></div>}
+      {!active && !run.recoveryRequired && run.resumable && run.landingPending && run.recoveryAcknowledged && (
+        <p className="notice">You recorded your repository inspection on {when(run.recoveryAcknowledged.at)}. Resume lets Conductor check whether the approved result reached the repository; if it did not, you will be asked to review it again.</p>
+      )}
+      {!active && run.recoveryRequired && ['interrupted', 'failed'].includes(run.status) && (
+        <Recovery api={api} run={run} repositoryPath={repositoryPath} onRefused={(e) => { setError(e); refresh(); }}
+          onRecorded={() => { setError(null); setNotice('Inspection recorded. Nothing has started and no branch was changed. Resume when you are ready.'); refresh(); }} />
+      )}
       {run.status === 'paused' && <div className="outcome"><p>Paused. {run.resumable ? 'Resume when ready.' : ''}</p></div>}
 
       {pending && !answered && <Decision api={api} run={run} review={review} onStale={(e) => { setError(e); refresh(); }}

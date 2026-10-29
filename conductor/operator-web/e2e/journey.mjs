@@ -184,8 +184,66 @@ try {
       assert.equal(await lp.getByRole('button', { name: 'Resume' }).count(), 0);
       assert.match(execFileSync('git', ['-C', repo, 'branch', '--list', 'conductor/landed'], { encoding: 'utf8' }), /conductor\/landed/);
     });
+
+    await step('recording an inspection for a run with no saved workspace is refused by the service and the UI says so', async () => {
+      const box = lp.getByRole('checkbox', { name: /I have inspected the repository/ });
+      const record = lp.getByRole('button', { name: 'Record inspection' });
+      assert.equal(await record.isDisabled(), true);
+      await box.check();
+      await record.click();
+      await lp.getByText(/no resumable workspace/).waitFor({ timeout: 5000 });
+      assert.equal(await lp.getByRole('button', { name: 'Resume' }).count(), 0);
+    });
     await lp.context().close();
   } finally { await landing.close(); }
+
+  // Third service with the UI's own inspect worker: lost after approval, but with a saved workspace.
+  process.env.JOURNEY_CONDUCTOR_DIR = conductorDir; // the worker uses this checkout's real Workspace
+  const inspecting = await createAppServer({ dataDir: path.join(root, 'data-inspect'), configFile, port: 0, uiDir,
+    workerFile: path.join(here, 'inspect-worker.cjs') });
+  try {
+    const ip = await (await browser.newContext()).newPage();
+    ip.on('pageerror', (e) => consoleErrors.push(e.message));
+    await ip.goto(`${inspecting.origin}/#bootstrap=${inspecting.bootstrapToken}`);
+    await ip.getByLabel(/Full path/).fill(repo);
+    await ip.getByRole('button', { name: 'Continue' }).click();
+    await ip.getByRole('button', { name: 'Add repository' }).click();
+
+    await step('inspection is recorded only after confirming, starts nothing, and then Resume reconciles without a second branch', async () => {
+      await ip.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'New task' }).click();
+      await ip.getByLabel(/Describe the change/).fill('inspect after a lost worker');
+      await ip.getByRole('button', { name: 'Start' }).click();
+      await ip.getByRole('heading', { name: 'Review the finished work' }).waitFor({ timeout: 15000 });
+      await ip.getByRole('button', { name: 'Approve: create a branch' }).click();
+      await ip.getByRole('heading', { name: 'Check the repository before recovering' }).waitFor({ timeout: 15000 });
+      const runId = new URL(ip.url()).pathname.split('/').pop();
+      const readRun = () => ip.evaluate(async (id) => (await fetch(`/api/v1/runs/${id}`)).json(), runId);
+      const approved = (await readRun()).workspaceCommit;
+      const panel = await ip.locator('.recovery').innerText();
+      assert.ok(panel.includes(repo), 'the inspection steps name the registered repository');
+      assert.ok(panel.includes(approved), 'the inspection steps name the approved commit');
+      assert.equal(await ip.getByRole('button', { name: 'Resume' }).count(), 0);
+      // What the operator would see with the panel's own read-only command: the branch is already there.
+      assert.match(execFileSync('git', ['-C', repo, 'branch', '--points-at', approved], { encoding: 'utf8' }), /conductor\/inspected/);
+      await ip.setViewportSize({ width: 360, height: 800 });
+      assert.ok(await ip.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'no horizontal scrolling with the inspection steps at phone width');
+      await ip.setViewportSize({ width: 1280, height: 800 });
+
+      await ip.getByRole('checkbox', { name: /I have inspected the repository/ }).check();
+      await ip.getByRole('button', { name: 'Record inspection' }).click();
+      await ip.getByText(/Inspection recorded. Nothing has started/).waitFor({ timeout: 5000 });
+      await ip.getByRole('button', { name: 'Resume' }).waitFor({ timeout: 5000 });
+      const run = await readRun();
+      assert.equal(run.status, 'interrupted', 'recording the inspection starts no worker');
+      assert.equal(run.recoveryAcknowledged?.commit, approved);
+
+      await ip.getByRole('button', { name: 'Resume' }).click();
+      await ip.getByText('Branch created').waitFor({ timeout: 15000 });
+      const branches = execFileSync('git', ['-C', repo, 'branch', '--list', 'conductor/inspected'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+      assert.equal(branches.length, 1);
+    });
+    await ip.context().close();
+  } finally { await inspecting.close(); }
 
   // ---- P07 adversarial checks (UI side) ----
   const runIdFrom = (p) => new URL(p.url()).pathname.split('/').pop();

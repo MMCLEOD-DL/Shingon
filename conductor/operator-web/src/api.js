@@ -54,6 +54,9 @@ export function createApi({ fetchImpl = (...a) => globalThis.fetch(...a), base =
       call(`/runs/${enc(runId)}/decisions/${enc(decisionId)}`, { method: 'POST', body: { choiceId, expectedRevision, reviewedCommit, clientRequestId, ...(feedback ? { feedback } : {}) } }),
     cancel: (id) => call(`/runs/${enc(id)}/cancel`, { method: 'POST', body: {} }),
     resume: (id) => call(`/runs/${enc(id)}/resume`, { method: 'POST', body: {} }),
+    // Records only that the operator inspected the repository after an uncertain landing. Starts nothing; Resume is separate.
+    recover: (id, { clientRequestId, repositoryInspected, expectedEventSeq, reviewedCommit }) =>
+      call(`/runs/${enc(id)}/recover`, { method: 'POST', body: { clientRequestId, repositoryInspected, expectedEventSeq, reviewedCommit } }),
   };
 }
 
