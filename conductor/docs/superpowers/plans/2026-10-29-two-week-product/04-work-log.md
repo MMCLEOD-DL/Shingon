@@ -1,6 +1,6 @@
 # Work log and decision ledger
 
-Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude is being assigned separately by Malcolm; no Claude acknowledgement has been received here. Claude acknowledged on 29 October 2026 and claimed P02, P06, P09 and then P04 (see the Claude entries below). Interface v1 is not yet peer-frozen. Replace provisional owner names when someone claims a task. Each row needs evidence before DONE.
+Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude acknowledged on 29 October 2026 and claimed P02, P06, P09 and then P04 (see the Claude entries below). Interface v1 is not yet peer-frozen. Replace provisional owner names when someone claims a task. Each row needs evidence before DONE.
 
 | Packet | Provisional owner | Status | Branch/checkout + baseline | Result/review/integration evidence |
 |---|---|---|---|---|
@@ -12,6 +12,7 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude is bei
 | P05 | Codex | IN_PROGRESS | codex/operator-app-v1 | Setup/probes/launcher implemented; native Windows/live-model acceptance pending |
 | P06 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 29 Oct P06 entry; awaiting Codex review and Malcolm's decisions D1–D5 |
 | P07 | Codex + Claude review | IN_PROGRESS | codex/operator-app-v1 | Backend boundary tests pass; UI integration and peer review pending |
+
 | P08 | Codex + Claude review | NOT_STARTED | — | — |
 | P09 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 29 Oct P09 entry; awaiting Codex review and Malcolm's prioritisation |
 
@@ -42,6 +43,16 @@ Append dated entries using the handoff template in `03-parallel-working.md`. Cap
 ## 29 October — Codex claim
 
 Baseline a8ffb910508ff3e9e172aa04c56a53f6758e8509. Codex owns P00/P01 then service/setup (P03/P05); leaves OCR, operator-web and KB research to Claude. Malcolm selected native Windows service/browser. No Windows execution host is available in this cloud task; native cancellation and installation remain explicit acceptance gates. Proposed dependency-free Node HTTP/IPC service and single active worker preserve CLI/engine isolation. Shared interface remains pending peer review; backend publishes concrete fixtures for UI consumption.
+
+## 29 October — Codex backend handoff
+
+- P01 fix is on `codex/update-settings-safety`, commit `b25e2bf`. Five new real-file failure-injection regressions cover pre-rename, directory-open/sync after rename, repeated restoration sync failure and unreadable tag recovery. 110 focused tests, Foundation typecheck and focused ESLint passed. It is separate from the service branch; do not assume it is merged.
+- `codex/operator-app-v1` contains P03/P05 candidate service, bounded same-origin HTTP/SSE API, one-time bootstrap, per-operation worker processes, repository registration, persisted/idempotent decisions, evidence drift checks, history/resume, setup and explicit challenge/file-based probes. No paid API calls or real model probes were made.
+- The service uses Node built-ins. Shared seam changes: Windows cmd.exe test execution and PID-scoped taskkill cancellation; native acceptance remains unverified. Production startup is `npm run app`; no UI files are changed.
+- Claude: read `conductor/docs/operator-app/interface.md` and `architecture.md`, and consume `conductor/test/fixtures/operator-app/contract-v1.json`. SSE event name is `run`; fallback choice IDs are `continue` / `pause`; other approvals are `approve` / `reject`; send reviewedCommit=null when the decision has no Git evidence. Fetch this branch for backend integration; propose interface changes explicitly.
+- Broad Linux Conductor regression passed 1,535 tests with the cloud orphan-reaping wrapper. Subsequent focused launcher tests cover a real start/stop/restart without any model calls. Final command/count details are in `conductor/docs/operator-app/acceptance.md`.
+- Git pushes work. `gh pr create` failed with GitHub API Forbidden; no PR was created. Branches remain directly reviewable. No automatic merge or client ship.
+- External gates: Claude UI/peer review, native Windows host installation/cancellation, and supported sign-in + configured local-model access for live acceptance. These are not inferred from Linux or mock results.
 
 ## 29 October — published Codex handoff for Claude
 
@@ -185,3 +196,16 @@ Integration SHA: —
   - **Suggested fix (for the engine owner):** remove `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_*` and `GIT_CONFIG_VALUE_*` together, or keep all three. Then add a regression test that sets the trio.
 - **1 failure** in `localAgent.test.js` was caused by my `XDG_CACHE_HOME` under the temp directory, which that test deliberately refuses. It passes (14/14) with the default cache location.
 - Vitest files are not picked up by `node --test`. They live in `operator-web/tests/*.spec.*`.
+
+
+## 29 October — Codex resolution of PR #2 conflicts and review blocker
+
+Merged main `675233d` into the operator-service branch; preserved both handoff histories and Claude's newer P02/P04/P06/P09 statuses. The only Git content conflict was in this ledger. No remote main merge or PR approval is performed.
+
+P3-1/I-1: result approval now persists a landing boundary before delivery. Cancel returns 409/landing-in-progress after that boundary, rather than killing an irreversible source update. Finished outcomes remain accepted after a cancellation request. Worker/service loss without a known approved outcome requires repository inspection and disables automatic resume. Added delayed-landing and crash-after-landing source-branch regressions; both fail on `a8c97bc` and pass on the updated branch. Added startup-recovery regression and shared/UI fixtures, plus a narrow UI change explaining recovery and hiding the unsafe stop action. Claude's other UI source remains unchanged.
+
+P3-2: absent/malformed asset paths return 404; regression added. P3-4: coverage wording states the actual participating vendor. P3-5: probe time budgets documented. I-2: lost-bootstrap-response restart limitation documented. P3-3 (pre-auth rate budget) remains a nonblocking note; the separately recorded baseline GIT_CONFIG_* scrubbing finding is outside this conflict update. P01/R1 notes remain attached to the separate safety branch.
+
+Combined checks: 29 service tests passed; 45 UI tests passed; UI build passed. Browser journey attempted but blocked by missing Chromium; the supported browser download was then denied by proxy (403 Domain forbidden for cdn.playwright.dev). No new browser/native Windows/live-model acceptance claim. Independent re-review of P3-1 is invited at the new branch commit; do not infer a peer sign-off from these owner's checks.
+
+Final combined validation for the PR #2 update: **1,541 Conductor tests passed, zero failed/skipped/cancelled** (70.40 seconds); **45 UI tests passed**, UI build passed. The launcher regression now verifies the built UI when present instead of assuming the pre-UI placeholder. No unresolved Git conflicts remain; main at 675233d is an ancestor of the review branch. Browser rerun remains blocked as described above.

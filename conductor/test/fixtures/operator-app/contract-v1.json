@@ -1,0 +1,495 @@
+{
+  "schema": 1,
+  "notice": "Synthetic UI contract examples; not live model or Windows acceptance evidence.",
+  "bootstrap": {
+    "request": {
+      "bootstrapToken": "synthetic-example-only"
+    },
+    "response": {
+      "authenticated": true
+    }
+  },
+  "repositories": {
+    "repositories": [
+      {
+        "id": "repo-fixture",
+        "path": "C:\\Projects\\example",
+        "name": "example",
+        "registeredAt": "2026-10-29T12:00:00.000Z"
+      }
+    ]
+  },
+  "awaitingResult": {
+    "id": "run-fixture",
+    "repositoryId": "repo-fixture",
+    "title": "Add a small tested helper",
+    "createdAt": "2026-10-29T12:00:00.000Z",
+    "updatedAt": "2026-10-29T12:00:00.000Z",
+    "status": "awaiting-decision",
+    "phase": "result",
+    "resumable": true,
+    "lastEventSeq": 2,
+    "activeDecisionId": "decision-fixture",
+    "workspaceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "landedBranch": null,
+    "coverage": {
+      "local": "used",
+      "vendors": [
+        "anthropic",
+        "openai"
+      ],
+      "weakened": false,
+      "reasons": []
+    },
+    "decision": {
+      "id": "decision-fixture",
+      "runId": "run-fixture",
+      "kind": "result",
+      "createdAt": "2026-10-29T12:00:00.000Z",
+      "status": "pending",
+      "prompt": "Review the changes and actual checks.",
+      "choices": [
+        {
+          "id": "reject",
+          "label": "Reject",
+          "consequence": "Do not proceed."
+        },
+        {
+          "id": "approve",
+          "label": "Approve",
+          "consequence": "Create a new branch; do not merge or deploy."
+        }
+      ],
+      "evidence": {
+        "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "diffId": "fixture-diff",
+        "testReportIds": [
+          "fixture-tests"
+        ]
+      },
+      "revision": "revision-fixture",
+      "resolvedAt": null
+    }
+  },
+  "review": {
+    "summary": "Review the changes and actual checks.",
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "diffId": "fixture-diff",
+    "testReportIds": [
+      "fixture-tests"
+    ],
+    "diff": "diff --git a/helper.js b/helper.js\n+export const doubled = n => n * 2;\n",
+    "tests": {
+      "ran": true,
+      "passed": true,
+      "code": 0,
+      "output": "1 test passed"
+    },
+    "files": [
+      "helper.js"
+    ]
+  },
+  "events": [
+    {
+      "schema": 1,
+      "runId": "run-fixture",
+      "seq": 1,
+      "at": "2026-10-29T12:00:00.000Z",
+      "type": "progress",
+      "phase": "chunks",
+      "participant": "local",
+      "message": "chunk-done",
+      "data": {
+        "participant": "local",
+        "role": "grunt",
+        "ok": true
+      }
+    },
+    {
+      "schema": 1,
+      "runId": "run-fixture",
+      "seq": 2,
+      "at": "2026-10-29T12:00:00.000Z",
+      "type": "decision-pending",
+      "phase": "result",
+      "participant": null,
+      "message": "Review the changes and actual checks.",
+      "data": {
+        "decisionId": "decision-fixture"
+      }
+    }
+  ],
+  "staleDecision": {
+    "error": {
+      "code": "stale-decision",
+      "message": "The reviewed work changed. Resume for a fresh review.",
+      "retryable": false,
+      "requestId": "request-fixture"
+    }
+  },
+  "failedChecks": {
+    "ran": true,
+    "passed": false,
+    "code": 1,
+    "output": "Assertion failed: expected result differs"
+  },
+  "unrunChecks": {
+    "ran": false,
+    "passed": null,
+    "code": null,
+    "output": ""
+  },
+  "maliciousContent": {
+    "diff": "+<script>window.evil()</script>\n+javascript:alert(1)",
+    "summary": "Untrusted model text. Never render this as HTML."
+  },
+  "escalationDecision": {
+    "id": "escalation-fixture",
+    "runId": "run-fixture",
+    "kind": "escalation",
+    "createdAt": "2026-10-29T12:00:00.000Z",
+    "status": "pending",
+    "prompt": "Review the changes and actual checks.",
+    "choices": [
+      {
+        "id": "reject",
+        "label": "Reject",
+        "consequence": "Do not proceed."
+      },
+      {
+        "id": "approve",
+        "label": "Approve",
+        "consequence": "Continue this step."
+      }
+    ],
+    "evidence": {
+      "commit": null,
+      "diffId": null,
+      "testReportIds": []
+    },
+    "revision": "revision-fixture",
+    "resolvedAt": null
+  },
+  "planDecision": {
+    "id": "plan-fixture",
+    "runId": "run-fixture",
+    "kind": "plan",
+    "createdAt": "2026-10-29T12:00:00.000Z",
+    "status": "pending",
+    "prompt": "Review the changes and actual checks.",
+    "choices": [
+      {
+        "id": "reject",
+        "label": "Reject",
+        "consequence": "Do not proceed."
+      },
+      {
+        "id": "approve",
+        "label": "Approve",
+        "consequence": "Continue this step."
+      }
+    ],
+    "evidence": {
+      "commit": null,
+      "diffId": null,
+      "testReportIds": []
+    },
+    "revision": "revision-fixture",
+    "resolvedAt": null
+  },
+  "chunkDecision": {
+    "id": "chunk-fixture",
+    "runId": "run-fixture",
+    "kind": "chunk",
+    "createdAt": "2026-10-29T12:00:00.000Z",
+    "status": "pending",
+    "prompt": "Review the changes and actual checks.",
+    "choices": [
+      {
+        "id": "reject",
+        "label": "Reject",
+        "consequence": "Do not proceed."
+      },
+      {
+        "id": "approve",
+        "label": "Approve",
+        "consequence": "Continue this step."
+      }
+    ],
+    "evidence": {
+      "commit": null,
+      "diffId": null,
+      "testReportIds": []
+    },
+    "revision": "revision-fixture",
+    "resolvedAt": null
+  },
+  "fallbackDecision": {
+    "id": "fallback-fixture",
+    "runId": "run-fixture",
+    "kind": "fallback",
+    "createdAt": "2026-10-29T12:00:00.000Z",
+    "status": "pending",
+    "prompt": "Review the changes and actual checks.",
+    "choices": [
+      {
+        "id": "pause",
+        "label": "Pause",
+        "consequence": "No subscription fallback."
+      },
+      {
+        "id": "continue",
+        "label": "Use subscriptions",
+        "consequence": "Uses more subscription allowance."
+      }
+    ],
+    "evidence": {
+      "commit": null,
+      "diffId": null,
+      "testReportIds": []
+    },
+    "revision": "revision-fixture",
+    "resolvedAt": null
+  },
+  "runningRun": {
+    "id": "run-fixture",
+    "repositoryId": "repo-fixture",
+    "title": "Add a small tested helper",
+    "createdAt": "2026-10-29T12:00:00.000Z",
+    "updatedAt": "2026-10-29T12:00:00.000Z",
+    "status": "running",
+    "phase": "result",
+    "resumable": false,
+    "lastEventSeq": 2,
+    "activeDecisionId": null,
+    "workspaceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "landedBranch": null,
+    "coverage": {
+      "local": "used",
+      "vendors": [
+        "anthropic",
+        "openai"
+      ],
+      "weakened": false,
+      "reasons": []
+    },
+    "decision": null
+  },
+  "pausedRun": {
+    "id": "run-fixture",
+    "repositoryId": "repo-fixture",
+    "title": "Add a small tested helper",
+    "createdAt": "2026-10-29T12:00:00.000Z",
+    "updatedAt": "2026-10-29T12:00:00.000Z",
+    "status": "paused",
+    "phase": "result",
+    "resumable": true,
+    "lastEventSeq": 2,
+    "activeDecisionId": null,
+    "workspaceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "landedBranch": null,
+    "coverage": {
+      "local": "used",
+      "vendors": [
+        "anthropic",
+        "openai"
+      ],
+      "weakened": false,
+      "reasons": []
+    },
+    "decision": null
+  },
+  "interruptedRun": {
+    "id": "run-fixture",
+    "repositoryId": "repo-fixture",
+    "title": "Add a small tested helper",
+    "createdAt": "2026-10-29T12:00:00.000Z",
+    "updatedAt": "2026-10-29T12:00:00.000Z",
+    "status": "interrupted",
+    "phase": "result",
+    "resumable": true,
+    "lastEventSeq": 2,
+    "activeDecisionId": null,
+    "workspaceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "landedBranch": null,
+    "coverage": {
+      "local": "used",
+      "vendors": [
+        "anthropic",
+        "openai"
+      ],
+      "weakened": false,
+      "reasons": []
+    },
+    "decision": null
+  },
+  "failedRun": {
+    "id": "run-fixture",
+    "repositoryId": "repo-fixture",
+    "title": "Add a small tested helper",
+    "createdAt": "2026-10-29T12:00:00.000Z",
+    "updatedAt": "2026-10-29T12:00:00.000Z",
+    "status": "failed",
+    "phase": "result",
+    "resumable": true,
+    "lastEventSeq": 2,
+    "activeDecisionId": null,
+    "workspaceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "landedBranch": null,
+    "coverage": {
+      "local": "used",
+      "vendors": [
+        "anthropic",
+        "openai"
+      ],
+      "weakened": false,
+      "reasons": []
+    },
+    "decision": null
+  },
+  "rejectedRun": {
+    "id": "run-fixture",
+    "repositoryId": "repo-fixture",
+    "title": "Add a small tested helper",
+    "createdAt": "2026-10-29T12:00:00.000Z",
+    "updatedAt": "2026-10-29T12:00:00.000Z",
+    "status": "rejected",
+    "phase": "result",
+    "resumable": false,
+    "lastEventSeq": 2,
+    "activeDecisionId": null,
+    "workspaceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "landedBranch": null,
+    "coverage": {
+      "local": "used",
+      "vendors": [
+        "anthropic",
+        "openai"
+      ],
+      "weakened": false,
+      "reasons": []
+    },
+    "decision": null
+  },
+  "completedRun": {
+    "id": "run-fixture",
+    "repositoryId": "repo-fixture",
+    "title": "Add a small tested helper",
+    "createdAt": "2026-10-29T12:00:00.000Z",
+    "updatedAt": "2026-10-29T12:00:00.000Z",
+    "status": "completed",
+    "phase": "result",
+    "resumable": false,
+    "lastEventSeq": 2,
+    "activeDecisionId": null,
+    "workspaceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "landedBranch": "conductor/example",
+    "coverage": {
+      "local": "used",
+      "vendors": [
+        "anthropic",
+        "openai"
+      ],
+      "weakened": false,
+      "reasons": []
+    },
+    "decision": null
+  },
+  "connectionStates": [
+    {
+      "participantId": "claude-code",
+      "adapter": "claude-code",
+      "executable": "found",
+      "authentication": "unknown",
+      "endpoint": "not-applicable",
+      "agenticExecution": "unknown",
+      "checkedAt": null,
+      "probeKind": "installation",
+      "reason": null,
+      "action": null
+    },
+    {
+      "participantId": "codex",
+      "adapter": "codex",
+      "executable": "found",
+      "authentication": "unknown",
+      "endpoint": "not-applicable",
+      "agenticExecution": "unknown",
+      "checkedAt": null,
+      "probeKind": "installation",
+      "reason": null,
+      "action": null
+    },
+    {
+      "participantId": "local-agent",
+      "adapter": "local-agent",
+      "executable": "found",
+      "authentication": "not-applicable",
+      "endpoint": "unknown",
+      "agenticExecution": "unknown",
+      "checkedAt": null,
+      "probeKind": "installation",
+      "reason": null,
+      "action": null
+    }
+  ],
+  "landingRun": {
+    "id": "run-fixture",
+    "repositoryId": "repo-fixture",
+    "title": "Add a small tested helper",
+    "createdAt": "2026-10-29T12:00:00.000Z",
+    "updatedAt": "2026-10-29T12:00:00.000Z",
+    "status": "running",
+    "phase": "landing",
+    "resumable": false,
+    "lastEventSeq": 2,
+    "activeDecisionId": null,
+    "workspaceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "landedBranch": null,
+    "coverage": {
+      "local": "used",
+      "vendors": [
+        "anthropic",
+        "openai"
+      ],
+      "weakened": false,
+      "reasons": []
+    },
+    "decision": null,
+    "landingPending": true
+  },
+  "uncertainLandingRun": {
+    "id": "run-fixture",
+    "repositoryId": "repo-fixture",
+    "title": "Add a small tested helper",
+    "createdAt": "2026-10-29T12:00:00.000Z",
+    "updatedAt": "2026-10-29T12:00:00.000Z",
+    "status": "interrupted",
+    "phase": "result",
+    "resumable": false,
+    "lastEventSeq": 2,
+    "activeDecisionId": null,
+    "workspaceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "landedBranch": null,
+    "coverage": {
+      "local": "used",
+      "vendors": [
+        "anthropic",
+        "openai"
+      ],
+      "weakened": false,
+      "reasons": []
+    },
+    "decision": null,
+    "landingPending": true,
+    "recoveryRequired": true
+  },
+  "landingInProgress": {
+    "error": {
+      "code": "landing-in-progress",
+      "message": "The approved result is being added to the source repository. Wait for its outcome; cancellation is no longer safe.",
+      "retryable": false,
+      "requestId": "request-fixture"
+    }
+  }
+}

@@ -238,3 +238,15 @@ test('without a session the app explains how to sign in instead of simulating an
   expect(await screen.findByText(/Open the link the Conductor app printed when it started/)).toBeTruthy();
   expect(screen.queryByText(/Simulated/)).toBeNull();
 });
+
+test('approved landing cannot be cancelled through the UI', async () => {
+  showRun(fixtures.landingRun);
+  expect(await screen.findByText(/Adding the approved result to the repository/)).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Stop run…' })).toBeNull();
+});
+test('uncertain landing explains repository inspection instead of offering resume', async () => {
+  showRun(fixtures.uncertainLandingRun);
+  expect(await screen.findByText(/The approved result may already be in the repository/)).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Resume' })).toBeNull();
+  expect(screen.queryByText(/It has no saved work to resume/)).toBeNull();
+});

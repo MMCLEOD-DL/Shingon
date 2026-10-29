@@ -432,5 +432,64 @@
       "reason": null,
       "action": null
     }
-  ]
+  ],
+  "landingRun": {
+    "id": "run-fixture",
+    "repositoryId": "repo-fixture",
+    "title": "Add a small tested helper",
+    "createdAt": "2026-10-29T12:00:00.000Z",
+    "updatedAt": "2026-10-29T12:00:00.000Z",
+    "status": "running",
+    "phase": "landing",
+    "resumable": false,
+    "lastEventSeq": 2,
+    "activeDecisionId": null,
+    "workspaceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "landedBranch": null,
+    "coverage": {
+      "local": "used",
+      "vendors": [
+        "anthropic",
+        "openai"
+      ],
+      "weakened": false,
+      "reasons": []
+    },
+    "decision": null,
+    "landingPending": true
+  },
+  "uncertainLandingRun": {
+    "id": "run-fixture",
+    "repositoryId": "repo-fixture",
+    "title": "Add a small tested helper",
+    "createdAt": "2026-10-29T12:00:00.000Z",
+    "updatedAt": "2026-10-29T12:00:00.000Z",
+    "status": "interrupted",
+    "phase": "result",
+    "resumable": false,
+    "lastEventSeq": 2,
+    "activeDecisionId": null,
+    "workspaceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "landedBranch": null,
+    "coverage": {
+      "local": "used",
+      "vendors": [
+        "anthropic",
+        "openai"
+      ],
+      "weakened": false,
+      "reasons": []
+    },
+    "decision": null,
+    "landingPending": true,
+    "recoveryRequired": true
+  },
+  "landingInProgress": {
+    "error": {
+      "code": "landing-in-progress",
+      "message": "The approved result is being added to the source repository. Wait for its outcome; cancellation is no longer safe.",
+      "retryable": false,
+      "requestId": "request-fixture"
+    }
+  }
 }
