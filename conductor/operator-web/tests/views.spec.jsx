@@ -251,6 +251,92 @@ test('uncertain landing explains repository inspection instead of offering resum
   expect(screen.queryByText(/It has no saved work to resume/)).toBeNull();
 });
 
+describe('recovery after an uncertain landing', () => {
+  const uncertain = fixtures.uncertainLandingRun;
+  const recoverCalls = (svc) => svc.state.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/recover'));
+
+  test('names the repository and approved commit, with read-only commands, and records nothing until confirmed', async () => {
+    const { svc } = showRun(uncertain);
+    expect(await screen.findByRole('heading', { name: 'Check the repository before recovering' })).toBeTruthy();
+    const repoPath = fixtures.repositories.repositories.find((r) => r.id === uncertain.repositoryId).path;
+    await waitFor(() => expect(screen.getAllByText(repoPath, { exact: false }).length).toBeGreaterThan(0));
+    expect(screen.getAllByText(uncertain.workspaceCommit, { exact: false }).length).toBeGreaterThan(0);
+    const commands = document.querySelector('.recovery pre').textContent;
+    expect(commands).toContain(`branch --points-at ${uncertain.workspaceCommit}`);
+    expect(commands).not.toMatch(/\b(branch -[dD]|reset|checkout|push|merge)\b/);
+    expect(screen.getByRole('button', { name: 'Record inspection' }).disabled).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Resume' })).toBeNull();
+    expect(recoverCalls(svc)).toHaveLength(0);
+  });
+
+  test('recording sends the explicit confirmation bound to the current snapshot, then offers Resume without starting anything', async () => {
+    const { svc } = showRun(uncertain);
+    await userEvent.click(await screen.findByRole('checkbox', { name: /I have inspected the repository/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Record inspection' }));
+    expect(await screen.findByText(/Inspection recorded. Nothing has started/)).toBeTruthy();
+    const [call] = recoverCalls(svc);
+    expect(call.body).toEqual({ clientRequestId: expect.stringMatching(/^[\w-]+$/), repositoryInspected: true, expectedEventSeq: uncertain.lastEventSeq, reviewedCommit: uncertain.workspaceCommit });
+    expect(await screen.findByRole('button', { name: 'Resume' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Check the repository before recovering' })).toBeNull();
+    expect(screen.getByText(/You recorded your repository inspection/)).toBeTruthy();
+    expect(svc.state.calls.some((c) => c.path.endsWith('/resume'))).toBe(false);
+  });
+
+  test('a retry after a lost response reuses the request id, so the service answers from its receipt', async () => {
+    const svc = fakeService({ run: uncertain });
+    let drop = true;
+    const fetchImpl = async (url, init = {}) => {
+      const r = await svc.fetchImpl(url, init);
+      if (url.endsWith('/recover') && drop) { drop = false; svc.state.run = { ...uncertain }; throw new TypeError('connection reset'); }
+      return r;
+    };
+    render(<RunView api={createApi({ fetchImpl })} runId={uncertain.id} go={() => {}} />);
+    await userEvent.click(await screen.findByRole('checkbox', { name: /I have inspected the repository/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Record inspection' }));
+    expect(await screen.findByText(/not answering/)).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Record inspection' }));
+    expect(await screen.findByText(/Inspection recorded/)).toBeTruthy();
+    const ids = recoverCalls(svc).map((c) => c.body.clientRequestId);
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).toBe(ids[0]);
+  });
+
+  test('a stale snapshot is refused, explained and reloaded, and the confirmation must be given again', async () => {
+    const { svc } = showRun(uncertain);
+    await userEvent.click(await screen.findByRole('checkbox', { name: /I have inspected the repository/ }));
+    svc.state.run = { ...uncertain, lastEventSeq: uncertain.lastEventSeq + 1 }; // something happened since this page loaded
+    await userEvent.click(screen.getByRole('button', { name: 'Record inspection' }));
+    expect(await screen.findByText(/stale-recovery/)).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: /I have inspected the repository/ }).checked).toBe(false));
+    expect(screen.getByRole('button', { name: 'Record inspection' }).disabled).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Resume' })).toBeNull();
+  });
+
+  test('a repository path a shell would expand is shown, but kept out of the copyable commands', async () => {
+    const odd = '/srv/$(touch pwned)/repo';
+    const svc = fakeService({ run: uncertain });
+    svc.state.repositories = svc.state.repositories.map((r) => (r.id === uncertain.repositoryId ? { ...r, path: odd } : r));
+    render(<RunView api={createApi({ fetchImpl: svc.fetchImpl })} runId={uncertain.id} go={() => {}} />);
+    await waitFor(() => expect(screen.getAllByText(odd, { exact: false }).length).toBeGreaterThan(0));
+    const commands = document.querySelector('.recovery pre').textContent;
+    expect(commands).not.toContain('$(');
+    expect(commands).toContain('git -C "<repository folder>" status --short');
+  });
+
+  test('a failed run that needs inspection says so instead of "cannot be resumed", and offers the same control', async () => {
+    showRun({ ...uncertain, status: 'failed' });
+    expect(await screen.findByText(/The approved result may already be in the repository/)).toBeTruthy();
+    expect(screen.queryByText(/It cannot be resumed from here/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Record inspection' })).toBeTruthy();
+  });
+
+  test('no inspection control for an ordinary interrupted run', async () => {
+    showRun(fixtures.interruptedRun);
+    await screen.findByText('Interrupted');
+    expect(screen.queryByRole('button', { name: 'Record inspection' })).toBeNull();
+  });
+});
+
 test('after an approval is accepted, neither the old question nor Stop is offered while the snapshot is still the pre-answer one', async () => {
   // The service keeps returning the pre-answer snapshot (as an in-flight refresh would): the UI must not resurrect it.
   const frozen = fixtures.awaitingResult;

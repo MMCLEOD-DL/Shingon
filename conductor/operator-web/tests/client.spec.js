@@ -33,6 +33,10 @@ describe('api client', () => {
     expect(seen[0].url).toBe('/api/v1/runs/run-1/decisions/d-1');
     expect(seen[0].init.credentials).toBe('same-origin');
     expect(JSON.parse(seen[0].init.body)).toEqual({ choiceId: 'approve', expectedRevision: 'rev', reviewedCommit: null, clientRequestId: 'c1' });
+    await api.recover('run-1', { clientRequestId: 'c2', repositoryInspected: true, expectedEventSeq: 7, reviewedCommit: 'a'.repeat(40) });
+    expect(seen[1].url).toBe('/api/v1/runs/run-1/recover');
+    expect(seen[1].init.method).toBe('POST');
+    expect(JSON.parse(seen[1].init.body)).toEqual({ clientRequestId: 'c2', repositoryInspected: true, expectedEventSeq: 7, reviewedCommit: 'a'.repeat(40) });
   });
 
   test('bootstrap: the fragment is removed from the address bar before the token is sent, and never stored', async () => {
