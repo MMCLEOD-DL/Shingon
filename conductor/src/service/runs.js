@@ -156,7 +156,7 @@ export class Runs {
   async answer(run, decisionId, body) {
     this.available(); requireValue(opaqueId(body?.clientRequestId), 'Provide a unique clientRequestId.');
     const identity = JSON.stringify([decisionId, body.choiceId, body.expectedRevision, body.reviewedCommit, body.feedback ?? null]);
-    const receipt = run.decisionReceipts[body.clientRequestId];
+    const receipt = Object.hasOwn(run.decisionReceipts ?? {}, body.clientRequestId) ? run.decisionReceipts[body.clientRequestId] : null;
     if (receipt) { requireValue(receipt.identity === identity, 'Request ID conflict.', 'conflict', 409); return receipt.result; }
     const d = run.decision;
     requireValue(this.active?.runId === run.id && run.status === 'awaiting-decision' && d?.id === decisionId && d.status === 'pending', 'This decision is no longer pending.', 'stale-decision', 409);
@@ -172,7 +172,7 @@ export class Runs {
         if (this.active?.child.connected) this.active.child.disconnect();
         requireValue(false, 'The reviewed work changed. Resume for a fresh review.', 'stale-decision', 409);
       }
-      const saved = run.decisionReceipts[body.clientRequestId];
+      const saved = Object.hasOwn(run.decisionReceipts ?? {}, body.clientRequestId) ? run.decisionReceipts[body.clientRequestId] : null;
       if (saved) { requireValue(saved.identity === identity, 'Request ID conflict.', 'conflict', 409); return saved.result; }
       requireValue(d.status === 'pending' && run.activeDecisionId === decisionId && this.active?.runId === run.id,
         'This decision is no longer pending.', 'stale-decision', 409);
@@ -187,7 +187,7 @@ export class Runs {
       run.landingPending = true; run.resumable = false; run.phase = 'landing';
     }
     const result = { accepted: true, decisionId };
-    run.decisionReceipts[body.clientRequestId] = { identity, result };
+    run.decisionReceipts = { ...run.decisionReceipts, [body.clientRequestId]: { identity, result } };
     this.event(run, 'decision-resolved', body.choiceId, { decisionId });
     this.active.child.send({ type: 'answer', id: decisionId, value });
     return result;

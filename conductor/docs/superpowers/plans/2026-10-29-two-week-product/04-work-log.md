@@ -7,7 +7,7 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude acknow
 | P00 | Codex | IN_REVIEW | codex/operator-app-v1 | Concrete API/ADR/fixtures ready; Claude acknowledgement pending |
 | P01 | Codex | DONE | `codex/updater-settings-recovery` | Claude approved `06678be`; PR #6 merged as `8e5bf13`; evidence below |
 | P02 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 29 Oct P02 entry; awaiting Codex review |
-| P03 | Codex | IN_REVIEW | `codex/operator-run-recovery` | N1/N2 on `a3fe39a` (main `3bc22a6` included); 34 service / 1,548 Conductor / 47 UI / 17 browser checks passed; revised peer review and merge due |
+| P03 | Codex | IN_REVIEW | `codex/decision-receipt-keys` from `d9e88e2` | #12 approved/merged; N5 fixed with 45 service / 1,559 Conductor / 47 UI / 17 browser checks passing; N5 peer review and merge due; N6 remains Claude-owned |
 | P04 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh`; contract v1 fixtures from `codex/operator-app-v1` @ `a8c97bc` | `conductor/operator-web`: 43/43 unit, 13/13 browser journey against real P03 service; see 29 Oct P04 entry; awaiting Codex review |
 | P05 | Codex | IN_PROGRESS | codex/operator-app-v1 | Setup/probes/launcher implemented; native Windows/live-model acceptance pending |
 | P06 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 29 Oct P06 entry; awaiting Codex review and Malcolm's decisions D1–D5 |
@@ -531,32 +531,74 @@ Integration SHA: —
 - **Evidence:** service tests 34/34 on `2948677`. The PR's five scenarios fail against the pre-#12 service code.
 - **Next Claude task:** N6, the UI recovery acknowledgement.
 
-### 29 October 2026 — Claude task 8 (claude-lane): recovery control in the operator UI (N6)
+### 29 October 2026 — Codex claim: P03 N5 decision-receipt object keys
+
+Owner: Codex; reviewer: Claude. Status: IN_PROGRESS.
+Branch: `codex/decision-receipt-keys`; baseline main: `d9e88e2`.
+PR #12 merged as `c0795fb`; Claude approved recovery in review commit `7759a55`.
+Next own review note: N5 in reviews/2026-10-29-claude-review-P03-recovery.md.
+Owned paths: `conductor/src/service/runs.js`, `conductor/test/service/{server,engine}.test.js`,
+`conductor/docs/operator-app/interface.md`, and this ledger. No UI/knowledge/CI changes.
+Scope: treat allowed request IDs as own dictionary keys during both receipt reads and writes,
+retain JSON/restart idempotency, and verify exactly-once approval with the real engine and
+synthetic CLI workers. Preserve the opaque-ID contract rather than introducing reserved names.
+N6 recovery UI remains Claude's task. Service/approval changes stay on the high-risk merge route.
+
+### 29 October 2026 — Codex P03 N5 handoff
 
 ```
-Packet/subpacket: P04 follow-up N6 (from the P03 recovery review) — UI control for POST /runs/:id/recover.
-Owner and reviewer: Claude; reviewer Codex.
+Packet/subpacket: P03 — N5 decision receipt keys and restart idempotency.
+Owner and reviewer: Codex; reviewer Claude.
 Status: IN_REVIEW.
-Baseline SHA: d9e88e2 (main after PR #13).
-Owned files: conductor/operator-web/{src/api.js, src/views/RunView.jsx, src/styles.css, tests/*, e2e/journey.mjs,
-  e2e/inspect-worker.cjs (new)}; conductor/docs/operator-app/ux.md; this ledger. No service, contract, fixture or CI change.
-What now works: a run with recoveryRequired (interrupted or failed) shows the registered repository, the full approved
-  commit and three read-only Git commands. "Record inspection" needs an explicit tick bound to the current snapshot and
-  sends repositoryInspected:true with lastEventSeq, workspaceCommit and one request id per snapshot. It starts nothing;
-  Resume then appears as a separate step. Refusals (stale-recovery, not-recoverable, not-resumable) are shown and the
-  run reloads. The failed-run text no longer says "cannot be resumed" when inspection is what is needed.
-Checks (cloud Linux, Node 22.22.0), from conductor/operator-web/:
-  npm test: 54 passed (47 before). 7 of the 8 new or extended tests fail against the previous UI source; the 8th is
-    the guard that ordinary interrupted runs get no control.
-  npm run build: passed.
-  NODE_PATH=$(npm root -g) node e2e/journey.mjs: 19 passed / 0 failed (Playwright 1.63.0) against the real service.
-    New steps: (a) Codex's slow-land worker (no workspace): the real service refuses the inspection
-    with not-resumable, and the UI shows it; (b) the UI's inspect worker: a real engine workspace via Workspace.create,
-    the branch fetched into the source repository and the worker killed before reporting; inspection recorded only after
-    the tick, no worker started, panel fits 360 px; Resume reconciles to "Branch created" with exactly one branch.
-Live / fake / skipped / unrun: real service, real Git and engine Workspace; deterministic fixture workers, no models.
-  Conductor service suite not re-run (no service change); CI runs it. Native Windows unrun.
-Open defects or unknowns: none found. Handoff to Codex (docs owner): setup.md "Recover an uncertain approved result"
-  step 2 can now point at the run page's "Record inspection" control instead of the developer-console snippet.
-Reviewer disposition and reviewed SHA: —
+Baseline SHA: d9e88e2; branch codex/decision-receipt-keys.
+Owned files: conductor/src/service/runs.js; conductor/test/service/{server,engine}.test.js;
+  conductor/docs/operator-app/interface.md; this ledger.
+What now works: both decision-receipt reads inspect own keys, and writes use computed own
+  data properties. Allowed IDs including __proto__, constructor, prototype, toString and
+  hasOwnProperty are durable JSON keys; same-ID/body retries replay after restart, while
+  conflicting reuse remains 409. ID syntax/state format are preserved without migration.
+Reproduction refines N5: the existing inherited-property read causes false 409 on the first
+  valid request, before the unsafe plain __proto__ assignment could run. Fix both reads and
+  the write together. Before fix: 8 of 10 HTTP restart cases fail, 2 prototype-name controls
+  pass; the real-engine concurrent __proto__ approval case also fails (409 instead of 200).
+Checks (Debian 13, Node 24.19.0 / npm 11.9.0):
+  From conductor/, source /workspace/shingon-dev/env.sh and use the cloud subreaper:
+  node --test test/service/*.test.js: 45 passed.
+  python3 /workspace/shingon-dev/reap.py node --test --test-concurrency=4:
+    1,559 passed / 0 failed/skipped/cancelled; 70.76 seconds.
+  From conductor/operator-web/: npm test: 47 passed; npm run build: passed.
+  Unchanged browser journey: 17 passed / 0 failed; Playwright 1.63.0 selecting system Chromium
+    154.0.8037.57 through the external supported executablePath preload described in acceptance.md.
+Live / fake / skipped / unrun: HTTP table tests use fixture workers and prove no source ref
+  writes; the concurrent/restart test uses the real engine/Git with deterministic model CLI
+  stand-ins and proves only one actual result branch, preserved source HEAD/clean checkout,
+  one decision-resolved event and no worker on restart replay. No live models/subscriptions,
+  native Windows, power-loss, client boxes or releases. Foundation/knowledge unchanged; their
+  required CI checks remain due. No UI source, CI or gate changes.
+Open defects or unknowns: no new blocker found; N5 peer review pending. N6 UI remains Claude's task.
+External blocker: high-risk service/approval code needs Malcolm's merge or approval label;
+  auto-merge off. Agents do not set that label or loosen the gate.
+Next packet unblocked: next lane item after this task merges.
+Reviewer disposition and reviewed SHA: Claude's N5 note is the basis; new fix not independently approved yet.
+Integration SHA: —
 ```
+
+### Codex task submitted — P03 N5 decision-receipt keys
+
+- Date: 29 October 2026. Branch: `codex/decision-receipt-keys`; baseline: `d9e88e2`.
+- Last code commit: `88b8a0789949bee750411460890091bc616718ac`.
+- PR: [#14 — P03: persist decision receipts for every valid request ID](https://github.com/MMCLEOD-DL/Shingon/pull/14).
+- Changes: own-property reads before/after asynchronous evidence checks, computed own-property
+  receipt writes, eleven regressions and API clarification. Accepted ID syntax/state schema stay compatible.
+- Reproduction: before fix, 8/10 HTTP cases fail (2 controls pass) and the real-engine concurrent
+  approval case fails. After fix: 45 service / 1,559 full Conductor / 47 UI tests passed,
+  UI build passed, and unchanged browser journey 17 passed. Exact host, commands and browser
+  override are in the handoff above; no production change after those checks.
+- Limits: HTTP fixture workers and real-engine deterministic model CLI stand-ins, actual Git;
+  local browser uses system Chromium. No live models/subscriptions, native Windows, power-loss,
+  client boxes or releases. Hosted Foundation/knowledge/pinned-browser CI pending at submission.
+- Merge route: high-risk service/approval code; auto-merge off. Independent Claude re-review
+  requested at the code SHA. Only Malcolm merges or adds his approval label; agent leaves the
+  label and gate untouched. N6 UI remains Claude-owned.
+- Open questions: none on the implementation; CI/peer review/merge pending. Address any own
+  failures on this branch. The next "carry on" after merge starts the next task from current main.

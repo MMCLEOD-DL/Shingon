@@ -41,6 +41,8 @@ if (token) {
 
 Errors use `{error:{code,message,retryable,requestId}}`. HTTP status is authoritative. Implemented codes include unauthorized (401), forbidden (403), invalid-request/invalid-json (400), not-found (404), busy/conflict/stale-decision/stale-recovery/not-recoverable/not-resumable/resync-required/landing-in-progress/recovery-required (409), too-large (413), rate-limit/stream-limit (429), and storage-unavailable/probe-failed (503). Do not rely on every error being retryable. Unknown errors become a generic message, without a stack/environment dump.
 
+Decision request IDs follow the existing opaque-ID syntax, including names such as `__proto__`, `constructor` and `hasOwnProperty`. They are stored as own data properties, not inherited object members. A retry with the same ID/body replays the saved receipt after a service restart without sending another answer; reuse for a different body remains 409/conflict. No state migration or new reserved-name rule is required.
+
 ## Data and process limits
 
 Maximum API body 32 KiB, task 16,000 characters, feedback 2,000, review payload 1 MiB, 5,000 normalized events per run, 500 retained run records, 16 MiB service-state snapshot, 8 SSE streams, 300 API requests/minute per process. Oversized reviews stop with CLI guidance; the UI must not display a clipped review as complete. Store metadata only on a local disk. A kernel-owned loopback lease prevents two processes from owning the same data directory even with different HTTP ports; an unrelated lease-port collision fails closed with guidance to select another data directory.
