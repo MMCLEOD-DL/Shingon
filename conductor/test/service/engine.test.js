@@ -73,6 +73,28 @@ test('changing reviewed files invalidates approval and never lands a branch', as
   assert.equal(readFileSync(path.join(s.repo,'README.md'),'utf8'),'original\n');
 });
 
+test('concurrent __proto__ approvals and a restart retry create only one real result branch (N5)', async t=>{
+  const s=await fixture(t); const run=await s.wait('awaiting-decision'); const d=run.decision;
+  const endpoint=`/runs/${s.runId}/decisions/${d.id}`;
+  const input={choiceId:'approve',expectedRevision:d.revision,reviewedCommit:d.evidence.commit,clientRequestId:'__proto__'};
+  const answers=await Promise.all([s.api(endpoint,'POST',input),s.api(endpoint,'POST',input)]);
+  for(const answer of answers) assert.equal(answer.status,200);
+  assert.deepEqual(answers[0].body,answers[1].body);
+  const done=await s.wait('completed');
+  assert.match((await git(s.repo,['show',`${done.landedBranch}:multiply.txt`])).stdout,/local did it/);
+  const refs=(await git(s.repo,['show-ref'])).stdout;
+  assert.equal((await git(s.repo,['for-each-ref','--format=%(refname)','refs/heads/conductor/'])).stdout.trim().split('\n').length,1);
+  await s.restart();
+  const replay=await s.api(endpoint,'POST',input);
+  assert.equal(replay.status,200); assert.deepEqual(replay.body,answers[0].body);
+  assert.equal((await s.api(endpoint,'POST',{...input,choiceId:'reject'})).status,409);
+  assert.equal(s.app.runs.get(s.runId).events.filter(e=>e.type==='decision-resolved').length,1);
+  assert.equal(s.app.runs.active,null);
+  assert.equal((await git(s.repo,['show-ref'])).stdout,refs);
+  assert.equal((await git(s.repo,['rev-parse','HEAD'])).stdout,s.originalHead);
+  assert.equal((await git(s.repo,['status','--porcelain'])).stdout,'');
+});
+
 test('worker refuses drift after the service approval check, preserving work for fresh review (N2)', async t=>{
   const s=await fixture(t); const run=await s.wait('awaiting-decision');
   const internal=s.app.runs.get(s.runId);

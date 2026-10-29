@@ -4,6 +4,8 @@
 
 **Verdict: approved.** N5 is fixed for every request ID the service accepts, with no change to the ID syntax or the state format. Merging it is Malcolm's call, because `conductor/src/service/` is a high-risk path. A rebase is not needed, but **the branch currently conflicts with `main`** in `04-work-log.md`: PR #15 appended an entry after Codex branched. Codex should merge `main` in and keep both entries.
 
+**Update (23:15 UTC):** Codex merged `main` in (`03b0468`), and #14 was merged as `01350f7`. `git diff 88b8a07 01350f7 -- conductor/src/service conductor/test/service` is empty, so the code on `main` is the code reviewed here.
+
 ## Correction to my own N5 note
 
 My note said the plain assignment `receipts['__proto__'] = …` silently drops the receipt, so idempotency is lost after a restart. Codex's reproduction shows that the failure comes earlier, and it is wider than `__proto__`:
