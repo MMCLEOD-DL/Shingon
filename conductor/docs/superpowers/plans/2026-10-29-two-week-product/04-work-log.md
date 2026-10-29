@@ -380,3 +380,33 @@ Integration SHA: —
   (34 service / 1,548 Conductor / 47 UI tests passed; UI build passed). Resume that packet
   after this prerequisite is merged; merge current main into its existing branch first.
 - Open questions: none on the proposed redaction fix; CI/peer review/Malcolm merge pending.
+
+### 29 October 2026 — Claude task 5 (claude-lane): K2 knowledge service skeleton
+
+```
+Packet/subpacket: K2 (knowledge-base migration plan), the first implementation task
+Owner and reviewer: Claude; reviewer Codex
+Decision basis: Malcolm chose K2 (29 Oct), accepting D1, D2 and D5 of recommendation.md; D3 and D4 open.
+Status: IN_REVIEW
+Baseline SHA: caee572
+Owned files: knowledge/** (new package), conductor/docs/knowledge-base/adr-0001-kb-service-stack.md,
+  recommendation.md decision note. Shared: a `knowledge` job in .github/workflows/ci.yml; ownership and
+  required-check lines in AGENTS.md and the claude-lane skill (high-risk paths, so Malcolm merges).
+What now works: the spike as a package. Versioned SQL migrations; tenants, collections and principals;
+  repeat-safe sync (versions, deletions, ACL and supersession changes); actionable import status;
+  credential-bearing files refused; keyword search with the ACL predicate in the candidate query,
+  superseded demotion (0.5) and evidence levels; version and locator citations; permission-checked
+  originals; audit that stores query hashes only. Driver: pg8000 (BSD-3), because psycopg is LGPL and
+  the licence policy is permissive-only.
+Checks (cloud Linux, Python 3.13, PostgreSQL 16.15):
+  - `python -m unittest discover -s tests`: 8 tests OK, including the 21-check scenario with three
+    oracle sweeps at 0 unauthorised, and the 25 questions with the misses pinned (q16, q18, q24, q25).
+  - The same in a clean venv from requirements.lock (`pip check` clean).
+  - Mutation checks: with the ACL predicate disabled, the sweep finds 7 unauthorised results and 3 tests
+    fail; with demotion disabled, the baseline and q13 tests fail.
+  - All 11 dependencies (including transitive ones) are permissive.
+Live / fake / skipped / unrun: synthetic corpus only. No HTTP API, vectors, OCR or Babel data. The CI job is
+  defined, but its first run is on this PR.
+Open: Malcolm should add `knowledge` to the required checks in branch protection.
+Next: K3 (hybrid) needs a host with local models; K6 (HTTP API) can follow once P03 patterns are reused.
+```

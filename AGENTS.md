@@ -15,12 +15,12 @@ Use this loop when Malcolm says "next task", "carry on" or "run the Codex lane".
 ### 0. Rules this loop never breaks
 
 - **One task per PR, and nothing new until the previous one is merged.**
-  - Merged into `main` is the only approval. It happens by **auto-merge** for PRs that touch no high-risk path, once the required checks (`foundation`, `conductor`, `operator-web`, `risk-gate`) are green. PRs touching a path in `.github/workflows/risk-gate.yml` wait for **Malcolm**: his merge, or his `malcolm-approved` label.
+  - Merged into `main` is the only approval. It happens by **auto-merge** for PRs that touch no high-risk path, once the required checks (`foundation`, `knowledge`, `conductor`, `operator-web`, `risk-gate`) are green. PRs touching a path in `.github/workflows/risk-gate.yml` wait for **Malcolm**: his merge, or his `malcolm-approved` label.
   - Never add or remove the `malcolm-approved` label. Never edit `.github/`, `AGENTS.md` or `.claude/` to loosen the gate.
   - An unmerged PR or branch means "waiting": say so and stop.
   - A PR closed without merging means "rejected": stop and ask Malcolm.
 - **Stay in lane.** Codex owns P00, P01, P03 and P05, coordinates P07 and P08, and owns the P01 ops files, the service (`conductor/src/service/**`), CLI service seams, setup scripts and Conductor's root `package.json`/lock.
-  - Never edit Claude-owned paths without a recorded handoff: `foundation/modules/ocr/**`, `conductor/operator-web/**`, `conductor/docs/knowledge-base/**`, `conductor/spikes/knowledge-base-evaluation/**`, and `conductor/docs/operator-app/{ux,next}.md`.
+  - Never edit Claude-owned paths without a recorded handoff: `foundation/modules/ocr/**`, `conductor/operator-web/**`, `conductor/docs/knowledge-base/**`, `conductor/spikes/knowledge-base-evaluation/**`, `knowledge/**` (the knowledge service), and `conductor/docs/operator-app/{ux,next}.md`.
   - Shared engine, configuration and adapter seams need a named, minimal change and a work-log note.
 - **Git.** Work on a fresh branch per task from the current `main`, named `codex/<short-task-name>`. Push normally and never force-push. Never rewrite someone else's branch; integrate other people's work with a merge commit.
 - **No outward actions.** No paid API calls, live model or subscription probes, remote machines, client boxes or releases. Nothing that needs Malcolm's sign-in or secrets. Ask instead.

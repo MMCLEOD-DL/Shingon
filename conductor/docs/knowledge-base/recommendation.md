@@ -4,6 +4,8 @@
 
 ## Decisions requested
 
+**Recorded 29 October 2026:** Malcolm chose task K2 as the next step, accepting **D1**, **D2** and **D5**. **D3** and **D4** remain open. Stack details: [ADR 0001](adr-0001-kb-service-stack.md).
+
 | # | Decision | Recommendation | Main alternative |
 |---|---|---|---|
 | D1 | Personal vs company | **Two separate deployments with separate credentials.** Babel stays personal; the company KB is new. | Collections or tenants inside Babel: rejected, because Babel has one identity and only a private flag ([inventory §2](inventory.md#2-data-model-documented-unless-marked)) |
