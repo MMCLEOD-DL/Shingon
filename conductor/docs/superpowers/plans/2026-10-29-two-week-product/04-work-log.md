@@ -4,14 +4,14 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude is bei
 
 | Packet | Provisional owner | Status | Branch/checkout + baseline | Result/review/integration evidence |
 |---|---|---|---|---|
-| P00 | Codex | IN_PROGRESS | /workspace/Shingon, a8ffb91 | Host decision recorded; service contract/fixtures next |
-| P01 | Codex | IN_PROGRESS | /workspace/Shingon, a8ffb91 | Updater failure reproduced in prior review; regression implementation next |
+| P00 | Codex | IN_REVIEW | codex/operator-app-v1, fc72b79 | Concrete interface/ADR and fixtures published; Claude acknowledgement pending |
+| P01 | Codex | IN_REVIEW | codex/update-settings-safety, fc72b79 | b25e2bf; 110 focused tests + Foundation types/lint pass; Claude review/full integrated verification pending |
 | P02 | Claude | NOT_STARTED | — | — |
-| P03 | Codex | NOT_STARTED | — | — |
+| P03 | Codex | IN_REVIEW | codex/operator-app-v1, fc72b79 | HTTP/IPC service, persistent decisions/replay/recovery; deterministic real-engine tests pass; UI/peer review pending |
 | P04 | Claude | NOT_STARTED | — | — |
-| P05 | Codex | NOT_STARTED | — | — |
+| P05 | Codex | IN_PROGRESS | codex/operator-app-v1, fc72b79 | Launcher/setup/probe implementation; native Windows and actual account/model acceptance blocked on host access |
 | P06 | Claude | NOT_STARTED | — | — |
-| P07 | Codex + Claude review | NOT_STARTED | — | — |
+| P07 | Codex + Claude review | IN_PROGRESS | codex/operator-app-v1 | Backend boundary/engine integration checks pass; UI integration and cross-review pending |
 | P08 | Codex + Claude review | NOT_STARTED | — | — |
 | P09 | Claude | NOT_STARTED | — | — |
 
@@ -42,3 +42,13 @@ Append dated entries using the handoff template in `03-parallel-working.md`. Cap
 ## 29 October — Codex claim
 
 Baseline a8ffb910508ff3e9e172aa04c56a53f6758e8509. Codex owns P00/P01 then service/setup (P03/P05); leaves OCR, operator-web and KB research to Claude. Malcolm selected native Windows service/browser. No Windows execution host is available in this cloud task; native cancellation and installation remain explicit acceptance gates. Proposed dependency-free Node HTTP/IPC service and single active worker preserve CLI/engine isolation. Shared interface remains pending peer review; backend publishes concrete fixtures for UI consumption.
+
+## 29 October — Codex backend handoff
+
+- P01 fix is on `codex/update-settings-safety`, commit `b25e2bf`. Five new real-file failure-injection regressions cover pre-rename, directory-open/sync after rename, repeated restoration sync failure and unreadable tag recovery. 110 focused tests, Foundation typecheck and focused ESLint passed. It is separate from the service branch; do not assume it is merged.
+- `codex/operator-app-v1` contains P03/P05 candidate service, bounded same-origin HTTP/SSE API, one-time bootstrap, per-operation worker processes, repository registration, persisted/idempotent decisions, evidence drift checks, history/resume, setup and explicit challenge/file-based probes. No paid API calls or real model probes were made.
+- The service uses Node built-ins. Shared seam changes: Windows cmd.exe test execution and PID-scoped taskkill cancellation; native acceptance remains unverified. Production startup is `npm run app`; no UI files are changed.
+- Claude: read `conductor/docs/operator-app/interface.md` and `architecture.md`, and consume `conductor/test/fixtures/operator-app/contract-v1.json`. SSE event name is `run`; fallback choice IDs are `continue` / `pause`; other approvals are `approve` / `reject`; send reviewedCommit=null when the decision has no Git evidence. Fetch this branch for backend integration; propose interface changes explicitly.
+- Broad Linux Conductor regression passed 1,535 tests with the cloud orphan-reaping wrapper. Subsequent focused launcher tests cover a real start/stop/restart without any model calls. Final command/count details are in `conductor/docs/operator-app/acceptance.md`.
+- Git pushes work. `gh pr create` failed with GitHub API Forbidden; no PR was created. Branches remain directly reviewable. No automatic merge or client ship.
+- External gates: Claude UI/peer review, native Windows host installation/cancellation, and supported sign-in + configured local-model access for live acceptance. These are not inferred from Linux or mock results.
