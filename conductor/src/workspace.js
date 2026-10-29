@@ -1,3 +1,4 @@
+import { testShell } from './service/platform.js';
 // src/workspace.js
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, copyFileSync, lstatSync, realpathSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
@@ -331,7 +332,7 @@ export class Workspace {
   async runTests(command, { timeoutMs = 600000 } = {}) {
     if (!command) return { ran: false, passed: null, code: null, output: '' };
     // Strict env (N2): the test command runs agent-authored code and needs no credentials.
-    const r = await runCommand({ cmd: 'sh', args: ['-c', command], cwd: this.dir, timeoutMs, env: strictChildEnv() });
+    const r = await runCommand({ ...testShell(command), cwd: this.dir, timeoutMs, env: strictChildEnv() });
     return {
       ran: true,
       passed: r.code === 0 && !r.timedOut,

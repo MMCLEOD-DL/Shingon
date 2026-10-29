@@ -1,5 +1,16 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { childEnv } from './secrets.js';
+
+export function stopChild(child, signal = 'SIGKILL') {
+  if (!child?.pid) return;
+  if (process.platform === 'win32') {
+    // Group signals are not supported on Windows. Scope taskkill strictly to
+    // our own tracked PID and descendants; never use image-name termination.
+    const result = spawnSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, timeout: 10000, stdio: 'ignore' });
+    if (result.status === 0) return;
+  }
+  try { process.kill(-child.pid, signal); } catch { try { child.kill(signal); } catch {} }
+}
 
 const LIVE = new Set(); // every running child, for Ctrl-C
 
@@ -29,8 +40,7 @@ export function runCommand({ cmd, args = [], cwd, input = null, timeoutMs = 1200
 
     timer = setTimeout(() => {
       timedOut = true;
-      try { process.kill(-child.pid, 'SIGKILL'); }
-      catch { try { child.kill('SIGKILL'); } catch {} }
+      stopChild(child);
       // a descendant may hold the pipes open after the child dies; force-resolve after a grace period
       grace = setTimeout(() => {
         try { child.stdout?.destroy(); child.stderr?.destroy(); } catch {}
@@ -64,6 +74,6 @@ export function spawnTracked(cmd, args, opts = {}) {
 // Ctrl-C (bin/conductor.js): end every agent we started, with its whole process group.
 export function killAllChildren(signal = 'SIGKILL') {
   for (const child of LIVE) {
-    try { process.kill(-child.pid, signal); } catch { try { child.kill(signal); } catch {} }
+    stopChild(child, signal);
   }
 }
