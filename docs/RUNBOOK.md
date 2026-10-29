@@ -218,7 +218,7 @@ In `.env` (only the app receives them):
 |---|---|---|
 | `OCR_ENGINE` | `local` | `local` reads on the box. `azure` reads in the cloud: only when the app's data policy allows it (below). |
 | `OCR_CONCURRENCY` | `1` | How many receipts are read at once, 1 to 4. Each reader can use about **500 MB** of memory while it reads a large photo, and keeps it; 1 suits a 2 GB box. |
-| `OCR_TIMEOUT_MS` | `60000` | How long one reading may take (1 000 to 600 000 milliseconds) before staff are asked to type the receipt in. A stop waits 70 seconds for a reading in progress (`stop_grace_period` in `compose.yaml`). |
+| `OCR_TIMEOUT_MS` | `60000` | How long one reading may take (1 000 to 600 000 milliseconds) before staff are asked to type the receipt in. A stop waits 70 seconds for a reading in progress (`stop_grace_period` in `compose.yaml`); if you raise this above 60 000, raise `stop_grace_period` to match, or a stop may cut a reading short (it is then marked unreadable, not repeated). |
 
 Change a setting with `docker compose run --rm -T updater set-env < settings.txt` (or by editing `.env`), then `docker compose up -d app`.
 

@@ -32,7 +32,7 @@ At the end it removes only the images it built.
   - Secrets: pass. "no secret found" (`DB_PASSWORD`, `HEALTH_TOKEN` and `BACKUP_PASSWORD` in neither the alerts nor any container log).
   10. Tear down: pass. "Removed the containers, volumes, network and the highland images this run built." "SMOKE PASSED in 11 min 41 s".
 - **Elapsed:** 11 min 41 s (second run 9 min 35 s).
-- **Left behind:** each run left one anonymous Docker volume (no project label) after its tear-down; they were removed by hand afterwards. A small follow-up for the smoke script.
+- **Left behind:** each run left one anonymous Docker volume (no project label) after its tear-down: the restic REST container's `/data` volume, because tear-down removed the container without `-v`. They were removed by hand. Fixed since: tear-down now removes the REST container together with its volume (`docker rm -f -v`).
 
 Also on the build machine the same night (outside the script), from the same tree: `npm run verify:full` passed with a throwaway PostgreSQL 15 container as `TEST_DATABASE_URL` (password generated on the machine): 1084 unit and integration tests (the real backup and restore tests included, no skips), the Playwright suite (69 passed, 2 skipped) including the mobile-webkit receipt-photo spec ("a sideways phone photo is uploaded upright and smaller"), and the OCR accuracy run (2 passed). The images were then built with explicit tags (`highland/app:0.2.0`, `highland/ops:0.2.0`, and `highland/app:0.1.0` from v0.1.0 as the baseline) for the modest-box OCR check (`deploy/smoke/OCR-RESULT.md`), and removed afterwards.
 

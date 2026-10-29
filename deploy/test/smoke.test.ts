@@ -64,7 +64,7 @@ test('good settings pass the check and reach the Docker check, which refuses on 
 test('the left-behind guard and the tear-down use the chosen names, and the REST server is "$PROJECT-rest"', () => {
   expect(text).toContain('REST_NAME="$PROJECT-rest"');
   expect(text).toContain('--name "$REST_NAME"');
-  expect(text).toContain('docker rm -f "$REST_NAME"');
+  expect(text).toContain('docker rm -f -v "$REST_NAME"');
   const guard = text.slice(text.indexOf('if [ -e "$DIR" ]'), text.indexOf('A previous smoke run was left behind'));
   for (const part of ['[ -L "$DIR" ]', '[ -e "$COOKIES" ]', '[ -L "$COOKIES" ]', '"$DIR-catcher.out"', 'compgen -G "$DIR-images-*.tar"',
     '"name=^$REST_NAME\\$"', 'docker ps -aq --filter "label=com.docker.compose.project=$PROJECT"',

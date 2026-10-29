@@ -92,7 +92,7 @@ teardown() {
   if [ "$PASSED" != true ]; then echo "SMOKE FAILED during: $STEP (exit $code). Cleaning up." >&2; fi
   say "Step 10: tear down"
   if [ -f "$DIR/compose.yaml" ]; then dc --profile tools --profile tunnel down -v --remove-orphans >/dev/null 2>&1; fi
-  docker rm -f "$REST_NAME" >/dev/null 2>&1
+  docker rm -f -v "$REST_NAME" >/dev/null 2>&1
   [ -n "$CATCHER_PID" ] && kill "$CATCHER_PID" >/dev/null 2>&1
   for img in "${CREATED_IMAGES[@]}"; do docker rmi "$img" >/dev/null 2>&1; done
   rm -rf "$DIR" "$COOKIES" "$DIR-images-${V1:-x}.tar"
