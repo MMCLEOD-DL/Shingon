@@ -140,10 +140,15 @@ export function alertSecrets(cfg: Pick<OpsConfig, 'alerts' | 'heartbeatUrl' | 'h
 /** Hides every listed secret, any database address, and the password part of any address in alert text. */
 export function redactAlert(text: string, secrets: readonly string[]): string {
   let out = text;
-  for (const s of secrets) out = out.split(s).join('[hidden]');
-  return out
+  // Preserve whole configured-URL hiding before masking its password changes it.
+  for (const s of secrets) if (s.includes('://')) out = out.split(s).join('[hidden]');
+  // A literal secret can itself be "postgres" or "https". Recognize addresses
+  // first, or substitution can break the scheme and leave credentials visible.
+  out = out
     .replace(/postgres(?:ql)?:\/\/\S+/gi, '[database address hidden]')
     .replace(/([a-z][a-z0-9+.-]*:\/\/[^:/\s@]+):[^@\s/]+@/gi, '$1:***@');
+  for (const s of secrets) out = out.split(s).join('[hidden]');
+  return out;
 }
 
 /** Wraps a channel so nothing it sends can carry a secret from the settings. */

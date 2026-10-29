@@ -5,7 +5,7 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude acknow
 | Packet | Provisional owner | Status | Branch/checkout + baseline | Result/review/integration evidence |
 |---|---|---|---|---|
 | P00 | Codex | IN_REVIEW | codex/operator-app-v1 | Concrete API/ADR/fixtures ready; Claude acknowledgement pending |
-| P01 | Codex | IN_REVIEW | `codex/updater-settings-recovery` from `42efa16` | R1-1/R1-2/R1-3 addressed; 129 focused tests, 1,107 full tests passed (6 Restic tests skipped); lint/types/licences/web build passed; revised peer review and merge pending |
+| P01 | Codex | DONE | `codex/updater-settings-recovery` | Claude approved `06678be`; PR #6 merged as `8e5bf13`; evidence below |
 | P02 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 29 Oct P02 entry; awaiting Codex review |
 | P03 | Codex | IN_REVIEW | codex/operator-app-v1 | Backend a8c97bc; full regression and engine integration pass; UI/peer review pending |
 | P04 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh`; contract v1 fixtures from `codex/operator-app-v1` @ `a8c97bc` | `conductor/operator-web`: 43/43 unit, 13/13 browser journey against real P03 service; see 29 Oct P04 entry; awaiting Codex review |
@@ -309,3 +309,74 @@ Integration SHA: —
 - **Actions on Node 24.** `actions/checkout` and `actions/setup-node` move from v4 (which ran on Node 20, deprecated on GitHub runners) to v6. Both v6 tags declare `using: node24`; checked by cloning the tags.
 - **No re-run on "ready for review".** `ci.yml` no longer triggers on `ready_for_review`. PR #7 showed that this event re-ran every job on an already-checked commit, which only delays auto-merge. `risk-gate.yml` keeps the event.
 - **Change type:** high-risk path (`.github/`), so it needs Malcolm's merge. No checks were added or removed.
+
+### 29 October 2026 — Codex claim: required Foundation CI redaction repair
+
+Packet/subpacket: required-check prerequisite — database-address redaction.
+Owner: Codex; reviewer: Claude. Status: IN_PROGRESS.
+Branch: `codex/database-url-redaction`; baseline: `caee572` (main).
+Owned files: `foundation/ops/src/alerts.ts`, `foundation/ops/test/{alerts,status}.test.ts`,
+`foundation/CHANGELOG.md`, and this ledger. No CI or gate changes.
+Main CI check 123700109780 fails status.test.ts:115 when the configured database password is
+postgres: literal substitution breaks the URI scheme before whole-address redaction. Diagnose
+and fix the production ordering, retaining existing assertions and full configured-URL hiding.
+P03 N1/N2 work is preserved, unsubmitted, on `codex/operator-run-recovery` @ `3c3e32a`:
+34 service tests, 1,548 full Conductor tests, 47 UI tests and UI build passed. No recovery PR
+is open. That packet resumes after this required-check prerequisite is merged; keep one task/PR.
+
+### 29 October 2026 — Codex required-check redaction repair handoff
+
+```
+Packet/subpacket: CI prerequisite — production alert/status URL redaction ordering.
+Owner and reviewer: Codex; reviewer Claude.
+Status: IN_REVIEW.
+Baseline SHA: caee572; branch codex/database-url-redaction.
+Owned files: foundation/ops/src/alerts.ts; foundation/ops/test/alerts.test.ts;
+  foundation/ops/test/status.test.ts; foundation/CHANGELOG.md; this ledger.
+What now works: configured secret URLs stay hidden whole; remaining database addresses and inline
+  URL passwords are recognized before literal secret substitution can break their URI schemes.
+  This repairs main's required Foundation status assertion for a database password of postgres.
+Checks (Debian 13 cloud Linux, Node 24.19.0, npm 11.9.0, local development PostgreSQL 17):
+  Initial run found the stopped development database; started only the existing dev db container
+  and verified pg_isready before reproducing code failures. No production database used.
+  Before fix: alerts/status tests 5 failed / 27 passed. Five new regressions fail, while the
+    sixth new case already passes and preserves whole configured-URL hiding.
+  From foundation/ after sourcing /workspace/shingon-dev/env.sh (umask 022):
+  npx vitest run --project @hf/ops alerts.test.ts status.test.ts runner.test.ts --maxWorkers=1:
+    36/36 passed.
+  npm run lint: passed. npm run typecheck: passed.
+  npm run licences: passed (449 installed packages; 553 lock entries permissive).
+  npm test -- --maxWorkers=1: 1,113 passed / 6 skipped / 0 failed; 94 files passed / 1 skipped;
+    223.91 seconds.
+  npm -w @hf/web run build: passed (dependency annotation/chunk-size warnings only).
+Live / fake / skipped / unrun: real local PostgreSQL, synthetic alert strings and test HTTP
+  servers; no real notification sent. Six Restic-backed tests skipped because Restic is absent.
+  Browser/corpus release checks, native Windows and client-box smokes not run for this ops fix;
+  no live models, paid API calls, remote machines or releases.
+Open defects or unknowns: reviewer disposition and this PR's required CI remain pending.
+External blocker: high-risk ops path needs Malcolm's merge or malcolm-approved label;
+  agents do not change that label or loosen the workflows.
+Next packet unblocked: P03 recovery prepared on codex/operator-run-recovery @ 3c3e32a;
+  only submit it after this prerequisite is merged. No recovery PR is open.
+Reviewer disposition and reviewed SHA: requested from Claude at the eventual code SHA; no sign-off claimed.
+Integration SHA: —
+```
+
+### Codex task submitted — required Foundation CI redaction repair
+
+- Date: 29 October 2026. Branch: `codex/database-url-redaction`; baseline: `caee572`.
+- Last code commit: `95cfa9858ab020d480c6662ab7fb691d5aa4bf95`.
+- PR: [#10 — Fix alert URL redaction and the required Foundation CI failure](https://github.com/MMCLEOD-DL/Shingon/pull/10).
+- Changes: production redaction ordering, six regressions, changelog and evidence. No CI/gate
+  changes and no P03 service changes in this PR. Five regressions fail before the fix.
+- Evidence: 36 focused tests passed; Foundation suite 1,113 passed / 6 skipped / 0 failed;
+  lint, typecheck, licence audit and web build passed. Full commands/host/limits are above.
+- Skipped/unrun: Restic integration (6 tests; tool absent), browser/corpus release checks,
+  native Windows, client boxes, live models and releases. No sign-off inferred from own tests.
+- Merge route: high-risk `foundation/ops/` paths; auto-merge stays off. This PR's required CI
+  was pending at submission. Claude review is requested at the code SHA; Malcolm must merge
+  or add `malcolm-approved` himself. The agent will not change that label or the gate.
+- P03 N1/N2 remains preserved and unsubmitted on `codex/operator-run-recovery` @ `3c3e32a`
+  (34 service / 1,548 Conductor / 47 UI tests passed; UI build passed). Resume that packet
+  after this prerequisite is merged; merge current main into its existing branch first.
+- Open questions: none on the proposed redaction fix; CI/peer review/Malcolm merge pending.

@@ -129,6 +129,20 @@ describe('collectStatus', () => {
     });
   });
 
+  test('a database password matching postgres does not break status address redaction', async () => {
+    await withDeps({}, async (deps) => {
+      // Use the real test DB through deps.db; this config address supplies only
+      // redaction inputs, so this regression is independent of the test DB password.
+      const cfg = { ...deps.cfg, databaseUrl: 'postgres://app:postgres@configured-db/app' };
+      const s = await collectStatus({ cfg, db: deps.db, now: () => at('10:00'),
+        checks: async () => [{ name: 'app', ok: false, detail: 'Failure: postgres://app:other-pw@private-db/other' }],
+      });
+      expect(s.checks[0]!.detail).toBe('Failure: [database address hidden]');
+      expect(JSON.stringify(s)).not.toContain('private-db');
+      expect(JSON.stringify(s)).not.toContain('other-pw');
+    });
+  });
+
   test('checks that throw are a problem, never a calm status', async () => {
     await withDeps({}, async (deps) => {
       const s = await collectStatus({ cfg: deps.cfg, db: deps.db, now: () => at('10:00'), checks: async () => { throw new Error(`boom ${TEST_BACKUP_PASSWORD}`); } });
