@@ -92,6 +92,16 @@ test('loadConfig carries the profile and OCR settings', async () => {
   ]);
 });
 
+test('with the ocr module off, OCR_ENGINE=azure needs no OCR_AZURE_* settings and none are kept', async () => {
+  const noOcr = await write('no-ocr.json', JSON.stringify({ schema: 1, modules: ['xlsx-export'], policy: { outbound: [], residency: 'uk' } }));
+  const c = loadConfig({ ...base, APP_PROFILE: noOcr, OCR_ENGINE: 'azure' });
+  expect(moduleOn(c, 'ocr')).toBe(false);
+  expect(c.ocr.azure).toBeUndefined();
+  // Even a malformed endpoint is not checked or kept: nothing reads it while ocr is off.
+  const odd = loadConfig({ ...base, APP_PROFILE: noOcr, OCR_ENGINE: 'azure', OCR_AZURE_ENDPOINT: 'http://x.example', OCR_AZURE_KEY: 'k', OCR_AZURE_REGION: 'uksouth' });
+  expect(odd.ocr.azure).toBeUndefined();
+});
+
 test('the committed app-profile.json is the default', () => {
   const file = fileURLToPath(new URL('../../../app-profile.json', import.meta.url));
   expect(loadAppProfile(file)).toEqual(DEFAULT_PROFILE);

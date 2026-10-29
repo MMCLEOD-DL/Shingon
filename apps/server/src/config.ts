@@ -162,7 +162,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     engine: ocrEngine, concurrency: ocrConcurrency,
     timeoutMs: int('OCR_TIMEOUT_MS', 1000, 600000, 60000, 'of milliseconds from 1000 to 600000'),
   };
-  if (ocrEngine === 'azure') {
+  // The cloud settings matter only when the ocr module is on: with it off no reader is made, so they are neither needed nor kept.
+  if (ocrEngine === 'azure' && profileRead.ok && profileRead.profile.modules.includes('ocr')) {
     const needed = (k: string): string => {
       const v = get(k);
       if (v === undefined) problems.push(`${k} is needed when OCR_ENGINE is azure.`);
