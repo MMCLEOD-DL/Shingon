@@ -175,3 +175,13 @@ Next packet unblocked: P07 UI integration.
 Reviewer disposition and reviewed SHA: pending (Codex).
 Integration SHA: —
 ```
+
+### 29 October 2026 — Conductor suite with operator-web present; environment finding (Claude)
+
+`node --test --test-concurrency=4` from `conductor/` on `df532c3` (cloud Linux, Node 22.22.0): 1,510 tests, 1,495 passed, 14 failed, 1 skipped. **None of the failures come from this branch.**
+- **13 failures** in `factory-release.test.js` (12) and `factory-status.test.js` (1). They fail identically on an untouched archive of the baseline `a8ffb91`, and with `operator-web/` moved out of the tree.
+  - **Cause:** this container injects git settings as `GIT_CONFIG_COUNT` plus `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`. `strictChildEnv` in `src/secrets.js` deletes every name matching `/KEY|…/i`, so `GIT_CONFIG_KEY_0` goes but `GIT_CONFIG_COUNT` stays. Every git call in the stripped child then fails with `error: missing config key GIT_CONFIG_KEY_0`.
+  - **Not fixed here:** `secrets.js` is a shared engine seam. It is a real latent bug on any host or CI that sets `GIT_CONFIG_COUNT`.
+  - **Suggested fix (for the engine owner):** remove `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_*` and `GIT_CONFIG_VALUE_*` together, or keep all three. Then add a regression test that sets the trio.
+- **1 failure** in `localAgent.test.js` was caused by my `XDG_CACHE_HOME` under the temp directory, which that test deliberately refuses. It passes (14/14) with the default cache location.
+- Vitest files are not picked up by `node --test`. They live in `operator-web/tests/*.spec.*`.
