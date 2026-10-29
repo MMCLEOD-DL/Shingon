@@ -5,7 +5,7 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude acknow
 | Packet | Provisional owner | Status | Branch/checkout + baseline | Result/review/integration evidence |
 |---|---|---|---|---|
 | P00 | Codex | IN_REVIEW | codex/operator-app-v1 | Concrete API/ADR/fixtures ready; Claude acknowledgement pending |
-| P01 | Codex | IN_REVIEW | codex/update-settings-safety | b25e2bf; 110 focused tests + types/lint passed; review/integrated Foundation checks pending |
+| P01 | Codex | IN_REVIEW | `codex/updater-settings-recovery` from `42efa16` | R1-1/R1-2/R1-3 addressed; 129 focused tests, 1,107 full tests passed (6 Restic tests skipped); lint/types/licences/web build passed; revised peer review and merge pending |
 | P02 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 29 Oct P02 entry; awaiting Codex review |
 | P03 | Codex | IN_REVIEW | codex/operator-app-v1 | Backend a8c97bc; full regression and engine integration pass; UI/peer review pending |
 | P04 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh`; contract v1 fixtures from `codex/operator-app-v1` @ `a8c97bc` | `conductor/operator-web`: 43/43 unit, 13/13 browser journey against real P03 service; see 29 Oct P04 entry; awaiting Codex review |
@@ -222,32 +222,73 @@ Final combined validation for the PR #2 update: **1,541 Conductor tests passed, 
 - **P04:** fixed `RunView` so it offers no stale question or Stop between an accepted answer and the next snapshot. The new unit test fails without the fix.
 - **Loop:** added `.claude/skills/claude-lane/SKILL.md` (one task per PR; merge = approval; read the repo between tasks).
 
-### 29 October 2026 — Claude task 2 (claude-lane): P07 UI-side adversarial checks
+### 29 October 2026 — Codex claim: P01 settings recovery
+
+Packet/subpacket: P01 — R1-1 settings-only undo, R1-2 changelog and R1-3 recovery coverage.
+Owner: Codex; reviewer: Claude.
+Status: IN_PROGRESS.
+Branch: `codex/updater-settings-recovery`; baseline: `42efa16` (current main).
+Owned paths: `foundation/ops/src/update.ts`, `foundation/ops/test/update-settings-safety.test.ts`,
+`foundation/CHANGELOG.md`, and this ledger.
+Carries forward the unmerged `codex/update-settings-safety` @ `b25e2bf` as `2e994db` on current main;
+the new branch supersedes that earlier submission candidate without rewriting it.
+Scope: restore and confirm the previous settings before falling back to database/uploads restore,
+retain truthful recovery evidence, and run the Foundation gate. P03 and other packets stay separate.
+
+### 29 October 2026 — Codex P01 revised handoff
 
 ```
-Packet/subpacket: P07, Claude's part (UI-owned files): browser adversarial checks
-Owner and reviewer: Claude; reviewer Codex (P07 coordinator)
-Status: IN_REVIEW
-Baseline SHA: 42efa16 (main after PR #3)
-Owned files: conductor/operator-web/e2e/{journey,serve-fixture}.mjs, operator-web/src/views/RunView.jsx,
-  operator-web/tests/views.spec.jsx, conductor/docs/operator-app/ux.md
-What now works / was checked:
-  - Two tabs, one question. Tab B's live stream is cut; tab A approves; tab B's approve is refused
-    (stale); exactly one decision-resolved event; the run is completed.
-  - Abrupt kill. The service runs as its own process and is killed with SIGKILL during a pending
-    question, then restarted on the same data and port. The open tab cannot answer and says the
-    sign-in ended. After the new bootstrap link the run is `interrupted` with decision null and no
-    landed branch.
-  - UI defect found and fixed. A refused (stale) answer's message lived inside the decision panel,
-    so the reload that followed removed the panel and the message with it: the operator's answer
-    silently didn't count. The error is now shown by the run view. A new unit test fails without the
-    fix and passes with it.
-Checks (cloud Linux, Node 22.22.0, Chromium via Playwright 1.63.0): `npm test` 47/47; build passed;
-  `node e2e/journey.mjs` 17/17 on three consecutive runs, no leftover processes.
-Live / fake / skipped / unrun: fixture workers only (no real engine, no models, no native Windows).
-  Workspace-changed-after-review is covered by Codex's real-engine test, not repeated here.
-  Not done here: secrets-in-responses/assets inspection, foreign-origin launch (Codex's server tests
-  cover the latter).
-Open defects: none found in the service in this pass.
-Next: Codex (P07 coordinator) to review and fold into the acceptance matrix.
+Packet/subpacket: P01 — update/settings safety, Claude R1-1/R1-2/R1-3.
+Owner and reviewer: Codex; reviewer Claude.
+Status: IN_REVIEW.
+Baseline SHA: 42efa16; carried-forward safety fix: 2e994db (original b25e2bf).
+Owned files: foundation/ops/src/update.ts; foundation/ops/test/update-settings-safety.test.ts;
+  foundation/CHANGELOG.md; this ledger.
+What now works: a post-rename settings failure first attempts a durable settings-only undo and
+  checks the tag before starting the old app; no database or uploads restore on that success path.
+  Failure to confirm that undo falls back to full restore. Failure of full recovery keeps the
+  undo-failed journal and backup reference, with a truthful observed/unknown tag message.
+  Cancellation after settings recovery records the backup and says the settings were restored.
+Checks (cloud Linux, Node 24.19.0 / npm 11.9.0; local development PostgreSQL 17):
+  Reproduction on 2e994db: three new recovery expectations failed, four passed, before source fix.
+  From foundation/, sourcing the local development helper and umask 022:
+  npx vitest run --project @hf/ops update-settings-safety.test.ts update.test.ts compose.test.ts
+    set-env.test.ts journal.test.ts update-cli.test.ts --maxWorkers=1: 129/129 passed (9 in new file).
+  npm run lint: passed. npm run typecheck: passed.
+  npm run licences: passed; 449 installed packages and 553 lock entries permissive.
+  npm test -- --maxWorkers=1: 1,107 passed, 6 skipped; 94 files passed, 1 skipped; 234.52 seconds.
+  npm -w @hf/web run build: passed (dependency annotation/chunk-size warnings only).
+Live / fake / skipped / unrun: new filesystem tests use real temporary .env files and injected
+  failures with deterministic Compose stand-ins; full suite uses local development PostgreSQL.
+  Six real Restic backup/restore integration tests skipped because restic is absent. Browser and
+  OCR-corpus release checks, native Windows and client-box smoke tests not run. No live models,
+  subscription probes, external machines or releases.
+Open defects or unknowns: no new P01 defect found; revised peer review remains due. The Restic
+  integration gap is explicit and the stand-ins do not prove a real client-box restore.
+External blocker: none for review; native/client-box acceptance requires the appropriate host.
+Next packet unblocked: none until Malcolm merges this task under the lane loop.
+Reviewer disposition and reviewed SHA: Claude approved the original b25e2bf subject to R1-1;
+  this revision addresses the notes but does not claim a new independent sign-off.
+Integration SHA: —
 ```
+
+### Codex task submitted — P01 updater settings recovery
+
+- Date: 29 October 2026. Branch: `codex/updater-settings-recovery`.
+- Last code commit: `06678be1d9e9f585d08126b2dc481adbdd3794bb`; baseline main: `42efa16`.
+- **PR needed:** draft creation via `gh pr create --draft` failed with GitHub GraphQL Forbidden.
+  Open from [the compare view](https://github.com/MMCLEOD-DL/Shingon/compare/main...codex/updater-settings-recovery).
+  The branch is pushed; no PR was created and no merge or release was performed.
+- Changes: carries forward P01, addresses R1-1 with settings-only undo before full restore,
+  R1-2 with a changelog entry, and R1-3 with restore-only flush-failure coverage. Unconfirmed
+  recovery never starts the target app without migrations; failed rollback retains its journal.
+- Evidence: 129 focused tests passed; full Foundation suite 1,107 passed / 6 skipped / 0 failed;
+  lint, typecheck, licence audit and production web build passed. New recovery expectations
+  reproduced three failures on the carried-forward fix before the revision. Detailed commands,
+  host, counts and stand-in limits appear in the revised handoff above.
+- Skipped/unrun: six real backup/restore tests require missing Restic. No browser/corpus release
+  checks, native Windows, client-box smokes or live models. Stand-ins do not prove real restores.
+- Open questions: none on the implementation; revised Claude review and Malcolm's merge remain
+  pending. Original branch `codex/update-settings-safety` is superseded by this submission.
+- Next action: Malcolm or Claude opens the draft PR; Malcolm approves by merging. Following
+  AGENTS.md, the next "carry on" after that merge starts the next Codex task.

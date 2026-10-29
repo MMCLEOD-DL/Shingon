@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+- If an update's settings write fails after replacing `.env`, the updater restores and checks the previous settings before restarting the app, without restoring the database or uploaded files unnecessarily. If recovery fails, it keeps the failed-update journal and backup reference for operator recovery, even when the failure was recorded in the database.
 - A PDF receipt of more than three pages is now refused with "This PDF has more than 3 pages, so it can't be read automatically. Please type the details." Before, only its first three pages were read and the reading said nothing of the rest, so a total or date on a later page (a corrected total, say) was lost and an earlier one could be proposed with full confidence.
 
 ## [0.2.0] - 2026-10-29
