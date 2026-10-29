@@ -1,0 +1,84 @@
+# Checks that gate auto-merge (see .claude/skills/claude-lane/SKILL.md and AGENTS.md).
+# Branch protection on main should require: foundation, conductor, operator-web, risk-gate.
+# Deliberately not triggered by label events: re-running with skipped jobs would report them
+# as passing on the same commit. Labels re-run only risk-gate.yml.
+name: ci
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  foundation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+    defaults:
+      run:
+        working-directory: foundation
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+          cache: npm
+          cache-dependency-path: foundation/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run licences
+      # One worker: several tests are timing-sensitive (05-validation.md). umask 022 for file-mode assertions.
+      - run: umask 022 && npm test -- --maxWorkers=1
+
+  conductor:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: conductor
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+      - run: git config --global user.name "ci" && git config --global user.email "ci@example.invalid"
+      - run: node --test --test-concurrency=4
+
+  operator-web:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: conductor/operator-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+          cache: npm
+          cache-dependency-path: conductor/operator-web/package-lock.json
+      - run: git config --global user.name "ci" && git config --global user.email "ci@example.invalid"
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      - run: npm run build
+      # Browser journey against the real service with deterministic fixture workers (no models).
+      - run: npm install -g playwright@1.63.0 && npx -y playwright@1.63.0 install --with-deps chromium
+      - run: NODE_PATH="$(npm root -g)" node e2e/journey.mjs
