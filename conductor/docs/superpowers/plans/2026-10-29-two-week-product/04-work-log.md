@@ -221,3 +221,38 @@ Final combined validation for the PR #2 update: **1,541 Conductor tests passed, 
   - Still fixture workers: no real engine, models or native Windows.
 - **P04:** fixed `RunView` so it offers no stale question or Stop between an accepted answer and the next snapshot. The new unit test fails without the fix.
 - **Loop:** added `.claude/skills/claude-lane/SKILL.md` (one task per PR; merge = approval; read the repo between tasks).
+
+### 29 October 2026 — shared engine seam: git env config in `strictChildEnv` (Claude)
+
+```
+Packet/subpacket: engine seam fix for the environment finding of 29 October (13 baseline failures)
+Owner and reviewer: Claude (at Malcolm's request); reviewer: Codex
+Status: IN_REVIEW
+Baseline SHA: 13a86f7
+Result commit(s) / patch artifact: branch claude/great-shannon-w5pzve
+Owned files and shared seams changed: SHARED src/secrets.js (strictChildEnv only); test/secrets.test.js
+Contract version: unchanged (no service/API surface)
+What now works: strictChildEnv removes GIT_CONFIG_COUNT, GIT_CONFIG_KEY_<n>, GIT_CONFIG_VALUE_<n> and
+  GIT_CONFIG_PARAMETERS as one group. Strict children (test command, checks, gates, council tools, wake,
+  ssh, the app's npm release script, the foundation ls-remote/clone) no longer inherit host git config,
+  which could carry credentials (http.extraHeader), and git no longer dies on a dangling COUNT.
+  childEnv is unchanged: agents and Conductor's own workspace/release/landing git keep host git config.
+Checks (cloud Linux, Node 22.22.0, cwd conductor/):
+  node --test test/factory-release.test.js test/factory-status.test.js test/secrets*.test.js
+    host GIT_CONFIG_COUNT=3: 63/63; trio COUNT=1/user.name/x only: 63/63; no GIT_CONFIG_*: 63/63.
+    Before the fix with host vars: release+status 38/51 (the 13 recorded failures).
+  New regression test fails on 13a86f7 and passes after.
+  node --test --test-concurrency=4: 1,542 tests, 1,541 pass, 0 fail, 1 skipped (workerMemory, root).
+Live / fake / skipped / unrun: no remote git exercised; foundation fetch covered by its local-repo tests.
+Open defects or unknowns:
+  - A host that reaches the foundation repo only through GIT_CONFIG_* (e.g. a url.insteadOf rewrite) loses
+    that rewrite in latestFoundation; ~/.gitconfig still applies. Intended: that fetch is credential-free.
+  - An app release script whose git identity comes only from GIT_CONFIG_* will now fail to commit; identity
+    should live in ~/.gitconfig or the app repo.
+  - secretValues still treats GIT_CONFIG_KEY_<n> values (config names) as secrets and does not redact
+    GIT_CONFIG_VALUE_<n> values. Not changed here; needs an owner decision.
+External blocker: none
+Next packet unblocked: none blocked on this; removes the 13 environment failures from cloud runs.
+Reviewer disposition and reviewed SHA: pending (Codex)
+Integration SHA: —
+```

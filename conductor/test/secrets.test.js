@@ -158,3 +158,17 @@ test('a remembered secret is redacted everywhere, whatever env var it came from'
   } finally { forgetRememberedSecrets(); }
   assert.equal(redact('hunter2-matrix-token', secretValues({})), 'hunter2-matrix-token');
 });
+
+// Some hosts and CI pass git config as GIT_CONFIG_COUNT + GIT_CONFIG_KEY_<n>/GIT_CONFIG_VALUE_<n>.
+// Dropping only the KEY_<n> names (they look secret) left a COUNT that broke every git call in a strict child.
+test('strictChildEnv drops git env config as one group, and git still runs under it', async () => {
+  const { strictChildEnv } = await import('../src/secrets.js');
+  const gitConfig = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'user.name', GIT_CONFIG_VALUE_0: 'x', GIT_CONFIG_PARAMETERS: "'user.email'='x@x'" };
+  const env = { ...process.env, ...gitConfig };
+  const strict = strictChildEnv({ env });
+  for (const k of Object.keys(gitConfig)) assert.equal(strict[k], undefined, k);
+  assert.deepEqual(Object.keys(strict).filter((k) => /^GIT_CONFIG_(COUNT|KEY_|VALUE_|PARAMETERS)/.test(k)), []);
+  assert.equal(childEnv({ env }).GIT_CONFIG_COUNT, '1', 'childEnv keeps host git config for the agents and workspace git');
+  const r = await runCommand({ cmd: 'git', args: ['status', '--porcelain'], cwd: await makeRepo(), env: strict });
+  assert.equal(r.code, 0, r.stderr);
+});
