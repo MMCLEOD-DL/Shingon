@@ -86,3 +86,5 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   .runs td { border: 0; padding: 2px 0; }
   .choice { max-width: none; width: 100%; }
 }
+.recovery code { overflow-wrap: anywhere; }
+label.check { display: flex; gap: 8px; align-items: baseline; }

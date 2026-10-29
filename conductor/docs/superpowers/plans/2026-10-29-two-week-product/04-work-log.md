@@ -530,3 +530,33 @@ Integration SHA: —
 - **Verdict:** approved. N1 and N2 are resolved. New notes: N5 (low, earlier code: `__proto__` as a request id loses decision-receipt idempotency) and N6 (the Claude-owned UI recovery control). Review: [`reviews/2026-10-29-claude-review-P03-recovery.md`](reviews/2026-10-29-claude-review-P03-recovery.md).
 - **Evidence:** service tests 34/34 on `2948677`. The PR's five scenarios fail against the pre-#12 service code.
 - **Next Claude task:** N6, the UI recovery acknowledgement.
+
+### 29 October 2026 — Claude task 8 (claude-lane): recovery control in the operator UI (N6)
+
+```
+Packet/subpacket: P04 follow-up N6 (from the P03 recovery review) — UI control for POST /runs/:id/recover.
+Owner and reviewer: Claude; reviewer Codex.
+Status: IN_REVIEW.
+Baseline SHA: d9e88e2 (main after PR #13).
+Owned files: conductor/operator-web/{src/api.js, src/views/RunView.jsx, src/styles.css, tests/*, e2e/journey.mjs,
+  e2e/inspect-worker.cjs (new)}; conductor/docs/operator-app/ux.md; this ledger. No service, contract, fixture or CI change.
+What now works: a run with recoveryRequired (interrupted or failed) shows the registered repository, the full approved
+  commit and three read-only Git commands. "Record inspection" needs an explicit tick bound to the current snapshot and
+  sends repositoryInspected:true with lastEventSeq, workspaceCommit and one request id per snapshot. It starts nothing;
+  Resume then appears as a separate step. Refusals (stale-recovery, not-recoverable, not-resumable) are shown and the
+  run reloads. The failed-run text no longer says "cannot be resumed" when inspection is what is needed.
+Checks (cloud Linux, Node 22.22.0), from conductor/operator-web/:
+  npm test: 54 passed (47 before). 7 of the 8 new or extended tests fail against the previous UI source; the 8th is
+    the guard that ordinary interrupted runs get no control.
+  npm run build: passed.
+  NODE_PATH=$(npm root -g) node e2e/journey.mjs: 19 passed / 0 failed (Playwright 1.63.0) against the real service.
+    New steps: (a) Codex's slow-land worker (no workspace): the real service refuses the inspection
+    with not-resumable, and the UI shows it; (b) the UI's inspect worker: a real engine workspace via Workspace.create,
+    the branch fetched into the source repository and the worker killed before reporting; inspection recorded only after
+    the tick, no worker started, panel fits 360 px; Resume reconciles to "Branch created" with exactly one branch.
+Live / fake / skipped / unrun: real service, real Git and engine Workspace; deterministic fixture workers, no models.
+  Conductor service suite not re-run (no service change); CI runs it. Native Windows unrun.
+Open defects or unknowns: none found. Handoff to Codex (docs owner): setup.md "Recover an uncertain approved result"
+  step 2 can now point at the run page's "Record inspection" control instead of the developer-console snippet.
+Reviewer disposition and reviewed SHA: —
+```
