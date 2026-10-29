@@ -2,9 +2,9 @@ import { describe, test, expect, beforeAll, afterAll } from 'vitest';
 import type { ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { Worker } from 'node:worker_threads';
-import { createLocalEngine, UnreadableError, type OcrEngine } from '../src/index.js';
-import { readPdfText, PDF_MEMORY_CEILING, type PdfReadOptions } from '../src/pdfText.js';
-import { bypassBombs, formFeedPdf, modernPdf, n4Bomb, pdfBomb, pdfWithContent, predictorBomb, trickyBombs } from './helpers.js';
+import { createLocalEngine, readReceipt, UnreadableError, type OcrEngine } from '../src/index.js';
+import { readPdfText, PDF_MEMORY_CEILING, TOO_MANY_PAGES_PDF, type PdfReadOptions } from '../src/pdfText.js';
+import { bypassBombs, formFeedPdf, modernPdf, n4Bomb, pdfBomb, pdfWithContent, predictorBomb, textPdf, trickyBombs } from './helpers.js';
 
 let engine: OcrEngine;
 const fx = (p: string) => readFileSync(new URL(`./fixtures/receipts/${p}`, import.meta.url));
@@ -30,6 +30,39 @@ test('a PDF that is not a PDF inside is refused, not a crash', async () => {
   const read = engine.read({ bytes: Buffer.from('%PDF-1.7 junk'), type: 'application/pdf' });
   await expect(read).rejects.toThrow(UnreadableError);
   await expect(read).rejects.toMatchObject({ userMessage: "This PDF couldn't be opened. Please type the details." });
+});
+
+describe('a PDF is read whole or not at all', () => {
+  const read = (pages: string[][]) => engine.read({ bytes: textPdf(pages), type: 'application/pdf' });
+
+  test('a one-page PDF gives its lines', async () => {
+    const r = await read([['Northside Taxis', 'Total GBP 12.40']]);
+    expect(r.lines.map((l) => l.text)).toEqual(['Northside Taxis', 'Total GBP 12.40']);
+  });
+
+  test('a three-page PDF gives the lines of every page, the last included', async () => {
+    const r = await read([['Northside Taxis', 'Subtotal GBP 10.00'], ['Terms'], ['Total GBP 12.40']]);
+    expect(r.lines.map((l) => l.text)).toEqual(['Northside Taxis', 'Subtotal GBP 10.00', 'Terms', 'Total GBP 12.40']);
+    expect(readReceipt(r, '2026-10-30').amountPence).toEqual({ value: 1240, confidence: 1 });
+  });
+
+  test.each([
+    ['a corrected total', [['Total GBP 10.00'], ['page two'], ['page three'], ['Corrected final total GBP 100.00']]],
+    ['a corrected date', [['12 Oct 2026', 'Total GBP 10.00'], ['page two'], ['page three'], ['Corrected date 15 Oct 2026']]],
+  ])('a four-page PDF with %s on page four is refused, not read in part', async (_label, pages) => {
+    const r = read(pages);
+    await expect(r).rejects.toThrow(UnreadableError);
+    await expect(r).rejects.toMatchObject({ userMessage: TOO_MANY_PAGES_PDF });
+  });
+
+  test('a long PDF is refused by the reader itself, quickly, without a watchdog', async () => {
+    const pages = Array.from({ length: 200 }, (_p, i) => [`Page ${String(i + 1)}`, 'Total GBP 1.00']);
+    const started = performance.now();
+    const r = await readWatched(textPdf(pages));
+    expect(r.error).toMatchObject({ userMessage: TOO_MANY_PAGES_PDF });
+    expect(r.exit).toEqual({ code: 0, signal: null });
+    expect(performance.now() - started).toBeLessThan(3000);
+  }, 30_000);
 });
 
 const UNOPENABLE = "This PDF couldn't be opened. Please type the details.";
