@@ -8,7 +8,7 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude is bei
 | P01 | Codex | IN_REVIEW | codex/update-settings-safety | b25e2bf; 110 focused tests + types/lint passed; review/integrated Foundation checks pending |
 | P02 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 29 Oct P02 entry; awaiting Codex review |
 | P03 | Codex | IN_REVIEW | codex/operator-app-v1 | Backend a8c97bc; full regression and engine integration pass; UI/peer review pending |
-| P04 | Claude | IN_PROGRESS | `claude/adoring-carson-gaa3xh`; consuming contract v1 fixtures from `codex/operator-app-v1` @ `a8c97bc` | Claimed 29 Oct; also reviewing P01 (`b25e2bf`) and P03 (`a8c97bc`) |
+| P04 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh`; contract v1 fixtures from `codex/operator-app-v1` @ `a8c97bc` | `conductor/operator-web`: 43/43 unit, 13/13 browser journey against real P03 service; see 29 Oct P04 entry; awaiting Codex review |
 | P05 | Codex | IN_PROGRESS | codex/operator-app-v1 | Setup/probes/launcher implemented; native Windows/live-model acceptance pending |
 | P06 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 29 Oct P06 entry; awaiting Codex review and Malcolm's decisions D1–D5 |
 | P07 | Codex + Claude review | IN_PROGRESS | codex/operator-app-v1 | Backend boundary tests pass; UI integration and peer review pending |
@@ -142,3 +142,36 @@ Findings, reproduction and disposition: [`reviews/2026-10-29-claude-review-P01-P
 - **P01 @ `b25e2bf`:** approve, subject to the owner's answer on R1-1. The suggestion there is a settings-only undo before a full restore. 125/125 focused ops tests pass with a test database; 4 of the 5 new tests fail on `a8ffb91`.
 - **P03 @ `a8c97bc`:** changes requested. P3-1 is **blocking**: cancelling after approval can leave a branch in the source repo while the run reports `interrupted` with no landed branch. A reproduction is included.
 - **P00 interface:** acknowledged as the P04 working contract. It is not frozen until I-1 is settled.
+
+### 29 October 2026 — P02 follow-up evidence (Claude)
+
+Full Foundation verification on `claude/adoring-carson-gaa3xh` (P02 included), against a throwaway local PostgreSQL 16.15 test role:
+- `npm run licences`: all 449 installed packages and 553 lock entries permissive.
+- `npm test -- --maxWorkers=1`: 1,098 passed, 6 skipped. One suite (`sessions.test.ts`) failed only in teardown, because the test role lacked `pg_signal_backend`. After granting it, re-run: 5/5 passed.
+- Lint and typecheck: passed earlier. Web build and `verify:full` (browsers) were not run for P02, which touches only the OCR module.
+
+### 29 October 2026 — P04 (Claude)
+
+```
+Packet/subpacket: P04 — browser operator experience
+Owner and reviewer: Claude; reviewer Codex
+Status: IN_REVIEW
+Baseline SHA: branch claude/adoring-carson-gaa3xh after merging main 44b8674
+Owned files: conductor/operator-web/** (own package.json + package-lock.json), conductor/docs/operator-app/ux.md.
+  No service, root-manifest or Foundation UI files touched.
+Contract version: v1 as published at codex/operator-app-v1 @ a8c97bc (fixture copied with a drift-guard test).
+What now works: five views (Connections, New task, Run with decisions/review, History) over the
+  real API/SSE contract; bootstrap per interface.md; idempotent create/answer; stale-decision handling;
+  reconnect/resync; evidence-gated approval; untrusted text rendered as text only.
+Checks (cloud Linux, Node 22.22.0): `npm test` 43/43; `npm run build` OK; `node e2e/journey.mjs --service
+  <archive of a8c97bc>/conductor` in Chromium (Playwright 1.63.0): 13/13 against the REAL service with
+  Codex's deterministic fixture worker.
+Live / fake / skipped / unrun: engine is the fixture worker (no models, no Git landing) — not coding evidence.
+  No live models, no native Windows, no automated accessibility audit. Real-engine journey is P07.
+Open defects or unknowns: cancel-after-approval truthfulness depends on P3-1; probe timeouts undocumented
+  (P3-5). dist/ is not committed; the P05 start command must run `npm ci && npm run build` in operator-web.
+External blocker: none for review. Integration (P07) needs P03 merged so `--service ..` resolves.
+Next packet unblocked: P07 UI integration.
+Reviewer disposition and reviewed SHA: pending (Codex).
+Integration SHA: —
+```
