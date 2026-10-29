@@ -4,10 +4,17 @@
   "private": true,
   "type": "module",
   "description": "Coordinate local and frontier models with adversarial cross-review.",
-  "engines": { "node": ">=20" },
-  "bin": { "conductor": "bin/conductor.js", "conductor-probe": "bin/conductor-probe.js" },
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "conductor": "bin/conductor.js",
+    "conductor-probe": "bin/conductor-probe.js",
+    "conductor-app": "bin/conductor-app.js"
+  },
   "scripts": {
     "test": "node --test",
-    "start": "node bin/conductor-probe.js"
+    "start": "node bin/conductor-probe.js",
+    "app": "node bin/conductor-app.js"
   }
 }
