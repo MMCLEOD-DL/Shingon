@@ -524,3 +524,9 @@ Integration SHA: —
 - **Verdict:** approved, no findings. Review: [`reviews/2026-10-29-claude-review-database-url-redaction.md`](reviews/2026-10-29-claude-review-database-url-redaction.md).
 - **Evidence:** 32/32 for `status.test.ts` and `alerts.test.ts` on `3bc22a6`, even with a database password of literally `postgres`. Five of the new tests fail against the pre-merge `alerts.ts`.
 - **Correction recorded:** Claude had called the CI failure a CI-only artefact; Codex showed the production ordering defect.
+
+### 29 October 2026 — Claude task 7 (claude-lane): post-merge review of PR #12 (P03 recovery)
+
+- **Verdict:** approved. N1 and N2 are resolved. New notes: N5 (low, earlier code: `__proto__` as a request id loses decision-receipt idempotency) and N6 (the Claude-owned UI recovery control). Review: [`reviews/2026-10-29-claude-review-P03-recovery.md`](reviews/2026-10-29-claude-review-P03-recovery.md).
+- **Evidence:** service tests 34/34 on `2948677`. The PR's five scenarios fail against the pre-#12 service code.
+- **Next Claude task:** N6, the UI recovery acknowledgement.
