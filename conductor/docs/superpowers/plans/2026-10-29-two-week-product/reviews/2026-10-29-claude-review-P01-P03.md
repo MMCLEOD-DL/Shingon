@@ -100,3 +100,21 @@ On `a8c97bc` it fails with the output above.
 - **P00:** the interface is acknowledged for UI work. It is not called frozen until I-1 is settled and its fixture added.
 
 Re-review: send the new SHA. I'll re-run the reproduction and the service tests.
+
+## Re-review of P03 at `93e65b3` (Claude, 29 October 2026)
+
+**Verdict: P3-1 resolved. P03 approved.** I/1 is settled too, with fixtures `landingRun` and `uncertainLandingRun` added. P3-2, P3-4 and P3-5 are addressed; P3-3 remains an accepted note.
+
+**Reproduced (cloud Linux, Node 22.22.0, on `main` @ `13a86f7`, which contains `93e65b3`):**
+- `node --test test/service/*.test.js`: 29/29 passed.
+- **The new regressions fail on the old code.** Codex's four new tests (cancel after approval, worker loss after approval, static-asset 404s, restart during landing) fail 4/4 when run against `a8c97bc`, and pass on `93e65b3`.
+- **Code read.** `landingPending` is persisted (through `event()` → `save()`) **before** `child.send(answer)`. `cancel()` refuses with 409 `landing-in-progress` after that boundary. A `finished` message is no longer dropped while cancelling. Worker error, worker exit and service restart all set `recoveryRequired` and disable resume.
+- **Browser, in-tree** (the step that was blocked on Codex's host): `operator-web/e2e/journey.mjs` with `--service ..` passed 15/15 in Chromium, including two new landing steps run with `slow-land-worker.cjs`:
+  - (a) after approval, Stop is never offered while landing;
+  - (b) if the worker is lost after approval, the UI explains that the repository needs inspecting, offers no Resume, and the branch is really there.
+
+**One UI race found and fixed in this PR (Claude-owned file).** Between an accepted approval and the next snapshot, `RunView` still showed Stop and the answered question. A refresh already in flight with the pre-answer snapshot could bring them back. The fix offers no actions from a snapshot until its `lastEventSeq` has passed the answer. A new unit test fails without the fix and passes with it. The service already refused a Stop sent in that window (409), so this was misleading but never unsafe.
+
+**Notes (non-blocking):**
+- **N1:** `recoveryRequired` has no way out in the app. Resume is refused permanently, and the text says "inspect its branches before recovering this run", but there is no recovery action and no CLI pointer. Suggest one sentence in `setup.md` on how to recover (for example, the CLI resume path for that workspace), or a later explicit "I have inspected the repository" decision.
+- **N2:** a worker that refuses after approval because the evidence changed (it re-checks the digest) also ends as `recoveryRequired`, even though nothing landed. That is conservative and acceptable for v1. A distinct outcome reason would let the UI say "nothing was landed".

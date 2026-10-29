@@ -89,6 +89,9 @@ export function RunView({ api, runId, go }) {
   const [error, setError] = useState(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [notice, setNotice] = useState(null);
+  // After an answer is accepted, the shown snapshot is out of date until the next one arrives: offer no actions from it.
+  const [answered, setAnswered] = useState(false);
+  const answeredAt = useRef(null); // lastEventSeq when the answer was accepted
   const follower = useRef(null);
   const eventsRef = useRef([]);
 
@@ -96,6 +99,8 @@ export function RunView({ api, runId, go }) {
     try {
       const r = await api.run(runId);
       setRun(r);
+      // A snapshot taken before the service recorded the answer must not bring the old question or Stop back.
+      if (answeredAt.current === null || r.lastEventSeq > answeredAt.current) { answeredAt.current = null; setAnswered(false); }
       if (r.decision?.kind === 'result' || ['completed', 'rejected'].includes(r.status)) {
         try { setReview(await api.review(runId)); } catch (e) { if (!(e instanceof ApiError && e.status === 404)) setError(e); }
       }
@@ -167,15 +172,15 @@ export function RunView({ api, runId, go }) {
       {run.status === 'interrupted' && <div className="outcome bad"><p>The run was interrupted (stopped, or the service restarted). Any question it was asking has been withdrawn. {run.recoveryRequired ? 'The approved result may already be in the repository. Inspect its branches before recovering this run; automatic resume is disabled.' : run.resumable ? 'Resume to continue from its saved work.' : 'It has no saved work to resume.'}</p></div>}
       {run.status === 'paused' && <div className="outcome"><p>Paused. {run.resumable ? 'Resume when ready.' : ''}</p></div>}
 
-      {pending && <Decision api={api} run={run} review={review} onStale={refresh}
-        onAnswered={() => { setNotice('Answer saved. Waiting for Conductor to continue — this does not yet mean the work is finished.'); refresh(); }} />}
+      {pending && !answered && <Decision api={api} run={run} review={review} onStale={refresh}
+        onAnswered={() => { answeredAt.current = run.lastEventSeq; setAnswered(true); setNotice('Answer saved. Waiting for Conductor to continue — this does not yet mean the work is finished.'); refresh(); }} />}
 
       <Coverage coverage={run.coverage} />
       {['completed', 'rejected'].includes(run.status) && review && <details><summary>What was reviewed</summary><ReviewDetails review={review} /></details>}
 
       <div className="actions">
         {active && run.landingPending && <p className="warn">Adding the approved result to the repository. Wait for its outcome; it is no longer safe to stop this step.</p>}
-        {active && !run.landingPending && run.status !== 'cancelling' && (confirmCancel ? (
+        {active && !answered && !run.landingPending && run.status !== 'cancelling' && (confirmCancel ? (
           <>
             <button type="button" className="danger" onClick={cancel}>Yes, stop this run</button>
             <button type="button" onClick={() => setConfirmCancel(false)}>Keep running</button>

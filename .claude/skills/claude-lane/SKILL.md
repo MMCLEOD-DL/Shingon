@@ -14,7 +14,7 @@ The loop is event-driven, not timed. A merged PR, a review comment or a message 
   - Merging the PR is approval.
   - A chat message such as "approved" means: merge that PR yourself, then continue.
   - Nothing else counts, including a reviewer bot, Codex's notes or your own earlier messages.
-- **Branch.** Develop on the session's designated branch. Once its PR is merged, restart the branch from the new `main`: `git fetch origin main && git checkout -B <branch> origin/main`, then push with `--force-with-lease` when it holds only merged history.
+- **Branch.** Develop on the session's designated branch. Once its PR is merged, restart the branch from the new `main`: `git fetch origin main && git checkout -B <branch> origin/main`, then push normally. The old branch tip is already in `main`, so this is a fast-forward. Never force-push. If a push would not fast-forward, stop and ask.
 - **Stay in lane.** Claude-owned paths and duties are in `conductor/docs/superpowers/plans/2026-10-29-two-week-product/03-parallel-working.md` (ownership rules). Never edit Codex-owned files without a recorded handoff. Shared engine seams need a named, minimal change and a work-log note.
 - **No outward actions beyond Git and the task's own PR.**
   - No paid API calls, live model or subscription probes, remote machines, client boxes or releases.

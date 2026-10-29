@@ -148,6 +148,45 @@ try {
     await phone.context().close();
   });
 
+  // Second service with Codex's slow-landing worker (P3-1): approval starts an irreversible landing.
+  const landing = await createAppServer({ dataDir: path.join(root, 'data-landing'), configFile, port: 0, uiDir,
+    workerFile: path.join(conductorDir, 'test', 'fixtures', 'operator-app', 'slow-land-worker.cjs') });
+  try {
+    const lp = await (await browser.newContext()).newPage();
+    lp.on('pageerror', (e) => consoleErrors.push(e.message));
+    await lp.goto(`${landing.origin}/#bootstrap=${landing.bootstrapToken}`);
+    await lp.getByLabel(/Full path/).fill(repo);
+    await lp.getByRole('button', { name: 'Continue' }).click();
+    await lp.getByRole('button', { name: 'Add repository' }).click();
+    const begin = async (text) => {
+      await lp.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'New task' }).click();
+      await lp.getByLabel(/Describe the change/).fill(text);
+      await lp.getByRole('button', { name: 'Start' }).click();
+      await lp.getByRole('heading', { name: 'Review the finished work' }).waitFor({ timeout: 15000 });
+      await lp.getByRole('button', { name: 'Approve: create a branch' }).click();
+    };
+
+    await step('during an approved landing the Stop action is never offered', async () => {
+      await begin('slow landing');
+      await lp.getByText(/Answer saved/).waitFor();
+      const until = Date.now() + 250;
+      while (Date.now() < until) {
+        if (await lp.getByRole('button', { name: /Stop run/ }).count()) throw new Error('Stop offered during landing: ' + (await lp.locator('main').innerText()).slice(0, 400));
+        await lp.waitForTimeout(25);
+      }
+      await lp.getByText('Branch created').waitFor({ timeout: 15000 });
+    });
+
+    await step('worker lost after approval: the UI asks for repository inspection and offers no Resume', async () => {
+      execFileSync('git', ['-C', repo, 'branch', '-D', 'conductor/landed']);
+      await begin('crash-after-approval');
+      await lp.getByText(/The approved result may already be in the repository/).waitFor({ timeout: 15000 });
+      assert.equal(await lp.getByRole('button', { name: 'Resume' }).count(), 0);
+      assert.match(execFileSync('git', ['-C', repo, 'branch', '--list', 'conductor/landed'], { encoding: 'utf8' }), /conductor\/landed/);
+    });
+    await lp.context().close();
+  } finally { await landing.close(); }
+
   await step('no browser errors and no CSP violations during the journey', async () => {
     assert.deepEqual(consoleErrors.filter((t) => !/Failed to load resource: the server responded with a status of 401/.test(t)), []);
   });
