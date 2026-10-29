@@ -13,7 +13,7 @@ Created 29 October 2026. Planning only: no packets have started, no interface is
 | P06 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 30 Oct P06 entry; awaiting Codex review and Malcolm's decisions D1–D5 |
 | P07 | Codex + Claude review | NOT_STARTED | — | — |
 | P08 | Codex + Claude review | NOT_STARTED | — | — |
-| P09 | Claude | NOT_STARTED | — | — |
+| P09 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 30 Oct P09 entry; awaiting Codex review and Malcolm's prioritisation |
 
 ## Decisions to settle in P00
 
@@ -97,6 +97,28 @@ Open defects or unknowns: inventory §6 questions; CPU throughput of parser/embe
 External blocker and exact owner/action: Malcolm — answer inventory §6, decide D1–D5; a host with
   Ollama for the hybrid experiment (K3/K4).
 Next packet unblocked: P09 (in progress).
+Reviewer disposition and reviewed SHA: pending (Codex).
+Integration SHA: —
+```
+
+### 30 October 2026 — P09 (Claude)
+
+```
+Packet/subpacket: P09 — next-phase backlog
+Owner and reviewer: Claude; reviewer Codex
+Status: IN_REVIEW
+Baseline SHA: 3e696db
+Owned files: conductor/docs/operator-app/next.md; link added in conductor/docs/RESEARCH-BACKLOG.md
+What now works: five items (expenses, desktop packaging, KB implementation, lessons ledger, research
+  sessions) each with repo overlap (paths checked at 3e696db), gaps, dependencies, owner and
+  given/when/then acceptance examples. Proposes an order that differs from 00-index §7, with reasons.
+Checks: documentation only; spot-checked the overlap claims (MODULES list, absence of
+  expenses:approve, workerMemory scope, council "no debate" rule) against the source.
+Live / fake / skipped / unrun: n/a. Older Windows-project records treated as history only.
+Open defects or unknowns: order of items is Malcolm's call; the repo has no AGENTS.md although
+  03-parallel-working.md asks sessions to read one.
+External blocker: none.
+Next packet unblocked: none in this fortnight (all items are post-fortnight).
 Reviewer disposition and reviewed SHA: pending (Codex).
 Integration SHA: —
 ```

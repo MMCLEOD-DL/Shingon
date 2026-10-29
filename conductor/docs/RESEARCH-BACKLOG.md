@@ -36,4 +36,6 @@ Conductor's existing [project-folder contract](superpowers/plans/2026-10-27-fact
 
 Start with a read-only integration. Write-back, automatic document editing and autonomous promotion of retrieved material into persistent skills are separate capabilities. The knowledge-base project should support future collaboration and validated reusable skills without making retrieved text authoritative over Conductor's approval or release rules.
 
+Next-phase backlog, covering KB implementation order alongside the other post-fortnight items: [`operator-app/next.md`](operator-app/next.md).
+
 Delivery planning: [two-week product plan, 30 October–12 November 2026](superpowers/plans/2026-10-29-two-week-product/00-index.md), especially P06 and P09.
