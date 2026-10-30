@@ -1523,3 +1523,17 @@ Only review artifacts/ledger changed; no private, model, connector, remote DB, H
 Claude preserves immediate logical denial, tracks failed byte cleanup durably and retries;
 keep KB-R5/R6 and other K6/K8 gates open. P09/Windows console follow-up remain queued.
 Merge records bounded semantic acceptance and cleanup finding, not v1 freeze or release.
+
+### Codex task submitted — PR41 authoritative sync review
+
+Date: 30 October 2026. Branch `codex/review-kb-sync`.
+Last artifact commit: `72f6b989e72b330d8318186024093234d1eef7f5`.
+PR: https://github.com/MMCLEOD-DL/Shingon/pull/45 (draft opened; ready after this push).
+Evidence: knowledge 36/36, zero skips; independent empty-complete/partial/failed-read controls
+pass. Windows open-original deletion/retry probe expected exit 1 for KB-R7. Whitespace passes.
+Accept examined listing/read-denial semantics; KB-R7 [P2] with Claude for durable cleanup
+tracking/retry and accurate reporting. Existing KB-R5/R6 and K6/K8 remain held. Only review
+artifacts/ledger changed. Temporary PG stopped; GPU worker remains off. No private/model/
+connector/HTTP/deployment acceptance. P09 and Windows console follow-up remain queued.
+No high-risk paths; request auto-merge and report disabled setting. Merge records handoff,
+not source correction, contract freeze or release. Stop until this submission merges.
