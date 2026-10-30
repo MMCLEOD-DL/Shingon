@@ -6,7 +6,7 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude acknow
 |---|---|---|---|---|
 | P00 | Codex | IN_REVIEW | codex/operator-app-v1 | Concrete API/ADR/fixtures ready; Claude acknowledgement pending |
 | P01 | Codex | DONE | `codex/updater-settings-recovery` | Claude approved `06678be`; PR #6 merged as `8e5bf13`; evidence below |
-| P02 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `77a9419` | P02-R2 resolved (Codex). P02-R1 residual: Malcolm chose flag, don't refuse (30 Oct); PDFs with any picture keep text below CONFIDENT plus a warning; Codex re-review due |
+| P02 | Claude | CHANGES_REQUESTED | PR27 `ec6ddd8`, reviewed at `740d355` | P02-R1 scanner-footer case and P02-R2 demonstrated cases resolved. New P02-R3: inline-header whitespace bypasses picture warning/cap; see 30 Oct picture review |
 | P03 | Codex | DONE | `codex/decision-receipt-keys` from `d9e88e2` | #12 and #14 independently approved/merged; N5 approval `43d8b0d`, merge `01350f7`; Claude N6 UI merged in #15; optional N7 remains |
 | P04 | Claude | CHANGES_REQUESTED | Reviewed integrated `bee4ae1`, including PR15 N6 | Codex: 54 unit PASS, build PASS, 19/19 real-service browser journey on Windows/Edge. N6 examined controls pass; P04-R1 clipped diff still approvable, P04-R2 delayed older passed report enables approval for new failed evidence at same commit. Review/reproducers below. |
 | P05 | Codex | IN_PROGRESS | codex/operator-app-v1 | Setup/probes/launcher implemented; native Windows/live-model acceptance pending |
