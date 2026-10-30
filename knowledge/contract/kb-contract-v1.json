@@ -943,7 +943,7 @@
       "caller": "Acme app server, asserted user alice (member of finance)",
       "request": {
         "method": "GET",
-        "path": "/passages/8c5c5e3a9d6e96ca1141b4d3d9e03c5700295c3b28218091eae7c01d005303c8?neighbours=1"
+        "path": "/passages/8e978b5c67a9e254d967fcfffff3a31d605d85d5de427adac21cfea04b7aade6?neighbours=1"
       },
       "response": {
         "status": 200,
@@ -955,7 +955,7 @@
           "title": "Acme Expenses Policy",
           "passages": [
             {
-              "chunkId": "8e978b5c67a9e254d967fcfffff3a31d605d85d5de427adac21cfea04b7aade6",
+              "chunkId": "51d71a22b886e67db6d09cff0701d051fa01d309aa67254b6ef634075b1c6e46",
               "text": "Any single claim over 500 pounds needs approval from a finance manager before payment.",
               "locator": {
                 "page": null,
@@ -971,7 +971,7 @@
               "focus": false
             },
             {
-              "chunkId": "51d71a22b886e67db6d09cff0701d051fa01d309aa67254b6ef634075b1c6e46",
+              "chunkId": "8e978b5c67a9e254d967fcfffff3a31d605d85d5de427adac21cfea04b7aade6",
               "text": "Staff using their own car for business travel are reimbursed 55 pence per mile.",
               "locator": {
                 "page": null,
@@ -1013,7 +1013,7 @@
       "caller": "Acme app server, asserted user andy (not in finance)",
       "request": {
         "method": "GET",
-        "path": "/passages/871672fa12f1cb335fe9f315aa26602ca65e33d2c5db2db428cfb95a6c0e19ea?neighbours=1"
+        "path": "/passages/240c72c96115ab98a41b820d79c98d1c3be7242c805c651c2d79e085f260e6dd?neighbours=1"
       },
       "response": {
         "status": 404,
@@ -1034,7 +1034,7 @@
       "caller": "Acme app server, asserted user andy (not in finance)",
       "request": {
         "method": "GET",
-        "path": "/passages/d14e0bc375fd74ec1aa02cd576034002fcd318377adef97677355fab966f52cb?neighbours=1"
+        "path": "/passages/6f36b3738697556408c0b5c40c493ab17a84c10f298641c832fe1a97de5941d7?neighbours=1"
       },
       "response": {
         "status": 404,
@@ -1055,7 +1055,7 @@
       "caller": "Acme app server, asserted user alice (member of finance)",
       "request": {
         "method": "GET",
-        "path": "/passages/501ca35260587caf7fc0691f46bd311b346f5e206ef719915d6e537f0cc4f07a?neighbours=9"
+        "path": "/passages/d85f018038728e69054c6b2c95fc769e1c32bdbd128cf8f5484edbdf21f0edd5?neighbours=9"
       },
       "response": {
         "status": 400,
