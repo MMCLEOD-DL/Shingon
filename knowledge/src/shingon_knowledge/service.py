@@ -24,6 +24,8 @@ CONTROL = re.compile(r'[\x00-\x08\x0b-\x1f\x7f]')
 STRONG, WEAK = 0.25, 0.08
 # Operator-marked superseded sources are still returned (flagged) but ranked below current ones (evaluation.md).
 SUPERSEDED_WEIGHT = 0.5
+# GET /passages/:chunkId widens a hit by at most this many passages either side.
+MAX_NEIGHBOURS = 2
 
 
 class ScopeError(PermissionError):
@@ -295,6 +297,69 @@ class KnowledgeService:
               ) succ ON true
               WHERE t.collection_id = ANY(%(allowed)s::text[]) AND t.status = 'active' AND {acl}
             ) view""", {'allowed': allowed, 'groups': groups, 'principal': cred.principal or ''}).fetchone()[0]
+
+    def collections(self, cred: Credential) -> dict:
+        """The collections this credential can search, each with what this caller can see of it: how many documents and
+        when the newest of them was ingested. Nothing counts documents the caller cannot see (retrieval-contract.md §3)."""
+        allowed, groups = self._scope(cred)
+        rows = self.db.execute("""
+            SELECT c.id, c.kind, c.destinations, count(t.id),
+                   to_char(max(v.ingested_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+            FROM collections c
+            LEFT JOIN sources t ON t.collection_id = c.id AND t.status = 'active'
+              AND (t.acl_all OR t.acl_groups && %(groups)s::text[] OR %(principal)s = ANY(t.acl_principals))
+            LEFT JOIN versions v ON v.source_id = t.id AND v.n = t.current_version
+            WHERE c.id = ANY(%(allowed)s::text[])
+            GROUP BY c.id, c.kind, c.destinations ORDER BY c.id""",
+            {'allowed': allowed, 'groups': groups, 'principal': cred.principal or ''}).fetchall()
+        revision = self.view_revision(cred)
+        self.db.commit()
+        return {'viewRevision': revision, 'collections': [
+            {'collectionId': r[0], 'kind': r[1], 'destinations': list(r[2]), 'documents': r[3], 'lastIngestedAt': r[4]}
+            for r in rows]}
+
+    def passage(self, cred: Credential, chunk_id: str, neighbours: int = 1) -> dict:
+        """One passage and up to `neighbours` (0 to 2) passages either side of it in the same document version, in
+        document order. The chunk is re-authorised like a search hit; a hidden or missing id is the same NotFound."""
+        if isinstance(neighbours, bool) or not isinstance(neighbours, int) or not 0 <= neighbours <= MAX_NEIGHBOURS:
+            raise ValueError('bad-request')
+        if not isinstance(chunk_id, str):
+            raise NotFound('not-found')
+        allowed, groups = self._scope(cred)
+        rows = self.db.execute("""
+            WITH focus AS (
+              SELECT c.id, c.source_id FROM chunks c JOIN sources s ON s.id = c.source_id
+              WHERE c.public_id = %(chunk)s AND c.tenant_id = %(tenant)s AND c.collection_id = ANY(%(allowed)s::text[])
+                AND s.status = 'active'
+                AND (c.acl_all OR c.acl_groups && %(groups)s::text[] OR %(principal)s = ANY(c.acl_principals))),
+            doc AS (
+              SELECT c.id, c.public_id, c.collection_id, c.version, c.title, c.text, c.locator, c.instruction_like,
+                     row_number() OVER (ORDER BY c.id) AS n
+              FROM chunks c JOIN focus f ON c.source_id = f.source_id)
+            SELECT d.public_id, d.collection_id, s.key, d.version, d.title, d.text, d.locator, d.instruction_like, d.id = f.id
+            FROM doc d, focus f, sources s, doc fd
+            WHERE s.id = f.source_id AND fd.id = f.id AND d.n BETWEEN fd.n - %(k)s AND fd.n + %(k)s
+            ORDER BY d.n""",
+            {'chunk': chunk_id, 'tenant': cred.tenant, 'allowed': allowed, 'groups': groups,
+             'principal': cred.principal or '', 'k': neighbours}).fetchall()
+        if rows:
+            self.db.execute('INSERT INTO audit (credential, principal, collections, result_sources, query_sha256) '
+                            "SELECT %s, %s, %s::text[], ARRAY[source_id], 'passage' FROM chunks WHERE public_id = %s",
+                            (cred.name, cred.principal, allowed, chunk_id))
+        revision = self.view_revision(cred)
+        self.db.commit()
+        if not rows:
+            raise NotFound('not-found')
+        return {'viewRevision': revision, 'collectionId': rows[0][1], 'documentId': rows[0][2], 'versionId': rows[0][3],
+                'title': rows[0][4], 'passages': [
+                    {'chunkId': r[0], 'text': CONTROL.sub('', r[5])[:1200], 'locator': r[6], 'instructionLike': r[7],
+                     'focus': r[8]} for r in rows]}
+
+    def health(self) -> dict:
+        """Readiness only: the index answers. Raises if it does not (the caller's 503)."""
+        self.db.execute('SELECT 1').fetchone()
+        self.db.commit()
+        return {'status': 'ok'}
 
     def original(self, cred: Credential, collection: str, key: str, version: int) -> Path:
         """The stored original of `version`, only while it is the current version, under the same permission rule as

@@ -53,6 +53,12 @@ SECTION_10 = {
     'an original, current version only': ['original-current', 'original-replaced-version', 'original-unknown-version'],
     'the same document key in two collections': ['same-key-two-collections', 'same-key-one-visible',
                                                  'same-key-other-collection', 'same-key-own-collection'],
+    # Codex review KB-R4: every exposed route and refusal.
+    'every route': ['collections-alice', 'collections-andy', 'collections-conductor', 'passage-neighbours',
+                    'passage-hidden', 'passage-missing', 'passage-too-wide', 'health'],
+    'request validation': ['bad-request', 'bad-request-boolean-limit', 'bad-request-unknown-field',
+                           'unsupported-hybrid', 'unsupported-filters', 'too-large'],
+    'authentication': ['unauthenticated'],
 }
 SERVICE_CHUNK_ID = re.compile(r'^[0-9a-f]{64}$')
 
@@ -61,8 +67,14 @@ def _search(kb, creds, fid, covers, who, query, *, limit=3, collections=None):
     body = {'query': query, 'mode': 'keyword', 'limit': limit, 'clientRequestId': f'req-{fid}'}
     if collections is not None:
         body['collections'] = collections
+    return _post_search(kb, creds, fid, covers, who, body)
+
+
+def _post_search(kb, creds, fid, covers, who, body):
+    """A `POST /search` exactly as K6 will handle it: the wire parser first, then the service."""
     try:
-        raw = kb.search(creds[who], query, limit=limit, collections=collections)
+        args = contract.parse_search_request(body)
+        raw = kb.search(creds[who], args['query'], limit=args['limit'], collections=args['collections'])
         status, out = 200, contract.search_body(raw)
         for r in out['results']:
             assert SERVICE_CHUNK_ID.match(r['chunkId']), r['chunkId']
@@ -86,6 +98,42 @@ def _original(kb, creds, fid, covers, who, collection, key, version):
             'request': {'method': 'GET', 'path': contract.original_path(collection, key, version)}, 'response': response}
 
 
+def _stand_in(fid, n) -> str:
+    return hashlib.sha256(f'{fid}#{n}'.encode()).hexdigest()
+
+
+def _get(fid, covers, who, path, run, shape):
+    """A GET fixture: `run()` gives the service's answer, `shape` turns it into the wire body."""
+    try:
+        status, out = 200, shape(run())
+    except Exception as e:  # noqa: BLE001
+        status, out = contract.error_body(contract.error_code(e), f'req-{fid}')
+    return {'id': fid, 'covers': covers, 'origin': 'generated', 'caller': CALLERS[who],
+            'request': {'method': 'GET', 'path': path}, 'response': {'status': status, 'body': out}}
+
+
+def _collections(kb, creds, fid, covers, who):
+    def shape(raw):
+        body = contract.collections_body(raw)
+        for c in body['collections']:
+            if c['lastIngestedAt'] is not None:
+                c['lastIngestedAt'] = INGESTED_AT
+        return body
+    return _get(fid, covers, who, '/collections', lambda: kb.collections(creds[who]), shape)
+
+
+def _passage(kb, creds, fid, covers, who, chunk_id, neighbours: str | None = '1'):
+    def shape(raw):
+        body = contract.passage_body(raw)
+        for i, q in enumerate(body['passages']):
+            assert SERVICE_CHUNK_ID.match(q['chunkId']), q['chunkId']
+            q['chunkId'] = _stand_in(fid, i)
+        return body
+    query = '' if neighbours is None else f'?neighbours={neighbours}'
+    return _get(fid, covers, who, f'/passages/{_stand_in(fid, "path")}{query}',
+                lambda: kb.passage(creds[who], chunk_id, contract.parse_neighbours(neighbours)), shape)
+
+
 def generate(kb, creds, manifest) -> list[dict]:
     """The generated fixtures, in order. The corpus must be synced as run-1 (expenses v1) then run-2."""
     s = lambda *a, **k: _search(kb, creds, *a, **k)  # noqa: E731
@@ -99,6 +147,26 @@ def generate(kb, creds, manifest) -> list[dict]:
         s('superseded-version', 'Two documents disagree; the replaced one is flagged and ranked lower', 'alice', 'mileage 45 pence per mile'),
         s('scope-violation', 'A collection outside the credential is refused, never silently dropped', 'alice', 'mileage', collections=['birch-handbook']),
         s('bad-request', 'An empty query is refused', 'alice', ''),
+        # Codex review KB-R4: request validation, and explicit refusal of what K2 does not do.
+        _post_search(kb, creds, 'bad-request-boolean-limit', 'A boolean limit is refused, not read as 1', 'alice',
+                     {'query': 'mileage', 'limit': True}),
+        _post_search(kb, creds, 'bad-request-unknown-field', 'A field the contract does not define is refused', 'alice',
+                     {'query': 'mileage', 'tenant': 'birch'}),
+        _post_search(kb, creds, 'unsupported-hybrid', 'Hybrid mode is refused until K3, never run as keyword search', 'alice',
+                     {'query': 'mileage', 'mode': 'hybrid'}),
+        _post_search(kb, creds, 'unsupported-filters', 'A document filter is refused until it is implemented, never ignored', 'alice',
+                     {'query': 'mileage', 'filters': {'documentIds': ['acme/expenses-policy.docx']}}),
+        _collections(kb, creds, 'collections-alice', 'The collections a caller can search, with what she can see of each', 'alice'),
+        _collections(kb, creds, 'collections-andy', 'The same collection, counted for a caller who cannot see the finance-only document', 'andy'),
+        _collections(kb, creds, 'collections-conductor', 'A project token sees only its reference collection', 'conductor'),
+        _passage(kb, creds, 'passage-neighbours', 'A passage and one neighbour either side, in document order', 'alice',
+                 kb.search(creds['alice'], 'mileage rate pence per mile own car', limit=1)['results'][0]['chunkId']),
+        _passage(kb, creds, 'passage-hidden', 'A passage the caller may not see: 404, as for a missing one', 'andy',
+                 kb.search(creds['alice'], 'salary band Senior Analyst', limit=1)['results'][0]['chunkId']),
+        _passage(kb, creds, 'passage-missing', 'A chunk id that does not exist: identical to hidden', 'andy', 'f' * 64),
+        _passage(kb, creds, 'passage-too-wide', 'More neighbours than the bound is refused', 'alice',
+                 kb.search(creds['alice'], 'mileage rate pence per mile own car', limit=1)['results'][0]['chunkId'], '9'),
+        _get('health', 'Readiness only: no revision or counts', 'conductor', '/health', kb.health, lambda raw: raw),
         _original(kb, creds, 'hidden-document', 'A document the caller may not see', 'andy', 'acme-policies', 'acme/salary-bands.docx', 1),
         _original(kb, creds, 'missing-document', 'A document that does not exist: identical to hidden', 'andy', 'acme-policies', 'acme/no-such-file.docx', 1),
     ]
@@ -155,6 +223,12 @@ class ContractFixtures(ServiceTestCase):
                     contract.check_withheld_report(body)
                 elif status == 200 and f['request']['path'] == '/search':
                     contract.check_search_body(body)
+                elif status == 200 and f['request']['path'] == '/collections':
+                    contract.check_collections_body(body)
+                elif status == 200 and f['request']['path'].startswith('/passages/'):
+                    contract.check_passage_body(body)
+                elif status == 200 and f['request']['path'] == '/health':
+                    contract.check_health_body(status, body)
                 elif status == 200:
                     contract.check_original_response(status, f['response']['headers'], unquote(f['request']['path'].split('/')[4]))
                     self.assertIsNone(body)
@@ -186,7 +260,7 @@ class ContractFixtures(ServiceTestCase):
     def test_hidden_and_missing_documents_are_indistinguishable(self):
         # Hidden, missing, revoked, replaced, unknown and other-collection versions all get the same 404.
         refused = ('hidden-document', 'missing-document', 'revoked-original', 'original-replaced-version',
-                   'original-unknown-version', 'same-key-other-collection')
+                   'original-unknown-version', 'same-key-other-collection', 'passage-hidden', 'passage-missing')
         strip = lambda r: {**r['body']['error'], 'requestId': None}  # noqa: E731
         first = self.by_id[refused[0]]['response']
         self.assertEqual(first['status'], 404)
@@ -356,6 +430,85 @@ class ShapeChecksRefuseBadBodies(unittest.TestCase):
         }.items():
             with self.subTest(name), self.assertRaises(contract.ContractError):
                 contract.check_original_response(status, headers, doc)
+
+
+
+class RequestsAndRoutes(unittest.TestCase):
+    """Codex review KB-R4: what a request may say, and the shapes of the routes besides search."""
+
+    def setUp(self):
+        self.fixtures = {f['id']: f for f in json.loads(FILE.read_text())['fixtures']}
+
+    def test_search_requests_are_parsed_strictly(self):
+        ok = contract.parse_search_request
+        self.assertEqual(ok({'query': 'q', 'limit': 20, 'mode': 'keyword', 'filters': {}, 'collections': ['a'], 'clientRequestId': 'run-7:step.2'}),
+                         {'query': 'q', 'limit': 20, 'collections': ['a'], 'clientRequestId': 'run-7:step.2'})
+        for name, body in {
+            'not an object': ['q'], 'no query': {}, 'long query': {'query': 'x' * 1001}, 'limit 0': {'query': 'q', 'limit': 0},
+            'limit 21': {'query': 'q', 'limit': 21}, 'float limit': {'query': 'q', 'limit': 8.0}, 'boolean limit': {'query': 'q', 'limit': False},
+            'collections as text': {'query': 'q', 'collections': 'a'}, 'empty collections': {'query': 'q', 'collections': []},
+            'repeated collection': {'query': 'q', 'collections': ['a', 'a']}, 'unknown mode': {'query': 'q', 'mode': 'vector'},
+            'filters as a list': {'query': 'q', 'filters': []}, 'request id with a space': {'query': 'q', 'clientRequestId': 'a b'},
+            'long request id': {'query': 'q', 'clientRequestId': 'a' * 65}, 'extra field': {'query': 'q', 'principal': 'alice'},
+        }.items():
+            with self.subTest(name), self.assertRaises(ValueError) as caught:
+                ok(body)
+            self.assertNotIsInstance(caught.exception, contract.Unsupported)
+        for body in ({'query': 'q', 'mode': 'hybrid'}, {'query': 'q', 'filters': {'sourceTypes': ['pdf']}}):
+            with self.subTest(body=body), self.assertRaises(contract.Unsupported):
+                ok(body)
+        for bad in ('3', '-1', 'one', '1.0', ''):
+            with self.subTest(neighbours=bad), self.assertRaises(ValueError):
+                contract.parse_neighbours(bad)
+        self.assertEqual((contract.parse_neighbours(None), contract.parse_neighbours('0')), (1, 0))
+
+    def test_request_ids_have_one_format(self):
+        with self.assertRaises(ValueError):
+            contract.error_body('scope', 'has a space')
+        for f in self.fixtures.values():
+            body = f['response'].get('body')
+            if isinstance(body, dict) and 'error' in body:
+                with self.subTest(fixture=f['id']):
+                    self.assertRegex(body['error']['requestId'], contract.REQUEST_ID)
+            sent = ((f.get('request') or {}).get('body') or {}).get('clientRequestId') if isinstance((f.get('request') or {}).get('body'), dict) else None
+            if sent is not None:
+                self.assertRegex(sent, contract.REQUEST_ID)
+
+    def test_route_bodies_refuse_near_misses(self):
+        coll = self.fixtures['collections-alice']['response']['body']
+        passage = self.fixtures['passage-neighbours']['response']['body']
+        c0 = lambda b: b['collections'][0]  # noqa: E731
+        bad_collections = {
+            'unknown kind': lambda b: c0(b).update(kind='private'),
+            'negative count': lambda b: c0(b).update(documents=-1),
+            'time without documents': lambda b: c0(b).update(documents=0),
+            'unknown destination': lambda b: c0(b).update(destinations=['openai']),
+            'a name field': lambda b: c0(b).update(name='Acme policies'),
+            'repeated collection': lambda b: b['collections'].append(dict(c0(b))),
+        }
+        bad_passages = {
+            'two focus passages': lambda b: [q.update(focus=True) for q in b['passages']],
+            'no passages': lambda b: b.update(passages=[]),
+            'too many passages': lambda b: b.update(passages=b['passages'] * 2),
+            'serial chunk id': lambda b: b['passages'][0].update(chunkId='17'),
+            'text too long': lambda b: b['passages'][0].update(text='x' * 1201),
+            'version zero': lambda b: b.update(versionId=0),
+        }
+        contract.check_collections_body(coll)
+        contract.check_passage_body(passage)
+        for name, fn in bad_collections.items():
+            body = json.loads(json.dumps(coll))
+            fn(body)
+            with self.subTest(name), self.assertRaises(contract.ContractError):
+                contract.check_collections_body(body)
+        for name, fn in bad_passages.items():
+            body = json.loads(json.dumps(passage))
+            fn(body)
+            with self.subTest(name), self.assertRaises(contract.ContractError):
+                contract.check_passage_body(body)
+        for status, body in ((200, {'status': 'ok', 'viewRevision': 'x'}), (200, {'status': 'ok', 'documents': 11}), (503, {'status': 'ok'})):
+            with self.subTest(health=body), self.assertRaises(contract.ContractError):
+                contract.check_health_body(status, body)
 
 
 if __name__ == '__main__':
