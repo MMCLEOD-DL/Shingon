@@ -761,3 +761,22 @@ legitimate conflict-resolution refusal, and hand the narrow correction back to C
 No production code edits, ownership transfer, live model calls or release operations.
 Next action: publish review evidence and the requested PR; P02 re-review and retrieval-contract
 review are independent queued tasks after this submission merges.
+
+### Codex task submitted — PR21 protection answers and upgrade review
+
+- Date: 30 October 2026. Branch: `codex/review-foundation-protection`; baseline: `2471ed7`.
+- Last review/reproducer commit: `016341fffdc8bdb3c855644fb4fdc75cadfdc85f`.
+- PR: [#22 — Review PR21: answer extension questions and record upgrade conflict blocker](https://github.com/MMCLEOD-DL/Shingon/pull/22).
+- Status: IN_REVIEW. Answers match BUILDING-ON's app extension points; PR21-R1 requests a
+  narrow trusted upgrade-conflict context/exception and actual bridge regression coverage.
+  Claude remains the implementation owner. No production implementation or existing test edits.
+- Evidence: Windows / Node v24.12.0; council-foundation 18/18 at PR head and integrated
+  baseline; standalone synthetic post-merge control passes, conflict-resolution refusal
+  reproduced with expected exit 1. Syntax and diff checks pass. Full hosted checks pending.
+- Full suites, real upgrade pipeline/model execution and live acceptance not run locally.
+  The reproduction invokes real Git, upgradeUnit and FOUNDATION.collect on a synthetic repo.
+- Merge route: review docs/reproducer only, no high-risk path. Mark ready and request existing
+  auto-merge policy after local checks; repository/API refusal must be reported, not bypassed.
+- Next action: Claude reviews and fixes the recorded upgrade handling. After this PR merges,
+  Codex takes independent P02 re-review, then retrieval contract/K6 review and P04/P06/P09.
+  No new task is started before this submission merges under the repository's one-task loop.
