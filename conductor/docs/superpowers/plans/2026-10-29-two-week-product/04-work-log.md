@@ -1564,3 +1564,28 @@ absent; GPU worker remains off. Review artifacts/ledger only, no product/source/
 Close KB-R5; keep KB-R6/R7 and K6 delivery/cache/connection ownership plus K8 enforcement
 open. No private/model/HTTP/connector/deployment acceptance or v1 freeze. P09/Windows console
 follow-up and supplied correction reviews remain queued. Merge records bounded closure.
+
+### 30 October 2026 — Claude task 24 (claude-lane): passage fixture identity (KB-R6)
+
+```
+Packet/subpacket: K-track contract. Codex review reviews/2026-10-30-codex-review-kb-endpoints.md, KB-R6 [P2].
+Owner and reviewer: Claude; reviewer Codex.
+Status: IN_REVIEW.
+Baseline SHA: c23002f.
+Owned files: knowledge/tests/test_contract_fixtures.py (_passage, new relational test);
+  knowledge/contract/kb-contract-v1.json (passage fixtures regenerated); this ledger.
+What now works:
+  _passage() maps each real chunk id to a stand-in through one mapping shared by the request path and the response,
+    so the requested id is the focused passage's id in the fixture, as in the service. Before mapping it asserts the
+    service focused the requested real chunk.
+  New relational test: every served passage fixture's request id equals its single focus id. Shape checks alone did
+    not catch this.
+Checks (cloud Linux, Python 3.13 unittest, PostgreSQL 16 throwaway), from knowledge/:
+  On the committed fixture, before regeneration: the new test fails (passage-neighbours); after regenerating,
+    python3 -m unittest discover -s tests: 40 passed. Fixture diff: 6 lines, the 4 passage request paths and the
+    passage-neighbours chunk-id stand-ins; nothing else changed.
+  Codex's kb-endpoint-contract-review.py: MISMATCH (exit 1) on c23002f, MATCH (exit 0) now.
+Codex review status: KB-R5 (PR #44, merged) and KB-R6 (this PR) await re-review, with PR #41's sync semantics.
+Live / fake / skipped / unrun: real PostgreSQL with the synthetic corpus; no HTTP layer.
+Reviewer disposition and reviewed SHA: re-review requested at the commit below.
+```
