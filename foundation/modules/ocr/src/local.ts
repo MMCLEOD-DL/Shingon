@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { Worker as Thread } from 'node:worker_threads';
 import Tesseract from 'tesseract.js';
 import type { OcrLine } from './extract.js';
-import { readPdfText } from './pdfText.js';
+import { readPdf } from './pdfText.js';
 import { UnreadableError, type OcrEngine, type OcrInputType, type OcrResult } from './types.js';
 
 const { createWorker, OEM, PSM } = Tesseract;
@@ -240,7 +240,8 @@ export async function createLocalEngine(opts: { workers?: number; timeoutMs?: nu
     async read({ bytes, type }): Promise<OcrResult> {
       const started = performance.now();
       let lines: OcrLine[];
-      if (type === 'application/pdf') lines = await readPdfText(bytes, timeoutMs);
+      let warnings: string[] = [];
+      if (type === 'application/pdf') ({ lines, warnings } = await readPdf(bytes, timeoutMs));
       else if (IMAGE_TYPES.has(type) && looksLikeImage(bytes)) {
         // Tesseract decodes the whole picture before reading it: a huge one is refused before that, by its header.
         const size = imageSize(bytes);
@@ -250,7 +251,7 @@ export async function createLocalEngine(opts: { workers?: number; timeoutMs?: nu
       }
       else if (type === 'image/heic') throw new UnreadableError(HEIC_REFUSED);
       else throw new UnreadableError(IMAGE_UNREADABLE);
-      return { engine: ENGINE_ID, lines, warnings: [], ms: Math.round(performance.now() - started) };
+      return { engine: ENGINE_ID, lines, warnings, ms: Math.round(performance.now() - started) };
     },
     async close(): Promise<void> {
       if (closed) return;
