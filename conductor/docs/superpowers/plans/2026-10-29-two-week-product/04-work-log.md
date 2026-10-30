@@ -8,7 +8,7 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude acknow
 | P01 | Codex | DONE | `codex/updater-settings-recovery` | Claude approved `06678be`; PR #6 merged as `8e5bf13`; evidence below |
 | P02 | Claude | CHANGES_REQUESTED | PR27 `ec6ddd8`, reviewed at `740d355` | P02-R1 scanner-footer case and P02-R2 demonstrated cases resolved. New P02-R3: inline-header whitespace bypasses picture warning/cap; see 30 Oct picture review |
 | P03 | Codex | DONE | `codex/decision-receipt-keys` from `d9e88e2` | #12 and #14 independently approved/merged; N5 approval `43d8b0d`, merge `01350f7`; Claude N6 UI merged in #15; optional N7 remains |
-| P04 | Claude | CHANGES_REQUESTED | Reviewed integrated `bee4ae1`, including PR15 N6 | Codex: 54 unit PASS, build PASS, 19/19 real-service browser journey on Windows/Edge. N6 examined controls pass; P04-R1 clipped diff still approvable, P04-R2 delayed older passed report enables approval for new failed evidence at same commit. Review/reproducers below. |
+| P04 | Claude | DONE | PR29 `70db662`, re-reviewed at `7e4ce83` | Codex closes P04-R1/R2; N6 disposition retained. 59 UI tests, build, 19-step real-service journey and 3 independent DOM controls pass; browser race safe and current failed-evidence control passes. Broader P07/P08 acceptance separate. |
 | P05 | Codex | IN_PROGRESS | codex/operator-app-v1 | Setup/probes/launcher implemented; native Windows/live-model acceptance pending |
 | P06 | Claude | CHANGES_REQUESTED | `claude/adoring-carson-gaa3xh` from `a8ffb91`; research reviewed at `77a9419` | See 30 Oct P06 review: R1–R4 corrections; separate contract findings in PR24. D1/D2/D5 accepted for K2; D3/D4 open |
 | P07 | Codex + Claude review | IN_PROGRESS | codex/operator-app-v1 | Backend boundary tests pass; UI integration and peer review pending |
@@ -1193,6 +1193,51 @@ Not done here (next tasks): a view-scoped indexGeneration (decision 1's last par
 Live / fake / skipped / unrun: real PostgreSQL with the synthetic corpus; no HTTP service (K6), models or private data.
 Reviewer disposition and reviewed SHA: re-review requested at the commit below.
 ```
+
+### 30 October 2026 — Codex claim: P04 approval-evidence correction re-review
+
+Reviewer Codex; correction owner Claude. Status IN_PROGRESS.
+Branch `codex/review-approval-evidence-fix`; integrated baseline `7e4ce83` (PR33/34 merged).
+Scope: PR29 `70db662`, P04-R1 full-diff inspection and P04-R2 current-question evidence.
+Owned paths: review artifacts/fixtures and ledger only. Next: inspect corrected gates,
+update the old reproducer preconditions to the accepted full-diff/hidden-stale behaviour,
+run UI checks/build and the real-service browser race control/journey using hidden children.
+No UI/source ownership transfer, live model, release or deployment. KB PR31/34 re-reviews,
+P09, P02-R3 and Windows console follow-up remain independently owned backlog.
+
+### 30 October 2026 — P04 approval-evidence correction re-review handoff (Codex)
+
+Reviewer Codex; correction owner Claude. Status DONE for examined P04 work.
+Correction `70db662` (PR29); reviewed baseline `7e4ce83`.
+Branch `codex/review-approval-evidence-fix`; review `reviews/2026-10-30-codex-review-P04-correction.md`.
+P04-R1/R2 resolved: supported long diff fully inspectable; oversized diff blocks approval;
+review identity includes commit/diff/ordered report IDs; old responses cannot supply current
+question evidence. Real browser race shows no stale passed label and approval disabled while
+current report is held, then visible failed tests with explicit approval available when it
+arrives. N6 prior disposition retained; P05/P07/P08 and live acceptance are not closed.
+Checks (Windows, Node 24.12.0, Edge/Playwright): UI 59 passed, build passed, unchanged
+real-service journey 19/19, updated standalone DOM 3/3, strengthened browser control exit 0.
+Archived pre-PR29 UI `33c0dd2` yields expected 2 failures/1 positive-control pass with the
+same DOM controls. Whitespace passes. Review/artifact/ledger changes only; runtime unchanged.
+Synthetic/live/unrun: real local HTTP/SSE and Git with fixture workers, no live inference,
+private input, remote host, deployment or broad Foundation/Conductor suite rerun.
+Next peer reviews: KB retrieval-contract corrections PR31/34; P09 and Windows console
+follow-up remain queued. P02-R3 remains with Claude. Merge accepts this bounded closure.
+
+### Codex task submitted — P04 approval-evidence correction re-review
+
+Date: 30 October 2026. Branch `codex/review-approval-evidence-fix`.
+Last artifact commit: `1f2f2aff6855b178f463a2a40d9230ecd65eef47`.
+PR: https://github.com/MMCLEOD-DL/Shingon/pull/35 (draft opened; ready after this push).
+Evidence: UI 59/59, build, unchanged 19-step real-service journey, independent DOM 3/3,
+and strengthened real-browser race/current-evidence control pass. Same DOM controls fail
+old UI in two cases while positive control passes. Whitespace checks pass.
+Disposition: P04-R1/R2 closed, N6 retained; bounded P04 UI work DONE. P05/P07/P08, live
+inference and deployments remain separate. Only review artifacts and ledger changed.
+Next peer work: KB retrieval-contract corrections PR31/34; P09 and Windows console follow-up
+remain queued, P02-R3 remains with Claude. Merge records this bounded closure.
+No high-risk paths changed; request auto-merge. If GitHub still refuses repository-disabled
+auto-merge or readiness, report the exact state. Stop until this submission is merged.
 
 ### 30 October 2026 — Claude task 19 (claude-lane): Codex P02 re-review, P02-R3 (inline-picture lookahead)
 
