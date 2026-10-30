@@ -331,6 +331,43 @@ export function mixedPdf(order: 'text-first' | 'picture-first'): Buffer {
   ]);
 }
 
+/** A JPEG image XObject (the fictional taxi photo, 1500×1274). */
+function jpegObject(): Buffer {
+  const jpeg = readFileSync(fixturesDir('receipts/rendered/taxi-photo.jpg'));
+  return Buffer.concat([
+    Buffer.from(`<< /Type /XObject /Subtype /Image /Width 1500 /Height 1274 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${String(jpeg.length)} >>\nstream\n`, 'latin1'),
+    jpeg,
+    Buffer.from('\nendstream', 'latin1'),
+  ]);
+}
+
+/**
+ * Codex review P02-R1: page one has `Total GBP 10.00` as text; page two paints the fictional taxi photo (total GBP
+ * 12.40) and carries one text line of its own, a scanner app's footer with no amount.
+ */
+export function scannerFooterPdf(): Buffer {
+  const page = (contents: number, resources: string): string => `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << ${resources} >> /Contents ${String(contents)} 0 R >>`;
+  return pdfOf(['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [4 0 R 6 0 R] /Count 2 >>', FONT,
+    page(5, '/Font << /F1 3 0 R >>'), textStream('BT /F1 12 Tf 10 760 Td (Total GBP 10.00) Tj ET'),
+    page(7, '/Font << /F1 3 0 R >> /XObject << /Im0 8 0 R >>'),
+    textStream('q 500 0 0 700 10 60 cm /Im0 Do Q BT /F1 8 Tf 10 20 Td (Scanned with PhoneScan) Tj ET'),
+    jpegObject()]);
+}
+
+/**
+ * One text page with `Total GBP 10.00`, and a picture: `painted` draws a small logo; `unused` only lists the image
+ * among the page's resources; `inline` draws a 1×1 inline image (BI … ID … EI).
+ */
+export function textWithPicturePdf(kind: 'painted' | 'unused' | 'inline'): Buffer {
+  const text = 'BT /F1 12 Tf 10 760 Td (Total GBP 10.00) Tj ET';
+  const draw = kind === 'painted' ? `q 60 0 0 20 10 780 cm /Im0 Do Q ${text}`
+    : kind === 'inline' ? `q 10 0 0 10 10 780 cm BI /W 1 /H 1 /CS /G /BPC 8 ID \x80 EI Q ${text}` : text;
+  const resources = kind === 'inline' ? '/Font << /F1 3 0 R >>' : '/Font << /F1 3 0 R >> /XObject << /Im0 6 0 R >>';
+  return pdfOf(['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [4 0 R] /Count 1 >>', FONT,
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << ${resources} >> /Contents 5 0 R >>`,
+    textStream(draw), ...(kind === 'inline' ? [] : [jpegObject()])]);
+}
+
 /** One text page (`Total GBP 10.00`) and one page with nothing on it. */
 export function blankPagePdf(): Buffer {
   const page = (contents: number): string => `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /Font << /F1 3 0 R >> >> /Contents ${String(contents)} 0 R >>`;

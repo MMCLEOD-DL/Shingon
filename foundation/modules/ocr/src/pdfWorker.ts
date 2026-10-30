@@ -7,7 +7,8 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import { inflateSync } from 'node:zlib';
 
-export type PdfWorkerReply = { ok: true; lines: string[] } | { ok: false; problem: 'unopenable' | 'too-many-pages' | 'partly-scanned' };
+/** `pictures`: the file holds a picture (painted or not) whose content was not read, so its text may not be all the evidence. */
+export type PdfWorkerReply = { ok: true; lines: string[]; pictures: boolean } | { ok: false; problem: 'unopenable' | 'too-many-pages' | 'partly-scanned' };
 /** What the thread is given: the PDF, and whether to check it first (always, except in tests of the watchdogs). */
 export interface PdfWorkerInput {
   data: Uint8Array;
@@ -31,6 +32,8 @@ const STREAM_KEYWORD = new RegExp(`(?<![^${NOT_REGULAR}])stream(?![^${NOT_REGULA
 const OBJ_KEYWORD = new RegExp(`(?<![^${NOT_REGULAR}])obj(?![^${NOT_REGULAR}])`, 'g');
 // An inline image ("BI … ID") whose data names a filter: pdfjs would decode it outside the budget.
 const INLINE_IMAGE_FILTER = /\bBI\b[^]{0,4096}?\/(?:F|Filter)\b[^]{0,4096}?\bID\b/;
+// Any inline image in a content stream. Text that merely reads "BI … ID" also matches: that only ever flags a PDF.
+const INLINE_IMAGE = /\bBI\b[^]{0,4096}?\bID\b/;
 
 type Value =
   | { kind: 'name'; name: string }
@@ -259,15 +262,21 @@ function noteObjectStream(dict: Map<string, Value>, decoded: Buffer, tree: PageT
  * that many distinct pages, so a page tree whose /Count understates its pages can't hide one. An "obj" keyword that is not part of a header read here is refused (pdfjs allows a comment between
  * the object number and "obj", and such an object would escape the count).
  *
- * Returns the number of pages, or null to refuse the file.
+ * It also notes whether the file holds a picture: an image XObject (/Subtype /Image), any JPEG stream (/DCTDecode) or
+ * an inline image in a stream it decoded. Nothing is decoded or drawn to find out, so an unused image resource counts
+ * too (Malcolm's decision, 30 October 2026: flag a PDF with any picture rather than refuse it; Codex review
+ * P02-R1 residual).
+ *
+ * Returns the number of pages and whether there is a picture, or null to refuse the file.
  */
-function scan(data: Uint8Array): { pages: number } | null {
+function scan(data: Uint8Array): { pages: number; pictures: boolean } | null {
   const bytes = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
   const text = bytes.toString('latin1');
   let budget = INFLATE_BUDGET;
   // Where the checked streams' data and the objects' dictionaries are: a "stream" inside them is not a keyword.
   const covered: { start: number; end: number }[] = [];
   const tree = new PageTree();
+  let pictures = false;
   const headers = new Set<number>(); // where each header's "obj" keyword is
   OBJ_HEADER.lastIndex = 0;
   for (let m = OBJ_HEADER.exec(text); m !== null; m = OBJ_HEADER.exec(text)) {
@@ -287,6 +296,8 @@ function scan(data: Uint8Array): { pages: number } | null {
     }
     covered.push({ start: dictStart, end: reader.at });
     tree.note(Number(m[1]), dict);
+    const subtype = dict.get('/Subtype');
+    if (subtype?.kind === 'name' && subtype.name === '/Image') pictures = true;
     reader.skipSpace();
     STREAM_KEYWORD.lastIndex = reader.at;
     const kw = STREAM_KEYWORD.exec(text);
@@ -304,6 +315,7 @@ function scan(data: Uint8Array): { pages: number } | null {
       if (list.length > 1 && !(list.length === 2 && list[0] === '/FlateDecode' && list[1] === '/DCTDecode')) return null;
     }
     const used = abbreviated.length > 0 ? abbreviated : filters; // pdfjs takes /F when it is there
+    if (used.includes('/DCTDecode')) pictures = true;
     const objectStream = isObjectStream(dict);
     if (objectStream && used.includes('/DCTDecode')) return null;
     let decoded: Buffer | null = null;
@@ -326,6 +338,7 @@ function scan(data: Uint8Array): { pages: number } | null {
       if (dict.has('/First') && !noteObjectStream(dict, decoded, tree)) return null;
     }
     if (decoded && used.length < 2 && INLINE_IMAGE_FILTER.test(decoded.toString('latin1'))) return null;
+    if (decoded && INLINE_IMAGE.test(decoded.toString('latin1'))) pictures = true;
   }
   // Any "stream" keyword this reading did not account for: pdfjs might find a stream we did not check.
   STREAM_KEYWORD.lastIndex = 0;
@@ -337,7 +350,7 @@ function scan(data: Uint8Array): { pages: number } | null {
     if (!headers.has(kw.index) && !covered.some((c) => kw.index >= c.start && kw.index < c.end)) return null;
   }
   const pages = tree.count();
-  return pages === null ? null : { pages };
+  return pages === null ? null : { pages, pictures };
 }
 
 interface Item {
@@ -399,7 +412,8 @@ async function read({ data, preScan }: PdfWorkerInput): Promise<PdfWorkerReply> 
     if (scanned && visited.size !== scanned.pages) return { ok: false, problem: 'unopenable' };
     // A page with no text (a scan, a picture, or blank) is decided per page: text elsewhere must not hide it.
     if (textless > 0 && textless < doc.numPages) return { ok: false, problem: 'partly-scanned' };
-    return { ok: true, lines };
+    // Without the pre-scan (only the watchdog tests skip it) nothing is known about pictures: assume there are some.
+    return { ok: true, lines, pictures: scanned?.pictures ?? true };
   } catch {
     return { ok: false, problem: 'unopenable' };
   } finally {

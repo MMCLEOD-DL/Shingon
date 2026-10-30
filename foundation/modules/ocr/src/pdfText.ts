@@ -8,6 +8,14 @@ import { UnreadableError } from './types.js';
 export const SCANNED_PDF = "This PDF is a scanned picture, so it can't be read automatically. Please type the details.";
 export const UNOPENABLE_PDF = "This PDF couldn't be opened. Please type the details.";
 export const TOO_MANY_PAGES_PDF = "This PDF has more than 3 pages, so it can't be read automatically. Please type the details.";
+/** Shown when the PDF holds a picture: its text is read, but the picture is not, so every field asks to be checked. */
+export const PDF_PICTURE_WARNING = 'This PDF also contains a picture, which was not read: check every field against the receipt.';
+/**
+ * The confidence of every line of a PDF that holds a picture. Below CONFIDENT (0.85), so each field it gives says
+ * "Please check": the picture may hold a different total or date that the text does not show (Malcolm's decision,
+ * 30 October 2026, for Codex review P02-R1's scanner-footer case).
+ */
+export const PDF_PICTURE_CONFIDENCE = 0.6;
 export const PARTLY_SCANNED_PDF = "Part of this PDF is a scanned picture or a blank page, so it can't be read automatically. Please type the details.";
 
 /** The longest a PDF may take, whatever the engine's own timeout. */
@@ -54,20 +62,32 @@ let queue: Promise<unknown> = Promise.resolve();
  * process checks itself from a thread pdfjs never blocks, and this side checks it from /proc and kills it. A read
  * longer than min(timeoutMs, 3 s) is killed too. Files over 20 MB are refused outright.
  */
-export function readPdfText(bytes: Buffer, timeoutMs: number, opts: PdfReadOptions = {}): Promise<OcrLine[]> {
+export async function readPdfText(bytes: Buffer, timeoutMs: number, opts: PdfReadOptions = {}): Promise<OcrLine[]> {
+  return (await readPdf(bytes, timeoutMs, opts)).lines;
+}
+
+/**
+ * As readPdfText, with the warnings staff must see. A PDF that holds a picture keeps its text lines, each at
+ * PDF_PICTURE_CONFIDENCE, with PDF_PICTURE_WARNING: the picture is not read, so the text may not be all the evidence.
+ */
+export function readPdf(bytes: Buffer, timeoutMs: number, opts: PdfReadOptions = {}): Promise<{ lines: OcrLine[]; warnings: string[] }> {
   if (bytes.length > PDF_MAX_BYTES) return Promise.reject(new UnreadableError(UNOPENABLE_PDF));
   const turn = queue.then(() => readInProcess(bytes, Math.min(timeoutMs, PDF_MAX_MS), opts));
   queue = turn.catch(() => undefined);
   return turn;
 }
 
-async function readInProcess(bytes: Buffer, ms: number, opts: PdfReadOptions): Promise<OcrLine[]> {
+async function readInProcess(bytes: Buffer, ms: number, opts: PdfReadOptions): Promise<{ lines: OcrLine[]; warnings: string[] }> {
   const reply = await runReader(bytes, ms, opts);
   if (reply?.ok === false && reply.problem === 'too-many-pages') throw new UnreadableError(TOO_MANY_PAGES_PDF);
   if (reply?.ok === false && reply.problem === 'partly-scanned') throw new UnreadableError(PARTLY_SCANNED_PDF);
   if (reply === null || !reply.ok) throw new UnreadableError(UNOPENABLE_PDF);
   if (reply.lines.length === 0) throw new UnreadableError(SCANNED_PDF);
-  return reply.lines.map((text) => ({ text, confidence: 1 }));
+  const { pictures } = reply;
+  return {
+    lines: reply.lines.map((text) => ({ text, confidence: pictures ? PDF_PICTURE_CONFIDENCE : 1 })),
+    warnings: pictures ? [PDF_PICTURE_WARNING] : [],
+  };
 }
 
 /** The process's resident memory in bytes, from /proc/<pid>/status (VmRSS), or null when it can't be read. */
@@ -78,8 +98,9 @@ function residentBytes(pid: number): number | null {
 
 function isReply(v: unknown): v is PdfWorkerReply {
   if (typeof v !== 'object' || v === null) return false;
-  const r = v as { ok?: unknown; lines?: unknown };
-  return r.ok === false || (r.ok === true && Array.isArray(r.lines) && r.lines.every((l) => typeof l === 'string'));
+  const r = v as { ok?: unknown; lines?: unknown; pictures?: unknown };
+  // A reading must say whether the file holds a picture: one that does not is not a reply.
+  return r.ok === false || (r.ok === true && Array.isArray(r.lines) && r.lines.every((l) => typeof l === 'string') && typeof r.pictures === 'boolean');
 }
 
 /**
