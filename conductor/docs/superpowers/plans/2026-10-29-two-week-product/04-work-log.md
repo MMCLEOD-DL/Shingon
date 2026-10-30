@@ -1338,27 +1338,34 @@ Live / fake / skipped / unrun: real PostgreSQL with the synthetic corpus; no HTT
 Reviewer disposition and reviewed SHA: re-review requested at the commit below.
 ```
 
-KB re-review integration note: PR37 `7ed04e4` merged as `704752a` during submission.
-Integrated it with a merge commit and preserved both ledger histories. It supplies the
-viewRevision/withheld-report corrections; their independent review is pending, not absent
-implementation. The pure identity control now copies the valid fixture envelope, supporting
-viewRevision without hard-coding the obsolete generation field. Compatibility rerun: 30/30
-knowledge tests, zero skips, 3.143 s; 25 pure fixture checks and probes pass. Pre-PR31 privacy
-backtest retains one expected failure/two passes. Temporary PG shut down again and absent.
-PR31/34 closures stay pinned to `35baba5`; PR37 semantic review remains a separate task.
+### 30 October 2026 — Claude task 21 (claude-lane): retrieval contract KB-R4 (every route, request validation)
 
-### Codex task submitted — KB privacy and identity corrections re-review
-
-Date: 30 October 2026. Branch `codex/review-kb-privacy-identity`.
-Last artifact/integration commit: `fbfe637592b1937e8328592365da81fcd50e631b`.
-PR: https://github.com/MMCLEOD-DL/Shingon/pull/38 (draft opened; ready after this push).
-Evidence: reviewed baseline knowledge 26/26; after PR37 integration, 30/30 with no skips;
-25 pure fixture controls/probes pass. Old SQL privacy test has its expected hidden-name
-failure (one failure/two passes). UTF-8 mode requirement and initial Windows harness/fixture
-failures are recorded, not counted as completed passes. Whitespace checks pass.
-Closes KB-R1/R2 and demonstrated KB-R3 at `35baba5`; PR37's new semantics retain separate
-review. KB-R4/sync/policy enforcement and final contract freeze remain held. Review artifacts
-and ledger only; no product changes. Temporary PG stopped; GPU worker left off.
-Next peer review: P02 PR36; PR37 semantic review, P09 and Windows console follow-up queued.
-No high-risk paths changed; request auto-merge. Report GitHub refusal if still disabled.
-Merge accepts these scoped closures, not deployment or v1 freeze. Stop until merged.
+```
+Packet/subpacket: K-track contract. Codex review reviews/2026-10-30-codex-review-retrieval-contract.md, KB-R4 [P2].
+Owner and reviewer: Claude; reviewer Codex.
+Status: IN_REVIEW.
+Baseline SHA: 704752a.
+Owned files: knowledge/src/shingon_knowledge/{service.py (collections, passage, health), contract.py};
+  knowledge/contract/kb-contract-v1.json; knowledge/tests/test_contract_fixtures.py;
+  conductor/docs/knowledge-base/retrieval-contract.md; this ledger.
+What now works:
+  Routes in the service core, each with generated fixtures:
+    GET /collections: only what the caller can see (document count, newest ingestion time, viewRevision).
+    GET /passages/:chunkId?neighbours=0..2: re-authorised, in document order, exactly one focus passage.
+    GET /health: readiness only, {"status": "ok"}.
+  Requests: contract.parse_search_request rejects unknown fields, a boolean or out-of-range limit, malformed
+    collections and request ids. It refuses mode "hybrid" and any filter with 400 unsupported, never running a
+    broader search. Every generated search fixture now goes through it, as K6 will.
+  One request-id format (1-64 of A-Z a-z 0-9 . _ : -) for clientRequestId and error requestId; error_body enforces it.
+  New errors: unsupported (400), unauthenticated (401), too-large (413, over 16 KB). The bad-request wording is
+    broader. 401 and 413 are authored fixtures pending K6; the rest are generated.
+Checks (cloud Linux, Python 3.13 unittest, PostgreSQL 16 throwaway), from knowledge/:
+  python3 -m unittest discover -s tests: 33 passed. 15 new fixtures (13 generated, 2 authored).
+  Hidden and missing passages give the same 404 body as the other refusals. collections-andy counts one document
+    fewer than collections-alice (the finance-only one).
+  Against the previous source: fixture generation errors (missing routes and parser): 1 failure, 3 errors.
+Codex review status after this: KB-R1-R4 and decisions 1, 3 and 4 are addressed; decision 2 (an authoritative
+  empty listing in sync) is the remaining task. v1 can be frozen after Codex re-reviews these pins.
+Live / fake / skipped / unrun: real PostgreSQL with the synthetic corpus; no HTTP layer (K6), so 401/413 are shapes only.
+Reviewer disposition and reviewed SHA: re-review requested at the commit below.
+```
