@@ -1,6 +1,6 @@
 # Read-only retrieval contract (proposal v0)
 
-**Packet:** P06, step 5. **Status:** proposal for Codex review. It is not an implemented API, and Conductor and Foundation are not changed by it. Version 0 becomes v1 only when both lanes accept it and a fixture set exists, as with the operator-app contract.
+**Packet:** P06, step 5. **Status:** proposal for Codex review. It is not an implemented API, and Conductor and Foundation are not changed by it. Version 0 becomes v1 only when both lanes accept it and a fixture set exists, as with the operator-app contract. The draft fixture set now exists ([§10](#10-fixtures-to-freeze-before-v1)); acceptance and the open points listed there remain.
 
 **Purpose:** one small contract that Conductor and generated Foundation apps both use to get evidence from a knowledge service. The service must return only what the caller is allowed to see, say where every passage came from, and be safe to put in front of a model.
 
@@ -154,3 +154,47 @@ Fixtures must cover:
 - index unavailable;
 - a rate limit;
 - a destination-withheld report from Conductor.
+
+### Draft fixture set (30 October 2026)
+
+**File:** [`knowledge/contract/kb-contract-v1.json`](../../../knowledge/contract/kb-contract-v1.json). The wire shapes and the shape checks are in `knowledge/src/shingon_knowledge/contract.py`; K6 should serialise with it and check its own output before sending. The test is `knowledge/tests/test_contract_fixtures.py`, which runs in CI.
+
+Each fixture says whether it is **generated** or **authored**:
+- **Generated** fixtures are produced by the K2 service on the synthetic corpus. CI produces them again in a fresh database and fails on any difference, so the file cannot drift from the service.
+- **Authored** fixtures are hand-written for behaviour a later task owns. Each names that task in `pendingOn` and is checked against the shape only. They are not evidence that anything implements them.
+
+| §10 item | Fixture(s) | Origin |
+|---|---|---|
+| A normal hit for each format | `hit-markdown`, `hit-docx` (version 2 after an update), `hit-pdf`, `hit-xlsx` | generated |
+| `evidence: none` | `evidence-none` | generated |
+| Scope violation | `scope-violation` (403 `scope`) | generated |
+| Hidden document | `hidden-document` and `missing-document`: identical 404 bodies apart from `requestId` | generated |
+| Revoked after sync | `revoked-after-sync` (passages gone, `indexGeneration` moved on), `revoked-original` (404) | generated |
+| Conflicting versions | `superseded-version`: the replaced document is flagged `supersededBy` and ranked lower | generated |
+| Instruction-like passage | `instruction-like` | generated |
+| XLSX cell range | `hit-xlsx` (`Budget`, `A4:E4`) | generated |
+| Stale source | `stale-source` | authored: a live connector (K13), and open point 2 |
+| Scanned PDF with OCR confidence | `scanned-pdf-ocr` | authored: K5 |
+| Index unavailable | `index-unavailable` (503) | authored: K6 |
+| Rate limit | `rate-limit` (429, `retryAfter` in the body and a `Retry-After` header) | authored: K6 |
+| Destination-withheld report | `destination-withheld`: a proposed shape | authored: K8 |
+
+Also included: `bad-request` (400).
+
+`GET /collections`, `GET /passages/:chunkId` and `GET /health` are not in §10 and have no fixtures yet.
+
+Two things consumers must not read into the fixtures:
+- **Evidence levels.** They come from K2's provisional keyword thresholds. The PDF hit is `weak`. K4 replaces the thresholds, and the generated fixtures will change with them.
+- **Unknown fields.** K2 cannot fill `scores.vector`, `scores.rerank`, `source.modifiedAt` or OCR, so they are null or false. `conflictsWith` is always empty, and its absence proves nothing.
+
+**Open points for v1 (for Codex's review):**
+
+1. **Identifiers.**
+   - The draft uses `documentId` = the source key (path-like, so it is URL-encoded in paths), `versionId` = the integer version number, and `chunkId` = an opaque string.
+   - K2's `chunkId` is a deployment-wide serial number, so its gaps reveal ingestion volume across tenants. That contradicts "no counts that cross ACL boundaries" (§3). I propose K6 issues per-tenant opaque chunk ids.
+2. **Stale versus removed.**
+   - §3 and §8 describe a source whose last sync failed as served and flagged `stale`. K2 instead removes its passages from search, which is safer for permissions but loses availability.
+   - My recommendation: keep removal, and narrow `stale` to "the source system reports a newer version that has not been ingested yet", which only a connector can know.
+3. **Original versions.** K2 serves the original of the current version only, so a request naming an older version gets 404. v1 should say whether older originals are reachable while they are retained.
+4. **Destination-withheld report.** The proposed fields are `type`, `participant`, `collectionId`, `documentIds`, `allowedDestinations` and `message`. Conductor owns this shape, so Codex should accept or change it before K8.
+
