@@ -1,5 +1,5 @@
 // Run at repository root: foundation/node_modules/.bin/tsx <this file> [archived OCR directory]
-// Exit 1 means ignored image evidence still leaves an unwarned, fully confident amount.
+// Current contract: keep supported text with a picture warning and every proposed field below 0.85; refuse a textless page.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -45,13 +45,20 @@ try {
     try {
       const result = await engine.read({ bytes, type: 'application/pdf' });
       const proposal = readReceipt(result, '2026-10-30');
+      assert.notEqual(name, 'image page without footer', 'the textless-page guard must still refuse');
+      assert.equal(proposal.amountPence?.value, 1000);
+      assert.ok(proposal.warnings.some((warning: string) => warning.includes('picture')), 'picture warning required');
+      for (const field of [proposal.amountPence, proposal.vatPence, proposal.date, proposal.merchant]) {
+        if (field && field.value !== null) assert.ok(field.confidence < 0.85, 'every proposed field must ask for checking');
+      }
       const unsafe = name === 'image page with non-amount scanner footer'
         && proposal.amountPence?.value === 1000 && proposal.amountPence.confidence === 1 && proposal.warnings.length === 0;
       if (name === 'all-text control with non-painted image resource') assert.equal(proposal.amountPence?.value, 1000);
       console.log(JSON.stringify({name, result: unsafe ? 'UNSAFE' : 'read', lines: result.lines, proposal}));
       if (unsafe) process.exitCode = 1;
     } catch (error) {
-      if (error.name !== 'UnreadableError') throw error;
+      if (name !== 'image page without footer' || error.name !== 'UnreadableError') throw error;
+      assert.match(error.userMessage, /Part of this PDF/);
       console.log(JSON.stringify({name, result:'refused', message:error.userMessage}));
     }
   }

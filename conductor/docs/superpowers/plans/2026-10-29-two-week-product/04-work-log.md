@@ -6,7 +6,7 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude acknow
 |---|---|---|---|---|
 | P00 | Codex | IN_REVIEW | codex/operator-app-v1 | Concrete API/ADR/fixtures ready; Claude acknowledgement pending |
 | P01 | Codex | DONE | `codex/updater-settings-recovery` | Claude approved `06678be`; PR #6 merged as `8e5bf13`; evidence below |
-| P02 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `77a9419` | P02-R2 resolved (Codex). P02-R1 residual: Malcolm chose flag, don't refuse (30 Oct); PDFs with any picture keep text below CONFIDENT plus a warning; Codex re-review due |
+| P02 | Claude | CHANGES_REQUESTED | PR27 `ec6ddd8`, reviewed at `740d355` | P02-R1 scanner-footer case and P02-R2 demonstrated cases resolved. New P02-R3: inline-header whitespace bypasses picture warning/cap; see 30 Oct picture review |
 | P03 | Codex | DONE | `codex/decision-receipt-keys` from `d9e88e2` | #12 and #14 independently approved/merged; N5 approval `43d8b0d`, merge `01350f7`; Claude N6 UI merged in #15; optional N7 remains |
 | P04 | Claude | CHANGES_REQUESTED | Reviewed integrated `bee4ae1`, including PR15 N6 | Codex: 54 unit PASS, build PASS, 19/19 real-service browser journey on Windows/Edge. N6 examined controls pass; P04-R1 clipped diff still approvable, P04-R2 delayed older passed report enables approval for new failed evidence at same commit. Review/reproducers below. |
 | P05 | Codex | IN_PROGRESS | codex/operator-app-v1 | Setup/probes/launcher implemented; native Windows/live-model acceptance pending |
@@ -1111,3 +1111,35 @@ Residual: a replaced document is still ranked lower for a caller who cannot see 
 Live / fake / skipped / unrun: real PostgreSQL with the synthetic corpus; no HTTP service, models or private data.
 Reviewer disposition and reviewed SHA: re-review requested at the code commit below.
 ```
+
+### 30 October 2026 — Codex claim: P02 picture-confidence correction re-review
+
+Reviewer Codex; implementation/correction owner Claude. Status IN_PROGRESS.
+Branch `codex/review-pdf-picture-confidence`; integrated baseline `740d355` (PR30/31 merged).
+Scope: PR27 `ec6ddd8`, P02-R1 scanner-footer residual and Malcolm's recorded flag-not-refuse
+decision. Owned paths: review artifacts/standalone controls and this ledger only.
+Next: rerun original and footer reproducers, inspect picture detection and propagation to
+all receipt fields, retain text-only/page-count/resource defences, record exact disposition.
+No OCR source rewrite, cloud OCR, model, private upload or deployment. P04 PR29 and KB PR31
+re-reviews, P09 and the Windows console follow-up remain separate backlog.
+
+### 30 October 2026 — P02 picture-confidence correction re-review handoff (Codex)
+
+Owner/reviewer Codex; correction owner Claude. Status CHANGES_REQUESTED for new P02-R3 [P2].
+Correction `ec6ddd8` (PR27); reviewed integrated baseline `740d355`.
+Branch `codex/review-pdf-picture-confidence`; artifact `reviews/2026-10-30-codex-review-P02-pictures.md`.
+P02-R1's demonstrated scanner-footer residual is resolved: amount confidence 0.6 and warning
+reach the proposal, including the deliberately unused image resource. P02-R2 controls hold.
+New finding: 5,000 spaces after inline BI evade the 4,096-character image-detection window;
+plain and Flate streams return confidence 1/no warning. PDF.js operator lists independently
+confirm a painted image. This one-pixel fixture proves missing caution, not a wrong value.
+Checks (Windows, Node 24.12.0): OCR 328 passed, 6 Linux-/proc-dependent cases intentionally
+excluded, 0 failed, seven files, 18.73 s. Original reproduction exit 0; strengthened footer
+control exit 0 (pre-PR27 `77a9419` exits 1 on missing warning); new boundary reproduction
+exit 1 expected, ordinary-header positive control passes. Whitespace check passes.
+Live/fake/unrun: real local PDF child and parser on synthetic input, no cloud OCR/model,
+private upload, DB/browser acceptance or deployment. Broad suites and Linux watchdogs unrun.
+Owned files changed: review artifacts/fixtures and ledger only; OCR-owned source untouched.
+Claude corrects P02-R3 within current budgets and flag-not-refuse policy; Codex re-reviews.
+Next supplied peer reviews: P04 PR29, retrieval-contract PR31, then P09; Windows console
+runtime follow-up stays separate. Merging this review records findings, not P02 completion.
