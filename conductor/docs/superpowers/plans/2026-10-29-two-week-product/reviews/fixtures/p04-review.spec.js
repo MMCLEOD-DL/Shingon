@@ -8,16 +8,16 @@ import { createApi } from '../../../../../../operator-web/src/api.js';
 import { fakeService, fixtures } from '../../../../../../operator-web/tests/fakeService.js';
 
 
-test('P04-R1: approval stays disabled while the diff tail is inaccessible', async () => {
+test('P04-R1: the service-sized 450k diff is shown in full before approval', async () => {
   const sentinel='+IMPORTANT_CHANGE_HIDDEN_IN_TAIL';
   const review={...structuredClone(fixtures.review),diff:'diff --git a/large.txt b/large.txt\n'+'+ordinary line\n'.repeat(30000)+sentinel+'\n'};
   expect(JSON.stringify(review).length).toBeLessThan(1024*1024);
   const svc=fakeService({review});
   render(React.createElement(RunView,{api:createApi({fetchImpl:svc.fetchImpl}),runId:svc.state.run.id,go:()=>{}}));
   const approve=await screen.findByRole('button',{name:'Approve: create a branch'});
-  await waitFor(()=>expect(document.querySelector('.diff')?.textContent).toContain('more characters not shown here'));
-  expect(document.querySelector('.diff').textContent).not.toContain(sentinel);
-  expect(approve.disabled).toBe(true);
+  await waitFor(()=>expect(document.querySelector('.diff')?.textContent).toContain(sentinel));
+  expect(document.querySelector('.diff').textContent).not.toContain('more characters not shown here');
+  expect(approve.disabled).toBe(false);
 });
 
 test('P04-R2: matching commit alone does not establish that the current test report was shown', async () => {
@@ -27,12 +27,13 @@ test('P04-R2: matching commit alone does not establish that the current test rep
   const svc=fakeService({run,review:structuredClone(fixtures.review)});
   render(React.createElement(RunView,{api:createApi({fetchImpl:svc.fetchImpl}),runId:run.id,go:()=>{}}));
   const approve=await screen.findByRole('button',{name:'Approve: create a branch'});
-  await screen.findByText('Tests passed');
+  await screen.findByText(/Loading the exact changes and test results/);
+  expect(screen.queryByText('Tests passed')).toBeNull();
   expect(fixtures.review.testReportIds).not.toEqual(run.decision.evidence.testReportIds);
   expect(approve.disabled).toBe(true);
 });
 
-test('control: a complete same-evidence diff just below the UI limit remains reviewable', async () => {
+test('control: a complete same-evidence 375k diff remains reviewable', async () => {
   const sentinel='+VISIBLE_FINAL_CHANGE';
   const review={...structuredClone(fixtures.review),diff:'diff --git a/large.txt b/large.txt\n'+'+ordinary line\n'.repeat(25000)+sentinel+'\n'};
   expect(review.diff.length).toBeLessThan(400000);

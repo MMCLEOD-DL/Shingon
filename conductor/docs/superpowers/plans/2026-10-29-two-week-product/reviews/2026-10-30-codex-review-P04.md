@@ -10,6 +10,8 @@ Additional controls show that a clipped diff remains approvable and that an olde
 test report can be displayed for a newer failed review at the same commit. Preserve the
 working controls; these findings concern completeness and identity of the evidence shown.
 
+> Follow-up: [PR29 correction re-review](2026-10-30-codex-review-P04-correction.md) closes P04-R1/R2. Retained DOM controls now assert the accepted full-diff/hidden-stale behaviour and pass; failure instructions below describe the original review state.
+
 ## P04-R1 — [P1] An inaccessible diff tail can still be approved
 
 Location: `conductor/operator-web/src/components/Evidence.jsx:4-6`;
