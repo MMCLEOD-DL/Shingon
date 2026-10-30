@@ -1589,3 +1589,9 @@ Codex review status: KB-R5 (PR #44, merged) and KB-R6 (this PR) await re-review,
 Live / fake / skipped / unrun: real PostgreSQL with the synthetic corpus; no HTTP layer.
 Reviewer disposition and reviewed SHA: re-review requested at the commit below.
 ```
+
+Snapshot re-review integration: merged PR46/main `4d1893a` during submission, preserving
+Codex sync/review history and restoring the missing Claude task 23/24 ledger entries.
+PR46 changes only passage fixture generation/IDs and its relational test; snapshot service
+code is unchanged. KB-R5 closure remains pinned to tested `dfaaf6c`; no repeated snapshot
+suite needed. KB-R6 correction is supplied and awaiting separate re-review, not absent.

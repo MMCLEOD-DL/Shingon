@@ -109,3 +109,6 @@ particular original-byte delivery still needs K6's delivery-time reauthorisation
 a Path from this core is not an HTTP delivery guarantee. No v1 freeze is granted here.
 P09 and the Windows console follow-up remain queued, along with supplied correction reviews.
 Merge records the bounded closure, not release or live acceptance authority.
+
+
+Integration note: PR46/main `4d1893a` was merged during submission. It changes the passage fixture/test, not the snapshot service. KB-R6's correction is now supplied and awaiting independent re-review; KB-R5's closure stays pinned to `dfaaf6c` and the results above. Both lanes' ledger histories are preserved.
