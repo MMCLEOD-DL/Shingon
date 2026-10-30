@@ -79,7 +79,8 @@ class KnowledgeService:
         return Credential(name, rows[0][1], None, tuple(sorted(set(collections))))
 
     def set_group_members(self, tenant: str, group: str, members: list[str]) -> None:
-        """A permission change from the directory: effective on the next search, and bumps the index generation."""
+        """A permission change from the directory: effective on the next search. It changes the view revision of
+        exactly the callers whose view it changes."""
         with self.db.transaction():
             self._replace_group(tenant, group, members)
             self._bump(tenant)
@@ -268,9 +269,32 @@ class KnowledgeService:
         evidence = 'strong' if top >= STRONG else 'weak' if top >= WEAK else 'none'
         self.db.execute('INSERT INTO audit (credential, principal, collections, result_sources, query_sha256) VALUES (%s,%s,%s::text[],%s::bigint[],%s)',
                         (cred.name, cred.principal, allowed, [r[1] for r in rows], hashlib.sha256(query.encode()).hexdigest()))
-        generation = self.db.execute('SELECT index_generation FROM tenants WHERE id = %s', (cred.tenant,)).fetchone()[0]
+        revision = self.view_revision(cred)
         self.db.commit()
-        return {'indexGeneration': generation, 'evidence': evidence, 'results': results, 'ms': ms}
+        return {'viewRevision': revision, 'evidence': evidence, 'results': results, 'ms': ms}
+
+    def view_revision(self, cred: Credential) -> str:
+        """A digest of everything this credential can see, for cache invalidation (Codex review decision 1). It changes
+        when a visible document is added, replaced, removed, re-permissioned out of view or marked superseded, when a
+        replacement becomes visible, or when a visible collection's destinations change. A change to a document the
+        caller cannot see leaves it as it was, so it reveals nothing the caller could not already list. The tenant's
+        internal index_generation counter never leaves the service."""
+        allowed, groups = self._scope(cred)
+        acl = '(t.acl_all OR t.acl_groups && %(groups)s::text[] OR %(principal)s = ANY(t.acl_principals))'
+        return self.db.execute(f"""
+            SELECT encode(sha256(convert_to(coalesce(string_agg(item, E'\\n' ORDER BY item), ''), 'UTF8')), 'hex') FROM (
+              SELECT jsonb_build_array('collection', c.id, c.destinations)::text AS item
+              FROM collections c WHERE c.id = ANY(%(allowed)s::text[])
+              UNION ALL
+              SELECT jsonb_build_array('document', t.collection_id, t.key, t.current_version, t.superseded_by IS NOT NULL, succ.key)::text
+              FROM sources t
+              LEFT JOIN LATERAL (
+                SELECT u.key FROM sources u
+                WHERE u.collection_id = t.collection_id AND u.key = t.superseded_by AND u.status = 'active'
+                  AND (u.acl_all OR u.acl_groups && %(groups)s::text[] OR %(principal)s = ANY(u.acl_principals))
+              ) succ ON true
+              WHERE t.collection_id = ANY(%(allowed)s::text[]) AND t.status = 'active' AND {acl}
+            ) view""", {'allowed': allowed, 'groups': groups, 'principal': cred.principal or ''}).fetchone()[0]
 
     def original(self, cred: Credential, collection: str, key: str, version: int) -> Path:
         """The stored original of `version`, only while it is the current version, under the same permission rule as

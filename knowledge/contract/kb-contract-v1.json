@@ -25,7 +25,7 @@
       "response": {
         "status": 200,
         "body": {
-          "indexGeneration": 3,
+          "viewRevision": "14f45e6190e90046e2487e207a1bf7862d2b6295bac7834217a1e4e82a28d60b",
           "evidence": "strong",
           "results": [
             {
@@ -126,7 +126,7 @@
       "response": {
         "status": 200,
         "body": {
-          "indexGeneration": 8,
+          "viewRevision": "3c6230e06c14fdfceb151c55187c25d0faa3fc623c9eeb71ada03023b4d78b69",
           "evidence": "strong",
           "results": [
             {
@@ -224,7 +224,7 @@
       "response": {
         "status": 200,
         "body": {
-          "indexGeneration": 8,
+          "viewRevision": "3c6230e06c14fdfceb151c55187c25d0faa3fc623c9eeb71ada03023b4d78b69",
           "evidence": "weak",
           "results": [
             {
@@ -357,7 +357,7 @@
       "response": {
         "status": 200,
         "body": {
-          "indexGeneration": 8,
+          "viewRevision": "3c6230e06c14fdfceb151c55187c25d0faa3fc623c9eeb71ada03023b4d78b69",
           "evidence": "strong",
           "results": [
             {
@@ -487,7 +487,7 @@
       "response": {
         "status": 200,
         "body": {
-          "indexGeneration": 8,
+          "viewRevision": "3c6230e06c14fdfceb151c55187c25d0faa3fc623c9eeb71ada03023b4d78b69",
           "evidence": "none",
           "results": []
         }
@@ -511,7 +511,7 @@
       "response": {
         "status": 200,
         "body": {
-          "indexGeneration": 3,
+          "viewRevision": "14f45e6190e90046e2487e207a1bf7862d2b6295bac7834217a1e4e82a28d60b",
           "evidence": "strong",
           "results": [
             {
@@ -612,7 +612,7 @@
       "response": {
         "status": 200,
         "body": {
-          "indexGeneration": 8,
+          "viewRevision": "3c6230e06c14fdfceb151c55187c25d0faa3fc623c9eeb71ada03023b4d78b69",
           "evidence": "weak",
           "results": [
             {
@@ -793,7 +793,7 @@
     },
     {
       "id": "revoked-after-sync",
-      "covers": "After the source removed it, the next sync drops its passages and bumps indexGeneration",
+      "covers": "After the source removed it, the next sync drops its passages and the caller's viewRevision changes",
       "origin": "generated",
       "caller": "Acme app server, asserted user alice (member of finance)",
       "request": {
@@ -809,7 +809,7 @@
       "response": {
         "status": 200,
         "body": {
-          "indexGeneration": 12,
+          "viewRevision": "fc8edb0e26510c1f171ce9d2d0e3d05d04c1e4a92aac37258d8368d4a298b427",
           "evidence": "weak",
           "results": [
             {
@@ -959,7 +959,7 @@
       "response": {
         "status": 200,
         "body": {
-          "indexGeneration": 13,
+          "viewRevision": "5ac23c08114f65ce4be4071bcd65c81d1ea930d2e455edbf6c122eba24008b02",
           "evidence": "strong",
           "results": [
             {
@@ -1264,7 +1264,7 @@
       "response": {
         "status": 200,
         "body": {
-          "indexGeneration": 13,
+          "viewRevision": "ff7b493353f6c6087ee43be4148a2469c02700fd3371b82e0577d2004e78c2ad",
           "evidence": "strong",
           "results": [
             {
@@ -1586,7 +1586,7 @@
       "response": {
         "status": 200,
         "body": {
-          "indexGeneration": 8,
+          "viewRevision": "de2ef1f290996b5256c0e45bf7dacc21c18f78c53d48d8fef84d77d0836813e4",
           "evidence": "strong",
           "results": [
             {
@@ -1650,7 +1650,7 @@
       "response": {
         "status": 200,
         "body": {
-          "indexGeneration": 14,
+          "viewRevision": "58f3c31249deb709a51ca1cc6c0608fa4f6d8bf10f28e7c82811bc6ec911e987",
           "evidence": "weak",
           "results": [
             {
@@ -1752,9 +1752,9 @@
     {
       "id": "destination-withheld",
       "kind": "conductor-report",
-      "covers": "Conductor withholds passages a collection's destinations do not allow, and says so (proposed shape)",
+      "covers": "Conductor keeps passages from a participant its collection's destinations do not allow, and tells the operator (shape accepted in Codex's review, operator only)",
       "origin": "authored",
-      "pendingOn": "K8 (Conductor evidence step); shape proposed here for Codex to accept or change",
+      "pendingOn": "K8 (Conductor evidence step); built with contract.withheld_report()",
       "caller": "Conductor, assembling evidence for participant claude from a local-model-only collection",
       "request": null,
       "response": {
@@ -1769,7 +1769,7 @@
           "allowedDestinations": [
             "local-model"
           ],
-          "message": "1 passage was withheld from claude: its collection may only go to the local model."
+          "message": "1 document from company-private-notes kept from claude: that collection may go only to local-model. To use it, run this step with an allowed participant."
         }
       }
     }

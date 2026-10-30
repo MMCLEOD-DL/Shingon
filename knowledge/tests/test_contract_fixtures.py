@@ -105,7 +105,7 @@ def generate(kb, creds, manifest) -> list[dict]:
     # Revocation: the next sync no longer lists the 2025 travel policy.
     kb.sync('run-3', CORPUS, [x for x in manifest['sources'] if x['key'] != 'acme/travel-policy-2025.pdf'])
     out += [
-        s('revoked-after-sync', 'After the source removed it, the next sync drops its passages and bumps indexGeneration', 'alice', 'hotel cap London per night'),
+        s('revoked-after-sync', 'After the source removed it, the next sync drops its passages and the caller\'s viewRevision changes', 'alice', 'hotel cap London per night'),
         _original(kb, creds, 'revoked-original', 'The stored original of a revoked document is gone', 'alice', 'acme-policies', 'acme/travel-policy-2025.pdf', 1),
         # Originals are served for the current version only (Codex review decision 3).
         _original(kb, creds, 'original-current', 'The current version of a visible document, as an attachment', 'alice', 'acme-policies', 'acme/expenses-policy.docx', 2),
@@ -210,11 +210,11 @@ class ContractFixtures(ServiceTestCase):
         data = (CORPUS / 'acme/expenses-policy.docx').read_bytes()
         self.assertEqual(got['file'], {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()})
 
-    def test_revocation_removes_the_document_and_moves_the_generation_on(self):
+    def test_revocation_removes_the_document_and_changes_the_view_revision(self):
         before, after = (self.by_id[i]['response']['body'] for i in ('hit-pdf', 'revoked-after-sync'))
         self.assertEqual(before['results'][0]['documentId'], 'acme/travel-policy-2025.pdf')
         self.assertNotIn('acme/travel-policy-2025.pdf', [r['documentId'] for r in after['results']])
-        self.assertGreater(after['indexGeneration'], before['indexGeneration'])
+        self.assertNotEqual(after['viewRevision'], before['viewRevision'])
         self.assertEqual(self.by_id['revoked-original']['response']['status'], 404)
 
 
@@ -273,7 +273,9 @@ class ShapeChecksRefuseBadBodies(unittest.TestCase):
             'version zero': lambda b: r(b).update(versionId=0),
             'page zero': lambda b: r(b)['locator'].update(page=0),
             'negative slide': lambda b: r(b)['locator'].update(slide=-1),
-            'negative generation': lambda b: b.update(indexGeneration=-1),
+            # Codex review decision 1: a view revision, never a number shared across ACLs.
+            'a counter for a revision': lambda b: b.update(viewRevision=1842),
+            'short revision': lambda b: b.update(viewRevision='abc'),
             'results not a list': lambda b: b.update(results={'0': r(b)}),
             'result not an object': lambda b: b.update(results=['hit']),
             'flags not an object': lambda b: r(b).update(flags=[]),
@@ -307,13 +309,32 @@ class ShapeChecksRefuseBadBodies(unittest.TestCase):
                 contract.check_error_body(status, bad)
         fixtures = {f['id']: f for f in json.loads(FILE.read_text())['fixtures']}
         report = fixtures['destination-withheld']['response']['body']
-        contract.check_withheld_report({**report, 'allowedDestinations': ['local-model', 'foundation-app:acme']})
+        with_dests = lambda dests: contract.withheld_report(report['participant'], report['collectionId'], report['documentIds'], dests)  # noqa: E731
+        contract.check_withheld_report(with_dests(['local-model', 'foundation-app:acme']))
         for dest in ('openai', 'foundation-app:', 'foundation-app:../x', 'LOCAL-MODEL'):
             with self.subTest(dest=dest), self.assertRaises(contract.ContractError):
-                contract.check_withheld_report({**report, 'allowedDestinations': [dest]})
+                contract.check_withheld_report(with_dests([dest]))
         for bad in (None, {**report, 'documentIds': 'notes/a.md'}):
             with self.subTest(report=bad), self.assertRaises(contract.ContractError):
                 contract.check_withheld_report(bad)
+
+    def test_the_withheld_report_is_exact_and_operator_only(self):
+        # Codex review decision 4: fixed wording, a participant name, exact ids, nothing of the content.
+        good = contract.withheld_report('claude', 'company-private-notes', ['notes/a.md', 'notes/b.md'], ['local-model'])
+        contract.check_withheld_report(good)
+        self.assertIn('2 documents from company-private-notes kept from claude', good['message'])
+        for name, bad in {
+            'free-text message': {**good, 'message': 'withheld: notes/a.md says the price is £4m'},
+            'participant with spaces': {**good, 'participant': 'Claude Code'},
+            'no documents': {**good, 'documentIds': []},
+            'repeated document': {**good, 'documentIds': ['notes/a.md', 'notes/a.md']},
+            'no allowed destination': {**good, 'allowedDestinations': []},
+            'extra excerpt field': {**good, 'excerpt': 'the price is £4m'},
+        }.items():
+            with self.subTest(name), self.assertRaises(contract.ContractError):
+                contract.check_withheld_report(bad)
+        for word in ('notes', 'company-private-notes', 'claude', 'document'):
+            self.assertNotIn(word, contract.PARTICIPANT_NOTICE)
 
     def test_originals_are_attachments_at_their_full_identity(self):
         doc = 'acme/expenses-policy.docx'

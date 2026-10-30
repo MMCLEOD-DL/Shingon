@@ -3,7 +3,8 @@
 - References (Codex review KB-R3): a real two-principal database regression, where the successor of a public,
   superseded policy is restricted.
 - Chunk ids (Codex review decision 1): opaque random ids, not the internal serial, whose gaps would show how much was
-  ingested under ACLs the caller does not hold."""
+  ingested under ACLs the caller does not hold.
+- The view revision (Codex review decision 1): it moves only when the caller's own view changes."""
 import copy
 import unittest
 
@@ -70,6 +71,40 @@ class OpaqueChunkIds(ServiceTestCase):
         after = ids()
         self.assertTrue(before and after)
         self.assertFalse(before & after)
+
+
+
+class ViewRevision(ServiceTestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.kb.sync('run-1', CORPUS, cls.manifest['sources'])
+
+    def rev(self, who):
+        return self.kb.search(self.creds[who], 'policy')['viewRevision']
+
+    def test_it_moves_only_for_callers_who_can_see_the_change(self):
+        andy, alice, bella = self.rev('andy'), self.rev('alice'), self.rev('bella')
+        self.assertNotEqual(andy, alice, 'different views, different revisions')
+        # A new version of a finance-only document: alice sees it, andy and another tenant do not.
+        self.kb.sync('run-2', CORPUS, self.manifest['sources'], files={'acme/salary-bands.docx': CORPUS / 'acme/expenses-policy.docx'})
+        self.assertEqual(self.rev('andy'), andy)
+        self.assertEqual(self.rev('bella'), bella)
+        self.assertNotEqual(self.rev('alice'), alice)
+        self.assertEqual(self.kb.search(self.creds['andy'], 'policy')['viewRevision'], self.kb.view_revision(self.creds['andy']))
+
+    def test_destination_changes_move_it(self):
+        before = self.rev('conductor')
+        coll = self.manifest['collections']['standards']
+        self.kb.setup({'collections': {'standards': {**coll, 'destinations': ['local-model']}}})
+        try:
+            self.assertNotEqual(self.rev('conductor'), before)
+        finally:
+            self.kb.setup({'collections': {'standards': coll}})
+        self.assertEqual(self.rev('conductor'), before)
+
+    def test_it_is_a_digest_not_a_counter(self):
+        self.assertRegex(self.rev('alice'), r'^[0-9a-f]{64}$')
 
 
 if __name__ == '__main__':

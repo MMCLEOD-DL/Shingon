@@ -31,6 +31,12 @@ MAX_RETRY_AFTER = 3600  # seconds
 # retrieval-contract.md §5: the destinations a collection may allow.
 DESTINATIONS = ('local-model', 'claude-subscription', 'codex-subscription')
 APP_DESTINATION = re.compile(r'^foundation-app:[a-z0-9][a-z0-9-]{0,63}$')
+# A digest of the caller's own view (§8), never a counter shared with documents the caller cannot see.
+VIEW_REVISION = re.compile(r'^[0-9a-f]{64}$')
+# A Conductor participant's configured name (K8 checks it is registered).
+PARTICIPANT = re.compile(r'^[a-z0-9][a-z0-9-]{0,63}$')
+# What a participant is told when evidence was kept from it: no collection, document, title or count.
+PARTICIPANT_NOTICE = 'Some evidence was withheld from you by the data policy for this run. Do not guess at it.'
 # Chunk ids are opaque: callers store and send them back, never parse them (§3). The service's are 64 hex characters.
 CHUNK_ID = re.compile(r'^[A-Za-z0-9_-]{22,128}$')
 # Originals are always downloads. Anything without a known type is octet-stream, never guessed from content.
@@ -70,7 +76,7 @@ def search_body(raw: dict) -> dict:
             'flags': {'stale': False, 'supersededBy': r['flags']['supersededBy'], 'conflictsWith': [],
                       'ocr': False, 'ocrConfidence': None, 'instructionLike': r['flags']['instructionLike']},
         })
-    return {'indexGeneration': raw['indexGeneration'], 'evidence': raw['evidence'], 'results': results}
+    return {'viewRevision': raw['viewRevision'], 'evidence': raw['evidence'], 'results': results}
 
 
 def error_code(exc: Exception) -> str:
@@ -109,6 +115,17 @@ def original_headers(document_id: str) -> dict:
     return {'Content-Type': MEDIA_TYPES.get(PurePosixPath(name).suffix.lower(), 'application/octet-stream'),
             'Content-Disposition': f"attachment; filename*=UTF-8''{quote(name, safe='')}",
             'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store'}
+
+
+def withheld_report(participant: str, collection_id: str, document_ids: list[str], allowed: list[str]) -> dict:
+    """The operator's report that a collection's passages were kept from a participant (Codex review decision 4). It
+    names exactly what was withheld and why, never its content: no excerpts, titles, prompt text or credentials. It is
+    for the operator's UI and transcript only; the participant gets PARTICIPANT_NOTICE instead."""
+    n = len(document_ids)
+    return {'type': 'evidence-withheld', 'participant': participant, 'collectionId': collection_id,
+            'documentIds': list(document_ids), 'allowedDestinations': list(allowed),
+            'message': f"{n} document{'' if n == 1 else 's'} from {collection_id} kept from {participant}: that collection "
+                       f"may go only to {', '.join(allowed)}. To use {'it' if n == 1 else 'them'}, run this step with an allowed participant."}
 
 
 # ---------- shape checks ----------
@@ -191,10 +208,10 @@ def _text(value, path: str, *, nullable: bool = False, max_len: int | None = Non
 def check_search_body(body: dict) -> None:
     """Raises ContractError unless `body` is a valid `POST /search` response."""
     _strict_json(body, MAX_BODY_BYTES)
-    _keys(body, '$', ('indexGeneration', 'evidence', 'results'))
-    _type(body['indexGeneration'], '$.indexGeneration', int)
-    if body['indexGeneration'] < 0:
-        _fail('$.indexGeneration', 'must not be negative')
+    _keys(body, '$', ('viewRevision', 'evidence', 'results'))
+    _text(body['viewRevision'], '$.viewRevision')
+    if not VIEW_REVISION.match(body['viewRevision']):
+        _fail('$.viewRevision', 'must be 64 lower-case hex characters')
     if body['evidence'] not in EVIDENCE:
         _fail('$.evidence', f'must be one of {EVIDENCE}')
     _type(body['results'], '$.results', list)
@@ -273,20 +290,28 @@ def check_error_body(status: int, body: dict) -> None:
 
 @_checked
 def check_withheld_report(report: dict) -> None:
-    """Conductor's report when a passage may not go to a participant (retrieval-contract.md §5). Proposed shape."""
+    """Conductor's report when passages may not go to a participant (retrieval-contract.md §5). For the operator only."""
     _strict_json(report)
     _keys(report, '$', ('type', 'participant', 'collectionId', 'documentIds', 'allowedDestinations', 'message'))
     if report['type'] != 'evidence-withheld':
         _fail('$.type', "must be 'evidence-withheld'")
-    for k in ('participant', 'collectionId', 'message'):
-        _text(report[k], f'$.{k}')
+    _text(report['participant'], '$.participant')
+    if not PARTICIPANT.match(report['participant']):
+        _fail('$.participant', 'must be a Conductor participant name (lower-case letters, digits and hyphens)')
+    _text(report['collectionId'], '$.collectionId')
     for k in ('documentIds', 'allowedDestinations'):
         _type(report[k], f'$.{k}', list)
+        if not report[k] or len(set(report[k])) != len(report[k]):
+            _fail(f'$.{k}', 'must list each entry once, and at least one')
         for j, v in enumerate(report[k]):
             _text(v, f'$.{k}[{j}]')
     for j, v in enumerate(report['allowedDestinations']):
         if v not in DESTINATIONS and not APP_DESTINATION.match(v):
             _fail(f'$.allowedDestinations[{j}]', f'unknown destination {v!r}')
+    expected = withheld_report(report['participant'], report['collectionId'], report['documentIds'],
+                               report['allowedDestinations'])['message']
+    if report['message'] != expected:
+        _fail('$.message', 'is fixed by the other fields: build reports with withheld_report()')
 
 
 @_checked
