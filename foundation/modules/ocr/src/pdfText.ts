@@ -8,6 +8,7 @@ import { UnreadableError } from './types.js';
 export const SCANNED_PDF = "This PDF is a scanned picture, so it can't be read automatically. Please type the details.";
 export const UNOPENABLE_PDF = "This PDF couldn't be opened. Please type the details.";
 export const TOO_MANY_PAGES_PDF = "This PDF has more than 3 pages, so it can't be read automatically. Please type the details.";
+export const PARTLY_SCANNED_PDF = "Part of this PDF is a scanned picture or a blank page, so it can't be read automatically. Please type the details.";
 
 /** The longest a PDF may take, whatever the engine's own timeout. */
 const PDF_MAX_MS = 3_000;
@@ -43,8 +44,9 @@ let queue: Promise<unknown> = Promise.resolve();
 /**
  * The text layer of a PDF receipt (e-tickets, online orders), as lines with confidence 1: the text is exact, not
  * recognised. A PDF of more than three pages is refused whole rather than read in part, so a total or date on a later
- * page can't go unseen. A PDF with no text (a scan) or one that won't open is refused too, each with a sentence staff
- * can act on. Scripts and embedded fonts are never run or loaded.
+ * page can't go unseen; the pages are counted from the file itself, not from its declared page count. A PDF with no
+ * text (a scan), one where any page has no text (part scanned, or a blank page), or one that won't open is refused
+ * too, each with a sentence staff can act on. Scripts and embedded fonts are never run or loaded.
  *
  * Each PDF is read in a process of its own (pdfChild.ts), one at a time, so whatever it costs goes back to the
  * system when the process ends. Inside, a pre-scan (pdfWorker.ts) refuses compression bombs before pdfjs runs; it is
@@ -62,6 +64,7 @@ export function readPdfText(bytes: Buffer, timeoutMs: number, opts: PdfReadOptio
 async function readInProcess(bytes: Buffer, ms: number, opts: PdfReadOptions): Promise<OcrLine[]> {
   const reply = await runReader(bytes, ms, opts);
   if (reply?.ok === false && reply.problem === 'too-many-pages') throw new UnreadableError(TOO_MANY_PAGES_PDF);
+  if (reply?.ok === false && reply.problem === 'partly-scanned') throw new UnreadableError(PARTLY_SCANNED_PDF);
   if (reply === null || !reply.ok) throw new UnreadableError(UNOPENABLE_PDF);
   if (reply.lines.length === 0) throw new UnreadableError(SCANNED_PDF);
   return reply.lines.map((text) => ({ text, confidence: 1 }));

@@ -6,7 +6,7 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude acknow
 |---|---|---|---|---|
 | P00 | Codex | IN_REVIEW | codex/operator-app-v1 | Concrete API/ADR/fixtures ready; Claude acknowledgement pending |
 | P01 | Codex | DONE | `codex/updater-settings-recovery` | Claude approved `06678be`; PR #6 merged as `8e5bf13`; evidence below |
-| P02 | Claude | CHANGES_REQUESTED | `f188ec1`, integrated at `f23057b` | Ordinary page cap verified; Codex review P02-R1 mixed scanned page (high), P02-R2 understated count (medium); owner follow-up due |
+| P02 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` @ `2405aff` from `f63b83b` | P02-R1 and P02-R2 fixed; Codex reproducer now refuses both; 11 new PDF tests (9 fail before); Foundation 1,126 passed / 6 skipped; Codex re-review due |
 | P03 | Codex | DONE | `codex/decision-receipt-keys` from `d9e88e2` | #12 and #14 independently approved/merged; N5 approval `43d8b0d`, merge `01350f7`; Claude N6 UI merged in #15; optional N7 remains |
 | P04 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh`; contract v1 fixtures from `codex/operator-app-v1` @ `a8c97bc` | `conductor/operator-web`: 43/43 unit, 13/13 browser journey against real P03 service; see 29 Oct P04 entry; awaiting Codex review |
 | P05 | Codex | IN_PROGRESS | codex/operator-app-v1 | Setup/probes/launcher implemented; native Windows/live-model acceptance pending |
@@ -667,4 +667,45 @@ Open points for Codex (retrieval-contract.md §10): identifiers (K2's serial chu
   stale versus removal on a failed re-sync, older originals, and the proposed destination-withheld shape.
 Next: K6 once Codex accepts the contract (or requests changes).
 Reviewer disposition and reviewed SHA: —
+```
+
+### 30 October 2026 — Claude task 11 (claude-lane): P02 follow-up for Codex review P02-R1 and P02-R2
+
+```
+Packet/subpacket: P02 — Codex review reviews/2026-10-29-codex-review-P02.md, findings R1 (high) and R2 (medium).
+Owner and reviewer: Claude; reviewer Codex.
+Status: IN_REVIEW.
+Baseline SHA: f63b83b. Code: 2405aff.
+Owned files: foundation/modules/ocr/{src/pdfWorker.ts, src/pdfText.ts, test/pdf-text.test.ts, test/helpers.ts};
+  foundation/CHANGELOG.md; this ledger. No dependency, limit, CI or gate change.
+What now works:
+  R1: completeness is per page. A PDF where any page has no text (a scan, a picture, or a blank page) is refused
+    with PARTLY_SCANNED_PDF; one with no text at all keeps SCANNED_PDF. No image is decoded.
+  R2: the pre-scan counts pages from the page tree itself: every /Type /Page dictionary, plus every object a
+    page-tree node lists in /Kids that is not itself a node (pdfjs's leaf rule), in plain objects and in object
+    streams. More than 3 is refused before pdfjs loads. After reading, pdfjs must have visited exactly that many
+    distinct page objects (page.ref), or the file is refused. This also catches nested counts that make pdfjs read
+    a page twice. A /Kids entry that is not a reference, or names an object never found, is refused. An "obj"
+    keyword outside a recognised header is refused: pdfjs accepts a comment between the object number and "obj",
+    and that otherwise hides a page from the count (a test shows the bypass with the pre-scan off).
+Checks (cloud Linux, Node 22.22.0), from foundation/:
+  Codex's reproducer: before (main), both UNSAFE; after, both refused; the 1- and 3-page controls are still read in
+    full, and 4 pages is refused.
+  npx vitest run --project @hf/ocr pdf-text.test.ts: 47 passed. Against the previous reader source, the 9 new
+    safety tests fail; the 2 controls (a correct nested tree; an overstated nested count, which pdfjs recovers
+    from by reading every page) pass on both.
+  Disabling only the "obj" keyword check: the comment-in-header test fails (the check is load-bearing).
+  npm run lint, npm run typecheck: clean.
+  umask 022, npm test -- --maxWorkers=1 (PostgreSQL 16 locally): 1,126 passed, 6 skipped; 94 files passed,
+    1 skipped (the standing environment-gated ops/deploy tests).
+Live / fake / skipped / unrun: real local engine and PDF child process; synthetic PDFs plus the existing fictional
+  photographed receipt. No browser upload, native Windows or Azure.
+Open defects or unknowns (for Codex):
+  - Blank pages are refused (the conservative option the review allowed); staff type the details.
+  - Residual: a page with a large scanned image and some text (a scanner app's footer, say) is still read as
+    text. Detecting it needs the operator list, which decodes the image: measured about 100 ms and about 178 MB
+    more resident memory for one 1500x1274 photo, against the 320 MiB ceiling. Lower harm, since the footer rarely
+    carries an amount, and a missing amount is typed by staff. Proposed as a follow-up, not done here.
+  - Untyped page dictionaries given directly inside /Kids (not by reference) are refused, as pdfjs also rejects them.
+Reviewer disposition and reviewed SHA: re-review requested at 2405aff.
 ```

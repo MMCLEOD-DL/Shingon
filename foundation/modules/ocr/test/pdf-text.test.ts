@@ -3,8 +3,10 @@ import type { ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { Worker } from 'node:worker_threads';
 import { createLocalEngine, readReceipt, UnreadableError, type OcrEngine } from '../src/index.js';
-import { readPdfText, PDF_MEMORY_CEILING, TOO_MANY_PAGES_PDF, type PdfReadOptions } from '../src/pdfText.js';
-import { bypassBombs, formFeedPdf, modernPdf, n4Bomb, pdfBomb, pdfWithContent, predictorBomb, textPdf, trickyBombs } from './helpers.js';
+import { readPdfText, PARTLY_SCANNED_PDF, PDF_MEMORY_CEILING, TOO_MANY_PAGES_PDF, type PdfReadOptions } from '../src/pdfText.js';
+import {
+  blankPagePdf, bookmarkedPdf, bypassBombs, formFeedPdf, mixedPdf, modernPdf, n4Bomb, pdfBomb, pdfWithContent, predictorBomb, textPdf, treePdf, trickyBombs, untypedHiddenPagePdf,
+} from './helpers.js';
 
 let engine: OcrEngine;
 const fx = (p: string) => readFileSync(new URL(`./fixtures/receipts/${p}`, import.meta.url));
@@ -34,6 +36,7 @@ test('a PDF that is not a PDF inside is refused, not a crash', async () => {
 
 describe('a PDF is read whole or not at all', () => {
   const read = (pages: string[][]) => engine.read({ bytes: textPdf(pages), type: 'application/pdf' });
+  const read4 = (bytes: Buffer) => engine.read({ bytes, type: 'application/pdf' });
 
   test('a one-page PDF gives its lines', async () => {
     const r = await read([['Northside Taxis', 'Total GBP 12.40']]);
@@ -53,6 +56,67 @@ describe('a PDF is read whole or not at all', () => {
     const r = read(pages);
     await expect(r).rejects.toThrow(UnreadableError);
     await expect(r).rejects.toMatchObject({ userMessage: TOO_MANY_PAGES_PDF });
+  });
+
+  // Codex review P02-R1: text on one page must not hide a page that has none.
+  test.each(['text-first', 'picture-first'] as const)('a PDF with a text page and a picture-only page (%s) is refused, not read in part', async (order) => {
+    const r = engine.read({ bytes: mixedPdf(order), type: 'application/pdf' });
+    await expect(r).rejects.toThrow(UnreadableError);
+    await expect(r).rejects.toMatchObject({ userMessage: PARTLY_SCANNED_PDF });
+  });
+
+  test('a text page followed by a blank page is refused too (blank pages are not told apart from pictures)', async () => {
+    await expect(engine.read({ bytes: blankPagePdf(), type: 'application/pdf' })).rejects.toMatchObject({ userMessage: PARTLY_SCANNED_PDF });
+  });
+
+  // Codex review P02-R2: the declared page count is not evidence that every page was read.
+  test('a four-page PDF whose page count says 3 is refused as too long, not read as three pages', async () => {
+    const lying = Buffer.from(textPdf([['Total GBP 10.00'], ['page two'], ['page three'], ['Corrected final total GBP 100.00']]).toString('latin1').replace('/Count 4', '/Count 3'), 'latin1');
+    await expect(read4(lying)).rejects.toMatchObject({ userMessage: TOO_MANY_PAGES_PDF });
+  });
+
+  test('a three-page PDF whose page count says 2 is refused, not read as two pages', async () => {
+    const lying = Buffer.from(textPdf([['Total GBP 10.00'], ['page two'], ['Corrected final total GBP 100.00']]).toString('latin1').replace('/Count 3', '/Count 2'), 'latin1');
+    await expect(read4(lying)).rejects.toMatchObject({ userMessage: UNOPENABLE });
+  });
+
+  test('a page tree with a nested node is read whole when its counts are right', async () => {
+    const r = await read4(treePdf('<< /Type /Pages /Kids [9 0 R 8 0 R] /Count 3 >>', '<< /Type /Pages /Parent 2 0 R /Kids [4 0 R 6 0 R] /Count 2 >>'));
+    expect(r.lines.map((l) => l.text)).toEqual(['page one', 'page two', 'Total GBP 100.00']);
+  });
+
+  test.each([
+    ['a nested count that understates its pages', '<< /Type /Pages /Kids [9 0 R 8 0 R] /Count 2 >>', '<< /Type /Pages /Parent 2 0 R /Kids [4 0 R 6 0 R] /Count 1 >>'],
+    ['a node listed twice', '<< /Type /Pages /Kids [9 0 R 9 0 R] /Count 3 >>', '<< /Type /Pages /Parent 2 0 R /Kids [4 0 R 6 0 R] /Count 2 >>'],
+  ])('a page tree with %s is refused', async (_label, pages, node) => {
+    await expect(read4(treePdf(pages, node))).rejects.toThrow(UnreadableError);
+  });
+
+  test('a nested count that overstates its pages is recovered by pdfjs: every page is still read, the last included', async () => {
+    const r = await read4(treePdf('<< /Type /Pages /Kids [9 0 R 8 0 R] /Count 3 >>', '<< /Type /Pages /Parent 2 0 R /Kids [4 0 R 6 0 R] /Count 3 >>'));
+    expect(r.lines.map((l) => l.text)).toEqual(['page one', 'page two', 'Total GBP 100.00']);
+  });
+
+  test('a page hidden in an object stream behind an understated count is refused', async () => {
+    await expect(read4(modernPdf({ hiddenSecondPage: true }))).rejects.toMatchObject({ userMessage: UNOPENABLE });
+  });
+
+  test('a bookmark is not taken for a page: a bookmarked one-page PDF still reads', async () => {
+    const r = await read4(bookmarkedPdf());
+    expect(r.lines.map((l) => l.text)).toEqual(['Total GBP 10.00']);
+  });
+
+  test('an untyped page listed in the page tree but left out of its count is refused', async () => {
+    await expect(read4(untypedHiddenPagePdf())).rejects.toMatchObject({ userMessage: UNOPENABLE });
+  });
+
+  test('a page whose object header has a comment inside it (which pdfjs accepts) cannot escape the page count', async () => {
+    const pages = [['Total GBP 10.00'], ['page two'], ['page three'], ['Corrected final total GBP 100.00']];
+    const hidden = Buffer.from(textPdf(pages).toString('latin1').replace('/Count 4', '/Count 3').replace('\n10 0 obj', '\n10%x\n0 obj'), 'latin1');
+    // Without the pre-scan, pdfjs reads three pages and never sees page four: the bypass is real.
+    const unchecked = await readPdfText(hidden, 3000, { preScan: false });
+    expect(unchecked.map((l) => l.text)).toEqual(['Total GBP 10.00', 'page two', 'page three']);
+    await expect(read4(hidden)).rejects.toMatchObject({ userMessage: UNOPENABLE });
   });
 
   test('a long PDF is refused by the reader itself, quickly, without a watchdog', async () => {

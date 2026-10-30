@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { constants, createDeflate, deflateRawSync, deflateSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
@@ -216,12 +216,15 @@ export function textPdf(pages: string[][]): Buffer {
  * stream, and its cross-reference table is a compressed stream with PNG "Up" prediction (/Predictor 12). The
  * dictionaries are written without spaces ("/Filter/FlateDecode"). The page says "Total 3.20".
  */
-export function modernPdf(): Buffer {
+export function modernPdf(opts: { hiddenSecondPage?: boolean } = {}): Buffer {
+  const page = '<</Type/Page/Parent 2 0 R/MediaBox[0 0 226 600]/Resources<</Font<</F1 5 0 R>>>>/Contents 4 0 R>>';
+  // hiddenSecondPage: a second page in the object stream, listed in /Kids, with /Count still saying 1.
   const objs: [number, string][] = [
     [1, '<</Type/Catalog/Pages 2 0 R>>'],
-    [2, '<</Type/Pages/Kids[3 0 R]/Count 1>>'],
-    [3, '<</Type/Page/Parent 2 0 R/MediaBox[0 0 226 600]/Resources<</Font<</F1 5 0 R>>>>/Contents 4 0 R>>'],
+    [2, opts.hiddenSecondPage ? '<</Type/Pages/Kids[3 0 R 8 0 R]/Count 1>>' : '<</Type/Pages/Kids[3 0 R]/Count 1>>'],
+    [3, page],
     [5, '<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>'],
+    ...(opts.hiddenSecondPage ? [[8, page] as [number, string]] : []),
   ];
   let body = '';
   const index: string[] = [];
@@ -269,6 +272,7 @@ export function modernPdf(): Buffer {
     row(2, 6, 3),
     row(1, offsets.get(6) ?? 0, 0),
     row(1, xrefAt, 0),
+    ...(opts.hiddenSecondPage ? [row(2, 6, 4)] : []),
   ];
   // PNG "Up" prediction: each row is the filter byte 2, then each byte minus the byte above it.
   let prev: Buffer = Buffer.alloc(7);
@@ -280,10 +284,88 @@ export function modernPdf(): Buffer {
     return out;
   });
   const xref = deflateSync(Buffer.concat(predicted));
-  add(`7 0 obj\n<</Type/XRef/Size 8/W[1 4 2]/Root 1 0 R/Filter/FlateDecode/DecodeParms<</Predictor 12/Columns 7>>/Length ${String(xref.length)}>>stream\n`);
+  add(`7 0 obj\n<</Type/XRef/Size ${String(rows.length)}/W[1 4 2]/Root 1 0 R/Filter/FlateDecode/DecodeParms<</Predictor 12/Columns 7>>/Length ${String(xref.length)}>>stream\n`);
   add(xref);
   add(`\nendstream\nendobj\nstartxref\n${String(xrefAt)}\n%%EOF\n`);
   return Buffer.concat(parts);
+}
+
+/** A PDF made of `objects`, numbered from 1 in order, with a correct cross-reference table; object 1 is the catalog. */
+export function pdfOf(objects: (string | Buffer)[]): Buffer {
+  let out = Buffer.from('%PDF-1.7\n', 'latin1');
+  const offsets = objects.map((o, i) => {
+    const at = out.length;
+    out = Buffer.concat([out, Buffer.from(`${String(i + 1)} 0 obj\n`, 'latin1'), typeof o === 'string' ? Buffer.from(o, 'latin1') : o, Buffer.from('\nendobj\n', 'latin1')]);
+    return at;
+  });
+  const entries = offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('');
+  const tail = `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n${entries}trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(out.length)}\n%%EOF\n`;
+  return Buffer.concat([out, Buffer.from(tail, 'latin1')]);
+}
+
+const textStream = (text: string): string => `<< /Length ${String(text.length)} >>\nstream\n${text}\nendstream`;
+const FONT = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
+
+/**
+ * Two pages: `Total GBP 10.00` as text, and the fictional photographed taxi receipt (total GBP 12.40) as a picture
+ * with no text, in either order. Every page is listed and counted correctly.
+ */
+export function mixedPdf(order: 'text-first' | 'picture-first'): Buffer {
+  const jpeg = readFileSync(fixturesDir('receipts/rendered/taxi-photo.jpg'));
+  const textPage = '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>';
+  const picturePage = '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /XObject << /Im0 8 0 R >> >> /Contents 7 0 R >>';
+  const kids = order === 'text-first' ? '4 0 R 6 0 R' : '6 0 R 4 0 R';
+  return pdfOf([
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    `<< /Type /Pages /Kids [${kids}] /Count 2 >>`,
+    FONT,
+    textPage,
+    textStream('BT /F1 12 Tf 10 760 Td (Total GBP 10.00) Tj ET'),
+    picturePage,
+    textStream('q 500 0 0 740 10 10 cm /Im0 Do Q'),
+    Buffer.concat([
+      Buffer.from(`<< /Type /XObject /Subtype /Image /Width 1500 /Height 1274 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${String(jpeg.length)} >>\nstream\n`, 'latin1'),
+      jpeg,
+      Buffer.from('\nendstream', 'latin1'),
+    ]),
+  ]);
+}
+
+/** One text page (`Total GBP 10.00`) and one page with nothing on it. */
+export function blankPagePdf(): Buffer {
+  const page = (contents: number): string => `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /Font << /F1 3 0 R >> >> /Contents ${String(contents)} 0 R >>`;
+  return pdfOf(['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [4 0 R 6 0 R] /Count 2 >>', FONT,
+    page(5), textStream('BT /F1 12 Tf 10 760 Td (Total GBP 10.00) Tj ET'), page(7), textStream('')]);
+}
+
+/**
+ * Three text pages ("page one", "page two", "Total GBP 100.00" on page three) under a page tree given as
+ * `pages` (object 2) and `node` (object 9, an intermediate node). Pages are objects 4, 6 and 8.
+ */
+export function treePdf(pages: string, node: string): Buffer {
+  const page = (parent: number, contents: number): string => `<< /Type /Page /Parent ${String(parent)} 0 R /MediaBox [0 0 600 800] /Resources << /Font << /F1 3 0 R >> >> /Contents ${String(contents)} 0 R >>`;
+  return pdfOf(['<< /Type /Catalog /Pages 2 0 R >>', pages, FONT,
+    page(9, 5), textStream('BT /F1 12 Tf 10 760 Td (page one) Tj ET'),
+    page(9, 7), textStream('BT /F1 12 Tf 10 760 Td (page two) Tj ET'),
+    page(2, 10), node, textStream('BT /F1 12 Tf 10 760 Td (Total GBP 100.00) Tj ET')]);
+}
+
+/** One text page with a bookmark (an outline item, which has a /Parent but is not a page). */
+export function bookmarkedPdf(): Buffer {
+  return pdfOf(['<< /Type /Catalog /Pages 2 0 R /Outlines 6 0 R >>', '<< /Type /Pages /Kids [4 0 R] /Count 1 >>', FONT,
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>',
+    textStream('BT /F1 12 Tf 10 760 Td (Total GBP 10.00) Tj ET'),
+    '<< /Type /Outlines /First 7 0 R /Last 7 0 R /Count 1 >>',
+    '<< /Title (Receipt) /Parent 6 0 R /Dest [4 0 R /Fit] >>']);
+}
+
+/** A typed text page, and an untyped second page (with a /Title, so it looks like no page type) that /Count leaves out. */
+export function untypedHiddenPagePdf(): Buffer {
+  return pdfOf(['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [4 0 R 6 0 R] /Count 1 >>', FONT,
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>',
+    textStream('BT /F1 12 Tf 10 760 Td (Total GBP 10.00) Tj ET'),
+    '<< /Title (notes) /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /Font << /F1 3 0 R >> >> /Contents 7 0 R >>',
+    textStream('BT /F1 12 Tf 10 760 Td (Corrected final total GBP 100.00) Tj ET')]);
 }
 
 /** A PDF whose one page's content stream inflates to `gib` GiB of zeros (a compression bomb of about `gib` MB). */
