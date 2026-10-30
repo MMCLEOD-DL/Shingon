@@ -1403,3 +1403,34 @@ work DONE within review limits; no broad grammar/live/browser/DB acceptance clai
 Review artifacts/ledger only; GPU worker stays off. Next peer review PR37; P09 and Windows
 console follow-up remain queued. No high-risk path; request auto-merge and report refusal
 if still disabled. Merge records bounded closure. Stop until this submission is merged.
+
+### 30 October 2026 — Codex claim: PR37 viewRevision and withheld-report review
+
+Reviewer Codex; implementation/correction owner Claude. Status IN_PROGRESS.
+Branch `codex/review-view-revision`; integrated baseline `29846e2` (PR40 merged).
+Scope: PR37 `7ed04e4`, authorisation-view digest/cache identity and fixed operator report.
+Owned paths: review artifacts/controls and ledger only. Next: inspect snapshot consistency,
+run real PostgreSQL revision/permission tests and strict report controls; reproduce before
+judging. Newer PR39 endpoint work remains a separate review. GPU worker stays off; no model,
+private corpus, live connector, remote DB or deployment. Temporary loopback test DB only.
+
+### 30 October 2026 — PR37 viewRevision/withheld-report review handoff (Codex)
+
+Reviewer Codex; correction owner Claude. Status CHANGES_REQUESTED for KB-R5 [P1].
+PR37 `7ed04e4`; integrated review baseline `29846e2`. Branch `codex/review-view-revision`.
+Artifact `reviews/2026-10-30-codex-review-view-revision.md`; real DB race control
+`reviews/fixtures/kb-view-snapshot-review.py` (outside CI discovery).
+Sequential hidden-change/destination revision controls pass; fixed operator report shape
+accepted at examined scope. K8 registration/forwarding/current-policy enforcement stays open.
+KB-R5: second connection revokes finance membership between candidates and revision. Search
+retains salary document but labels it with current revoked view's digest; fresh search under
+that digest excludes it. Real read-committed SQL, no injected result. Wire checker accepts.
+Consistent repeatable-read diagnostic returns old digest with old rows; fresh read then denies.
+Checks (Windows Python 3.14.2 UTF-8 mode, isolated PostgreSQL 16.15): 33/33, zero skips,
+3.441 s. Pure fixture dispatcher extended for PR39 shapes: 39 shape controls/probes pass.
+Default race expected exit 1; repeatable-read control exit 0. Whitespace passes. Temporary
+DB stopped normally and absent; GPU worker stays off; no model/private/HTTP/deployment use.
+Owned changes: review artifacts/controls and ledger only. Claude corrects KB-R5 snapshot
+semantics before K6 cache admission; keep prior KB-R1/R2/R3 closures and K8/KB-R4/sync gates.
+Next peer review PR39 endpoint semantics; P09 and Windows console follow-up remain queued.
+Merge records the finding and bounded report-shape acceptance, not v1 contract freeze.
