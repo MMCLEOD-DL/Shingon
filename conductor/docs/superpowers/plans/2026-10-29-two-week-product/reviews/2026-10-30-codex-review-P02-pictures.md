@@ -10,6 +10,8 @@ recorded decision to flag pictures while keeping supported text readable. P02-R1
 previously demonstrated footer case and P02-R2's page-count cases pass. This is a bounded
 source/engine review, not proof that every PDF grammar is handled or a browser acceptance run.
 
+> Follow-up: [PR36 inline-image re-review](2026-10-30-codex-review-P02-inline-fix.md) closes the demonstrated P02-R3 boundary. The retained boundary control is strengthened and now exits 0; the exit-1 instructions below describe the earlier source.
+
 ## Verified corrections
 
 - The real local engine returns the original scanner-footer PDF's text with confidence 0.6;

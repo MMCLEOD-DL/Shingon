@@ -1,5 +1,5 @@
 // Standalone P02 picture-detection boundary control; real local engine and PDF.js.
-// Exit 1 means a parser-confirmed inline picture leaves a fully confident, unwarned amount.
+// Exit 1 means a parser-confirmed inline picture is not flagged with all proposed fields below CONFIDENT.
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -23,7 +23,7 @@ function inlinePdf(padding: number, compressed: boolean): Buffer {
 }
 const engine = await createLocalEngine();
 try {
-  for (const [padding, compressed] of [[0, false], [5000, false], [5000, true]] as const) {
+  for (const [padding, compressed] of [[0, false], [5000, false], [5000, true], [100000, true]] as const) {
     const bytes = inlinePdf(padding, compressed);
     // Independently require the renderer's actual paint operation, not just a BI-looking string.
     const loading = getDocument({ data: new Uint8Array(bytes), isEvalSupported: false, disableFontFace: true, useSystemFonts: false, standardFontDataUrl: resolve('foundation/node_modules/pdfjs-dist/standard_fonts').replaceAll('\\', '/') + '/' });
@@ -37,7 +37,8 @@ try {
     const result = await engine.read({ bytes, type: 'application/pdf' });
     const proposal = readReceipt(result, '2026-10-30');
     assert.equal(proposal.amountPence?.value, 1000);
-    const unsafe = proposal.amountPence.confidence === 1 && proposal.warnings.length === 0;
+    const fields = [proposal.amountPence, proposal.vatPence, proposal.date, proposal.merchant].filter((field) => field && field.value !== null);
+    const unsafe = !proposal.warnings.some((warning: string) => warning.includes('picture')) || fields.some((field) => field.confidence >= 0.85);
     if (padding === 0) {
       assert.equal(unsafe, false);
       assert.equal(proposal.amountPence.confidence, 0.6);
