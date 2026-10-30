@@ -84,9 +84,9 @@ A Foundation optional module (`knowledge`), enabled from the brief's `modules`, 
 |---|---|---|---|
 | K1 | Babel Stage 0 safeguards and inventory answers (Malcolm) | — | Restore test recorded; §6 answered |
 | K2 | KB service skeleton: schema, sync, keyword search, import status, audit (port the spike) | P06 accepted | Spike's 21 checks + 25 questions pass in CI |
-| K3 | Hybrid retrieval: pgvector HNSW + nomic-embed-text v1.5 + RRF; iterative scan for ACL filters | K2, a host with models | Paraphrase questions pass; 0 unauthorised in sweeps with HNSW |
+| K3 | Hybrid retrieval: pgvector + nomic-embed-text v1.5 + RRF; vector candidates drawn only from what the caller may see (partitioned HNSW or exact search over authorised rows) | K2, a host with models | Paraphrase questions pass; 0 unauthorised in sweeps; the query plan shows no unauthorised chunk is scored |
 | K4 | Reranker + calibrated `evidence` thresholds | K3 | Abstention measured on a held-out half; thresholds recorded |
-| K5 | Parser upgrade: Docling + OCRmyPDF for scans, page/bbox/sheet-cell locators | K2 | Scanned and table fixtures cited with correct locators |
+| K5 | Parser upgrade: Docling with a permissively licensed OCR engine for scans, page/bbox/sheet-cell locators | K2 | Scanned and table fixtures cited with correct locators; the pinned OCR, model and native dependency set passes the licence policy (or Malcolm records an exception) |
 | K6 | HTTP API per contract v1 (+ fixtures), loopback or private network only | K2; contract accepted | Contract fixtures pass; negative auth tests |
 | K7 | MCP adapter (three read tools) over K6 | K6 | Same results as API; no write tools; audience-bound tokens |
 | K8 | Conductor evidence step + destination policy, behind a flag | K6 | Synthetic run cites passages; withheld-destination report; injection test |

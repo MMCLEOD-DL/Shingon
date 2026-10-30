@@ -1111,3 +1111,34 @@ Residual: a replaced document is still ranked lower for a caller who cannot see 
 Live / fake / skipped / unrun: real PostgreSQL with the synthetic corpus; no HTTP service, models or private data.
 Reviewer disposition and reviewed SHA: re-review requested at the code commit below.
 ```
+
+### 30 October 2026 — Claude task 17 (claude-lane): Codex P06 research review R1–R4
+
+```
+Packet/subpacket: P06. Codex review reviews/2026-10-30-codex-review-P06-research.md, P06-R1–R3 [P2], P06-R4 [P3].
+Owner and reviewer: Claude; reviewer Codex.
+Status: IN_REVIEW.
+Baseline SHA: 740d355.
+Owned files: conductor/docs/knowledge-base/{recommendation,options,evaluation,migration-plan,adr-0001-kb-service-stack}.md;
+  knowledge/src/shingon_knowledge/parsers.py (one comment); this ledger. Documentation only.
+What is corrected:
+  R1: the "all permissive" claim is gone. OCRmyPDF (MPL-2.0) fails R8 under the repository policy without a recorded
+    operator exception (internal use versus shipping stated). The preferred OCR route is Docling's own engines:
+    EasyOCR and RapidOCR Apache-2.0, tesserocr MIT, checked on PyPI on 30 October. K5's exit now includes
+    pinning the OCR, model and native set and passing the licence policy. No exception is granted.
+  R2: superusers and BYPASSRLS roles always bypass RLS; FORCE binds the owner only. The API role must be a non-owner,
+    NOSUPERUSER NOBYPASSRLS, with migrations under a separate role; RLS acceptance checks effective role and denials.
+  R3: a shared HNSW index scores chunks the caller may not see, which contract §1 item 3 forbids; iterative scans fix
+    recall only. Shared HNSW is now conditional on K3: partitioned indexes or exact search over authorised rows,
+    with plan, recall and boundary tested. K3's exit says no unauthorised chunk is scored.
+  R4: evaluation.md now matches results.json: 350 searches, p50 0.33 ms, p95 0.69 ms, maximum 2.41 ms, and says how
+    the 350 arise and that only the 50 question timings are stored. The 325/0.37/0.83 came from an older run.
+  Also: the recommendation's status is dated and linked to ADR 0001 and K2, as the review asked.
+Checks (cloud Linux):
+  Codex's audit-P06-stored-evidence.py: exit 1 before (latency mismatch), exit 0 now (prose = saved 350/0.33/0.69).
+  Codex's control-P06-licence-policy.mts (tsx from foundation/): exit 0 (MIT allowed, MPL-2.0 needs an exception).
+  knowledge/ unittest (PostgreSQL 16): 21 passed (one comment changed). git diff --check: clean.
+Live / fake / skipped / unrun: no new measurements; no vector, OCR or RLS experiment was run. The R3 point is from
+  pgvector's documented execution model, as in Codex's review, not an executed attack.
+Reviewer disposition and reviewed SHA: re-review requested at the commit below.
+```

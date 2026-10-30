@@ -72,7 +72,7 @@ By category, keyword → with demotion:
 | ingest-failure | 1/2 | 1/2 |
 | paraphrase | 0/2 | 0/2 |
 
-Latency over 325 searches: p50 0.37 ms, p95 0.83 ms. That is meaningless at this size, beyond showing the ACL predicate adds no visible cost on a GIN-indexed table.
+Latency over 350 searches: p50 0.33 ms, p95 0.69 ms, maximum 2.41 ms. At this size that means nothing beyond showing the ACL predicate adds no visible cost on a GIN-indexed table. The 350 are 25 questions × 2 ranking variants, plus 2 permission sweeps × 25 questions × 6 credentials, as saved in [results.json](../../spikes/knowledge-base-evaluation/results/results.json). Only the 50 question timings are stored individually, so the quantiles cannot be recomputed from the file. An earlier draft quoted an older run.
 
 ### What the misses mean
 
@@ -91,5 +91,5 @@ The release-checklist passage was returned for its legitimate query (q21) with `
 On the Babel host or the acceptance host, with Ollama:
 1. Add `nomic-embed-text` v1.5 (768-d, with the `search_query:`/`search_document:` prefixes) and pgvector HNSW. Use reciprocal-rank fusion with the full-text ranking.
 2. Add `bge-reranker-v2-m3` (int8 ONNX) on the top 20–50 candidates and calibrate `strong`/`weak` thresholds on half the labelled questions; test on the other half.
-3. Re-run the three permission sweeps with HNSW and ACL selectivity similar to production, to check for recall loss from post-filtered approximate indexes (pgvector's iterative scans).
+3. Re-run the three permission sweeps with HNSW and ACL selectivity similar to production, to check for recall loss from post-filtered approximate indexes (pgvector's iterative scans). Recall is not the only question: a shared graph scores chunks the caller may not see, so K3 must also settle the authorisation boundary ([options §C](options.md#c-composable-self-hosted-stack)).
 4. Grow the labelled set to at least 60 questions, with some written by someone other than the corpus author, before drawing any quality conclusion.
