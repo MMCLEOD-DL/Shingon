@@ -80,3 +80,57 @@ class Oracle:
             return True
         groups = {g for g, ms in self.m['tenants'][cred.tenant]['groups'].items() if cred.principal in ms}
         return cred.principal in acl.get('principals', []) or bool(groups & set(acl.get('groups', [])))
+
+
+class ApiClient:
+    """Calls a running K6 server as each test caller would: a project token, or an app token plus a freshly signed
+    user assertion on every request. `who=None` sends no credential."""
+
+    def __init__(self, port: int, callers: dict):
+        self.port, self.callers = port, callers  # who -> (token, assertion key or None, tenant, user)
+
+    def request(self, who, method, path, *, body=None, raw=None, request_id=None, headers=None):
+        import http.client
+        import time
+        from shingon_knowledge import auth
+        h = dict(headers or {})
+        if request_id:
+            h['X-Request-Id'] = request_id
+        if who is not None:
+            token, key, tenant, user = self.callers[who]
+            h['Authorization'] = f'Bearer {token}'
+            if key:
+                h['KB-User-Assertion'] = auth.sign_assertion(key, tenant, user, expires_at=int(time.time()) + 60)
+        data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
+        if data is not None:
+            h['Content-Type'] = 'application/json'
+        conn = http.client.HTTPConnection('127.0.0.1', self.port, timeout=30)
+        try:
+            conn.request(method, '/kb/v1' + path, body=data, headers=h)
+            resp = conn.getresponse()
+            return resp.status, {k.lower(): v for k, v in resp.getheaders()}, resp.read()
+        finally:
+            conn.close()
+
+
+def start_api(test: type, *, limiter=None, connect_db=None):
+    """Starts a K6 server for a ServiceTestCase class on a free loopback port, with its own connection per request.
+    Returns (server, port); stop it with server.shutdown(); server.server_close()."""
+    import threading
+    from shingon_knowledge.http import Api, make_server
+    u = urlparse(admin_url())
+    url = urlunparse(u._replace(path='/' + test.dbname))
+    api = Api(connect_db or (lambda: connect(url)), test.kb.originals, limiter=limiter)
+    server = make_server(api, '127.0.0.1', 0)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, server.server_address[1]
+
+
+def issue_http_callers(db) -> dict:
+    """Real credentials for the four fixture callers: who -> (token, assertion key, tenant, user)."""
+    from shingon_knowledge import auth
+    acme, acme_key = auth.issue_app_credential(db, 'app:acme', 'acme')
+    birch, birch_key = auth.issue_app_credential(db, 'app:birch', 'birch')
+    return {'alice': (acme, acme_key, 'acme', 'alice'), 'andy': (acme, acme_key, 'acme', 'andy'),
+            'bella': (birch, birch_key, 'birch', 'bella'),
+            'conductor': (auth.issue_project_credential(db, 'conductor:test-http', ['standards']), None, 'company', None)}

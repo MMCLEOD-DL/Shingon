@@ -175,7 +175,7 @@ Fixtures must cover:
 **File:** [`knowledge/contract/kb-contract-v1.json`](../../../knowledge/contract/kb-contract-v1.json). The wire shapes and the shape checks are in `knowledge/src/shingon_knowledge/contract.py`; K6 should serialise with it and check its own output before sending. The test is `knowledge/tests/test_contract_fixtures.py`, which runs in CI.
 
 Each fixture says whether it is **generated** or **authored**:
-- **Generated** fixtures are produced by the K2 service on the synthetic corpus. CI produces them again in a fresh database and fails on any difference, so the file cannot drift from the service.
+- **Generated** fixtures are produced over HTTP by the K6 server, in front of the K2 service, on the synthetic corpus. CI produces them again in a fresh database and fails on any difference, so the file cannot drift from the service.
 - **Authored** fixtures are hand-written for behaviour a later task owns. Each names that task in `pendingOn` and is checked against the shape only. They are not evidence that anything implements them.
 
 | §10 item | Fixture(s) | Origin |
@@ -190,8 +190,8 @@ Each fixture says whether it is **generated** or **authored**:
 | XLSX cell range | `hit-xlsx` (`Budget`, `A4:E4`) | generated |
 | Stale source | `stale-source`: a newer version known upstream, the indexed one still authorised | authored: a live connector (K13) |
 | Scanned PDF with OCR confidence | `scanned-pdf-ocr` | authored: K5 |
-| Index unavailable | `index-unavailable` (503) | authored: K6 |
-| Rate limit | `rate-limit` (429, `retryAfter` in the body and a `Retry-After` header) | authored: K6 |
+| Index unavailable | `index-unavailable` (503) | generated over HTTP (K6), with the database unreachable |
+| Rate limit | `rate-limit` (429, `retryAfter` in the body and a `Retry-After` header) | generated over HTTP (K6), with a one-a-minute limit on a stopped clock |
 | Destination-withheld report | `destination-withheld`, built with `withheld_report()` (§5) | authored: K8 |
 | Original, current version only (decision 3) | `original-current` (200: attachment headers and the file's size and sha256), `original-replaced-version` and `original-unknown-version` (404) | generated |
 | Same `documentId` in two collections (KB-R1) | `same-key-two-collections`, `same-key-one-visible`, `same-key-other-collection` (404), `same-key-own-collection` (200) | generated |
@@ -206,7 +206,7 @@ Every exposed route now has fixtures (Codex review KB-R4):
 | `GET /passages/:chunkId` | `passage-neighbours` (focus plus one either side), `passage-hidden` and `passage-missing` (identical 404s), `passage-too-wide` (400) | generated |
 | `GET /health` | `health` | generated |
 | Request validation | `bad-request`, `bad-request-boolean-limit`, `bad-request-unknown-field`, `unsupported-hybrid`, `unsupported-filters` | generated, through `parse_search_request` |
-| Body too large, authentication | `too-large` (413), `unauthenticated` (401) | authored: K6 |
+| Body too large, authentication | `too-large` (413), `unauthenticated` (401) | generated over HTTP (K6) |
 
 Two things consumers must not read into the fixtures:
 - **Evidence levels.** They come from K2's provisional keyword thresholds. The PDF hit is `weak`. K4 replaces the thresholds, and the generated fixtures will change with them.

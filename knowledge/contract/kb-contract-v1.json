@@ -1128,6 +1128,107 @@
       }
     },
     {
+      "id": "unauthenticated",
+      "covers": "No credential: 401 with fixed wording, never a hint about what is missing",
+      "origin": "generated",
+      "caller": "Any caller, without a credential",
+      "request": {
+        "method": "POST",
+        "path": "/search",
+        "body": {
+          "query": "mileage"
+        }
+      },
+      "response": {
+        "status": 401,
+        "body": {
+          "error": {
+            "code": "unauthenticated",
+            "message": "The credential is missing, expired or not valid for this service.",
+            "retryable": false,
+            "requestId": "req-unauthenticated"
+          }
+        }
+      }
+    },
+    {
+      "id": "too-large",
+      "covers": "A request body over 16 KB is refused before it is parsed",
+      "origin": "generated",
+      "caller": "Any caller, without a credential",
+      "request": {
+        "method": "POST",
+        "path": "/search",
+        "body": null
+      },
+      "response": {
+        "status": 413,
+        "body": {
+          "error": {
+            "code": "too-large",
+            "message": "The request body is larger than 16 KB.",
+            "retryable": false,
+            "requestId": "req-too-large"
+          }
+        }
+      }
+    },
+    {
+      "id": "rate-limit",
+      "covers": "A second search inside the window: 429, retryAfter in the body and Retry-After",
+      "origin": "generated",
+      "caller": "Acme app server, asserted user alice (member of finance)",
+      "request": {
+        "method": "POST",
+        "path": "/search",
+        "body": {
+          "query": "mileage rate",
+          "mode": "keyword",
+          "limit": 3,
+          "clientRequestId": "req-rate-limit"
+        }
+      },
+      "response": {
+        "status": 429,
+        "body": {
+          "error": {
+            "code": "rate-limit",
+            "message": "Too many searches for this credential. Try again after the stated delay.",
+            "retryable": true,
+            "requestId": "req-rate-limit",
+            "retryAfter": 60
+          }
+        }
+      }
+    },
+    {
+      "id": "index-unavailable",
+      "covers": "The database is unreachable: 503, never an empty result",
+      "origin": "generated",
+      "caller": "Acme app server, asserted user alice (member of finance)",
+      "request": {
+        "method": "POST",
+        "path": "/search",
+        "body": {
+          "query": "mileage rate",
+          "mode": "keyword",
+          "limit": 3,
+          "clientRequestId": "req-index-unavailable"
+        }
+      },
+      "response": {
+        "status": 503,
+        "body": {
+          "error": {
+            "code": "index-unavailable",
+            "message": "The knowledge index is unavailable. This is an outage, not an empty result.",
+            "retryable": true,
+            "requestId": "req-index-unavailable"
+          }
+        }
+      }
+    },
+    {
       "id": "revoked-after-sync",
       "covers": "After the source removed it, the next sync drops its passages and the caller's viewRevision changes",
       "origin": "generated",
@@ -2029,63 +2130,6 @@
       }
     },
     {
-      "id": "index-unavailable",
-      "covers": "The index is down: 503, never an empty result",
-      "origin": "authored",
-      "pendingOn": "K6 (HTTP layer)",
-      "caller": "Acme app server, asserted user alice (member of finance)",
-      "request": {
-        "method": "POST",
-        "path": "/search",
-        "body": {
-          "query": "mileage rate",
-          "mode": "keyword",
-          "limit": 3,
-          "clientRequestId": "req-index-unavailable"
-        }
-      },
-      "response": {
-        "status": 503,
-        "body": {
-          "error": {
-            "code": "index-unavailable",
-            "message": "The knowledge index is unavailable. This is an outage, not an empty result.",
-            "retryable": true,
-            "requestId": "req-index-unavailable"
-          }
-        }
-      }
-    },
-    {
-      "id": "rate-limit",
-      "covers": "Too many searches for one credential: 429 with retryAfter seconds (also sent as a Retry-After header)",
-      "origin": "authored",
-      "pendingOn": "K6 (HTTP layer)",
-      "caller": "Acme app server, asserted user alice (member of finance)",
-      "request": {
-        "method": "POST",
-        "path": "/search",
-        "body": {
-          "query": "mileage rate",
-          "mode": "keyword",
-          "limit": 3,
-          "clientRequestId": "req-rate-limit"
-        }
-      },
-      "response": {
-        "status": 429,
-        "body": {
-          "error": {
-            "code": "rate-limit",
-            "message": "Too many searches for this credential. Try again after the stated delay.",
-            "retryable": true,
-            "requestId": "req-rate-limit",
-            "retryAfter": 30
-          }
-        }
-      }
-    },
-    {
       "id": "destination-withheld",
       "kind": "conductor-report",
       "covers": "Conductor keeps passages from a participant its collection's destinations do not allow, and tells the operator (shape accepted in Codex's review, operator only)",
@@ -2106,54 +2150,6 @@
             "local-model"
           ],
           "message": "1 document from company-private-notes kept from claude: that collection may go only to local-model. To use it, run this step with an allowed participant."
-        }
-      }
-    },
-    {
-      "id": "unauthenticated",
-      "covers": "A missing, expired or wrong credential: 401 with fixed wording, never a hint about which",
-      "origin": "authored",
-      "pendingOn": "K6 (HTTP layer: authentication and body limits)",
-      "caller": "Any caller",
-      "request": {
-        "method": "POST",
-        "path": "/search",
-        "body": {
-          "query": "mileage"
-        }
-      },
-      "response": {
-        "status": 401,
-        "body": {
-          "error": {
-            "code": "unauthenticated",
-            "message": "The credential is missing, expired or not valid for this service.",
-            "retryable": false,
-            "requestId": "req-unauthenticated"
-          }
-        }
-      }
-    },
-    {
-      "id": "too-large",
-      "covers": "A request body over 16 KB is refused before it is parsed",
-      "origin": "authored",
-      "pendingOn": "K6 (HTTP layer: authentication and body limits)",
-      "caller": "Any caller",
-      "request": {
-        "method": "POST",
-        "path": "/search",
-        "body": null
-      },
-      "response": {
-        "status": 413,
-        "body": {
-          "error": {
-            "code": "too-large",
-            "message": "The request body is larger than 16 KB.",
-            "retryable": false,
-            "requestId": "req-too-large"
-          }
         }
       }
     }
