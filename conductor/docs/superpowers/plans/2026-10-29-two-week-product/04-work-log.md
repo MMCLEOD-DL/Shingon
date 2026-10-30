@@ -913,6 +913,82 @@ Open: Codex may want its reproducer to take the bridged field, or to retire it i
 Reviewer disposition and reviewed SHA: re-review requested at f5673de.
 ```
 
+### 30 October 2026 — Codex claim: P06 wider research review
+
+Owner/reviewer Codex; research/correction owner Claude. Status IN_PROGRESS.
+Branch `codex/review-kb-research`; baseline `77a9419` (PR26 and PR25 merged).
+Scope: recommendation/options/inventory/migration/evaluation evidence beyond the separately
+reviewed retrieval contract. Verify decision alignment, primary sources, licence/deployment
+boundary, cost/scale assumptions and stored evaluation arithmetic without private data.
+Owned paths: review artifacts/standalone controls and this ledger only. No edits to
+Claude-owned KB research/service/source or existing accepted architecture decisions.
+Next action: independently recompute stored synthetic results; verify material upstream
+claims; record precise corrections and what remains unmeasured. PR25 upgrade correction
+re-review is newly supplied peer backlog and retained for the next source-review cycle.
+No model/connector/DB/host operation, Babel export, account access or deployment authorised.
+
+### 30 October 2026 — P06 wider research review handoff (Codex)
+
+Owner/reviewer: Codex. Correction owner: Claude. Status: CHANGES_REQUESTED.
+Branch: `codex/review-kb-research`; reviewed baseline `77a9419`.
+Artifact: `reviews/2026-10-30-codex-review-P06-research.md` plus two standalone controls.
+Findings: R1 [P2] MPL/policy classification; R2 [P2] FORCE/BYPASSRLS guidance;
+R3 [P2] shared ANN versus authorise-before-scoring promise; R4 [P3] latency provenance.
+Checks: stored rows independently reproduce 17/25 and 21/25 and all category counts;
+21/21 saved check outcomes agree. Audit exits 1 as expected on 325/0.37/0.83 versus
+saved 350/0.33/0.69 latency mismatch. Existing licence gate control passes (MIT allowed,
+MPL rejected). Quantiles cannot be independently recomputed from the incomplete samples.
+Live/fake/skipped/unrun: historical synthetic artifacts only, no fresh DB/model/connector
+execution, private retrieval/export or deployment; broad product suites unrun (review only).
+Disposition: D1/D2/D5 remain accepted for K2; D3/D4 remain open. Review merge records the
+findings, not their resolution. Claude supplies R1–R4 corrections; Codex re-reviews them.
+Next supplied peer task is PR25 upgrade correction re-review; P09 remains in backlog.
+
+### Codex task submitted — P06 wider research review
+
+Date: 30 October 2026. Branch: `codex/review-kb-research`.
+Last artifact commit: `357d2ef77e4dfb8130f1242050cccf5e9861c18d`.
+PR: https://github.com/MMCLEOD-DL/Shingon/pull/28 (opened draft; ready after this push).
+Evidence: stored-evidence arithmetic/category checks pass; 21/21 saved outcomes agree;
+latency audit expected exit 1 reproduces P06-R4. Existing licence control passes.
+`git diff --check` passes. No product suites or fresh DB/model/live/private execution.
+Open: Claude owns P06-R1–R4 corrections; separate contract review remains open; D3/D4
+remain decisions. Merge records the handoff, not correctness of the original research.
+No high-risk paths changed; request auto-merge after readiness. If repository auto-merge
+is still disabled, Malcolm's merge is required. Stop here until this submission is merged;
+next invocation starts by checking approval, with PR25 re-review in the supplied backlog.
+
+### 30 October 2026 — Codex claim: PR21-R1 upgrade correction re-review
+
+Reviewer Codex; correction owner Claude. Status IN_PROGRESS.
+Branch `codex/review-upgrade-correction`; baseline `fc4f25b` (PR28 merged).
+Scope: PR25 correction at `f5673de`, trusted pipeline/build/council bridges and retained
+protection controls. Owned paths: standalone review artifacts and this ledger only.
+Next: reproduce the old hand-built context, exercise the corrected context and actual
+bridge tests, then record the exact closure or remaining finding. No live models, hosts,
+releases or source implementation changes. P02 PR27 re-review and P09 remain backlog.
+
+### 30 October 2026 — PR21-R1 correction re-review handoff (Codex)
+
+Owner/reviewer Codex; correction owner Claude. Status DONE for the specific PR21-R1 finding.
+Correction `f5673de` (PR25); reviewed integrated baseline `fc4f25b`.
+Branch `codex/review-upgrade-correction`. Artifact `reviews/2026-10-30-codex-review-PR25.md`.
+Reviewed trusted Git conflict path through pipeline/build/council; both option bridges are
+covered. Exact listed conflicts yield locked warnings; unlisted files, app-profile.json and
+verify-script changes retain blocking guards. No new blocking finding in this correction.
+Updated standalone reproducer preserves missing-context refusal and tests the trusted field.
+Checks (Windows, Node 24.12.0): three affected files 107/107 passed, zero skips/failures,
+exit 0, 340.1 s; updated control exit 0. Same control against `89d44be` exits 1 because the
+authorised resolution is blocked. Whitespace check passes. Initial suite attempt interrupted
+for visible child consoles; resumed suite uses a local windowsHide-only launcher wrapper.
+Fake/live/unrun: synthetic Git and fake-provider/pipeline harnesses; no real model, release,
+deployment or client input. Broad suites not independently rerun; owner evidence stays separate.
+Owned paths changed: review files, standalone control and this ledger only; runtime unchanged.
+Windows follow-up owned by Codex: src/exec.js launches detached commands without windowsHide;
+record a separate runtime fix with Windows process/cancellation checks. Temporary launcher
+avoids console churn in this review; the runtime defect is not claimed fixed.
+Next supplied peer review: P02 picture-confidence correction PR27; P09 remains in backlog.
+
 ### 30 October 2026 — Claude task 14 (claude-lane): Codex P02 follow-up, P02-R1 residual (PDF pictures)
 
 ```
