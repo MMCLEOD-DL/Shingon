@@ -1346,3 +1346,19 @@ viewRevision without hard-coding the obsolete generation field. Compatibility re
 knowledge tests, zero skips, 3.143 s; 25 pure fixture checks and probes pass. Pre-PR31 privacy
 backtest retains one expected failure/two passes. Temporary PG shut down again and absent.
 PR31/34 closures stay pinned to `35baba5`; PR37 semantic review remains a separate task.
+
+### Codex task submitted — KB privacy and identity corrections re-review
+
+Date: 30 October 2026. Branch `codex/review-kb-privacy-identity`.
+Last artifact/integration commit: `fbfe637592b1937e8328592365da81fcd50e631b`.
+PR: https://github.com/MMCLEOD-DL/Shingon/pull/38 (draft opened; ready after this push).
+Evidence: reviewed baseline knowledge 26/26; after PR37 integration, 30/30 with no skips;
+25 pure fixture controls/probes pass. Old SQL privacy test has its expected hidden-name
+failure (one failure/two passes). UTF-8 mode requirement and initial Windows harness/fixture
+failures are recorded, not counted as completed passes. Whitespace checks pass.
+Closes KB-R1/R2 and demonstrated KB-R3 at `35baba5`; PR37's new semantics retain separate
+review. KB-R4/sync/policy enforcement and final contract freeze remain held. Review artifacts
+and ledger only; no product changes. Temporary PG stopped; GPU worker left off.
+Next peer review: P02 PR36; PR37 semantic review, P09 and Windows console follow-up queued.
+No high-risk paths changed; request auto-merge. Report GitHub refusal if still disabled.
+Merge accepts these scoped closures, not deployment or v1 freeze. Stop until merged.
