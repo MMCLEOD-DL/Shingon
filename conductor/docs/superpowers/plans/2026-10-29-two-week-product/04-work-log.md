@@ -10,7 +10,7 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude acknow
 | P03 | Codex | DONE | `codex/decision-receipt-keys` from `d9e88e2` | #12 and #14 independently approved/merged; N5 approval `43d8b0d`, merge `01350f7`; Claude N6 UI merged in #15; optional N7 remains |
 | P04 | Claude | CHANGES_REQUESTED | Reviewed integrated `bee4ae1`, including PR15 N6 | Codex: 54 unit PASS, build PASS, 19/19 real-service browser journey on Windows/Edge. N6 examined controls pass; P04-R1 clipped diff still approvable, P04-R2 delayed older passed report enables approval for new failed evidence at same commit. Review/reproducers below. |
 | P05 | Codex | IN_PROGRESS | codex/operator-app-v1 | Setup/probes/launcher implemented; native Windows/live-model acceptance pending |
-| P06 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 29 Oct P06 entry; awaiting Codex review and Malcolm's decisions D1–D5 |
+| P06 | Claude | CHANGES_REQUESTED | `claude/adoring-carson-gaa3xh` from `a8ffb91`; research reviewed at `77a9419` | See 30 Oct P06 review: R1–R4 corrections; separate contract findings in PR24. D1/D2/D5 accepted for K2; D3/D4 open |
 | P07 | Codex + Claude review | IN_PROGRESS | codex/operator-app-v1 | Backend boundary tests pass; UI integration and peer review pending |
 
 | P08 | Codex + Claude review | NOT_STARTED | — | — |
