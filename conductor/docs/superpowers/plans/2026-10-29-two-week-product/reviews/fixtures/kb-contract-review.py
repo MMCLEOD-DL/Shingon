@@ -65,7 +65,9 @@ a, b = deepcopy(good['results'][0]), deepcopy(good['results'][0])
 a.update(documentId='policies/current.md', collectionId='team-a', versionId=1)
 b.update(documentId='policies/current.md', collectionId='team-b', versionId=1)
 a['scores']['rank'], b['scores']['rank'] = 1, 2
-contract.check_search_body({'indexGeneration': 1, 'evidence': 'strong', 'results': [a, b]})
+qualified = deepcopy(good)
+qualified.update(evidence='strong', results=[a, b])
+contract.check_search_body(qualified)
 urls = [contract.original_path(r['collectionId'], r['documentId'], r['versionId']) for r in (a, b)]
 assert urls[0] != urls[1]
 assert all('policies%2Fcurrent.md' in url for url in urls)

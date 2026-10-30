@@ -73,7 +73,7 @@ That probe cannot test an authorisation fix inside SQL, so it has been retired f
 control. Its replacement evidence is the real database regression above. The pure control
 makes no SQL privacy claim and now exits 0 after the corrected checks pass.
 
-## Remaining freeze gates (unchanged ownership)
+## Freeze gates at the reviewed baseline (unchanged ownership)
 
 - Decision 1: replace tenant-wide `indexGeneration` with reviewed authorisation-view semantics;
   hidden changes still move the exposed counter. Opaque chunk IDs do not resolve this.
@@ -84,6 +84,8 @@ makes no SQL privacy claim and now exits 0 after the corrected checks pass.
   originals are now covered; this does not close the rest of KB-R4.
 - Decision 4 / K8: registered destination/participant semantics, exact withheld identifiers,
   fixed messages, operator-only disclosure and current-policy revalidation on every hop.
+
+PR37 (`7ed04e4`, merged as `704752a`) arrived during submission and supplies the viewRevision and withheld-report changes. It is integrated here, with its independent design/privacy review still queued; the bullets above describe the `35baba5` review baseline. The updated pure identity control copies the current fixture envelope so it also works with viewRevision. Post-integration knowledge tests pass **30/30**, zero failures/skips, 3.143 s, and all 25 pure fixture controls still pass. The three-test pre-PR31 privacy backtest still has its expected one failure. Temporary PostgreSQL was again shut down. This compatibility run does not add approval of PR37's new semantics to the PR31/34 review.
 
 These are already recorded contract tasks, not newly discovered regressions. Claude retains
 implementation ownership. The separate wider research findings are not signed off by this

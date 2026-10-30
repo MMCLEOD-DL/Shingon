@@ -1337,3 +1337,12 @@ Cost: view_revision reads every visible source on each search. That is fine at t
 Live / fake / skipped / unrun: real PostgreSQL with the synthetic corpus; no HTTP service, Conductor or models.
 Reviewer disposition and reviewed SHA: re-review requested at the commit below.
 ```
+
+KB re-review integration note: PR37 `7ed04e4` merged as `704752a` during submission.
+Integrated it with a merge commit and preserved both ledger histories. It supplies the
+viewRevision/withheld-report corrections; their independent review is pending, not absent
+implementation. The pure identity control now copies the valid fixture envelope, supporting
+viewRevision without hard-coding the obsolete generation field. Compatibility rerun: 30/30
+knowledge tests, zero skips, 3.143 s; 25 pure fixture checks and probes pass. Pre-PR31 privacy
+backtest retains one expected failure/two passes. Temporary PG shut down again and absent.
+PR31/34 closures stay pinned to `35baba5`; PR37 semantic review remains a separate task.
