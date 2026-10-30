@@ -182,5 +182,10 @@ It must keep the one-active-operation rule until process cleanup is run-scoped (
 
 ## Housekeeping found while writing this (small, separate changes)
 
-- **Missing instruction files:** `03-parallel-working.md` tells sessions to read "applicable AGENTS.md", but the repository has none. Either add a short `AGENTS.md`/`CLAUDE.md` with the ownership and evidence rules, or drop the instruction.
-- **Factory protection list:** FOLLOW-UPS notes that Conductor's `PROTECTED_PATHS` (`src/council/foundationRules.js`) still needs the v0.2.0 layout (modules, app jobs, receipt pages). That affects item 1 directly.
+- ~~**Missing instruction files:**~~ Done: the root `AGENTS.md` (Codex loop) and `.claude/skills/claude-lane/SKILL.md` (Claude loop) now hold the ownership and evidence rules.
+- ~~**Factory protection list:**~~ Done on 30 October 2026 (Claude task 12). `PROTECTED_PATHS` now covers the v0.2.0 layout, and a new `PROTECTED_DIRS` covers whole folders:
+  - the modules (`modules/`, `apps/server/src/modules/`, `apps/web/src/modules/`);
+  - `app-profile.json` (the data policy) and the shared code that reads it;
+  - the money, report and receipt code;
+  - the job registry and the ops job runner;
+  - the shared package's test config and verify scripts.
