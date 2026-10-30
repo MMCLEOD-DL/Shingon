@@ -1112,36 +1112,52 @@ Live / fake / skipped / unrun: real PostgreSQL with the synthetic corpus; no HTT
 Reviewer disposition and reviewed SHA: re-review requested at the code commit below.
 ```
 
-### 30 October 2026 — Claude task 17 (claude-lane): Codex P06 research review R1–R4
+### 30 October 2026 — Codex claim: P02 picture-confidence correction re-review
 
-```
-Packet/subpacket: P06. Codex review reviews/2026-10-30-codex-review-P06-research.md, P06-R1–R3 [P2], P06-R4 [P3].
-Owner and reviewer: Claude; reviewer Codex.
-Status: IN_REVIEW.
-Baseline SHA: 740d355.
-Owned files: conductor/docs/knowledge-base/{recommendation,options,evaluation,migration-plan,adr-0001-kb-service-stack}.md;
-  knowledge/src/shingon_knowledge/parsers.py (one comment); this ledger. Documentation only.
-What is corrected:
-  R1: the "all permissive" claim is gone. OCRmyPDF (MPL-2.0) fails R8 under the repository policy without a recorded
-    operator exception (internal use versus shipping stated). The preferred OCR route is Docling's own engines:
-    EasyOCR and RapidOCR Apache-2.0, tesserocr MIT, checked on PyPI on 30 October. K5's exit now includes
-    pinning the OCR, model and native set and passing the licence policy. No exception is granted.
-  R2: superusers and BYPASSRLS roles always bypass RLS; FORCE binds the owner only. The API role must be a non-owner,
-    NOSUPERUSER NOBYPASSRLS, with migrations under a separate role; RLS acceptance checks effective role and denials.
-  R3: a shared HNSW index scores chunks the caller may not see, which contract §1 item 3 forbids; iterative scans fix
-    recall only. Shared HNSW is now conditional on K3: partitioned indexes or exact search over authorised rows,
-    with plan, recall and boundary tested. K3's exit says no unauthorised chunk is scored.
-  R4: evaluation.md now matches results.json: 350 searches, p50 0.33 ms, p95 0.69 ms, maximum 2.41 ms, and says how
-    the 350 arise and that only the 50 question timings are stored. The 325/0.37/0.83 came from an older run.
-  Also: the recommendation's status is dated and linked to ADR 0001 and K2, as the review asked.
-Checks (cloud Linux):
-  Codex's audit-P06-stored-evidence.py: exit 1 before (latency mismatch), exit 0 now (prose = saved 350/0.33/0.69).
-  Codex's control-P06-licence-policy.mts (tsx from foundation/): exit 0 (MIT allowed, MPL-2.0 needs an exception).
-  knowledge/ unittest (PostgreSQL 16): 21 passed (one comment changed). git diff --check: clean.
-Live / fake / skipped / unrun: no new measurements; no vector, OCR or RLS experiment was run. The R3 point is from
-  pgvector's documented execution model, as in Codex's review, not an executed attack.
-Reviewer disposition and reviewed SHA: re-review requested at the commit below.
-```
+Reviewer Codex; implementation/correction owner Claude. Status IN_PROGRESS.
+Branch `codex/review-pdf-picture-confidence`; integrated baseline `740d355` (PR30/31 merged).
+Scope: PR27 `ec6ddd8`, P02-R1 scanner-footer residual and Malcolm's recorded flag-not-refuse
+decision. Owned paths: review artifacts/standalone controls and this ledger only.
+Next: rerun original and footer reproducers, inspect picture detection and propagation to
+all receipt fields, retain text-only/page-count/resource defences, record exact disposition.
+No OCR source rewrite, cloud OCR, model, private upload or deployment. P04 PR29 and KB PR31
+re-reviews, P09 and the Windows console follow-up remain separate backlog.
+
+### 30 October 2026 — P02 picture-confidence correction re-review handoff (Codex)
+
+Owner/reviewer Codex; correction owner Claude. Status CHANGES_REQUESTED for new P02-R3 [P2].
+Correction `ec6ddd8` (PR27); reviewed integrated baseline `740d355`.
+Branch `codex/review-pdf-picture-confidence`; artifact `reviews/2026-10-30-codex-review-P02-pictures.md`.
+P02-R1's demonstrated scanner-footer residual is resolved: amount confidence 0.6 and warning
+reach the proposal, including the deliberately unused image resource. P02-R2 controls hold.
+New finding: 5,000 spaces after inline BI evade the 4,096-character image-detection window;
+plain and Flate streams return confidence 1/no warning. PDF.js operator lists independently
+confirm a painted image. This one-pixel fixture proves missing caution, not a wrong value.
+Checks (Windows, Node 24.12.0): OCR 328 passed, 6 Linux-/proc-dependent cases intentionally
+excluded, 0 failed, seven files, 18.73 s. Original reproduction exit 0; strengthened footer
+control exit 0 (pre-PR27 `77a9419` exits 1 on missing warning); new boundary reproduction
+exit 1 expected, ordinary-header positive control passes. Whitespace check passes.
+Live/fake/unrun: real local PDF child and parser on synthetic input, no cloud OCR/model,
+private upload, DB/browser acceptance or deployment. Broad suites and Linux watchdogs unrun.
+Owned files changed: review artifacts/fixtures and ledger only; OCR-owned source untouched.
+Claude corrects P02-R3 within current budgets and flag-not-refuse policy; Codex re-reviews.
+Next supplied peer reviews: P04 PR29, retrieval-contract PR31, then P09; Windows console
+runtime follow-up stays separate. Merging this review records findings, not P02 completion.
+
+### Codex task submitted — P02 picture-confidence correction re-review
+
+Date: 30 October 2026. Branch `codex/review-pdf-picture-confidence`.
+Last artifact commit: `f731c3929e17a15233a2db39685c71d22ce16cfe`.
+PR: https://github.com/MMCLEOD-DL/Shingon/pull/33 (draft opened; ready after this push).
+Evidence: OCR 328 passed, 6 Linux-specific watchdog cases intentionally excluded; original
+and strengthened footer controls pass. Footer control fails pre-PR27 source on the missing
+warning; new inline-boundary control exits 1 expected for P02-R3, ordinary-inline control
+passes. Whitespace check passes. No product source changed or live acceptance claimed.
+Disposition: demonstrated P02-R1 footer case and P02-R2 cases resolved; P02-R3 [P2] remains
+with Claude. Merge records the correction handoff, not P02 completion. Next peer reviews
+are P04 PR29 and retrieval-contract PR31; P09 and Windows console follow-up remain queued.
+No high-risk path changed; request auto-merge after readiness. If repository setting still
+refuses it, Malcolm's merge is required. Stop until this submission is merged.
 
 ### 30 October 2026 — Claude task 18 (claude-lane): retrieval contract identity and originals (KB-R1, decisions 1 and 3)
 
