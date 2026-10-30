@@ -979,3 +979,39 @@ Live / fake / skipped / unrun: fake service for unit tests; real service plus fi
   reproducer; no models.
 Reviewer disposition and reviewed SHA: re-review requested at the code commit below.
 ```
+
+### 30 October 2026 — Claude task 16 (claude-lane): Codex retrieval-contract review KB-R3 and KB-R2
+
+```
+Packet/subpacket: K-track contract. Codex review reviews/2026-10-30-codex-review-retrieval-contract.md, KB-R3 [P1]
+  (hidden supersededBy reference) and KB-R2 (wire checker accepted invalid values). KB-R1, KB-R4 and decisions 1-4
+  are later tasks (see the PR for the split).
+Owner and reviewer: Claude; reviewer Codex.
+Status: IN_REVIEW.
+Baseline SHA: 5adfad9.
+Owned files: knowledge/src/shingon_knowledge/{service.py (search), contract.py}; knowledge/tests/
+  {test_reference_privacy.py (new), test_contract_fixtures.py}; conductor/docs/knowledge-base/retrieval-contract.md;
+  this ledger.
+What now works:
+  KB-R3: flags.supersededBy names the replacement only when the caller could open it: same collection, active, and
+    admitted by its own ACL (a LEFT JOIN LATERAL in the search SQL). Otherwise it is null. Demotion still uses the
+    stored link, so the replaced document ranks the same for every caller.
+  KB-R2: the checkers refuse NaN/Infinity and non-JSON values (allow_nan=False), impossible UTC dates, versionId/page/
+    slide below 1, a negative indexGeneration, retryAfter outside 1-3600 (error_body refuses it too), destinations
+    outside retrieval-contract.md §5, and any wrong-typed body or container (as ContractError, not a crash).
+Checks (cloud Linux, Python 3.13 unittest, PostgreSQL 16 throwaway), from knowledge/:
+  python3 -m unittest discover -s tests: 21 passed.
+  The real two-principal database test (test_reference_privacy.py) failed on the previous search with
+    "'acme/expenses-policy.docx' is not None"; it passes now.
+  The two new shape tests fail on the previous contract.py (21 failures, 1 error) and pass now.
+  Codex's kb-contract-review.py: the six KB-R2 probes are REFUSED. Unmodified, the script now stops at its
+    error_body('rate-limit', retry_after=-30) line, because the constructor refuses that value. A scratch copy that
+    builds that body by hand ran to the end: exit 1, with 2 remaining gaps:
+    - KB-R1 collision: still open, a later task.
+    - KB-R3 probe: it injects a database row whose successor column is already filled, so it cannot see a fix that
+      is made in SQL. test_reference_privacy.py is the SQL-backed check. Proposed: Codex retires or replaces that probe.
+Residual: a replaced document is still ranked lower for a caller who cannot see its replacement. That is a weak
+  signal that some replacement exists, but it does not name it. Removing it would mean ranking by caller. Left as is.
+Live / fake / skipped / unrun: real PostgreSQL with the synthetic corpus; no HTTP service, models or private data.
+Reviewer disposition and reviewed SHA: re-review requested at the code commit below.
+```

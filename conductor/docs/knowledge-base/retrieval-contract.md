@@ -73,7 +73,7 @@ OAuth token exchange (RFC 8693) with the user's own token is stronger. It is def
 
 - **`evidence`** comes from a reranker threshold calibrated on the labelled set (`evaluation.md`), not from a raw similarity score. Babel's many identical 1.0 scores show why a raw score cannot drive abstention. `none` means the caller must abstain; `weak` means it must say so.
 - **`locator`** carries the finest provenance the parser kept: page for PDFs, section path for DOCX/Markdown/HTML, sheet and cell range for XLSX, slide for PPTX. A missing field is `null`, never guessed. Each citation names the **version** quoted, so a later edit cannot silently change what an earlier answer cited.
-- **`stale`** means the source system reports a newer version that has not been ingested yet, or the last sync failed for this source. **`supersededBy`** is set when the operator has marked the document replaced. **`conflictsWith`** lists other authorised results that disagree on an extracted fact; it is set only when the service detects this, and its absence proves nothing.
+- **`stale`** means the source system reports a newer version that has not been ingested yet, or the last sync failed for this source. **`supersededBy`** names the replacement when the operator has marked the document replaced, but only if the caller could open the replacement itself. Otherwise it is null, though the replaced document is still ranked lower. **`conflictsWith`** lists other authorised results that disagree on an extracted fact; it is set only when the service detects this, and its absence proves nothing.
 - **`instructionLike`** is a heuristic flag for text that reads like instructions to an assistant ("ignore previous…", tool-call syntax). It is advisory only: callers treat all passages as data either way.
 - **Spreadsheets:** a passage from a sheet is the stored cell text with its range. The service does not calculate. A question that needs a calculation over records is answered by the system that owns those records, not by document retrieval.
 
@@ -186,6 +186,14 @@ Also included: `bad-request` (400).
 Two things consumers must not read into the fixtures:
 - **Evidence levels.** They come from K2's provisional keyword thresholds. The PDF hit is `weak`. K4 replaces the thresholds, and the generated fixtures will change with them.
 - **Unknown fields.** K2 cannot fill `scores.vector`, `scores.rerank`, `source.modifiedAt` or OCR, so they are null or false. `conflictsWith` is always empty, and its absence proves nothing.
+
+**What the wire checkers in `contract.py` refuse** (Codex review KB-R2). They are what K6 will run on its own output, so they refuse anything a strict JSON consumer could not take:
+- NaN, infinite or non-JSON values;
+- timestamps that are not real UTC dates and times;
+- `versionId`, `page` or `slide` below 1, or a negative `indexGeneration`;
+- a `retryAfter` outside 1–3600 seconds;
+- an `allowedDestinations` entry outside §5's list (`foundation-app:` takes a lower-case slug until Foundation fixes the app-id format);
+- a body or container of the wrong type.
 
 **Open points for v1 (for Codex's review):**
 

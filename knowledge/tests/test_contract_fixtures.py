@@ -211,6 +211,56 @@ class ShapeChecksRefuseBadBodies(unittest.TestCase):
             contract.error_body('rate-limit', 'r2')
         contract.check_error_body(*contract.error_body('rate-limit', 'r2', retry_after=30))
 
+    def test_values_the_wire_cannot_carry_are_refused(self):
+        # Codex review KB-R2: each of these passed the checker before.
+        r = lambda b: b['results'][0]  # noqa: E731
+        bad = {
+            'NaN score': lambda b: r(b)['scores'].update(keyword=float('nan')),
+            'infinite score': lambda b: r(b)['scores'].update(keyword=float('inf')),
+            'impossible date': lambda b: r(b)['source'].update(ingestedAt='2026-99-99T99:99:99Z'),
+            'thirty-first of February': lambda b: r(b)['source'].update(modifiedAt='2026-02-31T10:00:00Z'),
+            'version zero': lambda b: r(b).update(versionId=0),
+            'page zero': lambda b: r(b)['locator'].update(page=0),
+            'negative slide': lambda b: r(b)['locator'].update(slide=-1),
+            'negative generation': lambda b: b.update(indexGeneration=-1),
+            'results not a list': lambda b: b.update(results={'0': r(b)}),
+            'result not an object': lambda b: b.update(results=['hit']),
+            'flags not an object': lambda b: r(b).update(flags=[]),
+            'body not an object': lambda b: b.clear() or b.update({'x': None}),
+            'non-JSON value': lambda b: r(b).update(title=b'bytes'),
+        }
+        for name, fn in bad.items():
+            with self.subTest(name), self.assertRaises(contract.ContractError):
+                contract.check_search_body(self.mutate_raw(fn))
+        for body in (None, [], 'text'):
+            with self.subTest(body=body), self.assertRaises(contract.ContractError):
+                contract.check_search_body(body)
+
+    def mutate_raw(self, fn):
+        body = json.loads(json.dumps(self.good))
+        fn(body)
+        return body  # no JSON round trip: the bad value must reach the checker as it is
+
+    def test_error_retry_and_withheld_destinations_are_bounded(self):
+        status, body = contract.error_body('rate-limit', 'r3', retry_after=30)
+        for retry in (0, -5, 3601, 2.5, True, float('nan')):
+            with self.subTest(retry=retry), self.assertRaises(contract.ContractError):
+                contract.check_error_body(status, {'error': {**body['error'], 'retryAfter': retry}})
+            with self.subTest(make=retry), self.assertRaises(ValueError):
+                contract.error_body('rate-limit', 'r3', retry_after=retry)
+        for bad in (None, [], {'error': []}, {'error': None}):
+            with self.subTest(error=bad), self.assertRaises(contract.ContractError):
+                contract.check_error_body(status, bad)
+        fixtures = {f['id']: f for f in json.loads(FILE.read_text())['fixtures']}
+        report = fixtures['destination-withheld']['response']['body']
+        contract.check_withheld_report({**report, 'allowedDestinations': ['local-model', 'foundation-app:acme']})
+        for dest in ('openai', 'foundation-app:', 'foundation-app:../x', 'LOCAL-MODEL'):
+            with self.subTest(dest=dest), self.assertRaises(contract.ContractError):
+                contract.check_withheld_report({**report, 'allowedDestinations': [dest]})
+        for bad in (None, {**report, 'documentIds': 'notes/a.md'}):
+            with self.subTest(report=bad), self.assertRaises(contract.ContractError):
+                contract.check_withheld_report(bad)
+
 
 if __name__ == '__main__':
     unittest.main()

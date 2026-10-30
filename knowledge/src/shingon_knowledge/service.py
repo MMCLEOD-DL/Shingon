@@ -240,10 +240,17 @@ class KnowledgeService:
             WITH q AS (SELECT CASE WHEN plainto_tsquery('english', %(q)s)::text = '' THEN NULL
                          ELSE replace(plainto_tsquery('english', %(q)s)::text, '&', '|')::tsquery END AS tsq)
             SELECT c.id, c.source_id, c.version, c.collection_id, c.title, c.text, c.locator, c.instruction_like,
-                   s.key, s.superseded_by,
+                   s.key, succ.key AS superseded_by_visible,
                    ts_rank_cd(c.tsv, q.tsq, 32) * CASE WHEN s.superseded_by IS NULL THEN 1 ELSE %(sw)s::real END AS score,
                    to_char(v.ingested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
-            FROM chunks c JOIN sources s ON s.id = c.source_id JOIN versions v ON v.source_id = c.source_id AND v.n = c.version, q
+            FROM chunks c JOIN sources s ON s.id = c.source_id JOIN versions v ON v.source_id = c.source_id AND v.n = c.version
+            -- A reference to another document is shown only when the caller could open that document itself (Codex
+            -- review KB-R3): same collection, active, and admitted by its own ACL. Demotion still uses the stored link.
+            LEFT JOIN LATERAL (
+              SELECT t.key FROM sources t
+              WHERE t.collection_id = s.collection_id AND t.key = s.superseded_by AND t.status = 'active'
+                AND (t.acl_all OR t.acl_groups && %(groups)s::text[] OR %(principal)s = ANY(t.acl_principals))
+            ) succ ON true, q
             WHERE q.tsq IS NOT NULL AND c.tsv @@ q.tsq
               AND c.tenant_id = %(tenant)s AND c.collection_id = ANY(%(allowed)s::text[]) AND s.status = 'active'
               AND (c.acl_all OR c.acl_groups && %(groups)s::text[] OR %(principal)s = ANY(c.acl_principals))
