@@ -70,7 +70,11 @@ try{
   approveEnabled:await page.getByRole('button',{name:'Approve: create a branch'}).isEnabled()};
  const reproduced=observed.stalePassedLabel===1&&observed.currentFailedLabel===0&&observed.approveEnabled;
  console.log(JSON.stringify({finding:'P04-R2',result:reproduced?'REPRODUCED':'NOT_REPRODUCED',...observed}));
+ if(!reproduced){assert.equal(observed.stalePassedLabel,0);assert.equal(observed.approveEnabled,false);}
  for(const release of releases)release();await page.getByText('Tests failed (exit code 1)',{exact:true}).waitFor();
+ assert.equal(await page.getByText('Tests passed',{exact:true}).count(),0);
+ assert.equal(await page.getByRole('button',{name:'Approve: create a branch'}).isEnabled(),true);
+ console.log(JSON.stringify({control:'current failed evidence becomes visible and reviewable',passed:true}));
  assert.equal(git('rev-parse','HEAD'),sourceHead);assert.equal(git('status','--porcelain'),'');
  assert.equal(git('branch','--list','conductor/*'),'');
  if(reproduced)process.exitCode=1;
