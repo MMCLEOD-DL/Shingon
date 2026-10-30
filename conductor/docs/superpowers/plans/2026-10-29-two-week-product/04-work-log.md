@@ -6,8 +6,8 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude acknow
 |---|---|---|---|---|
 | P00 | Codex | IN_REVIEW | codex/operator-app-v1 | Concrete API/ADR/fixtures ready; Claude acknowledgement pending |
 | P01 | Codex | DONE | `codex/updater-settings-recovery` | Claude approved `06678be`; PR #6 merged as `8e5bf13`; evidence below |
-| P02 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 29 Oct P02 entry; awaiting Codex review |
-| P03 | Codex | IN_REVIEW | `codex/decision-receipt-keys` from `d9e88e2` | #12 approved/merged; N5 fixed with 45 service / 1,559 Conductor / 47 UI / 17 browser checks passing; N5 peer review and merge due; N6 remains Claude-owned |
+| P02 | Claude | CHANGES_REQUESTED | `f188ec1`, integrated at `f23057b` | Ordinary page cap verified; Codex review P02-R1 mixed scanned page (high), P02-R2 understated count (medium); owner follow-up due |
+| P03 | Codex | DONE | `codex/decision-receipt-keys` from `d9e88e2` | #12 and #14 independently approved/merged; N5 approval `43d8b0d`, merge `01350f7`; Claude N6 UI merged in #15; optional N7 remains |
 | P04 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh`; contract v1 fixtures from `codex/operator-app-v1` @ `a8c97bc` | `conductor/operator-web`: 43/43 unit, 13/13 browser journey against real P03 service; see 29 Oct P04 entry; awaiting Codex review |
 | P05 | Codex | IN_PROGRESS | codex/operator-app-v1 | Setup/probes/launcher implemented; native Windows/live-model acceptance pending |
 | P06 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 29 Oct P06 entry; awaiting Codex review and Malcolm's decisions D1–D5 |
@@ -641,3 +641,69 @@ _Restored 29 October 2026: this entry was dropped when `main` was merged into `c
 - **Evidence:** service tests 45/45 at `88b8a07`. With `main`'s `runs.js`, 9 fail (8 HTTP prototype-name cases and the real-engine concurrent case), and the 2 `prototype` controls pass, as Codex reported.
 - **Correction:** my N5 note understated the defect. The inherited-member read refused the *first* valid request (409) for four IDs. It did not only lose idempotency for `__proto__`.
 - **Outcome:** Codex merged `main` in (`03b0468`) and #14 was merged as `01350f7`. The service code on `main` is identical to the reviewed `88b8a07`. That merge dropped Claude task 8's entry, which is restored above. N7 (optional, for Codex): add a test for a prototype-named ID on `/recover`.
+
+### 29 October 2026 — Codex claim: independent P02 PDF safety review
+
+Owner/reviewer: Codex reviewing Claude. Status: IN_PROGRESS.
+Branch: `codex/review-pdf-safety`; baseline main: `f23057b`.
+Review target: P02 `f188ec1`, verified against its integrated OCR files on current main.
+Owned changes: this ledger and a review report under `reviews/`; no implementation edits.
+Scope: reproduce the omitted-page confident-result defect before the fix, challenge the
+one/three/four-page boundary and unreadable propagation, and run existing memory/deadline
+defences. Known predictor/repeated-reference limitations remain recorded deferrals.
+Previous Codex task #14 is merged (`01350f7`) and independently approved by Claude at `88b8a07`.
+Malcolm's standing instruction is to assume "carry on"; human merge gates still apply.
+
+### 29 October 2026 — Codex P02 independent review handoff
+
+```
+Packet/subpacket: P02 independent adversarial review.
+Owner and reviewer: Claude owns implementation; Codex reviewed.
+Status: CHANGES_REQUESTED (safety acceptance); this review artifact is IN_REVIEW.
+Baseline SHA: f23057b; reviewed code f188ec154ca3eb567dbf457a3b171004d9eb120d.
+Owned files: this ledger; reviews/2026-10-29-codex-review-P02.md;
+  reviews/fixtures/p02-reproduce.mts. No OCR/service/UI/knowledge/CI implementation edits.
+What now works: independently verified ordinary page-limit fix and preserved resource defences.
+Findings: P02-R1 high, a valid mixed text/image PDF silently omits the scanned page;
+  P02-R2 medium, an understated page-tree count hides a fourth reachable page.
+  Both return 1000 pence at confidence 1, warnings [], and reproduce before P02 too.
+  Do not revert the valid page-cap fix; Claude should address these remaining gaps.
+Checks (Debian 13, Node 24.19.0, npm 11.9.0, PDF.js 6.4.299):
+  Focused PDF/extraction/read-receipt: 255 passed (45.34 s).
+  All OCR tests: 316 passed (47.97 s), including memory/watchdog/cleanup/timeout tests.
+  P02 boundary tests against external before-fix source copy: 3 fail / 2 pass;
+    29 tests intentionally filtered. Checkout source was never reset/stashed.
+  Checked-in actual local-engine reproducer: exit 1 with two unsafe results on current
+    main and before-fix source; supported one/three-page controls pass on both;
+    ordinary four-page refusal passes only after P02. Expected review failures.
+  Full Conductor via retained subreaper: 1,559 pass / 0 fail/skip/cancel (69.91 s).
+Live / fake / skipped / unrun: real local OCR/PDF processes and receipt extraction on
+  synthetic documents, existing fictional photo; no model/network request or paid call.
+  No real upload/browser, Azure, native Windows or client-box run. Full Foundation
+  verification is not repeated locally for a docs/reproducer-only PR; required CI due.
+  Known predictor/repeated-reference etc. deferrals were read and not relabelled new.
+External blocker: Claude owns both fixes; no permission/credential needed for reproduction.
+Next packet unblocked: P04 independent review after this artifact merges; OCR remains open.
+Reviewer disposition: changes requested as detailed in the report; ordinary fix accepted.
+Integration SHA: —
+```
+
+### Codex task submitted — P02 independent PDF safety review
+
+- Date: 29 October 2026 (client date). Branch: `codex/review-pdf-safety`; baseline: `f23057b`.
+- Last review/reproducer commit: `11d28b1`. No production code changed.
+- PR: [#18 — P02 review: record incomplete-PDF confidence gaps](https://github.com/MMCLEOD-DL/Shingon/pull/18).
+- Disposition: ordinary over-three-page fix verified; P02 CHANGES_REQUESTED for two remaining
+  pre-existing safety gaps, mixed scanned page (P02-R1 high) and understated count (P02-R2 medium).
+  Report supplies locations, trigger, consequence, reproduction and correction direction.
+- Evidence: 316 OCR tests passed, focused 255 passed; original boundary tests against before-fix
+  source 3 failed / 2 controls passed; checked-in real-engine reproducer exit 1 confirms both
+  unsafe outcomes before and after P02; full Conductor 1,559 passed / 0 failed/skipped/cancelled.
+- Limits: fictional fixtures and real local OCR/PDF child processes; no live models/subscriptions,
+  network, Azure, real upload/browser, native Windows, client-box or release validation.
+  Full Foundation not repeated locally; required hosted CI pending at submission.
+- Merge route: docs/reproducer only, no high-risk paths; mark ready and enable auto-merge after
+  own checks. Green CI merges the review artifact, not an OCR fix or safety sign-off.
+- Next action: Claude owns the two OCR fixes. Next Codex queue item is the independent P04 review
+  after this submission merges. Malcolm's standing "carry on" instruction remains active;
+  human gates and live-access restrictions are unchanged. No approval label was touched.
