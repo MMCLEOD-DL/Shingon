@@ -12,7 +12,9 @@ removed from search rather than served stale, and manual imports have no source 
 from __future__ import annotations
 
 import json
+import math
 import re
+from datetime import datetime
 
 from .service import NotFound, ScopeError
 
@@ -23,6 +25,10 @@ MAX_RESULTS = 20
 MAX_EXCERPT = 1200
 CONTROL = re.compile(r'[\x00-\x08\x0b-\x1f\x7f]')
 TIMESTAMP = re.compile(r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z$')
+MAX_RETRY_AFTER = 3600  # seconds
+# retrieval-contract.md §5: the destinations a collection may allow.
+DESTINATIONS = ('local-model', 'claude-subscription', 'codex-subscription')
+APP_DESTINATION = re.compile(r'^foundation-app:[a-z0-9][a-z0-9-]{0,63}$')
 
 # Fixed wording per error: exception text never reaches the caller.
 ERRORS = {
@@ -70,6 +76,8 @@ def error_body(code: str, request_id: str, *, retry_after: int | None = None) ->
     status, retryable, message = ERRORS[code]
     if (code == 'rate-limit') != (retry_after is not None):
         raise ValueError('retryAfter belongs to rate-limit errors only, and they must carry it.')
+    if retry_after is not None and (isinstance(retry_after, bool) or not isinstance(retry_after, int) or not 1 <= retry_after <= MAX_RETRY_AFTER):
+        raise ValueError(f'retryAfter is a whole number of seconds from 1 to {MAX_RETRY_AFTER}.')
     err = {'code': code, 'message': message, 'retryable': retryable, 'requestId': request_id}
     if retry_after is not None:
         err['retryAfter'] = retry_after
@@ -98,6 +106,48 @@ def _type(value, path: str, *types, nullable: bool = False):
         _fail(path, f'must be {"/".join(t.__name__ for t in types)}')
     if not isinstance(value, types):
         _fail(path, f'must be {"/".join(t.__name__ for t in types)}{" or null" if nullable else ""}')
+    if isinstance(value, float) and not math.isfinite(value):
+        _fail(path, 'must be a finite number')
+
+
+def _positive(value, path: str, *, nullable: bool = False):
+    _type(value, path, int, nullable=nullable)
+    if value is not None and value < 1:
+        _fail(path, 'must be 1 or more')
+
+
+def _timestamp(value, path: str, *, nullable: bool = False):
+    _text(value, path, nullable=nullable)
+    if value is None:
+        return
+    if not TIMESTAMP.match(value):
+        _fail(path, 'must be a UTC timestamp ending in Z')
+    try:
+        datetime.strptime(value[:19], '%Y-%m-%dT%H:%M:%S')
+    except ValueError:
+        _fail(path, 'is not a real date and time')
+
+
+def _strict_json(body, limit: int | None = None):
+    try:
+        encoded = json.dumps(body, ensure_ascii=False, allow_nan=False).encode()
+    except (TypeError, ValueError) as e:
+        _fail('$', f'is not strict JSON ({e})')
+    if limit is not None and len(encoded) > limit:
+        _fail('$', f'larger than {limit} bytes')
+
+
+def _checked(check):
+    """Malformed input of any shape is a ContractError at the wire boundary, never a crash from inside the check."""
+    def run(*args):
+        try:
+            return check(*args)
+        except ContractError:
+            raise
+        except (TypeError, AttributeError, KeyError, IndexError, ValueError) as e:
+            raise ContractError(f'$: malformed ({type(e).__name__})') from e
+    run.__name__, run.__doc__ = check.__name__, check.__doc__
+    return run
 
 
 def _text(value, path: str, *, nullable: bool = False, max_len: int | None = None):
@@ -110,12 +160,14 @@ def _text(value, path: str, *, nullable: bool = False, max_len: int | None = Non
         _fail(path, f'longer than {max_len} characters')
 
 
+@_checked
 def check_search_body(body: dict) -> None:
     """Raises ContractError unless `body` is a valid `POST /search` response."""
-    if len(json.dumps(body, ensure_ascii=False).encode()) > MAX_BODY_BYTES:
-        _fail('$', f'larger than {MAX_BODY_BYTES} bytes')
+    _strict_json(body, MAX_BODY_BYTES)
     _keys(body, '$', ('indexGeneration', 'evidence', 'results'))
     _type(body['indexGeneration'], '$.indexGeneration', int)
+    if body['indexGeneration'] < 0:
+        _fail('$.indexGeneration', 'must not be negative')
     if body['evidence'] not in EVIDENCE:
         _fail('$.evidence', f'must be one of {EVIDENCE}')
     _type(body['results'], '$.results', list)
@@ -128,12 +180,12 @@ def check_search_body(body: dict) -> None:
         _keys(r, p, ('chunkId', 'documentId', 'versionId', 'collectionId', 'title', 'excerpt', 'locator', 'source', 'scores', 'flags'))
         for k in ('chunkId', 'documentId', 'collectionId', 'title'):
             _text(r[k], f'{p}.{k}')
-        _type(r['versionId'], f'{p}.versionId', int)
+        _positive(r['versionId'], f'{p}.versionId')
         _text(r['excerpt'], f'{p}.excerpt', max_len=MAX_EXCERPT)
         loc = r['locator']
         _keys(loc, f'{p}.locator', LOCATOR_KEYS)
-        _type(loc['page'], f'{p}.locator.page', int, nullable=True)
-        _type(loc['slide'], f'{p}.locator.slide', int, nullable=True)
+        _positive(loc['page'], f'{p}.locator.page', nullable=True)
+        _positive(loc['slide'], f'{p}.locator.slide', nullable=True)
         _text(loc['sheet'], f'{p}.locator.sheet', nullable=True)
         _text(loc['cellRange'], f'{p}.locator.cellRange', nullable=True)
         _type(loc['sectionPath'], f'{p}.locator.sectionPath', list, nullable=True)
@@ -146,9 +198,7 @@ def check_search_body(body: dict) -> None:
         _text(src['display'], f'{p}.source.display')
         _text(src['versionLabel'], f'{p}.source.versionLabel')
         for k in ('modifiedAt', 'ingestedAt'):
-            _text(src[k], f'{p}.source.{k}', nullable=k == 'modifiedAt')
-            if src[k] is not None and not TIMESTAMP.match(src[k]):
-                _fail(f'{p}.source.{k}', 'must be a UTC timestamp ending in Z')
+            _timestamp(src[k], f'{p}.source.{k}', nullable=k == 'modifiedAt')
         sc = r['scores']
         _keys(sc, f'{p}.scores', ('rank', 'keyword', 'vector', 'rerank'))
         _type(sc['rank'], f'{p}.scores.rank', int)
@@ -169,8 +219,10 @@ def check_search_body(body: dict) -> None:
             _fail(f'{p}.flags.ocrConfidence', 'only for OCR text, between 0 and 1')
 
 
+@_checked
 def check_error_body(status: int, body: dict) -> None:
     """Raises ContractError unless (status, body) is a contract error."""
+    _strict_json(body)
     _keys(body, '$', ('error',))
     e = body['error']
     _keys(e, '$.error', ('code', 'message', 'retryable', 'requestId'), ('retryAfter',))
@@ -185,11 +237,15 @@ def check_error_body(status: int, body: dict) -> None:
     if (e['code'] == 'rate-limit') != ('retryAfter' in e):
         _fail('$.error.retryAfter', 'present on rate-limit errors only')
     if 'retryAfter' in e:
-        _type(e['retryAfter'], '$.error.retryAfter', int)
+        _positive(e['retryAfter'], '$.error.retryAfter')
+        if e['retryAfter'] > MAX_RETRY_AFTER:
+            _fail('$.error.retryAfter', f'at most {MAX_RETRY_AFTER} seconds')
 
 
+@_checked
 def check_withheld_report(report: dict) -> None:
     """Conductor's report when a passage may not go to a participant (retrieval-contract.md §5). Proposed shape."""
+    _strict_json(report)
     _keys(report, '$', ('type', 'participant', 'collectionId', 'documentIds', 'allowedDestinations', 'message'))
     if report['type'] != 'evidence-withheld':
         _fail('$.type', "must be 'evidence-withheld'")
@@ -199,3 +255,6 @@ def check_withheld_report(report: dict) -> None:
         _type(report[k], f'$.{k}', list)
         for j, v in enumerate(report[k]):
             _text(v, f'$.{k}[{j}]')
+    for j, v in enumerate(report['allowedDestinations']):
+        if v not in DESTINATIONS and not APP_DESTINATION.match(v):
+            _fail(f'$.allowedDestinations[{j}]', f'unknown destination {v!r}')
