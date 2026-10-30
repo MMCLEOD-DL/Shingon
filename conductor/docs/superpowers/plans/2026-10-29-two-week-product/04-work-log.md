@@ -1143,3 +1143,18 @@ Owned files changed: review artifacts/fixtures and ledger only; OCR-owned source
 Claude corrects P02-R3 within current budgets and flag-not-refuse policy; Codex re-reviews.
 Next supplied peer reviews: P04 PR29, retrieval-contract PR31, then P09; Windows console
 runtime follow-up stays separate. Merging this review records findings, not P02 completion.
+
+### Codex task submitted — P02 picture-confidence correction re-review
+
+Date: 30 October 2026. Branch `codex/review-pdf-picture-confidence`.
+Last artifact commit: `f731c3929e17a15233a2db39685c71d22ce16cfe`.
+PR: https://github.com/MMCLEOD-DL/Shingon/pull/33 (draft opened; ready after this push).
+Evidence: OCR 328 passed, 6 Linux-specific watchdog cases intentionally excluded; original
+and strengthened footer controls pass. Footer control fails pre-PR27 source on the missing
+warning; new inline-boundary control exits 1 expected for P02-R3, ordinary-inline control
+passes. Whitespace check passes. No product source changed or live acceptance claimed.
+Disposition: demonstrated P02-R1 footer case and P02-R2 cases resolved; P02-R3 [P2] remains
+with Claude. Merge records the correction handoff, not P02 completion. Next peer reviews
+are P04 PR29 and retrieval-contract PR31; P09 and Windows console follow-up remain queued.
+No high-risk path changed; request auto-merge after readiness. If repository setting still
+refuses it, Malcolm's merge is required. Stop until this submission is merged.
