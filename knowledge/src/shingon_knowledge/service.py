@@ -10,6 +10,7 @@ import json
 import re
 import shutil
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -230,6 +231,23 @@ class KnowledgeService:
 
     # ---------- read side ----------
 
+    @contextmanager
+    def _snapshot(self):
+        """One consistent view for a whole read (Codex review KB-R5). Scope, group membership, candidates, references,
+        versions, destinations and the returned viewRevision are all read in one REPEATABLE READ transaction, so a
+        revocation or replacement committed part-way through cannot pair old evidence with the new revision: the
+        answer is wholly from before the change, and the next read is wholly after it. Only the audit row is written,
+        an insert that cannot conflict, so no retry is needed. Any open transaction is committed first, because the
+        isolation level can only be set before the transaction's first statement."""
+        self.db.commit()
+        self.db.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
+        try:
+            yield
+        except BaseException:
+            self.db.rollback()
+            raise
+        self.db.commit()
+
     def _scope(self, cred: Credential) -> tuple[list[str], list[str]]:
         allowed = [r[0] for r in self.db.execute('SELECT id FROM collections WHERE tenant_id = %s ORDER BY id', (cred.tenant,)).fetchall()]
         if cred.collections:
@@ -242,7 +260,12 @@ class KnowledgeService:
                superseded_weight: float = SUPERSEDED_WEIGHT) -> dict:
         if not isinstance(query, str) or not 1 <= len(query) <= 1000 or not 1 <= limit <= 20:
             raise ValueError('bad-request')
+        with self._snapshot():
+            return self._search(cred, query, limit, collections, superseded_weight)
+
+    def _search(self, cred, query, limit, collections, superseded_weight) -> dict:
         allowed, groups = self._scope(cred)
+        scope = list(allowed)
         if collections is not None:
             if any(c not in allowed for c in collections):
                 raise ScopeError('scope')
@@ -282,9 +305,7 @@ class KnowledgeService:
         evidence = 'strong' if top >= STRONG else 'weak' if top >= WEAK else 'none'
         self.db.execute('INSERT INTO audit (credential, principal, collections, result_sources, query_sha256) VALUES (%s,%s,%s::text[],%s::bigint[],%s)',
                         (cred.name, cred.principal, allowed, [r[1] for r in rows], hashlib.sha256(query.encode()).hexdigest()))
-        revision = self.view_revision(cred)
-        self.db.commit()
-        return {'viewRevision': revision, 'evidence': evidence, 'results': results, 'ms': ms}
+        return {'viewRevision': self._revision(scope, groups, cred), 'evidence': evidence, 'results': results, 'ms': ms}
 
     def view_revision(self, cred: Credential) -> str:
         """A digest of everything this credential can see, for cache invalidation (Codex review decision 1). It changes
@@ -292,7 +313,11 @@ class KnowledgeService:
         replacement becomes visible, or when a visible collection's destinations change. A change to a document the
         caller cannot see leaves it as it was, so it reveals nothing the caller could not already list. The tenant's
         internal index_generation counter never leaves the service."""
-        allowed, groups = self._scope(cred)
+        with self._snapshot():
+            return self._revision(*self._scope(cred), cred)
+
+    def _revision(self, allowed: list[str], groups: list[str], cred: Credential) -> str:
+        """view_revision() inside the caller's snapshot, from the scope that snapshot already read."""
         acl = '(t.acl_all OR t.acl_groups && %(groups)s::text[] OR %(principal)s = ANY(t.acl_principals))'
         return self.db.execute(f"""
             SELECT encode(sha256(convert_to(coalesce(string_agg(item, E'\\n' ORDER BY item), ''), 'UTF8')), 'hex') FROM (
@@ -312,8 +337,15 @@ class KnowledgeService:
     def collections(self, cred: Credential) -> dict:
         """The collections this credential can search, each with what this caller can see of it: how many documents and
         when the newest of them was ingested. Nothing counts documents the caller cannot see (retrieval-contract.md §3)."""
-        allowed, groups = self._scope(cred)
-        rows = self.db.execute("""
+        with self._snapshot():
+            allowed, groups = self._scope(cred)
+            rows, revision = self._collection_rows(allowed, groups, cred), self._revision(allowed, groups, cred)
+        return {'viewRevision': revision, 'collections': [
+            {'collectionId': r[0], 'kind': r[1], 'destinations': list(r[2]), 'documents': r[3], 'lastIngestedAt': r[4]}
+            for r in rows]}
+
+    def _collection_rows(self, allowed, groups, cred):
+        return self.db.execute("""
             SELECT c.id, c.kind, c.destinations, count(t.id),
                    to_char(max(v.ingested_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
             FROM collections c
@@ -323,11 +355,6 @@ class KnowledgeService:
             WHERE c.id = ANY(%(allowed)s::text[])
             GROUP BY c.id, c.kind, c.destinations ORDER BY c.id""",
             {'allowed': allowed, 'groups': groups, 'principal': cred.principal or ''}).fetchall()
-        revision = self.view_revision(cred)
-        self.db.commit()
-        return {'viewRevision': revision, 'collections': [
-            {'collectionId': r[0], 'kind': r[1], 'destinations': list(r[2]), 'documents': r[3], 'lastIngestedAt': r[4]}
-            for r in rows]}
 
     def passage(self, cred: Credential, chunk_id: str, neighbours: int = 1) -> dict:
         """One passage and up to `neighbours` (0 to 2) passages either side of it in the same document version, in
@@ -336,8 +363,23 @@ class KnowledgeService:
             raise ValueError('bad-request')
         if not isinstance(chunk_id, str):
             raise NotFound('not-found')
-        allowed, groups = self._scope(cred)
-        rows = self.db.execute("""
+        with self._snapshot():
+            allowed, groups = self._scope(cred)
+            rows = self._passage_rows(chunk_id, neighbours, allowed, groups, cred)
+            if rows:
+                self.db.execute('INSERT INTO audit (credential, principal, collections, result_sources, query_sha256) '
+                                "SELECT %s, %s, %s::text[], ARRAY[source_id], 'passage' FROM chunks WHERE public_id = %s",
+                                (cred.name, cred.principal, allowed, chunk_id))
+            revision = self._revision(allowed, groups, cred)
+        if not rows:
+            raise NotFound('not-found')
+        return {'viewRevision': revision, 'collectionId': rows[0][1], 'documentId': rows[0][2], 'versionId': rows[0][3],
+                'title': rows[0][4], 'passages': [
+                    {'chunkId': r[0], 'text': CONTROL.sub('', r[5])[:1200], 'locator': r[6], 'instructionLike': r[7],
+                     'focus': r[8]} for r in rows]}
+
+    def _passage_rows(self, chunk_id, neighbours, allowed, groups, cred):
+        return self.db.execute("""
             WITH focus AS (
               SELECT c.id, c.source_id FROM chunks c JOIN sources s ON s.id = c.source_id
               WHERE c.public_id = %(chunk)s AND c.tenant_id = %(tenant)s AND c.collection_id = ANY(%(allowed)s::text[])
@@ -353,18 +395,6 @@ class KnowledgeService:
             ORDER BY d.n""",
             {'chunk': chunk_id, 'tenant': cred.tenant, 'allowed': allowed, 'groups': groups,
              'principal': cred.principal or '', 'k': neighbours}).fetchall()
-        if rows:
-            self.db.execute('INSERT INTO audit (credential, principal, collections, result_sources, query_sha256) '
-                            "SELECT %s, %s, %s::text[], ARRAY[source_id], 'passage' FROM chunks WHERE public_id = %s",
-                            (cred.name, cred.principal, allowed, chunk_id))
-        revision = self.view_revision(cred)
-        self.db.commit()
-        if not rows:
-            raise NotFound('not-found')
-        return {'viewRevision': revision, 'collectionId': rows[0][1], 'documentId': rows[0][2], 'versionId': rows[0][3],
-                'title': rows[0][4], 'passages': [
-                    {'chunkId': r[0], 'text': CONTROL.sub('', r[5])[:1200], 'locator': r[6], 'instructionLike': r[7],
-                     'focus': r[8]} for r in rows]}
 
     def health(self) -> dict:
         """Readiness only: the index answers. Raises if it does not (the caller's 503)."""
@@ -378,6 +408,13 @@ class KnowledgeService:
         served in its place (retrieval-contract.md §3)."""
         if isinstance(version, bool) or not isinstance(version, int):
             raise NotFound('not-found')
+        with self._snapshot():
+            row = self._original_row(cred, collection, key, version)
+        if not row or not row[0]:
+            raise NotFound('not-found')
+        return Path(row[0])
+
+    def _original_row(self, cred, collection, key, version):
         allowed, groups = self._scope(cred)
         row = self.db.execute("""
             SELECT v.original_path FROM sources s JOIN collections c ON c.id = s.collection_id
@@ -390,7 +427,4 @@ class KnowledgeService:
             self.db.execute('INSERT INTO audit (credential, principal, collections, result_sources, query_sha256) '
                             "SELECT %s, %s, %s::text[], ARRAY[id], 'original' FROM sources WHERE collection_id = %s AND key = %s",
                             (cred.name, cred.principal, [collection], collection, key))
-        self.db.commit()
-        if not row or not row[0]:
-            raise NotFound('not-found')
-        return Path(row[0])
+        return row
