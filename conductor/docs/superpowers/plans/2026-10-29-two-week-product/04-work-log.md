@@ -1479,3 +1479,17 @@ owner tests or JSON fixture edits. Whitespace passes. Temporary PG stopped and a
 GPU worker stays off; no model/private/HTTP/connector/deployment acceptance.
 Keep K6 held for KB-R5/R6 and transport/policy gates; PR41 sync review remains separate.
 Next peer review PR41; P09 and Windows console follow-up queued. Merge records the handoff.
+
+### Codex task submitted — PR39 endpoint/request contract review
+
+Date: 30 October 2026. Branch `codex/review-kb-endpoint-contract`.
+Last artifact commit: `c832ea81ab9c0d48193391df8a4f83ab8ac1d837`.
+PR: https://github.com/MMCLEOD-DL/Shingon/pull/43 (draft opened; ready after this push).
+Evidence: knowledge 36/36, zero skips; 39 pure fixture shapes and request controls pass.
+Real core focus identity/expansion and three denied-principal controls pass. New fixture
+identity probe expected exit 1 for KB-R6; KB-R5 race still expected exit 1. Whitespace passes.
+Disposition: KB-R6 [P2] with Claude; correct passage fixture normalisation and assert exact
+request/focus identity. K6/v1 held; prior closures retained. No owner product/fixture edits.
+Temporary PG stopped; GPU worker stays off. Next review PR41; P09 and Windows console
+follow-up remain queued. No high-risk paths; request auto-merge and report disabled setting.
+Merge records the handoff, not source correction or freeze. Stop until submission merges.
