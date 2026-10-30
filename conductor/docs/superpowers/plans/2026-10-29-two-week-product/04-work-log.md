@@ -1537,3 +1537,30 @@ artifacts/ledger changed. Temporary PG stopped; GPU worker remains off. No priva
 connector/HTTP/deployment acceptance. P09 and Windows console follow-up remain queued.
 No high-risk paths; request auto-merge and report disabled setting. Merge records handoff,
 not source correction, contract freeze or release. Stop until this submission merges.
+
+### 30 October 2026 — Codex claim: KB-R5 snapshot correction re-review
+
+Reviewer Codex; correction owner Claude. Status IN_PROGRESS.
+Branch `codex/review-kb-snapshot-fix`; baseline `dfaaf6c` (PR45 merged).
+Scope: PR44 `b32a9d6`, consistent read snapshots for search/collections/passage/original/
+revision, exception cleanup and retained race regression. Owned paths: review artifacts/
+controls and ledger only. Next: run the independent two-connection repro, affected real DB
+suite and pre-fix source backtest; distinguish snapshot-bound core results from K6 delivery
+or K8 policy enforcement. GPU worker stays off; temporary loopback PG/synthetic data only.
+KB-R6/R7, P09 and Windows console follow-up remain separately owned/queued work.
+
+### 30 October 2026 — KB-R5 snapshot correction re-review handoff (Codex)
+
+Reviewer Codex; correction owner Claude. Status DONE for KB-R5 at reviewed scope.
+PR44 `b32a9d6`; baseline `dfaaf6c`. Branch `codex/review-kb-snapshot-fix`.
+Artifact `reviews/2026-10-30-codex-review-kb-snapshot-fix.md`; independent race retained and
+new rollback/reuse control. Whole-read repeatable snapshots pair scope/ACL/results/policy
+and digest; fresh reads see revocation. No new blocker in this correction.
+Checks (Windows Python 3.14.2 UTF-8 mode, isolated PostgreSQL 16.15): knowledge 39/39, no
+skips, 4.139 s. Independent default-connection race exit 0; archived pre-PR44 `0205e37` same
+probe expected exit 1. Fault after audit/revision rolls back audit, resets isolation and
+allows next read on same connection (exit 0). Whitespace passes. Temporary PG stopped and
+absent; GPU worker remains off. Review artifacts/ledger only, no product/source/fixture edit.
+Close KB-R5; keep KB-R6/R7 and K6 delivery/cache/connection ownership plus K8 enforcement
+open. No private/model/HTTP/connector/deployment acceptance or v1 freeze. P09/Windows console
+follow-up and supplied correction reviews remain queued. Merge records bounded closure.

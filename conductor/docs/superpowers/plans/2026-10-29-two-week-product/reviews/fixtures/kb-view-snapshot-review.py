@@ -69,7 +69,7 @@ try:
     if consistent_control:
         assert raced['viewRevision'] == before, 'consistent snapshot must retain the pre-revocation revision'
         assert not mislabeled
-    print(json.dumps({'case': 'revocation between candidates and revision', 'isolation': 'repeatable read' if consistent_control else isolation,
+    print(json.dumps({'case': 'revocation between candidates and revision', 'connection_default_isolation': isolation, 'explicit_snapshot_control': consistent_control,
                       'positive_control_contains_document': True, 'fresh_search_contains_document': False,
                       'raced_search_contains_document': retained,
                       'raced_revision_matches_current_revoked_view': raced['viewRevision'] == fresh['viewRevision'],
