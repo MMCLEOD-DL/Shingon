@@ -5,7 +5,7 @@
 ## Decision
 
 1. **Python for the knowledge service.**
-   - The spike is Python, and the next tasks are Python-first: Docling and OCRmyPDF (K5), local embeddings and the reranker (K3/K4).
+   - The spike is Python, and the next tasks are Python-first: Docling and an OCR engine (K5; OCRmyPDF is MPL-2.0 and would need a licence exception, see options §C), local embeddings and the reranker (K3/K4).
    - Conductor (Node) and Foundation apps (TypeScript) reach it over HTTP (K6), never by importing it, so a second language does not leak into either product.
    - **Cost:** a second toolchain in CI and on the box.
 2. **pg8000 (BSD-3-Clause) as the PostgreSQL driver**, not psycopg (LGPL-3.0). The repository's licence policy (`foundation/docs/LICENCES.md`) accepts only permissive licences unless the operator records an exception. pg8000 is pure Python, so it needs no native build.
