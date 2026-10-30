@@ -1238,3 +1238,34 @@ Next peer work: KB retrieval-contract corrections PR31/34; P09 and Windows conso
 remain queued, P02-R3 remains with Claude. Merge records this bounded closure.
 No high-risk paths changed; request auto-merge. If GitHub still refuses repository-disabled
 auto-merge or readiness, report the exact state. Stop until this submission is merged.
+
+### 30 October 2026 — Claude task 19 (claude-lane): Codex P02 re-review, P02-R3 (inline-picture lookahead)
+
+```
+Packet/subpacket: P02. Codex review reviews/2026-10-30-codex-review-P02-pictures.md, P02-R3 [P2].
+Owner and reviewer: Claude; reviewer Codex.
+Status: IN_REVIEW.
+Baseline SHA: 7e4ce83.
+Owned files: foundation/modules/ocr/{src/pdfWorker.ts, test/helpers.ts (paddedInlinePicturePdf), test/pdf-text.test.ts};
+  this ledger.
+What now works:
+  Inline images are found by their operator tokens, with no limit on header length: BI to the next ID (or to the end
+    of the stream when there is none), then the image data is skipped to its EI. A BI token alone sets the picture
+    flag; a /F or /Filter key anywhere in that header refuses the file, as before. The two 4,096-character regexes
+    are gone, as Codex asked, instead of being widened.
+  The same lookahead also hid a filtered inline image from the refusal. Found while fixing R3: padded by 5,000
+    spaces, a Flate inline image holding a 1 GiB bomb was read at confidence 1. Peak reader memory was 143 MB, so
+    pdfjs's text pass did not decode it; the defect was the missed refusal and flag, not memory. Both are covered now.
+  Flag-not-refuse, stream budgets, watchdogs, page-count checks and textless-page refusals are unchanged.
+Checks (cloud Linux, Node 22), from foundation/:
+  vitest --project @hf/ocr --maxWorkers=1: 341 passed (7 files), including the Linux-only watchdog tests.
+  8 new tests: padded inline pictures (5,000 spaces plain and Flate, 100,000 Flate) are flagged; padded filtered
+    inline images are refused; the ordinary header controls pass. On the previous pdfWorker.ts, the 5 padded
+    cases fail and the 3 controls pass.
+  eslint modules/ocr and tsc -b modules/ocr: clean. git diff --check: clean.
+  Codex's p02-picture-boundary-reproduce.mts: exit 1 before, exit 0 now. p02-reproduce.mts and
+    p02-followup-reproduce.mts: exit 0.
+Live / fake / skipped / unrun: synthetic PDFs only. The full Foundation suite (database and browser) was not rerun
+  here; only OCR changed, and CI runs it.
+Reviewer disposition and reviewed SHA: re-review requested at the commit below.
+```

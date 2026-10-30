@@ -30,10 +30,13 @@ const NOT_REGULAR = '\\0\\t\\n\\f\\r ()<>\\[\\]{}/%';
 const STREAM_KEYWORD = new RegExp(`(?<![^${NOT_REGULAR}])stream(?![^${NOT_REGULAR}])`, 'g');
 // The keyword "obj" as a token of its own ("endobj" is another token).
 const OBJ_KEYWORD = new RegExp(`(?<![^${NOT_REGULAR}])obj(?![^${NOT_REGULAR}])`, 'g');
-// An inline image ("BI … ID") whose data names a filter: pdfjs would decode it outside the budget.
-const INLINE_IMAGE_FILTER = /\bBI\b[^]{0,4096}?\/(?:F|Filter)\b[^]{0,4096}?\bID\b/;
-// Any inline image in a content stream. Text that merely reads "BI … ID" also matches: that only ever flags a PDF.
-const INLINE_IMAGE = /\bBI\b[^]{0,4096}?\bID\b/;
+// Inline images ("BI <header> ID <data> EI"), found by their operator tokens with no limit on the header's length
+// (Codex review P02-R3: ordinary whitespace once pushed the header past a fixed lookahead). Text that merely reads
+// "BI" also counts: that only ever flags a PDF.
+const BI_OPERATOR = new RegExp(`(?<![^${NOT_REGULAR}])BI(?![^${NOT_REGULAR}])`, 'g');
+const ID_OPERATOR = new RegExp(`(?<![^${NOT_REGULAR}])ID(?![^${NOT_REGULAR}])`, 'g');
+const EI_OPERATOR = new RegExp(`(?<![^${NOT_REGULAR}])EI(?![^${NOT_REGULAR}])`, 'g');
+const FILTER_KEY = new RegExp(`/(?:F|Filter)(?![^${NOT_REGULAR}])`);
 
 type Value =
   | { kind: 'name'; name: string }
@@ -249,6 +252,31 @@ function noteObjectStream(dict: Map<string, Value>, decoded: Buffer, tree: PageT
 }
 
 /**
+ * Whether a decoded content stream draws inline images, and whether any names a filter (pdfjs would decode that data
+ * outside the budget, so the caller refuses it). Each header runs from a BI token to the next ID token, or to the end
+ * of the stream when there is none. The image data after ID is skipped to its EI token, so bytes in it are not read
+ * as operators, and the scan reads each byte about once.
+ */
+function inlineImages(content: string): 'none' | 'unfiltered' | 'filtered' {
+  let found: 'none' | 'unfiltered' = 'none';
+  let from = 0;
+  for (;;) {
+    BI_OPERATOR.lastIndex = from;
+    const bi = BI_OPERATOR.exec(content);
+    if (!bi) return found;
+    found = 'unfiltered';
+    ID_OPERATOR.lastIndex = bi.index + 2;
+    const id = ID_OPERATOR.exec(content);
+    if (FILTER_KEY.test(content.slice(bi.index + 2, id ? id.index : content.length))) return 'filtered';
+    if (!id) return found;
+    EI_OPERATOR.lastIndex = id.index + 2;
+    const ei = EI_OPERATOR.exec(content);
+    if (!ei) return found;
+    from = ei.index + 2;
+  }
+}
+
+/**
  * Checks the raw PDF before pdfjs sees it — a cheap first line; the memory watchdogs in pdfChild.ts and pdfText.ts
  * are the backstop. Every object is read from its header ("4 0 obj"); a stream's top-level dictionary must have no
  * filter, /FlateDecode, /DCTDecode (JPEG pictures, which reading text never decodes) or [/FlateDecode /DCTDecode]
@@ -337,8 +365,9 @@ function scan(data: Uint8Array): { pages: number; pictures: boolean } | null {
       // pdfjs serves objects only from a stream with /First (an ICC profile's /N is a component count, not this).
       if (dict.has('/First') && !noteObjectStream(dict, decoded, tree)) return null;
     }
-    if (decoded && used.length < 2 && INLINE_IMAGE_FILTER.test(decoded.toString('latin1'))) return null;
-    if (decoded && INLINE_IMAGE.test(decoded.toString('latin1'))) pictures = true;
+    const inline = decoded ? inlineImages(decoded.toString('latin1')) : 'none';
+    if (inline === 'filtered' && used.length < 2) return null;
+    if (inline !== 'none') pictures = true;
   }
   // Any "stream" keyword this reading did not account for: pdfjs might find a stream we did not check.
   STREAM_KEYWORD.lastIndex = 0;

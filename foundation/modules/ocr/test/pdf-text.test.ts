@@ -6,7 +6,7 @@ import { createLocalEngine, readReceipt, UnreadableError, type OcrEngine } from 
 import { CONFIDENT } from '@hf/shared';
 import { readPdfText, PARTLY_SCANNED_PDF, PDF_MEMORY_CEILING, PDF_PICTURE_WARNING, TOO_MANY_PAGES_PDF, type PdfReadOptions } from '../src/pdfText.js';
 import {
-  blankPagePdf, bookmarkedPdf, bypassBombs, scannerFooterPdf, textWithPicturePdf, formFeedPdf, mixedPdf, modernPdf, n4Bomb, pdfBomb, pdfWithContent, predictorBomb, textPdf, treePdf, trickyBombs, untypedHiddenPagePdf,
+  blankPagePdf, bookmarkedPdf, bypassBombs, scannerFooterPdf, textWithPicturePdf, formFeedPdf, mixedPdf, modernPdf, n4Bomb, pdfBomb, pdfWithContent, predictorBomb, textPdf, treePdf, trickyBombs, untypedHiddenPagePdf, paddedInlinePicturePdf,
 } from './helpers.js';
 
 let engine: OcrEngine;
@@ -88,6 +88,28 @@ describe('a PDF is read whole or not at all', () => {
     expect(r.warnings).toEqual([PDF_PICTURE_WARNING]);
     const p = readReceipt(r, '2026-10-30');
     for (const f of [p.amountPence, p.vatPence, p.date, p.merchant]) if (f) expect(f.confidence).toBeLessThan(CONFIDENT);
+  });
+
+  // Codex review P02-R3: an inline image is found by its BI token however long its header is.
+  test.each([
+    ['an ordinary header', { padding: 0 }],
+    ['5,000 spaces after BI', { padding: 5000 }],
+    ['5,000 spaces after BI, in a Flate content stream', { padding: 5000, flate: true }],
+    ['100,000 spaces after BI, in a Flate content stream', { padding: 100_000, flate: true }],
+  ])('an inline picture with %s is flagged, every field below CONFIDENT', async (_label, opts) => {
+    const r = await read4(paddedInlinePicturePdf(opts));
+    expect(r.lines.map((l) => l.text)).toEqual(['Total GBP 10.00']);
+    expect(r.lines.every((l) => l.confidence < CONFIDENT)).toBe(true);
+    expect(r.warnings).toEqual([PDF_PICTURE_WARNING]);
+    expect(readReceipt(r, '2026-10-30').amountPence?.confidence).toBeLessThan(CONFIDENT);
+  });
+
+  test.each([
+    ['an ordinary header', { padding: 0 }],
+    ['5,000 spaces after BI', { padding: 5000 }],
+    ['5,000 spaces after BI, in a Flate content stream', { padding: 5000, flate: true }],
+  ])('an inline picture whose data names a filter is refused, with %s', async (_label, opts) => {
+    await expect(read4(paddedInlinePicturePdf({ ...opts, filtered: true }))).rejects.toMatchObject({ userMessage: UNOPENABLE });
   });
 
   test('a text PDF with no picture is still confident and carries no warning', async () => {
