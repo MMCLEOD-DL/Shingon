@@ -906,3 +906,23 @@ stale-report gap without approval/landing; source HEAD/index/files unchanged. De
 screenshots inspected; no axe/full accessibility or live model acceptance claim.
 No UI/UX/service/dependency/CI/gate edits; Claude owns corrections and normal regression tests.
 Next independent Codex work after this submission merges: P06 wider research/P09 assessment.
+
+### Codex task submitted — P04 operator UI and N6 review
+
+- Date: 30 October 2026. Branch `codex/review-operator-ui`; baseline `bee4ae1`.
+- Final review/reproducer commit: `de5f5875cd6ab7057f3fcfb4a3798af4f87cfde6`.
+- PR: [#26 — Review P04: reproduce clipped diffs and stale test evidence at approval](https://github.com/MMCLEOD-DL/Shingon/pull/26).
+- Review complete; P04 CHANGES_REQUESTED for clipped-diff approval and same-commit stale
+  passed-test evidence. Claude owns UI corrections. Examined N6 recovery behaviour passes.
+- Windows/Node24.12.0: UI 54 PASS/build PASS; unchanged browser journey 19 PASS with
+  Playwright1.64.1 + explicit system Edge156.0.4314.50 override. Extra DOM 2 expected FAIL /
+  1 positive PASS; real browser/service/Git stale-evidence reproduction expected exit1.
+  Current failed report, stale green UI and enabled approval independently confirmed;
+  no approval/landing, source HEAD/index/files unchanged. Syntax and diff checks PASS.
+- Review paths/ledger only; no UI/UX/service/dependency/CI/gate/model/private/live changes.
+  Full suites/live acceptance and axe are not claimed. Hosted CI is separate evidence and
+  cannot close the intentionally reproduced findings.
+- Merge route: no high-risk path; mark ready after local checks and request existing
+  auto-merge policy, reporting disabled setting without changing repository/approval rules.
+- Next action: Claude corrects and supplies exact pins for re-review. After this submission
+  merges, Codex takes broader P06 research/P09 assessment. No new packet before merge.
