@@ -13,14 +13,15 @@ Permission-filtered, versioned, cited document retrieval for Conductor (referenc
 - an audit trail that stores query hashes, not query text.
 - the contract's wire shapes and checks (`contract.py`), with the v1 fixture set in [`contract/kb-contract-v1.json`](contract/kb-contract-v1.json) (retrieval-contract.md §10–11);
 - the HTTP API (`http.py`, K6) with its credentials (`auth.py`): see [The HTTP API](#the-http-api-k6) and [Credentials](#credentials-k6);
-- a local MCP adapter over that API for coding sessions (`mcp.py`, K7): see [MCP](#mcp-k7).
+- a local MCP adapter over that API for coding sessions (`mcp.py`, K7): see [MCP](#mcp-k7);
+- backups, restore and an automated restore drill (`backup.py`, K9): see [Backups](#backups-k9).
 
 **Not yet:**
 - vector and hybrid retrieval (K3) and a calibrated reranker (K4);
 - Docling/OCR parsing in an isolated worker (K5);
 - a remote (HTTP, OAuth) MCP adapter: the local STDIO one exists (K7), the remote one waits for hosting (D4);
 - the Conductor evidence step (K8);
-- backups (K9).
+- point-in-time recovery (pgBackRest), off-box copies and encryption of backups: they wait on hosting (D4).
 
 There is no Library of Babel data here, and none may be committed. The tests use the synthetic corpus in `tests/fixtures/`.
 
@@ -42,6 +43,7 @@ TEST_DATABASE_URL=postgres://user:pass@127.0.0.1:5432/postgres python -m unittes
 - **Credential refusal** (secrets in files) and migration idempotence.
 - **Credentials** (`test_auth.py`): what each kind of token reaches, and every way a request can fail to prove who it is.
 - **MCP** (`test_mcp.py`): both protocol eras, the evidence blocks, and the real adapter process over a real K6 server giving the API's answers. `tests/conformance/mcp_schema_check.py` (needs `jsonschema`, so not in CI) checks every kind of message against the published schemas.
+- **Backups** (`test_backup.py`): a drill that reproduces every caller's view and the 25 labelled questions; a restore that serves the same originals from its own folder only; and the refusals: a changed dump or original, a missing or altered original at backup time, a database or folder in use. A backup writes no audit rows and keeps the password off the command line.
 - **HTTP** (`test_http.py`): path decoding, delivery-time re-authorisation of originals, refusing to send a body that breaks the contract, outages, transport limits, the bind rule and the command line. The contract fixtures themselves are produced over HTTP.
 - **Contract fixtures:** the generated fixtures are produced again in a fresh database and must match the committed file exactly, and every fixture is checked against the wire shape. After an intended change, regenerate with `KB_WRITE_FIXTURES=1` (see `tests/test_contract_fixtures.py`) and review the diff.
 
@@ -95,6 +97,44 @@ Two kinds, each bound to one tenant (retrieval-contract.md §2). A token is `kb1
 `auth.authenticate()` turns the two headers into a `Credential`, or raises `Unauthenticated`. Every refusal is the same 401 to the caller; the reason is for the server's log only. `auth.revoke()` takes effect on the next request.
 
 The assertion key is stored as issued, because the service must check signatures with it. A copy of the database therefore lets someone forge assertions, but not call the service: that still needs a token, which is stored only as a hash.
+
+## Backups (K9)
+
+```
+export KB_DATABASE_URL=postgres://...       # the live database: backup reads it, restore writes into it
+python -m shingon_knowledge backup --originals /path/to/originals --out /path/to/backups [--questions check.json]
+python -m shingon_knowledge restore /path/to/backups/kb-<time> --originals /new/originals    # into an empty database
+export KB_DRILL_DATABASE_URL=postgres://...  # a role that may CREATE DATABASE, ideally on a scratch host
+python -m shingon_knowledge drill /path/to/backups/kb-<time>    # prints a JSON report; exit 0 only on pass
+```
+
+The client tools `pg_dump` and `pg_restore` (PostgreSQL 16 or later) must be on `PATH`, or in the folder named by `KB_PG_BIN`. The password reaches them through the environment, never the command line.
+
+**A backup** is a new folder, `kb-<UTC time>/`:
+- `database.dump`: `pg_dump` custom format;
+- `originals/`: the stored originals, at their paths under the originals folder;
+- `manifest.json`: the hashes of both, the migrations, row counts, and fingerprints.
+
+Everything is read from one database snapshot. Each original must match the sha256 recorded when it was imported, or the backup fails. A failed backup exits non-zero and leaves only a `kb-<time>.partial` folder, so it never looks complete. Originals of deleted sources awaiting removal are not copied. A sync that deletes a document while a backup runs can make the backup fail (its original was removed after the snapshot): schedule backups away from syncs, and run again if one fails.
+
+**The fingerprints** are what a restore must reproduce for every caller:
+- each tenant principal's and each active project token's `viewRevision`;
+- the results of the check questions, if `--questions` was given.
+
+A check-questions file is `{"questions": [{"id", "as": {"tenant", "principal"} or {"credential": "<project token name>"}, "query"}]}`. The questions are kept in the manifest so the drill needs nothing else. Use operator-written questions only, never queries copied from users. Running them writes no audit rows.
+
+**A restore** refuses a non-empty database or originals folder, and checks every hash before it changes anything. `pg_restore` runs in one transaction. The stored paths are then rewritten to the new folder, including those awaiting removal, so the restored service never touches the old deployment's files. A failed restore removes the originals it copied. Tokens and app credentials keep working, because their hashes and keys are restored.
+
+**The drill** restores into a scratch database and a temporary folder. It then checks:
+- migrations;
+- row counts;
+- every original against its import hash;
+- every caller's view revision;
+- every check question's results.
+
+It drops the scratch database whatever the outcome, and reports how long the restore took. Run it monthly with the operator's scheduler (cron, or Task Scheduler on Windows); the service does not schedule itself. A failing drill means the backups cannot be trusted until it passes.
+
+**Protect a backup like the database.** It holds every document, the token hashes, and the app credentials' assertion keys, which allow forging user assertions. On POSIX the backup folder is created owner-only. On Windows, give the backups folder an ACL for the service account only. Keep backups and the scratch host on the same footing as the live database. Encryption and off-box copies wait on hosting (D4). Nothing here deletes old backups: retention is the operator's choice.
 
 ## Decisions
 

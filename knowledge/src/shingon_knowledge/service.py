@@ -304,7 +304,7 @@ class KnowledgeService:
         with self._snapshot():
             return self._search(cred, query, limit, collections, superseded_weight)
 
-    def _search(self, cred, query, limit, collections, superseded_weight) -> dict:
+    def _search(self, cred, query, limit, collections, superseded_weight, audit=True) -> dict:
         allowed, groups = self._scope(cred)
         scope = list(allowed)
         if collections is not None:
@@ -344,8 +344,9 @@ class KnowledgeService:
         } for i, r in enumerate(rows)]
         top = results[0]['scores']['keyword'] if results else 0.0
         evidence = 'strong' if top >= STRONG else 'weak' if top >= WEAK else 'none'
-        self.db.execute('INSERT INTO audit (credential, principal, collections, result_sources, query_sha256) VALUES (%s,%s,%s::text[],%s::bigint[],%s)',
-                        (cred.name, cred.principal, allowed, [r[1] for r in rows], hashlib.sha256(query.encode()).hexdigest()))
+        if audit:  # off only for the backup's own check questions (backup.py), which are not a caller's reads
+            self.db.execute('INSERT INTO audit (credential, principal, collections, result_sources, query_sha256) VALUES (%s,%s,%s::text[],%s::bigint[],%s)',
+                            (cred.name, cred.principal, allowed, [r[1] for r in rows], hashlib.sha256(query.encode()).hexdigest()))
         return {'viewRevision': self._revision(scope, groups, cred), 'evidence': evidence, 'results': results, 'ms': ms}
 
     def view_revision(self, cred: Credential) -> str:
