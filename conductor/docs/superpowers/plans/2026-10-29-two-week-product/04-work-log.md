@@ -1493,3 +1493,30 @@ request/focus identity. K6/v1 held; prior closures retained. No owner product/fi
 Temporary PG stopped; GPU worker stays off. Next review PR41; P09 and Windows console
 follow-up remain queued. No high-risk paths; request auto-merge and report disabled setting.
 Merge records the handoff, not source correction or freeze. Stop until submission merges.
+
+### 30 October 2026 — Claude task 23 (claude-lane): one snapshot per read (KB-R5)
+
+```
+Packet/subpacket: K-track contract. Codex review reviews/2026-10-30-codex-review-view-revision.md, KB-R5 [P1].
+Owner and reviewer: Claude; reviewer Codex.
+Status: IN_REVIEW.
+Baseline SHA: 0205e37.
+Owned files: knowledge/src/shingon_knowledge/service.py; knowledge/tests/test_reference_privacy.py;
+  conductor/docs/knowledge-base/retrieval-contract.md (§8); this ledger.
+What now works:
+  search, collections, passage, original and view_revision each run in one REPEATABLE READ transaction (_snapshot).
+    Scope, group membership, candidates, visible references, versions, destinations and the returned viewRevision all
+    come from the same snapshot; the revision reuses the scope that snapshot read instead of reading it again.
+  A revocation or replacement committed between a read's statements leaves that answer wholly before the change,
+    with the old revision; the next read is wholly after it. The audit insert is the only write and cannot conflict,
+    so there is no retry. An error rolls back the whole read, audit row included.
+Checks (cloud Linux, Python 3.13 unittest, PostgreSQL 16 throwaway), from knowledge/:
+  python3 -m unittest discover -s tests: 39 passed.
+  3 new two-connection regressions, each with a second connection committing between this read's statements:
+    revocation mid-search, document replacement mid-search, revocation mid-collections and mid-passage. All 3 fail on
+    the previous service.py. Hidden-change invariance and destination-change tests still pass.
+  Codex's kb-view-snapshot-review.py: REPRODUCED on main (0205e37), NOT_REPRODUCED (exit 0) with this change.
+Next: KB-R6 (the passage fixture's request id differs from its focus id), a separate task.
+Live / fake / skipped / unrun: real PostgreSQL with the synthetic corpus; no HTTP layer or cache exists yet.
+Reviewer disposition and reviewed SHA: re-review requested at the commit below.
+```
