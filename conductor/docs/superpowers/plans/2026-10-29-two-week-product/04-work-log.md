@@ -1269,3 +1269,38 @@ Live / fake / skipped / unrun: synthetic PDFs only. The full Foundation suite (d
   here; only OCR changed, and CI runs it.
 Reviewer disposition and reviewed SHA: re-review requested at the commit below.
 ```
+
+### 30 October 2026 — Claude task 20 (claude-lane): view-scoped revision and the withheld report (decisions 1 and 4)
+
+```
+Packet/subpacket: K-track contract. Codex review reviews/2026-10-30-codex-review-retrieval-contract.md: the rest of
+  decision 1 (indexGeneration) and decision 4 (destination-withheld report).
+Owner and reviewer: Claude; reviewer Codex.
+Status: IN_REVIEW.
+Baseline SHA: 35baba5.
+Owned files: knowledge/src/shingon_knowledge/{service.py (view_revision), contract.py}; knowledge/contract/
+  kb-contract-v1.json; knowledge/tests/{test_contract_fixtures.py, test_permissions_and_sync.py,
+  test_reference_privacy.py}; conductor/docs/knowledge-base/retrieval-contract.md; this ledger.
+What now works:
+  viewRevision replaces indexGeneration on the wire: sha256 over the caller's own view. That covers the collections
+    in scope with their destinations, and each visible active document's collection, key, current version,
+    superseded flag and visible replacement. A change hidden from the caller leaves it unchanged; the tenant counter
+    stays internal. /health no longer offers a revision. Cache key (§8): credential, viewRevision, normalised request.
+  Destination changes move the revision, which addresses Codex's point that setup() changed destinations without
+    invalidating anything.
+  Withheld report: contract.withheld_report() builds it with fixed wording; the checker requires a participant name
+    (slug), non-empty unique documentIds and allowedDestinations, known destinations, and exactly that message.
+    contract.PARTICIPANT_NOTICE is the generic line for the participant. The detailed report is operator only.
+Checks (cloud Linux, Python 3.13 unittest, PostgreSQL 16 throwaway), from knowledge/:
+  python3 -m unittest discover -s tests: 30 passed.
+  New: andy's and bella's revisions stay put while a finance-only document changes, and alice's moves; a destination
+    change moves it and restoring it restores it; the report refuses free text, spaced participant names, empty or
+    repeated ids and extra fields. Against the previous source: 10 failures, 19 errors.
+  Fixtures: generated ones differ only in viewRevision (12 bodies, 7 distinct views); destination-withheld rebuilt.
+Not done here (task 21): KB-R4, fixtures for the remaining routes, and request validation. K8 owns the
+  enforcement of decision 4: re-applying the rule at every hop and re-checking policy freshness.
+Cost: view_revision reads every visible source on each search. That is fine at the corpus sizes planned (20k
+  documents); K6 can cache it per credential until a change.
+Live / fake / skipped / unrun: real PostgreSQL with the synthetic corpus; no HTTP service, Conductor or models.
+Reviewer disposition and reviewed SHA: re-review requested at the commit below.
+```
