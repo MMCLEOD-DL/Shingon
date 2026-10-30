@@ -9,9 +9,9 @@ from pathlib import Path
 from shingon_knowledge import NotFound, ScopeError, find_secret, parse, ImportProblem
 from shingon_knowledge.db import migrate
 
-from support import CORPUS, FIXTURES, Oracle, ServiceTestCase
+from support import COLLECTIONS, CORPUS, FIXTURES, Oracle, ServiceTestCase
 
-QUESTIONS = json.loads((FIXTURES / 'questions.json').read_text())['questions']
+QUESTIONS = json.loads((FIXTURES / 'questions.json').read_text(encoding='utf-8'))['questions']
 
 
 class PermissionsSyncDeletion(ServiceTestCase):
@@ -34,13 +34,13 @@ class PermissionsSyncDeletion(ServiceTestCase):
         oracle = Oracle(m)
         v1 = {'acme/expenses-policy.docx': CORPUS / 'acme/_v1-expenses-policy.docx'}
 
-        first = kb.sync('run-1', CORPUS, m['sources'], files=v1)
+        first = kb.sync('run-1', CORPUS, m['sources'], files=v1, complete=COLLECTIONS)
         self.assertEqual(first, {'added': 8, 'updated': 0, 'unchanged': 0, 'deleted': 0, 'failed': 3, 'acl': 0})
         r = kb.search(c['alice'], 'mileage rate pence per mile own car')
         exp = [x for x in r['results'] if x['documentId'] == 'acme/expenses-policy.docx']
         self.assertTrue(exp and exp[0]['versionId'] == 1 and '45 pence' in exp[0]['excerpt'], 'version 1 indexed first')
 
-        second = kb.sync('run-2', CORPUS, m['sources'])
+        second = kb.sync('run-2', CORPUS, m['sources'], complete=COLLECTIONS)
         self.assertEqual(second['updated'], 1)
         sid = kb.db.execute("SELECT id FROM sources WHERE key = 'acme/expenses-policy.docx'").fetchone()[0]
         self.assertEqual(kb.db.execute('SELECT count(*) FROM chunks WHERE source_id = %s AND version = 1', (sid,)).fetchone()[0], 0,
@@ -48,7 +48,7 @@ class PermissionsSyncDeletion(ServiceTestCase):
 
         count = "SELECT (SELECT count(*) FROM sources), (SELECT count(*) FROM chunks), (SELECT count(*) FROM versions)"
         before = kb.db.execute(count).fetchone()
-        third = kb.sync('run-3', CORPUS, m['sources'])
+        third = kb.sync('run-3', CORPUS, m['sources'], complete=COLLECTIONS)
         self.assertEqual(kb.db.execute(count).fetchone(), before, 'repeat import changes nothing')
         self.assertEqual((third['added'], third['updated'], third['deleted']), (0, 0, 0))
 
@@ -85,7 +85,7 @@ class PermissionsSyncDeletion(ServiceTestCase):
 
         m2 = copy.deepcopy(m)
         next(s for s in m2['sources'] if s['key'] == 'acme/salary-bands.docx')['acl'] = {'principals': ['andy']}
-        s4 = kb.sync('run-4', CORPUS, m2['sources'])
+        s4 = kb.sync('run-4', CORPUS, m2['sources'], complete=COLLECTIONS)
         oracle.m = m2 | {'tenants': oracle.m['tenants']}
         self.assertEqual((s4['acl'], s4['updated']), (1, 0), 'source ACL change applied without re-parsing')
         self.assertNotEqual(kb.search(c['andy'], 'salary band Senior Analyst')['evidence'], 'none')
@@ -93,7 +93,7 @@ class PermissionsSyncDeletion(ServiceTestCase):
 
         m3 = copy.deepcopy(m2)
         m3['sources'] = [s for s in m3['sources'] if s['key'] != 'acme/travel-policy-2025.pdf']
-        s5 = kb.sync('run-5', CORPUS, m3['sources'])
+        s5 = kb.sync('run-5', CORPUS, m3['sources'], complete=COLLECTIONS)
         oracle.deleted.add('acme/travel-policy-2025.pdf')
         sid = kb.db.execute("SELECT id FROM sources WHERE key = 'acme/travel-policy-2025.pdf'").fetchone()[0]
         self.assertEqual(s5['deleted'], 1)
@@ -120,7 +120,7 @@ class CredentialsAreNeverIndexed(unittest.TestCase):
         key = '-----BEGIN ' + 'OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END ' + 'OPENSSH PRIVATE KEY-----'
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / 'deploy-notes.md'
-            p.write_text(f'# Deploy notes\n\n## Access\n\n{key}\n')
+            p.write_text(f'# Deploy notes\n\n## Access\n\n{key}\n', encoding='utf-8')
             with self.assertRaises(ImportProblem) as e:
                 parse(p)
             self.assertIn('appears to contain a private key', str(e.exception))
@@ -134,3 +134,46 @@ class CredentialsAreNeverIndexed(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class AuthoritativeListings(ServiceTestCase):
+    """Codex review decision 2: only a listing read in full deletes, and then even the last document goes."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.kb.sync('run-1', CORPUS, cls.manifest['sources'], complete=COLLECTIONS)
+
+    def counts(self):
+        return {c['collectionId']: c['documents'] for who in ('alice', 'bella', 'conductor')
+                for c in self.kb.collections(self.creds[who])['collections']}
+
+    def test_a_complete_empty_listing_removes_the_last_document(self):
+        before = self.kb.search(self.creds['bella'], 'mileage pence per mile')
+        self.assertEqual(before['results'][0]['documentId'], 'birch/staff-handbook.md')
+        out = self.kb.sync('run-2', CORPUS, [], complete=['birch-handbook'])
+        self.assertEqual(out['deleted'], 1)
+        after = self.kb.search(self.creds['bella'], 'mileage pence per mile')
+        self.assertEqual((after['results'], after['evidence']), ([], 'none'))
+        self.assertNotEqual(after['viewRevision'], before['viewRevision'])
+        self.assertEqual(self.kb.collections(self.creds['bella'])['collections'][0]['documents'], 0)
+        with self.assertRaises(NotFound):
+            self.kb.original(self.creds['bella'], 'birch-handbook', 'birch/staff-handbook.md', 1)
+        self.assertIn('deleted', [e['outcome'] for e in self.kb.import_status('run-2')])
+
+    def test_a_listing_not_named_complete_deletes_nothing(self):
+        before = self.counts()
+        one = [s for s in self.manifest['sources'] if s['key'] == 'acme/budget-2026.xlsx']
+        self.assertEqual(self.kb.sync('run-3', CORPUS, one, complete=[])['deleted'], 0)
+        # A failed read upstream must reach sync as "nothing complete", never as an empty complete listing.
+        self.assertEqual(self.kb.sync('run-4', CORPUS, [], complete=[])['deleted'], 0)
+        self.assertEqual(self.counts(), before)
+
+    def test_complete_must_name_declared_collections_once(self):
+        before = self.counts()
+        for bad in (['no-such-collection'], ['standards', 'standards']):
+            with self.subTest(complete=bad), self.assertRaises(ValueError):
+                self.kb.sync('run-5', CORPUS, [], complete=bad)
+        with self.assertRaises(TypeError):
+            self.kb.sync('run-6', CORPUS, [])  # pylint: disable=missing-kwoa
+        self.assertEqual(self.counts(), before)

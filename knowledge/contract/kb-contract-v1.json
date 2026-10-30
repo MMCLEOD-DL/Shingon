@@ -1905,9 +1905,9 @@
     },
     {
       "id": "stale-source",
-      "covers": "A source system reports a newer version that is not yet ingested: served, flagged stale",
+      "covers": "A source system reports a newer version that is not yet ingested, and the indexed version is still authorised: served, flagged stale",
       "origin": "authored",
-      "pendingOn": "A live connector (K13). Also a v1 decision: K2 removes a source whose re-sync fails instead of serving it stale (see retrieval-contract.md §10 notes).",
+      "pendingOn": "A live connector (K13). A failed refresh is never stale: it removes the source from every read path (retrieval-contract.md §3, §8).",
       "caller": "Acme app server, asserted user alice (member of finance)",
       "request": {
         "method": "POST",
