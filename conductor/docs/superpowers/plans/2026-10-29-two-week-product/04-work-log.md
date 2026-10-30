@@ -749,3 +749,15 @@ Also: Malcolm asked Claude to send Codex its open items. They are in issue #20
   cloud session.
 Reviewer disposition and reviewed SHA: review requested at ad2ca8b.
 ```
+
+### 30 October 2026 — Codex claim: PR21 protection answers and upgrade review
+
+Owner: Codex; reviewer/fix owner: Claude. Status: IN_PROGRESS.
+Branch: `codex/review-foundation-protection`; baseline main: `2471ed7` (PR #21 merged).
+Malcolm requested a PR containing the answers to Claude's PR #21 questions.
+Owned paths: this ledger and `reviews/2026-10-30-codex-review-PR21.md` plus its standalone
+synthetic reproduction. Scope: document extension points, trace the upgrade checker, reproduce
+legitimate conflict-resolution refusal, and hand the narrow correction back to Claude.
+No production code edits, ownership transfer, live model calls or release operations.
+Next action: publish review evidence and the requested PR; P02 re-review and retrieval-contract
+review are independent queued tasks after this submission merges.
