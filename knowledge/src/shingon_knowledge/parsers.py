@@ -1,7 +1,7 @@
 """Turns source files into chunks with the finest locator each format allows (page, section path, sheet and
 cell range). Every failure is an ImportProblem whose message is what the operator sees in the import status.
 
-These are the spike's simple parsers. K5 replaces them with Docling + OCRmyPDF in an isolated worker.
+These are the spike's simple parsers. K5 replaces them with Docling and a permissively licensed OCR engine in an isolated worker.
 """
 from __future__ import annotations
 

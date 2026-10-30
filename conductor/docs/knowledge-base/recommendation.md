@@ -1,6 +1,6 @@
 # Knowledge-base recommendation
 
-**Packet:** P06, required output 2. **Status:** recommendation for review by Codex and decision by Malcolm. Nothing here is implemented beyond the evaluation spike. Inputs: [inventory](inventory.md), [options](options.md), [evaluation](evaluation.md), [contract](retrieval-contract.md), [migration plan](migration-plan.md).
+**Packet:** P06, required output 2. **Status:** written 29 October 2026, before any implementation; D1, D2 and D5 are now accepted ([ADR 0001](adr-0001-kb-service-stack.md)) and K2 is the `knowledge/` skeleton. Corrected 30 October after Codex's research review (P06-R1–R4). Inputs: [inventory](inventory.md), [options](options.md), [evaluation](evaluation.md), [contract](retrieval-contract.md), [migration plan](migration-plan.md).
 
 ## Decisions requested
 
@@ -9,7 +9,7 @@
 | # | Decision | Recommendation | Main alternative |
 |---|---|---|---|
 | D1 | Personal vs company | **Two separate deployments with separate credentials.** Babel stays personal; the company KB is new. | Collections or tenants inside Babel: rejected, because Babel has one identity and only a private flag ([inventory §2](inventory.md#2-data-model-documented-unless-marked)) |
-| D2 | Company KB architecture | **Composable: PostgreSQL + pgvector + filesystem originals + Docling/OCRmyPDF + local embeddings and reranker + our read-only API, with MCP as a thin adapter** | Onyx Business, if M365/Google permission sync is needed before we can build and test it (get a price first) |
+| D2 | Company KB architecture | **Composable: PostgreSQL + pgvector + filesystem originals + Docling with a permissively licensed OCR engine + local embeddings and reranker + our read-only API, with MCP as a thin adapter** | Onyx Business, if M365/Google permission sync is needed before we can build and test it (get a price first) |
 | D3 | Client runtime knowledge | **The same service deployed per client** on the client's box/hosting, through a Foundation `knowledge` module, only when a brief needs it | Azure AI Search UK South, for a client already on Azure who pays for it |
 | D4 | Hosting of the company KB | **One UK-located box Malcolm controls** (existing server or a UK VPS), private network only, with off-box backups | Managed cloud (see D2 alternative) |
 | D5 | First integration | **Read-only reference knowledge for Conductor** (Foundation and Conductor docs, standards), behind a flag | Starting with client data: rejected, as it crosses the client-data boundary first |
@@ -18,7 +18,7 @@
 
 **For it:**
 - **The work that matters cannot be bought off the shelf at this size.** No option meets R1 (permissions enforced before retrieval, per client, including on originals and caches) without either trusting a vendor's permission layer or building one. Onyx's version is proprietary and paid, and had a cross-group disclosure advisory in July 2026. Azure's is preview. AWS documents its user context as "filtering, not authentication" ([options §A–B](options.md)). The spike showed that a small, inspectable permission layer can pass an oracle-checked sweep with 0 unauthorised results ([evaluation](evaluation.md)). We also need that test whichever product we pick.
-- **It reuses what Shingon already runs and tests.** Foundation is PostgreSQL. Babel is PostgreSQL + pgvector + nomic-embed-text. All candidate libraries are permissive: pgvector PostgreSQL licence, Docling MIT, OCRmyPDF MPL-2.0, reranker Apache-2.0.
+- **It reuses what Shingon already runs and tests.** Foundation is PostgreSQL. Babel is PostgreSQL + pgvector + nomic-embed-text. The core libraries are permissive: pgvector PostgreSQL licence, Docling MIT, reranker Apache-2.0. OCR needs care: OCRmyPDF is MPL-2.0, a file-level copyleft licence that the repository's licence policy rejects without a recorded operator exception. Docling's own OCR engines (EasyOCR and RapidOCR Apache-2.0, tesserocr MIT, from PyPI) avoid the exception. Model weights and native libraries have their own licences and are checked when K5 pins its dependency set ([options §C](options.md#c-composable-self-hosted-stack)).
 - **It is the lightest runtime.** One PostgreSQL plus a worker, versus OpenSearch/Elasticsearch-based products that need 10–16 GB. A separate search engine is not justified at ~400k chunks ([options §C](options.md#c-composable-self-hosted-stack)).
 - **Exports are plain SQL plus original files.** Nothing is locked into a proprietary index.
 
@@ -31,7 +31,7 @@
 
 ```
  sources ──► import worker (sandboxed, no network) ──► originals store (filesystem, per-tenant dirs, sha256)
-  drag/drop      Docling (+ OCRmyPDF for scans)         │
+  drag/drop      Docling (+ its OCR engine for scans)   │
   folders        chunk + locator (page/section/cell)    ▼
   git repos      embed (nomic-embed-text v1.5, 768-d)  PostgreSQL 16+: tenants, principals, groups,
   [later: Graph/  instruction-like flag                 collections, sources, versions, chunks (ACL cols,
@@ -44,7 +44,8 @@
           Claude Code / Codex
 ```
 
-- **Isolation.** One tenant per client plus a `company` tenant for reference knowledge. Credentials are bound to a tenant; ACL columns live on every chunk. RLS with `FORCE ROW LEVEL SECURITY` sits under a non-owner API role as defence in depth.
+- **Isolation.** One tenant per client plus a `company` tenant for reference knowledge. Credentials are bound to a tenant; ACL columns live on every chunk. RLS sits under the API role as defence in depth. That role must not own the tables and must be `NOSUPERUSER NOBYPASSRLS`: superusers and `BYPASSRLS` roles skip RLS whatever `FORCE ROW LEVEL SECURITY` says, and FORCE only binds the owner. Migrations run under a separate role. RLS acceptance checks the effective role and that a denied row stays denied.
+- **Vector index and "never scored".** A shared approximate (HNSW) index walks a graph that includes vectors the caller may not see, and filters by ACL afterwards. That computes distances for unauthorised chunks, which the contract (§1 item 3) forbids. So a shared HNSW index is conditional on K3 resolving this: indexes partitioned so a walk stays within what one caller may see, or an exact search over the authorised rows only, with the query plan, recall and the security boundary all tested. Partitioning by tenant does not cover per-document ACLs within a tenant.
 - **BM25.** Stay on native full-text until the hybrid experiment says otherwise. pg_textsearch needs PG 17+ and its statistics cross permission boundaries. ParadeDB and VectorChord are AGPL.
 - **Parser isolation.** The import worker runs as its own user/container with no network and resource limits, the same posture as Foundation's PDF reader process. Parsing untrusted files is the riskiest code path.
 - **Backups.** Nightly `pg_dump` (v0), then pgBackRest PITR. Originals are copied off-box. A restore drill runs monthly (K9).
@@ -65,8 +66,8 @@ Re-platforming Babel onto the company stack later is possible because the stack 
 | Item | Composable (recommended) | Managed alternative for comparison |
 |---|---|---|
 | Hosting | Existing UK server: marginal power only; or a UK VPS (8 vCPU/32 GB): price **not verified** in this research | Azure AI Search Basic ~£55–60/mo, ~2× with SLA [U]; Bedrock Managed KB ~£21–26/mo [F] |
-| Parsing 200k pages | Local CPU time (Docling/OCRmyPDF); £0 cash; hours to days, **unmeasured** | ~$300–2,000 one-off (Google/AWS list prices) [F] |
-| Licences | £0 (all permissive) | Onyx Business: price unseen |
+| Parsing 200k pages | Local CPU time (Docling and its OCR engine); £0 cash; hours to days, **unmeasured** | ~$300–2,000 one-off (Google/AWS list prices) [F] |
+| Licences | £0, provided K5's OCR engine and models are permissive; OCRmyPDF would need a recorded licence exception (MPL-2.0) | Onyx Business: price unseen |
 | People time | Build K2–K9: largest cost; mitigated by the spike and a small contract | Integration + permission testing still needed |
 
 ## Security summary

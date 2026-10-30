@@ -79,7 +79,7 @@ Vendor sites (docs.onyx.app, ragflow.io, docs.dify.ai and others) were blocked, 
    - Azure UK South and Bedrock London fit `uk`.
    - Google's EU option excludes the UK.
    - M365 semantic-index processing may happen in the US for UK tenants.
-3. **Cost at this scale is dominated by one-off parsing**, not storage or queries. That favours parsing on the box (Docling/OCRmyPDF) even with a managed index.
+3. **Cost at this scale is dominated by one-off parsing**, not storage or queries. That favours parsing on the box (Docling and its OCR engine) even with a managed index.
 4. Managed services are attractive for a **client already on Azure or AWS**, where the client pays and owns the subscription. They are a poor fit for Malcolm's own personal and company KB, which would add per-client cloud accounts and lock-in for little gain at ~20k documents.
 
 ## C. Composable self-hosted stack
@@ -89,13 +89,14 @@ Vendor sites (docs.onyx.app, ragflow.io, docs.dify.ai and others) were blocked, 
   - pgvector 0.8.7 (2026-10-01), PostgreSQL licence [F][pgv-cl].
   - HNSW or IVFFlat; `halfvec` up to 4,000 indexed dimensions; binary quantisation via expression indexes [F][pgv].
   - **Approximate indexes filter after the index scan**, so selective ACL filters can lose results. Since 0.8.0, iterative scans (`hnsw.iterative_scan`, capped by `hnsw.max_scan_tuples`) are the mitigation [F][pgv]. The spike's ACL predicate must be re-tested under HNSW (`evaluation.md`, next experiment).
+  - **Iterative scans fix recall, not authorisation.** The graph walk still computes distances for chunks the caller may not see, before SQL filters them out, and other tenants' vectors shape the work done. The contract says unauthorised chunks are never scored (§1 item 3), so a shared HNSW index does not meet it. K3 must choose partitioned indexes or an exact search over authorised rows, and test the plan, recall and the boundary. The keyword spike's 0 unauthorised results say nothing about vector scoring.
 - **Full-text.**
   - Native Postgres ranking "does not use any global information": no BM25/IDF [F][pg-fts].
   - BM25 options:
     - **pg_textsearch**: PostgreSQL licence, **PG 17/18 only**. Its BM25 statistics include rows hidden by row-level security, so term frequencies can leak across permission boundaries [F][pgts].
     - **ParadeDB pg_search**: AGPL-3.0 [F][pdb].
     - **VectorChord-bm25**: AGPLv3/ELv2 [F][vcb].
-- **Row-level security** as defence in depth: owners and BYPASSRLS roles bypass it unless `FORCE ROW LEVEL SECURITY` is set, and policies that check only the row's own columns are the fastest [F][pg-rls]. The spike already keeps ACLs on the chunk row.
+- **Row-level security** as defence in depth. Superusers and roles with `BYPASSRLS` always bypass it. Table owners bypass it too, unless `FORCE ROW LEVEL SECURITY` is set, which binds the owner only. So the API role must be a non-owner with `NOSUPERUSER NOBYPASSRLS`, and migrations use a separate role. Policies that check only the row's own columns are the fastest [F][pg-rls]. The spike already keeps ACLs on the chunk row.
 - **When a separate engine is justified.** No official source gives a document-count threshold [F/S]. The concrete triggers are:
   - BM25/IDF quality needed on PG16;
   - more than 2,000 or 4,000 indexed dimensions;
@@ -109,7 +110,8 @@ Vendor sites (docs.onyx.app, ragflow.io, docs.dify.ai and others) were blocked, 
 | Tool | Licence / version | Citations it can support | Note |
 |---|---|---|---|
 | Docling | MIT, 2.145.0 (2026-10-29) [F][docling] | page, bbox, charspan; XLSX sheets as pages with cell-grid coordinates [F][docling-xlsx] | Model licences are separate; check each |
-| OCRmyPDF + Tesseract | MPL-2.0, 17.13.0 [F][ocrmypdf] | Adds a text layer that keeps page geometry | Pre-step for scans |
+| OCRmyPDF + Tesseract | MPL-2.0, 17.13.0 [F][ocrmypdf] | Adds a text layer that keeps page geometry | Pre-step for scans. **Fails R8 under the repository policy:** MPL-2.0 is file-level copyleft, so it needs a recorded operator exception, stating internal use versus shipping to clients. Since 17.0 it can use pypdfium2 instead of Ghostscript [S] |
+| Docling's OCR engines | EasyOCR 1.7.2 Apache-2.0; RapidOCR 3.10.0 Apache-2.0; tesserocr 2.12.0 MIT (Docling extras `easyocr`, `rapidocr`, `tesserocr`) [F][ocr-engines] | Through Docling's page/bbox locators | Preferred for scans. Model weights and native libraries (Tesseract, ONNX Runtime) are checked when K5 pins them |
 | Unstructured (OSS) | Apache-2.0, 0.27.35 [F][unst] | page number (PDF/DOCX/HTML/PPTX), sheet name, coordinates | The vendor itself says its paid API is more accurate |
 | Apache Tika | Apache-2.0, 4.2.0; Java 17 [F][tika] | text and metadata only | Long-tail fallback |
 | Marker | Apache code, **weights under a modified Open Rail-M: commercial use free only below $5M revenue/funding** [F][marker] | page + polygon | Avoid for company use unless the licence fits |
@@ -142,13 +144,13 @@ Key: ✔ documented and fits; ◐ partly, preview, paid or must be built; ✘ do
 | Req | Onyx (Business) | RAGFlow | Azure AI Search UK | Bedrock Managed KB London | Composable (Postgres) |
 |---|---|---|---|---|---|
 | R1 permissions before retrieval | ◐ paid tier; past IDORs | ✘ team-level only | ◐ GA filters are app-enforced; token enforcement preview | ◐ app-asserted user | ◐ **built by us**; spike shows the design (0 unauthorised) |
-| R2 imports and formats | ✔ connectors; ✘ OCR | ✔ best parsing; connectors without ACL | ◐ no Drive; parsing billed | ◐ ? formats | ◐ Docling + OCRmyPDF; connectors built per need |
+| R2 imports and formats | ✔ connectors; ✘ OCR | ✔ best parsing; connectors without ACL | ◐ no Drive; parsing billed | ◐ ? formats | ◐ Docling + its OCR engine; connectors built per need |
 | R3 sync, versions, deletions | ◐ paid perm-sync | ◐ | ◐ manual resync for inherited ACLs | ◐ group changes wait for next ingest | ◐ built; spike shows repeat-safe sync and deletion |
 | R4 hybrid, rerank, citations | ◐ no reranker | ✔ | ✔ | ✔ | ◐ hybrid + reranker not yet measured |
 | R5 API/MCP as user | ✔ OAuth MCP | ◐ API keys | ✔ MCP per KB (perm preview) | ◐ via AgentCore | ◐ built: API + thin MCP adapter |
 | R6 UK residency / client box | ✔ self-host | ✔ self-host | ✔ UK South | ✔ London | ✔ self-host, any box |
 | R7 low effort, predictable cost | ◐ heavy stack; price unknown | ◐ heavy stack; patch cadence | ✔ managed; ~£55–120/mo | ✔ ~£25/mo + parsing | ◐ more code to own; lightest runtime |
-| R8 licence, export | ◐ proprietary `ee/` | ✔ Apache | ✔ / proprietary index | ✔ / opaque index | ✔ PostgreSQL/MIT/Apache; plain SQL export |
+| R8 licence, export | ◐ proprietary `ee/` | ✔ Apache | ✔ / proprietary index | ✔ / opaque index | ◐ PostgreSQL/MIT/Apache core, plain SQL export; OCR and model licences checked at K5 (OCRmyPDF would need an exception) |
 
 None of the options meets every requirement off the shelf. The choice is about **where the unavoidable work lands**:
 - paying for and trusting a product's permission layer (Onyx Business, or preview Azure features);
@@ -232,6 +234,7 @@ The recommendation takes the second for the company KB and keeps the first avail
 [docling]: https://pypi.org/project/docling/
 [docling-xlsx]: https://github.com/docling-project/docling/blob/main/docling/backend/msexcel_backend.py
 [ocrmypdf]: https://pypi.org/project/ocrmypdf/
+[ocr-engines]: https://pypi.org/project/docling/ (extras), https://pypi.org/project/easyocr/, https://pypi.org/project/rapidocr/, https://pypi.org/project/tesserocr/ (fetched 30 October 2026)
 [unst]: https://github.com/Unstructured-IO/unstructured
 [tika]: https://github.com/apache/tika
 [marker]: https://github.com/datalab-to/marker
