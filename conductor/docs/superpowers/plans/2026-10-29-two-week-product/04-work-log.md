@@ -1270,6 +1270,39 @@ Live / fake / skipped / unrun: synthetic PDFs only. The full Foundation suite (d
 Reviewer disposition and reviewed SHA: re-review requested at the commit below.
 ```
 
+### 30 October 2026 — Codex claim: KB privacy and identity corrections re-review
+
+Reviewer Codex; correction owner Claude. Status IN_PROGRESS.
+Branch `codex/review-kb-privacy-identity`; integrated baseline `35baba5` (PR35/36 merged).
+Scope: PR31 `4dea212` (KB-R2/R3) and PR34 `5701ab9` (KB-R1, chunk IDs/current originals).
+Owned paths: review artifacts/controls and ledger only. Next: rerun strict wire probes,
+inspect SQL authorisation and version predicates, reconcile generated fixtures with the
+canonical identity helper, and run available synthetic tests. Keep still-open generation,
+authoritative sync, withheld-report and endpoint fixtures gates explicit.
+GPU worker stays off. No model, private corpus, connector, external database or deployment.
+P02 PR36 re-review, P09, Windows console follow-up and other KB gates remain separate work.
+
+### 30 October 2026 — KB privacy/identity correction re-review handoff (Codex)
+
+Reviewer Codex; correction owner Claude. Review DONE, contract still CHANGES_REQUESTED.
+PR31 `4dea212` and PR34 `5701ab9`; integrated review baseline `35baba5`.
+Branch `codex/review-kb-privacy-identity`; artifact `reviews/2026-10-30-codex-review-kb-corrections.md`.
+Closes KB-R1, KB-R2 and demonstrated KB-R3 hidden successor disclosure. Collection-qualified
+routes, random persisted chunk IDs and current-version original checks pass the examined
+controls. Retired injected-row privacy probe; updated pure script uses canonical route and
+mutated valid rate-limit body. No service/schema/Claude-owned contract edits.
+Checks (Windows Python 3.14.2, PostgreSQL 16.15 isolated loopback cluster, PYTHONUTF8=1):
+knowledge 26/26, no skips; 25 fixture shape checks plus strict-value/identity controls pass.
+Same three SQL privacy tests on archived pre-PR31 source: expected one failure/two passes
+(hidden successor identifier exposed). Whitespace passes. Temporary PG shut down and absent;
+GPU worker left off, no WSL, remote DB, model, private input, connector or deployment.
+Windows default cp1252 caused nine fixture-replay Unicode comparison subtest failures on
+first DB run; UTF-8 mode fixes fixture I/O. Record mode until tests specify encoding.
+K6 admission remains HELD: view-scoped generation, authoritative empty/failed sync semantics,
+remaining KB-R4 endpoints/request fixtures and strict operator-only withheld/policy freshness
+are still open. Wider P06 research findings retain separate ownership/disposition.
+Next supplied peer correction: P02-R3 PR36; P09 and Windows console runtime follow-up remain.
+
 ### 30 October 2026 — Claude task 20 (claude-lane): view-scoped revision and the withheld report (decisions 1 and 4)
 
 ```
@@ -1304,3 +1337,28 @@ Cost: view_revision reads every visible source on each search. That is fine at t
 Live / fake / skipped / unrun: real PostgreSQL with the synthetic corpus; no HTTP service, Conductor or models.
 Reviewer disposition and reviewed SHA: re-review requested at the commit below.
 ```
+
+KB re-review integration note: PR37 `7ed04e4` merged as `704752a` during submission.
+Integrated it with a merge commit and preserved both ledger histories. It supplies the
+viewRevision/withheld-report corrections; their independent review is pending, not absent
+implementation. The pure identity control now copies the valid fixture envelope, supporting
+viewRevision without hard-coding the obsolete generation field. Compatibility rerun: 30/30
+knowledge tests, zero skips, 3.143 s; 25 pure fixture checks and probes pass. Pre-PR31 privacy
+backtest retains one expected failure/two passes. Temporary PG shut down again and absent.
+PR31/34 closures stay pinned to `35baba5`; PR37 semantic review remains a separate task.
+
+### Codex task submitted — KB privacy and identity corrections re-review
+
+Date: 30 October 2026. Branch `codex/review-kb-privacy-identity`.
+Last artifact/integration commit: `fbfe637592b1937e8328592365da81fcd50e631b`.
+PR: https://github.com/MMCLEOD-DL/Shingon/pull/38 (draft opened; ready after this push).
+Evidence: reviewed baseline knowledge 26/26; after PR37 integration, 30/30 with no skips;
+25 pure fixture controls/probes pass. Old SQL privacy test has its expected hidden-name
+failure (one failure/two passes). UTF-8 mode requirement and initial Windows harness/fixture
+failures are recorded, not counted as completed passes. Whitespace checks pass.
+Closes KB-R1/R2 and demonstrated KB-R3 at `35baba5`; PR37's new semantics retain separate
+review. KB-R4/sync/policy enforcement and final contract freeze remain held. Review artifacts
+and ledger only; no product changes. Temporary PG stopped; GPU worker left off.
+Next peer review: P02 PR36; PR37 semantic review, P09 and Windows console follow-up queued.
+No high-risk paths changed; request auto-merge. Report GitHub refusal if still disabled.
+Merge accepts these scoped closures, not deployment or v1 freeze. Stop until merged.
