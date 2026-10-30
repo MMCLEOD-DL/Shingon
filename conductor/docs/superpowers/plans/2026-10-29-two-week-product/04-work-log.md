@@ -1434,3 +1434,18 @@ Owned changes: review artifacts/controls and ledger only. Claude corrects KB-R5 
 semantics before K6 cache admission; keep prior KB-R1/R2/R3 closures and K8/KB-R4/sync gates.
 Next peer review PR39 endpoint semantics; P09 and Windows console follow-up remain queued.
 Merge records the finding and bounded report-shape acceptance, not v1 contract freeze.
+
+### Codex task submitted — PR37 viewRevision and withheld-report review
+
+Date: 30 October 2026. Branch `codex/review-view-revision`.
+Last artifact commit: `b14e2744cb8ef31cd87d55c2b0a7be78bd5d8adf`.
+PR: https://github.com/MMCLEOD-DL/Shingon/pull/42 (draft opened; ready after this push).
+Evidence: knowledge 33/33 with no skips; 39 fixture shape checks plus strict report/value
+controls pass. Real DB default-isolation race expected exit 1; consistent-snapshot control
+exit 0. Whitespace passes. Temporary PostgreSQL stopped; GPU worker stays off.
+Disposition: KB-R5 [P1] with Claude before K6 cache admission. Fixed operator-report shape
+accepted at examined scope; prior KB-R1/R2/R3 closures retained; K8 enforcement and final
+contract/other open gates not closed. Only review artifacts and ledger changed.
+Next peer review PR39 endpoint semantics; P09 and Windows console follow-up remain queued.
+No high-risk paths; request auto-merge and report repository refusal. Merge records handoff,
+not source correction, v1 freeze or deployment approval. Stop until this submission merges.
