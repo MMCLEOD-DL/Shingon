@@ -12,6 +12,9 @@ export const RELEASE_TAG_RE = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
 export const isSha = (s) => typeof s === 'string' && SHA_RE.test(s);
 export const isObject = (o) => o !== null && typeof o === 'object' && !Array.isArray(o);
+// A path inside the repository as Git names it: relative, forward slashes, no empty, "." or ".." parts, no NUL.
+export const isRepoPath = (p) => typeof p === 'string' && p.length > 0 && p.length <= 1024 && !p.includes('\0')
+  && p.split('/').every((part) => part !== '' && part !== '.' && part !== '..');
 
 /** The parsed version when `s` is a plain x.y.z (no pre-release, no build metadata), otherwise null. */
 export function plainVersion(s) {

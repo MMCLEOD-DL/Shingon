@@ -510,7 +510,9 @@ async function stepBuild(ctx, run) {
       change: {
         runId: run.runId, baseRef: run.baseRef, units: run.units, profile: run.profile ?? null,
         // An upgrade is reviewed and summarised against the foundation release it brings in (final review item 3).
-        ...(isChange ? {} : { foundation: { tag: u.toTag, commit: u.tagSha } }),
+        // Its conflicts are the files prepareUpgradeMerge left with both versions, read from Git (never from a model):
+        // the foundation-rules member lets the upgrade unit resolve those foundation files and no others (PR21-R1).
+        ...(isChange ? {} : { foundation: { tag: u.toTag, commit: u.tagSha, conflicts: [...u.conflicts] } }),
       },
     },
   });

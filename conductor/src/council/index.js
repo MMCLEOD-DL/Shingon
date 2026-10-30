@@ -10,6 +10,7 @@ import { SECURITY, addedLines, unquoteGitPath } from './security.js';
 import { LEGAL } from './licences.js';
 import { CORRECTNESS } from './correctness.js';
 import { FOUNDATION } from './foundationRules.js';
+import { isRepoPath } from '../factory/change/gitSafe.js';
 import { DESIGN } from './design.js';
 import { RELIABILITY } from './reliability.js';
 import { collectEvidence } from './evidence.js';
@@ -90,6 +91,9 @@ export function validateCouncilOptions(o) {
   if (ff !== null && (typeof ff !== 'object' || Array.isArray(ff) || typeof ff.id !== 'string' || !ff.id.trim()
     || !Array.isArray(ff.tags) || ff.tags.some((t) => typeof t !== 'string' || !EXAMPLE_ID_RE.test(t)))) {
     throw new Error(`factoryFeature needs an id and a list of tags (got ${shown(ff)})`);
+  }
+  if (ff !== null && ff.upgradeConflicts !== undefined && (!Array.isArray(ff.upgradeConflicts) || !ff.upgradeConflicts.every(isRepoPath))) {
+    throw new Error(`factoryFeature.upgradeConflicts must list repository paths (got ${shown(ff.upgradeConflicts)})`);
   }
 }
 
