@@ -83,6 +83,7 @@ const PAGES = 'apps/web/e2e/pages.ts';
 
 const BUILDING_ON = {
   protected: 'BUILDING-ON: "Resolve any conflicts (they should be rare if the foundation\'s files were left alone)". Put this file back exactly as the foundation has it and make the change in your own files instead.',
+  upgrade: 'This file held both versions after the foundation merge, as recorded by Conductor from Git (not by the model), so the upgrade had to change it. Check that the resolution keeps both the foundation\'s fix and the app\'s own behaviour.',
   profile: 'BUILDING-ON: "The factory writes this file from the approved brief … Do not edit it by hand in a factory-built app." Modules and the data policy change only through a change request to the brief. Put app-profile.json back as it was.',
   verify: 'BUILDING-ON: "npm run verify: lint, type checks, the licence gate and every unit and integration test (including the role-crossing harness). It must pass at every commit." Put the lint, typecheck, licences, test, verify, test:e2e and verify:full scripts in package.json back as they were.',
   tests: 'Every worked example needs a test whose name carries its tag, written before the code, that runs in npm run verify.',
@@ -125,16 +126,21 @@ function addedTextLines(input, file) {
   return [...nums].sort((a, b) => a - b).map((n) => lines[n - 1]).filter((l) => l !== undefined);
 }
 
-// The member's own diff with renames off: a protected file renamed away shows as deleted.
+// The member's own diff with renames off: a protected file renamed away shows as deleted. A foundation upgrade may
+// resolve the protected files its merge left with both versions (factoryFeature.upgradeConflicts, recorded from Git):
+// those become a locked warning to review, not a block. The data policy (app-profile.json) is never excused.
 async function protectedFindings(input) {
   if (!input.baseSha) throw new CheckFailed('the starting commit is not known');
   // Literal pathspecs: a protected name is never read as a pattern. A folder covers every file below it.
   const r = await mustGit(input.dir, ['--literal-pathspecs', 'diff', '--no-ext-diff', '--no-renames', '--name-only', '-z', input.baseSha, 'HEAD', '--',
     ...PROTECTED_PATHS, ...PROTECTED_DIRS], 'git could not compare the protected foundation files with the starting commit');
   const touched = [...new Set(r.stdout.split('\0').filter(Boolean))].sort();
-  return touched.filter((p) => PROTECTED_PATHS.includes(p) || PROTECTED_DIRS.some((d) => p.startsWith(d)))
-    .map((p) => finding('blocking', `${p} belongs to the foundation and must not be changed`,
-      p === 'app-profile.json' ? BUILDING_ON.profile : BUILDING_ON.protected, p));
+  const resolving = new Set(input.options?.factoryFeature?.upgradeConflicts ?? []);
+  return touched.filter((p) => PROTECTED_PATHS.includes(p) || PROTECTED_DIRS.some((d) => p.startsWith(d))).map((p) => {
+    if (p === 'app-profile.json') return finding('blocking', `${p} belongs to the foundation and must not be changed`, BUILDING_ON.profile, p);
+    if (resolving.has(p)) return finding('warning', `${p}, a foundation file, was changed to resolve the upgrade's merge conflict`, BUILDING_ON.upgrade, p);
+    return finding('blocking', `${p} belongs to the foundation and must not be changed`, BUILDING_ON.protected, p);
+  });
 }
 
 async function fileAt(dir, sha, file) {

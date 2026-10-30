@@ -363,9 +363,28 @@ test('change.foundation: the council is handed the target foundation and the gat
   assert.equal('foundation' in plain, false);
 });
 
-test('change.foundation must name a release tag and a full commit', async () => {
+// Codex review PR21-R1: an upgrade's recorded conflicts reach the feature council, and nothing else carries them.
+test('change.foundation.conflicts reach the feature run as factoryFeature.upgradeConflicts; a plain change has none', async () => {
   const s = await live();
-  for (const foundation of [{ tag: 'v0.1.1' }, { tag: '--x', commit: 'a'.repeat(40) }, { tag: 'v0.1.1', commit: 'HEAD' }, 'v0.1.1']) {
+  const conflicts = ['packages/shared/src/report.ts', 'apps/server/src/notes/repo.ts'];
+  const seen = [];
+  const out = await run(s, {
+    change: change({ foundation: { tag: 'v0.1.1', commit: 'a'.repeat(40), conflicts } }),
+    deps: { runTask: (a) => { seen.push(a.options.factoryFeature); return realRunTask(a); } },
+  });
+  assert.equal(out.status, 'approved', out.reason);
+  assert.deepEqual(seen.map((f) => f.upgradeConflicts), [conflicts]);
+  const s2 = await live();
+  const plain = [];
+  await run(s2, { deps: { runTask: (a) => { plain.push(a.options.factoryFeature); return realRunTask(a); } } });
+  assert.ok(plain.length > 0 && plain.every((f) => !('upgradeConflicts' in f)));
+});
+
+test('change.foundation must name a release tag and a full commit, and its conflicts must be repository paths', async () => {
+  const s = await live();
+  const ok = { tag: 'v0.1.1', commit: 'a'.repeat(40) };
+  for (const foundation of [{ tag: 'v0.1.1' }, { tag: '--x', commit: 'a'.repeat(40) }, { tag: 'v0.1.1', commit: 'HEAD' }, 'v0.1.1',
+    { ...ok, conflicts: 'a.ts' }, { ...ok, conflicts: ['../outside.ts'] }, { ...ok, conflicts: ['/etc/passwd'] }, { ...ok, conflicts: [''] }, { ...ok, conflicts: [1] }]) {
     const out = await run(s, { change: change({ foundation }) });
     assert.equal(out.status, 'failed');
     assert.equal(out.reason, 'The foundation release for the change was not passed in a form Conductor can read, so the change build did not start.');

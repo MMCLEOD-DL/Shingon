@@ -21,7 +21,7 @@ import {
   mergeFeature as realMergeFeature,
 } from './buildState.js';
 import { newRunId, RUN_ID_RE } from './ids.js';
-import { SHA_RE, RELEASE_TAG_RE } from './change/gitSafe.js';
+import { SHA_RE, RELEASE_TAG_RE, isRepoPath } from './change/gitSafe.js';
 
 const UNFINISHED = new Set(['running', 'paused', 'failed', 'stopped']);
 const RESUMABLE_RUN = new Set(['running', 'failed', 'paused']);
@@ -153,7 +153,8 @@ export async function runBuild({ factory, slug, team, hooks, options = {}, baseD
     // summary names it. project.json keeps the old one until Plan 11 records the upgrade.
     const f = change.foundation;
     if (f != null && (typeof f !== 'object' || Array.isArray(f) || typeof f.tag !== 'string' || !RELEASE_TAG_RE.test(f.tag)
-      || typeof f.commit !== 'string' || !SHA_RE.test(f.commit))) {
+      || typeof f.commit !== 'string' || !SHA_RE.test(f.commit)
+      || (f.conflicts !== undefined && (!Array.isArray(f.conflicts) || !f.conflicts.every(isRepoPath))))) {
       return refuse('The foundation release for the change was not passed in a form Conductor can read, so the change build did not start.');
     }
   } else if (project.status === 'ready' || project.status === 'shipped') {
@@ -453,7 +454,11 @@ export async function runBuild({ factory, slug, team, hooks, options = {}, baseD
       // The member gets ws.baseSha from the run (ruling Q27 b); a change unit also names the tags it retires.
       // No council member reads factoryFeature.retire yet: it is kept because the unit's instructions name the same
       // tags (the authority to change or remove those tests), so a member can check against it later.
-      factoryFeature: { id: unit.id, tags: [...(unit.acceptance ?? [])], ...(change ? { retire: [...(unit.retire ?? [])] } : {}) },
+      factoryFeature: {
+        id: unit.id, tags: [...(unit.acceptance ?? [])], ...(change ? { retire: [...(unit.retire ?? [])] } : {}),
+        // Only a foundation upgrade carries these: the files its merge left with both versions (PR21-R1).
+        ...(change?.foundation?.conflicts ? { upgradeConflicts: [...change.foundation.conflicts] } : {}),
+      },
       firstChunk: acceptanceStep({ brief, unit }),
     };
     const featureHooks = featureHooksFor(i);

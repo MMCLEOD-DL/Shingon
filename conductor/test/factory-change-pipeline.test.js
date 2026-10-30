@@ -912,6 +912,9 @@ test('foundation upgrade with no code conflicts: merged, built from the upgrade 
   assert.match(build.options.change.baseRef, /^factory\/upgrade-v0\.1\.1-\d{8}-\d{6}-[0-9a-f]{4}$/);
   assert.deepEqual(build.options.change.units.map((u) => u.change), ['foundation-upgrade']);
   assert.equal(build.options.change.profile, null);
+  // The recorded conflicts travel with the foundation release (none here); a plain change request carries neither.
+  assert.deepEqual(build.options.change.foundation.conflicts, run.upgrade.conflicts);
+  assert.deepEqual(run.upgrade.conflicts, []);
   assert.equal(h.callsOf('releaseApp')[0].args[0].bump, 'patch');
   assert.ok(h.callsOf('updateDeployment').every((c) => c.args[0].foundation === 'v0.1.1'));
   assert.deepEqual(h.callsOf('updateDeployment').map((c) => c.args[0].version), ['0.2.1', '0.2.1']);
@@ -943,6 +946,8 @@ test('foundation upgrade whose conflicts were not resolved is refused at the gat
   const out = await h.upgrade();
   assert.equal(out.status, 'stopped');
   assert.equal(out.reason, MARKERS_LEFT(['apps/server/src/feature.ts']));
+  // The conflict Git recorded is the one the feature council is told the upgrade may resolve (PR21-R1).
+  assert.deepEqual(h.callsOf('runBuild')[0].args[0].options.change.foundation.conflicts, ['apps/server/src/feature.ts']);
   assert.equal(h.term.calls.filter((c) => c.name === 'approveBuild').length, 0);
   assert.equal(h.callsOf('releaseApp').length, 0);
   assert.equal(h.project().foundation.tag, 'v0.1.0');
@@ -1129,12 +1134,12 @@ test('item 8: on resume a saved changelog commit that changes more than CHANGELO
   assert.equal(appMain(h.appDir), run.mainAtStart);
 });
 
-test('item 3: an upgrade passes the target foundation (tag and commit) to the change build', async () => {
+test('item 3: an upgrade passes the target foundation (tag, commit and recorded conflicts) to the change build', async () => {
   const h = await harness();
   const out = await h.upgrade();
   assert.equal(out.status, 'done', out.reason);
   const change = h.callsOf('runBuild')[0].args[0].options.change;
-  assert.deepEqual(change.foundation, { tag: 'v0.1.1', commit: h.f.tagSha('v0.1.1') });
+  assert.deepEqual(change.foundation, { tag: 'v0.1.1', commit: h.f.tagSha('v0.1.1'), conflicts: [] });
   // A change request builds on the foundation the project already records: nothing is passed.
   const h2 = await harness();
   assert.equal((await h2.change()).status, 'done');

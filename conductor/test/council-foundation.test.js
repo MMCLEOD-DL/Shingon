@@ -173,6 +173,59 @@ test('v0.2.0: the shared package\'s verify scripts are protected like the others
   assert.ok(f.some((x) => /blocking! The checks that npm run verify runs were changed in packages\/shared\/package\.json/.test(x)), f.join('\n'));
 });
 
+// Codex review PR21-R1: an upgrade may resolve the protected files its merge left with both versions, and no others.
+async function upgradeScenario({ base, edits, conflicts }) {
+  const dir = await makeFoundationRepo({ extra: base });
+  const baseSha = (await git(dir, ['rev-parse', 'HEAD'])).stdout.trim();
+  const options = { ...DEFAULT_OPTIONS, factoryFeature: { id: 'foundation-upgrade-v0-2-0', tags: [], retire: [], upgradeConflicts: conflicts } };
+  const collect = async () => {
+    const changed = (await git(dir, ['diff', '--name-only', baseSha, 'HEAD'])).stdout.split('\n').filter(Boolean);
+    const [run] = await FOUNDATION.collect({ dir, baseSha, files: changed, changed: new Set(changed), options });
+    return run.findings;
+  };
+  const before = await collect();
+  if (edits) { for (const [f, b] of Object.entries(edits)) put(dir, f, b); await commit(dir, 'resolve'); }
+  return { before, after: await collect() };
+}
+const MARKED = '<<<<<<< HEAD\nexport const app = 1;\n=======\nexport const fix = 2;\n>>>>>>> v0.2.0\n';
+const REPORT = 'packages/shared/src/report.ts';
+
+test('upgrade: a clean post-merge baseline is not an edit, and resolving a recorded conflict is a locked warning, not a block', async () => {
+  const { before, after } = await upgradeScenario({ base: { [REPORT]: MARKED }, edits: { [REPORT]: 'export const app = 1;\nexport const fix = 2;\n' }, conflicts: [REPORT] });
+  assert.deepEqual(before.filter((f) => f.file === REPORT), []);
+  const mine = after.filter((f) => f.file === REPORT);
+  assert.equal(mine.length, 1);
+  assert.equal(mine[0].grade, 'warning');
+  assert.equal(mine[0].locked, true);
+  assert.match(mine[0].detail, /recorded by Conductor from Git \(not by the model\)/);
+});
+
+test('upgrade: a protected file that was not a recorded conflict is still blocked', async () => {
+  const { after } = await upgradeScenario({ base: { [REPORT]: MARKED, 'packages/shared/src/money.ts': 'export {};\n' },
+    edits: { [REPORT]: 'export const both = 3;\n', 'packages/shared/src/money.ts': '// weakened\n' }, conflicts: [REPORT] });
+  assert.ok(after.some((f) => f.file === 'packages/shared/src/money.ts' && f.grade === 'blocking' && f.locked));
+  assert.ok(after.some((f) => f.file === REPORT && f.grade === 'warning'));
+});
+
+test('upgrade: the data policy is never excused, even when it is a recorded conflict, nor are the verify scripts', async () => {
+  const pkg = (test) => JSON.stringify({ name: 'highland-foundation', version: '0.2.0', scripts: { verify: 'npm run lint', test } }) + '\n';
+  const { after } = await upgradeScenario({
+    base: { 'app-profile.json': '{ "schema": 1 }\n', 'package.json': pkg('vitest run') },
+    edits: { 'app-profile.json': JSON.stringify({ schema: 1, modules: [], policy: { outbound: ['azure-document-intelligence'], residency: 'any' } }), 'package.json': pkg('node -e 0') },
+    conflicts: ['app-profile.json', 'package.json'],
+  });
+  assert.ok(after.some((f) => f.file === 'app-profile.json' && f.grade === 'blocking' && f.locked));
+  assert.ok(after.some((f) => f.file === 'package.json' && f.grade === 'blocking' && /checks that npm run verify runs were changed/.test(f.title)));
+});
+
+test('upgradeConflicts must be a list of repository paths', () => {
+  const base = { ...DEFAULT_OPTIONS, council: true };
+  for (const upgradeConflicts of ['a.ts', ['../a.ts'], ['/a.ts'], [''], [1]]) {
+    assert.throws(() => validateCouncilOptions({ ...base, factoryFeature: { id: 'x', tags: TAGS, upgradeConflicts } }), /upgradeConflicts must list repository paths/);
+  }
+  assert.doesNotThrow(() => validateCouncilOptions({ ...base, factoryFeature: { id: 'x', tags: TAGS, upgradeConflicts: [REPORT] } }));
+});
+
 test('the reliability test (deploy/smoke) belongs to the foundation: a feature or fix run cannot rewrite it', async () => {
   const f = await scenario([{ 'apps/server/test/expenses/a.test.ts': TESTS }, {
     'deploy/smoke/run-smoke.sh': 'echo SMOKE PASSED\n', 'deploy/smoke/catcher.mjs': '// gone\n',

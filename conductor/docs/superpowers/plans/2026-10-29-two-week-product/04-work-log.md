@@ -880,49 +880,35 @@ Next independent Codex task after this submission merges: P04 UI including N6 re
   Codex reviews P04 including N6; wider P06 research/P09 reviews remain independent backlog.
   Stop this one-task lane invocation after submission; no new packet before merge.
 
-### 30 October 2026 — Codex claim: P04 operator UI and N6 recovery review
+### 30 October 2026 — Claude task 13 (claude-lane): Codex review PR21-R1, upgrade conflict resolution in protected files
 
-Owner/reviewer Codex; implementation owner Claude. Status: IN_PROGRESS.
-Branch `codex/review-operator-ui`; baseline `bee4ae1` (PR #24 merged).
-Scope: independently review operator-web against service interface/fixtures, including N6
-inspection acknowledgement, approval evidence, stale/error/reconnect and untrusted text.
-Owned paths: review artifacts/standalone controls and this ledger only. No Claude-owned UI,
-service, dependency, CI/gate or live-model changes. Next action: install UI lockfile, run its
-unit/build/browser checks where available, and reproduce concrete failures before judging.
-
-### 30 October 2026 — Codex P04/N6 review handoff
-
-Baseline `bee4ae1`; branch `codex/review-operator-ui`; review owner Codex, fix owner Claude.
-Status CHANGES_REQUESTED for P04; no independent N6 defect reproduced in examined controls.
-Review: `reviews/2026-10-30-codex-review-P04.md` with standalone DOM and browser reproducers.
-P04-R1 UI clips a450k diff at400k but leaves approval enabled (below worker1MiB ceiling).
-P04-R2 delayed old passed review overwrites current failed evidence at the same commit;
-production browser/service reproduction confirms currentReportPassed=false, stalePassedLabel1,
-currentFailedLabel0, approveEnabled=true. Bind full evidence identity and discard stale GETs.
-Windows Node24.12.0/npm11.6.2: UI54PASS/buildPASS; unchanged journey19PASS using Playwright1.64.1
-with explicit system Edge156.0.4314.50 override. Normal journey workers synthetic; N6 includes
-real Git workspace/reconciliation. Extra DOM2expectedFAIL/1PASS; browserexpectedexit1 records
-stale-report gap without approval/landing; source HEAD/index/files unchanged. Desktop/phone
-screenshots inspected; no axe/full accessibility or live model acceptance claim.
-No UI/UX/service/dependency/CI/gate edits; Claude owns corrections and normal regression tests.
-Next independent Codex work after this submission merges: P06 wider research/P09 assessment.
-
-### Codex task submitted — P04 operator UI and N6 review
-
-- Date: 30 October 2026. Branch `codex/review-operator-ui`; baseline `bee4ae1`.
-- Final review/reproducer commit: `de5f5875cd6ab7057f3fcfb4a3798af4f87cfde6`.
-- PR: [#26 — Review P04: reproduce clipped diffs and stale test evidence at approval](https://github.com/MMCLEOD-DL/Shingon/pull/26).
-- Review complete; P04 CHANGES_REQUESTED for clipped-diff approval and same-commit stale
-  passed-test evidence. Claude owns UI corrections. Examined N6 recovery behaviour passes.
-- Windows/Node24.12.0: UI 54 PASS/build PASS; unchanged browser journey 19 PASS with
-  Playwright1.64.1 + explicit system Edge156.0.4314.50 override. Extra DOM 2 expected FAIL /
-  1 positive PASS; real browser/service/Git stale-evidence reproduction expected exit1.
-  Current failed report, stale green UI and enabled approval independently confirmed;
-  no approval/landing, source HEAD/index/files unchanged. Syntax and diff checks PASS.
-- Review paths/ledger only; no UI/UX/service/dependency/CI/gate/model/private/live changes.
-  Full suites/live acceptance and axe are not claimed. Hosted CI is separate evidence and
-  cannot close the intentionally reproduced findings.
-- Merge route: no high-risk path; mark ready after local checks and request existing
-  auto-merge policy, reporting disabled setting without changing repository/approval rules.
-- Next action: Claude corrects and supplies exact pins for re-review. After this submission
-  merges, Codex takes broader P06 research/P09 assessment. No new packet before merge.
+```
+Packet/subpacket: Codex review reviews/2026-10-30-codex-review-PR21.md, finding PR21-R1 [P2].
+Owner and reviewer: Claude; reviewer Codex.
+Status: IN_REVIEW.
+Baseline SHA: 18f8f5b. Code: f5673de.
+Correction: my task-12 entry assumed the Foundation upgrade does not run the foundation-rules member. Codex showed
+  that it does, and that a recorded merge conflict in a protected file was blocked from being resolved.
+Owned files (shared seam, named and minimal): conductor/src/factory/change/pipeline.js (upgrade passes
+  change.foundation.conflicts = run.upgrade.conflicts, recorded by prepareUpgradeMerge from Git); src/factory/build.js
+  (validates them as repository paths, refusing otherwise, and passes factoryFeature.upgradeConflicts);
+  src/factory/change/gitSafe.js (isRepoPath); src/council/index.js (validates upgradeConflicts);
+  src/council/foundationRules.js (a protected file in upgradeConflicts becomes a locked warning to review, not a block);
+  three test files; this ledger.
+Authority: only from the pipeline's recorded conflicts, never from a unit id or model output. Plain change requests
+  and first builds carry no change.foundation. Unlisted protected files, app-profile.json (even when listed) and the
+  verify-script check stay blocking.
+Checks (cloud Linux, Node 22.22.0), from conductor/:
+  council-foundation, factory-build-change, factory-change-pipeline: 107 passed. Against the previous source, 8 fail
+    (member, option validation, both bridges, and the pinned change.foundation object); the data-policy and
+    verify-script guard passes on both.
+  Codex's reproducer as committed still prints REPRODUCED (exit 1), because it hand-builds factoryFeature without
+    the new field, mirroring the old bridge. The same script with upgradeConflicts: [file] added prints NOT
+    REPRODUCED (exit 0), and its control still passes. The real bridge is covered by the two bridge tests.
+  Full suite, node --test --test-concurrency=4 under a child-subreaper wrapper: 1,569 tests, 1,568 passed, 0 failed,
+    1 skipped; 120 s. One earlier attempt stalled in test/service/engine.test.js (no tests reported; that file
+    passes 7/7 alone on this code). This is environmental: the container does not reap orphans.
+Live / fake / skipped / unrun: synthetic repos and factory harnesses; no real upgrade with a model.
+Open: Codex may want its reproducer to take the bridged field, or to retire it in favour of the tests.
+Reviewer disposition and reviewed SHA: re-review requested at f5673de.
+```
