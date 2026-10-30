@@ -19,12 +19,18 @@ import json
 import os
 import re
 import unittest
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 from pathlib import Path
 
 from shingon_knowledge import contract
 
-from support import COLLECTIONS, CORPUS, ServiceTestCase
+from shingon_knowledge.http import RateLimiter
+
+from support import COLLECTIONS, CORPUS, ApiClient, ServiceTestCase, issue_http_callers, start_api
+
+
+def _unreachable():
+    raise ConnectionRefusedError('the test says the database is down')
 
 FILE = Path(__file__).resolve().parents[1] / 'contract' / 'kb-contract-v1.json'
 INGESTED_AT = '2026-10-29T12:00:00Z'  # generated fixtures replace the real ingestion time with this
@@ -33,6 +39,7 @@ CALLERS = {
     'andy': 'Acme app server, asserted user andy (not in finance)',
     'bella': 'Birch app server, asserted user bella',
     'conductor': 'Conductor project token over the standards collection',
+    None: 'Any caller, without a credential',
 }
 # Every §10 item, and the fixtures that cover it.
 SECTION_10 = {
@@ -63,86 +70,89 @@ SECTION_10 = {
 SERVICE_CHUNK_ID = re.compile(r'^[0-9a-f]{64}$')
 
 
-def _search(kb, creds, fid, covers, who, query, *, limit=3, collections=None):
+def _search(api, fid, covers, who, query, *, limit=3, collections=None):
     body = {'query': query, 'mode': 'keyword', 'limit': limit, 'clientRequestId': f'req-{fid}'}
     if collections is not None:
         body['collections'] = collections
-    return _post_search(kb, creds, fid, covers, who, body)
+    return _post_search(api, fid, covers, who, body)
 
 
-def _post_search(kb, creds, fid, covers, who, body):
-    """A `POST /search` exactly as K6 will handle it: the wire parser first, then the service."""
-    try:
-        args = contract.parse_search_request(body)
-        raw = kb.search(creds[who], args['query'], limit=args['limit'], collections=args['collections'])
-        status, out = 200, contract.search_body(raw)
+def _post_search(api, fid, covers, who, body, *, raw=None):
+    """A `POST /search` over real HTTP (K6): authentication, the wire parser, the service, the checked body."""
+    status, _headers, data = api.request(who, 'POST', '/search', body=body, raw=raw, request_id=f'req-{fid}')
+    out = json.loads(data)
+    if status == 200:
         for r in out['results']:
             assert SERVICE_CHUNK_ID.match(r['chunkId']), r['chunkId']
             r['chunkId'] = hashlib.sha256(f"{fid}#{r['scores']['rank']}".encode()).hexdigest()
             r['source']['ingestedAt'] = INGESTED_AT
-    except Exception as e:  # noqa: BLE001 - contract.error_code re-raises anything that is not a contract error
-        status, out = contract.error_body(contract.error_code(e), f'req-{fid}')
     return {'id': fid, 'covers': covers, 'origin': 'generated', 'caller': CALLERS[who],
             'request': {'method': 'POST', 'path': '/search', 'body': body}, 'response': {'status': status, 'body': out}}
 
 
-def _original(kb, creds, fid, covers, who, collection, key, version):
-    try:
-        data = kb.original(creds[who], collection, key, version).read_bytes()
-        response = {'status': 200, 'headers': contract.original_headers(key), 'body': None,  # the file, not JSON
-                    'file': {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}}
-    except Exception as e:  # noqa: BLE001
-        status, out = contract.error_body(contract.error_code(e), f'req-{fid}')
-        response = {'status': status, 'body': out}
+def _rate_limited(api):
+    """Two searches against a server allowing one a minute, on a stopped clock: the second gets 429 with the wait."""
+    body = {'query': 'mileage rate', 'mode': 'keyword', 'limit': 3, 'clientRequestId': 'req-rate-limit'}
+    first = _post_search(api, 'rate-limit', '', 'alice', body)
+    assert first['response']['status'] == 200, first
+    return _post_search(api, 'rate-limit', 'A second search inside the window: 429, retryAfter in the body and Retry-After', 'alice', body)
+
+
+def _original(api, fid, covers, who, collection, key, version):
+    path = contract.original_path(collection, key, version)
+    status, headers, data = api.request(who, 'GET', path, request_id=f'req-{fid}')
+    if status == 200:
+        response = {'status': 200, 'headers': {k: headers[k.lower()] for k in contract.ORIGINAL_HEADERS},
+                    'body': None, 'file': {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}}
+    else:
+        response = {'status': status, 'body': json.loads(data)}
     return {'id': fid, 'covers': covers, 'origin': 'generated', 'caller': CALLERS[who],
-            'request': {'method': 'GET', 'path': contract.original_path(collection, key, version)}, 'response': response}
+            'request': {'method': 'GET', 'path': path}, 'response': response}
 
 
 def _stand_in(fid, n) -> str:
     return hashlib.sha256(f'{fid}#{n}'.encode()).hexdigest()
 
 
-def _get(fid, covers, who, path, run, shape):
-    """A GET fixture: `run()` gives the service's answer, `shape` turns it into the wire body."""
-    try:
-        status, out = 200, shape(run())
-    except Exception as e:  # noqa: BLE001
-        status, out = contract.error_body(contract.error_code(e), f'req-{fid}')
+def _get(api, fid, covers, who, path, shape=lambda body: body, *, sent_path=None):
+    """A GET fixture over HTTP. `shape` normalises a 200 body; `sent_path` is what goes on the wire when the fixture
+    records a stand-in in the path instead."""
+    status, _headers, data = api.request(who, 'GET', sent_path or path, request_id=f'req-{fid}')
+    out = json.loads(data)
     return {'id': fid, 'covers': covers, 'origin': 'generated', 'caller': CALLERS[who],
-            'request': {'method': 'GET', 'path': path}, 'response': {'status': status, 'body': out}}
+            'request': {'method': 'GET', 'path': path}, 'response': {'status': status, 'body': shape(out) if status == 200 else out}}
 
 
-def _collections(kb, creds, fid, covers, who):
-    def shape(raw):
-        body = contract.collections_body(raw)
+def _collections(api, fid, covers, who):
+    def shape(body):
         for c in body['collections']:
             if c['lastIngestedAt'] is not None:
                 c['lastIngestedAt'] = INGESTED_AT
         return body
-    return _get(fid, covers, who, '/collections', lambda: kb.collections(creds[who]), shape)
+    return _get(api, fid, covers, who, '/collections', shape)
 
 
-def _passage(kb, creds, fid, covers, who, chunk_id, neighbours: str | None = '1'):
+def _passage(api, fid, covers, who, chunk_id, neighbours: str | None = '1'):
     # One mapping from real chunk id to stand-in for the request and the response (Codex review KB-R6), so the
     # requested id is the focused passage's id in the fixture exactly as it is in the service.
     stand_ins: dict[str, str] = {}
     stand_in = lambda real: stand_ins.setdefault(real, _stand_in(fid, len(stand_ins)))  # noqa: E731
 
-    def shape(raw):
-        body = contract.passage_body(raw)
+    def shape(body):
         assert [q['chunkId'] for q in body['passages'] if q['focus']] == [chunk_id], 'the service focused another chunk'
         for q in body['passages']:
             assert SERVICE_CHUNK_ID.match(q['chunkId']), q['chunkId']
             q['chunkId'] = stand_in(q['chunkId'])
         return body
     query = '' if neighbours is None else f'?neighbours={neighbours}'
-    return _get(fid, covers, who, f'/passages/{stand_in(chunk_id)}{query}',
-                lambda: kb.passage(creds[who], chunk_id, contract.parse_neighbours(neighbours)), shape)
+    return _get(api, fid, covers, who, f'/passages/{stand_in(chunk_id)}{query}', shape,
+                sent_path=f'/passages/{quote(chunk_id, safe="")}{query}')
 
 
-def generate(kb, creds, manifest) -> list[dict]:
-    """The generated fixtures, in order. The corpus must be synced as run-1 (expenses v1) then run-2."""
-    s = lambda *a, **k: _search(kb, creds, *a, **k)  # noqa: E731
+def generate(kb, creds, manifest, api, transport) -> list[dict]:
+    """The generated fixtures, in order, produced over HTTP. The corpus must be synced as run-1 (expenses v1) then
+    run-2. `transport` holds the other servers: one with a one-search rate limit, and one whose database is down."""
+    s = lambda *a, **k: _search(api, *a, **k)  # noqa: E731
     out = [
         s('hit-markdown', 'Normal hit, Markdown: section path locator', 'conductor', 'what must never be written to logs'),
         s('hit-docx', 'Normal hit, DOCX: section path locator, version 2 after an update', 'alice', 'mileage rate pence per mile own car'),
@@ -154,37 +164,45 @@ def generate(kb, creds, manifest) -> list[dict]:
         s('scope-violation', 'A collection outside the credential is refused, never silently dropped', 'alice', 'mileage', collections=['birch-handbook']),
         s('bad-request', 'An empty query is refused', 'alice', ''),
         # Codex review KB-R4: request validation, and explicit refusal of what K2 does not do.
-        _post_search(kb, creds, 'bad-request-boolean-limit', 'A boolean limit is refused, not read as 1', 'alice',
+        _post_search(api, 'bad-request-boolean-limit', 'A boolean limit is refused, not read as 1', 'alice',
                      {'query': 'mileage', 'limit': True}),
-        _post_search(kb, creds, 'bad-request-unknown-field', 'A field the contract does not define is refused', 'alice',
+        _post_search(api, 'bad-request-unknown-field', 'A field the contract does not define is refused', 'alice',
                      {'query': 'mileage', 'tenant': 'birch'}),
-        _post_search(kb, creds, 'unsupported-hybrid', 'Hybrid mode is refused until K3, never run as keyword search', 'alice',
+        _post_search(api, 'unsupported-hybrid', 'Hybrid mode is refused until K3, never run as keyword search', 'alice',
                      {'query': 'mileage', 'mode': 'hybrid'}),
-        _post_search(kb, creds, 'unsupported-filters', 'A document filter is refused until it is implemented, never ignored', 'alice',
+        _post_search(api, 'unsupported-filters', 'A document filter is refused until it is implemented, never ignored', 'alice',
                      {'query': 'mileage', 'filters': {'documentIds': ['acme/expenses-policy.docx']}}),
-        _collections(kb, creds, 'collections-alice', 'The collections a caller can search, with what she can see of each', 'alice'),
-        _collections(kb, creds, 'collections-andy', 'The same collection, counted for a caller who cannot see the finance-only document', 'andy'),
-        _collections(kb, creds, 'collections-conductor', 'A project token sees only its reference collection', 'conductor'),
-        _passage(kb, creds, 'passage-neighbours', 'A passage and one neighbour either side, in document order', 'alice',
+        _collections(api, 'collections-alice', 'The collections a caller can search, with what she can see of each', 'alice'),
+        _collections(api, 'collections-andy', 'The same collection, counted for a caller who cannot see the finance-only document', 'andy'),
+        _collections(api, 'collections-conductor', 'A project token sees only its reference collection', 'conductor'),
+        _passage(api, 'passage-neighbours', 'A passage and one neighbour either side, in document order', 'alice',
                  kb.search(creds['alice'], 'mileage rate pence per mile own car', limit=1)['results'][0]['chunkId']),
-        _passage(kb, creds, 'passage-hidden', 'A passage the caller may not see: 404, as for a missing one', 'andy',
+        _passage(api, 'passage-hidden', 'A passage the caller may not see: 404, as for a missing one', 'andy',
                  kb.search(creds['alice'], 'salary band Senior Analyst', limit=1)['results'][0]['chunkId']),
-        _passage(kb, creds, 'passage-missing', 'A chunk id that does not exist: identical to hidden', 'andy', 'f' * 64),
-        _passage(kb, creds, 'passage-too-wide', 'More neighbours than the bound is refused', 'alice',
+        _passage(api, 'passage-missing', 'A chunk id that does not exist: identical to hidden', 'andy', 'f' * 64),
+        _passage(api, 'passage-too-wide', 'More neighbours than the bound is refused', 'alice',
                  kb.search(creds['alice'], 'mileage rate pence per mile own car', limit=1)['results'][0]['chunkId'], '9'),
-        _get('health', 'Readiness only: no revision or counts', 'conductor', '/health', kb.health, lambda raw: raw),
-        _original(kb, creds, 'hidden-document', 'A document the caller may not see', 'andy', 'acme-policies', 'acme/salary-bands.docx', 1),
-        _original(kb, creds, 'missing-document', 'A document that does not exist: identical to hidden', 'andy', 'acme-policies', 'acme/no-such-file.docx', 1),
+        _get(api, 'health', 'Readiness only: no revision or counts', 'conductor', '/health'),
+        _original(api, 'hidden-document', 'A document the caller may not see', 'andy', 'acme-policies', 'acme/salary-bands.docx', 1),
+        _original(api, 'missing-document', 'A document that does not exist: identical to hidden', 'andy', 'acme-policies', 'acme/no-such-file.docx', 1),
+        # The transport (K6): these were authored shapes until the HTTP layer existed.
+        _post_search(api, 'unauthenticated', 'No credential: 401 with fixed wording, never a hint about what is missing',
+                     None, {'query': 'mileage'}),
+        {**_post_search(api, 'too-large', 'A request body over 16 KB is refused before it is parsed', None, None,
+                        raw=b' ' * (contract.MAX_REQUEST_BYTES + 1)), 'request': {'method': 'POST', 'path': '/search', 'body': None}},
+        _rate_limited(transport['limited']),
+        _post_search(transport['down'], 'index-unavailable', 'The database is unreachable: 503, never an empty result', 'alice',
+                     {'query': 'mileage rate', 'mode': 'keyword', 'limit': 3, 'clientRequestId': 'req-index-unavailable'}),
     ]
     # Revocation: the next sync no longer lists the 2025 travel policy.
     kb.sync('run-3', CORPUS, [x for x in manifest['sources'] if x['key'] != 'acme/travel-policy-2025.pdf'], complete=COLLECTIONS)
     out += [
         s('revoked-after-sync', 'After the source removed it, the next sync drops its passages and the caller\'s viewRevision changes', 'alice', 'hotel cap London per night'),
-        _original(kb, creds, 'revoked-original', 'The stored original of a revoked document is gone', 'alice', 'acme-policies', 'acme/travel-policy-2025.pdf', 1),
+        _original(api, 'revoked-original', 'The stored original of a revoked document is gone', 'alice', 'acme-policies', 'acme/travel-policy-2025.pdf', 1),
         # Originals are served for the current version only (Codex review decision 3).
-        _original(kb, creds, 'original-current', 'The current version of a visible document, as an attachment', 'alice', 'acme-policies', 'acme/expenses-policy.docx', 2),
-        _original(kb, creds, 'original-replaced-version', 'Version 1 after version 2 was indexed: 404, never the newer file', 'alice', 'acme-policies', 'acme/expenses-policy.docx', 1),
-        _original(kb, creds, 'original-unknown-version', 'A version that never existed: 404', 'alice', 'acme-policies', 'acme/expenses-policy.docx', 7),
+        _original(api, 'original-current', 'The current version of a visible document, as an attachment', 'alice', 'acme-policies', 'acme/expenses-policy.docx', 2),
+        _original(api, 'original-replaced-version', 'Version 1 after version 2 was indexed: 404, never the newer file', 'alice', 'acme-policies', 'acme/expenses-policy.docx', 1),
+        _original(api, 'original-unknown-version', 'A version that never existed: 404', 'alice', 'acme-policies', 'acme/expenses-policy.docx', 7),
     ]
     # Source keys are unique per collection only (Codex review KB-R1): a finance-only copy of the budget, also v1.
     kb.setup({'collections': {'acme-finance': {'tenant': 'acme', 'kind': 'client-runtime', 'destinations': ['foundation-app:acme']}}})
@@ -192,8 +210,8 @@ def generate(kb, creds, manifest) -> list[dict]:
     out += [
         s('same-key-two-collections', 'Two collections hold acme/budget-2026.xlsx at version 1: collectionId tells them apart', 'alice', 'Sales travel budget Q3', limit=8),
         s('same-key-one-visible', 'A caller outside finance sees only the acme-policies copy', 'andy', 'Sales travel budget Q3', limit=8),
-        _original(kb, creds, 'same-key-other-collection', "The finance copy by its full identity, for a caller outside finance: 404", 'andy', 'acme-finance', 'acme/budget-2026.xlsx', 1),
-        _original(kb, creds, 'same-key-own-collection', 'The acme-policies copy by its full identity, for the same caller', 'andy', 'acme-policies', 'acme/budget-2026.xlsx', 1),
+        _original(api, 'same-key-other-collection', "The finance copy by its full identity, for a caller outside finance: 404", 'andy', 'acme-finance', 'acme/budget-2026.xlsx', 1),
+        _original(api, 'same-key-own-collection', 'The acme-policies copy by its full identity, for the same caller', 'andy', 'acme-policies', 'acme/budget-2026.xlsx', 1),
     ]
     return out
 
@@ -204,7 +222,17 @@ class ContractFixtures(ServiceTestCase):
         super().setUpClass()
         cls.kb.sync('run-1', CORPUS, cls.manifest['sources'], files={'acme/expenses-policy.docx': CORPUS / 'acme/_v1-expenses-policy.docx'}, complete=COLLECTIONS)
         cls.kb.sync('run-2', CORPUS, cls.manifest['sources'], complete=COLLECTIONS)
-        cls.generated = generate(cls.kb, cls.creds, cls.manifest)
+        callers = issue_http_callers(cls.db)
+        cls.servers = [start_api(cls, limiter=RateLimiter(rate=10_000)),
+                       start_api(cls, limiter=RateLimiter(rate=1, per=60, clock=lambda: 0.0)),
+                       start_api(cls, connect_db=_unreachable)]
+        api, limited, down = (ApiClient(port, callers) for _server, port in cls.servers)
+        try:
+            cls.generated = generate(cls.kb, cls.creds, cls.manifest, api, {'limited': limited, 'down': down})
+        finally:
+            for server, _port in cls.servers:
+                server.shutdown()
+                server.server_close()
         committed = json.loads(FILE.read_text(encoding='utf-8')) if FILE.exists() else {'fixtures': []}
         if os.environ.get('KB_WRITE_FIXTURES') == '1':
             authored = [f for f in committed['fixtures'] if f['origin'] != 'generated']

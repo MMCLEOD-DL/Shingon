@@ -443,19 +443,19 @@ class KnowledgeService:
         self.db.commit()
         return {'status': 'ok'}
 
-    def original(self, cred: Credential, collection: str, key: str, version: int) -> Path:
+    def original(self, cred: Credential, collection: str, key: str, version: int, *, audit: bool = True) -> Path:
         """The stored original of `version`, only while it is the current version, under the same permission rule as
         search. Any other version gets the same NotFound as a hidden or missing document; the latest bytes are never
         served in its place (retrieval-contract.md §3)."""
         if isinstance(version, bool) or not isinstance(version, int):
             raise NotFound('not-found')
         with self._snapshot():
-            row = self._original_row(cred, collection, key, version)
+            row = self._original_row(cred, collection, key, version, audit)
         if not row or not row[0]:
             raise NotFound('not-found')
         return Path(row[0])
 
-    def _original_row(self, cred, collection, key, version):
+    def _original_row(self, cred, collection, key, version, audit):
         allowed, groups = self._scope(cred)
         row = self.db.execute("""
             SELECT v.original_path FROM sources s JOIN collections c ON c.id = s.collection_id
@@ -464,7 +464,7 @@ class KnowledgeService:
               AND s.collection_id = ANY(%s::text[]) AND s.status = 'active'
               AND (s.acl_all OR s.acl_groups && %s::text[] OR %s = ANY(s.acl_principals))""",
             (key, collection, version, cred.tenant, allowed, groups, cred.principal or '')).fetchone()
-        if row:  # audited like a search: who fetched which original
+        if row and audit:  # audited like a search: who fetched which original
             self.db.execute('INSERT INTO audit (credential, principal, collections, result_sources, query_sha256) '
                             "SELECT %s, %s, %s::text[], ARRAY[id], 'original' FROM sources WHERE collection_id = %s AND key = %s",
                             (cred.name, cred.principal, [collection], collection, key))
