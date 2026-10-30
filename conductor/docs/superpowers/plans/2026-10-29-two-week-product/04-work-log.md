@@ -1304,3 +1304,35 @@ Cost: view_revision reads every visible source on each search. That is fine at t
 Live / fake / skipped / unrun: real PostgreSQL with the synthetic corpus; no HTTP service, Conductor or models.
 Reviewer disposition and reviewed SHA: re-review requested at the commit below.
 ```
+
+### 30 October 2026 — Claude task 21 (claude-lane): retrieval contract KB-R4 (every route, request validation)
+
+```
+Packet/subpacket: K-track contract. Codex review reviews/2026-10-30-codex-review-retrieval-contract.md, KB-R4 [P2].
+Owner and reviewer: Claude; reviewer Codex.
+Status: IN_REVIEW.
+Baseline SHA: 704752a.
+Owned files: knowledge/src/shingon_knowledge/{service.py (collections, passage, health), contract.py};
+  knowledge/contract/kb-contract-v1.json; knowledge/tests/test_contract_fixtures.py;
+  conductor/docs/knowledge-base/retrieval-contract.md; this ledger.
+What now works:
+  Routes in the service core, each with generated fixtures:
+    GET /collections: only what the caller can see (document count, newest ingestion time, viewRevision).
+    GET /passages/:chunkId?neighbours=0..2: re-authorised, in document order, exactly one focus passage.
+    GET /health: readiness only, {"status": "ok"}.
+  Requests: contract.parse_search_request rejects unknown fields, a boolean or out-of-range limit, malformed
+    collections and request ids. It refuses mode "hybrid" and any filter with 400 unsupported, never running a
+    broader search. Every generated search fixture now goes through it, as K6 will.
+  One request-id format (1-64 of A-Z a-z 0-9 . _ : -) for clientRequestId and error requestId; error_body enforces it.
+  New errors: unsupported (400), unauthenticated (401), too-large (413, over 16 KB). The bad-request wording is
+    broader. 401 and 413 are authored fixtures pending K6; the rest are generated.
+Checks (cloud Linux, Python 3.13 unittest, PostgreSQL 16 throwaway), from knowledge/:
+  python3 -m unittest discover -s tests: 33 passed. 15 new fixtures (13 generated, 2 authored).
+  Hidden and missing passages give the same 404 body as the other refusals. collections-andy counts one document
+    fewer than collections-alice (the finance-only one).
+  Against the previous source: fixture generation errors (missing routes and parser): 1 failure, 3 errors.
+Codex review status after this: KB-R1-R4 and decisions 1, 3 and 4 are addressed; decision 2 (an authoritative
+  empty listing in sync) is the remaining task. v1 can be frozen after Codex re-reviews these pins.
+Live / fake / skipped / unrun: real PostgreSQL with the synthetic corpus; no HTTP layer (K6), so 401/413 are shapes only.
+Reviewer disposition and reviewed SHA: re-review requested at the commit below.
+```

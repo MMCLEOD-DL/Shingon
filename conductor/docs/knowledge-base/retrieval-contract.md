@@ -33,11 +33,11 @@ OAuth token exchange (RFC 8693) with the user's own token is stronger. It is def
 
 | Method/path | Purpose |
 |---|---|
-| `GET /collections` | The collections this credential can search: id, name, description, `destinations` (§5), document count and last-sync time. |
+| `GET /collections` | The collections this credential can search, in id order: `collectionId`, `kind`, `destinations` (§5), `documents` (how many **this caller** can see) and `lastIngestedAt` (when the newest of those was ingested, null when none). Plus `viewRevision`. Names and descriptions are not stored yet, so they are not sent. |
 | `POST /search` | Ranked, cited passages for a query. |
-| `GET /passages/:chunkId` | One passage with ±N neighbouring chunks of the same version, bounded. Used to widen context around a hit. The chunk and its document are re-authorised on every lookup: an opaque id is not a permission. |
+| `GET /passages/:chunkId?neighbours=N` | One passage and up to N (0–2, default 1) passages either side of it in the same document version, in document order, with exactly one marked `focus`. The body names `collectionId`, `documentId`, `versionId` and `title`; each passage has `chunkId`, `text` (≤ 1,200 characters, control characters stripped), `locator` and `instructionLike`. Used to widen context around a hit. The chunk and its document are re-authorised on every lookup: an opaque id is not a permission, and a hidden or missing id gets the same 404. |
 | `GET /collections/:collectionId/documents/:documentId/versions/:versionId/original` | The original file of that exact document version, only while it is the **current** version and the ACL allows it. Served directly to the authenticated caller and re-authorised at delivery; v1 has no download tickets. Headers: `Content-Disposition: attachment`, a fixed `Content-Type` by extension (`application/octet-stream` when unknown), `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`. Any other version, including an older one still retained, gets the same `404` as a hidden or missing document; the latest file is never served in its place. Each identifier is one URL-encoded path segment, decoded once and looked up, never joined to a file path. |
-| `GET /health` | Readiness only. No revision, counts or anything else that crosses ACL boundaries. |
+| `GET /health` | Readiness only: `200 {"status": "ok"}`, or `503 index-unavailable`. No revision, counts or anything else that crosses ACL boundaries. |
 
 ### `POST /search` request
 
@@ -45,10 +45,15 @@ OAuth token exchange (RFC 8693) with the user's own token is stronger. It is def
 { "query": "string, 1-1000 chars",
   "collections": ["optional subset of allowed ids"],
   "filters": { "sourceTypes": ["pdf","docx","xlsx","md"], "updatedAfter": "ISO date", "documentIds": [] },
-  "mode": "hybrid | keyword",
+  "mode": "keyword",
   "limit": 8,
-  "clientRequestId": "uuid" }
+  "clientRequestId": "optional: 1-64 of A-Z a-z 0-9 . _ : -" }
 ```
+
+The request is parsed strictly (`contract.parse_search_request`):
+- only these six fields; `limit` is a whole number from 1 to 20 (a boolean is not a number); `collections` is 1 to 50 distinct ids;
+- `clientRequestId` uses the one request-id format, which is also the format of `requestId` in every error. When it is absent, K6 issues one;
+- **`mode: "hybrid"` and any filter are refused with `400 unsupported`** until K3 and the filters exist. They are never answered by quietly running a keyword search or ignoring the filter. `filters` may only be absent or `{}`.
 
 `limit` is at most 20, and the response body is at most 64 KB. A request naming a collection outside scope gets `403 scope` and is never silently dropped, so callers can tell "nothing found" from "not allowed".
 
@@ -80,7 +85,7 @@ OAuth token exchange (RFC 8693) with the user's own token is stronger. It is def
 
 ## 4. Errors and limits
 
-Errors use the operator-app shape `{ error: { code, message, retryable, requestId } }` with 400/401/403/404/413/429/503.
+Errors use the operator-app shape `{ error: { code, message, retryable, requestId } }`. The codes, each with fixed wording (`contract.ERRORS`), are `bad-request` and `unsupported` (400), `unauthenticated` (401), `scope` (403), `not-found` (404), `too-large` (413, a request body over 16 KB), `rate-limit` (429) and `index-unavailable` (503).
 
 - **No existence leaks:** a document the caller cannot see returns `404`, exactly as one that does not exist.
 - **`503 index-unavailable`** is distinct from an empty result. Callers must not turn an outage into "no evidence found".
@@ -190,7 +195,15 @@ Each fixture says whether it is **generated** or **authored**:
 
 Also included: `bad-request` (400).
 
-`GET /collections`, `GET /passages/:chunkId` and `GET /health` are not in §10 and have no fixtures yet.
+Every exposed route now has fixtures (Codex review KB-R4):
+
+| Item | Fixture(s) | Origin |
+|---|---|---|
+| `GET /collections` | `collections-alice`, `collections-andy` (one document fewer: the finance-only one), `collections-conductor` | generated |
+| `GET /passages/:chunkId` | `passage-neighbours` (focus plus one either side), `passage-hidden` and `passage-missing` (identical 404s), `passage-too-wide` (400) | generated |
+| `GET /health` | `health` | generated |
+| Request validation | `bad-request`, `bad-request-boolean-limit`, `bad-request-unknown-field`, `unsupported-hybrid`, `unsupported-filters` | generated, through `parse_search_request` |
+| Body too large, authentication | `too-large` (413), `unauthenticated` (401) | authored: K6 |
 
 Two things consumers must not read into the fixtures:
 - **Evidence levels.** They come from K2's provisional keyword thresholds. The PDF hit is `weak`. K4 replaces the thresholds, and the generated fixtures will change with them.

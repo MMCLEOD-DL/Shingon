@@ -742,10 +742,346 @@
         "body": {
           "error": {
             "code": "bad-request",
-            "message": "The query must be 1 to 1,000 characters and the limit 1 to 20.",
+            "message": "The request is not valid: send only the documented fields, a query of 1 to 1,000 characters and a whole-number limit from 1 to 20.",
             "retryable": false,
             "requestId": "req-bad-request"
           }
+        }
+      }
+    },
+    {
+      "id": "bad-request-boolean-limit",
+      "covers": "A boolean limit is refused, not read as 1",
+      "origin": "generated",
+      "caller": "Acme app server, asserted user alice (member of finance)",
+      "request": {
+        "method": "POST",
+        "path": "/search",
+        "body": {
+          "query": "mileage",
+          "limit": true
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": {
+            "code": "bad-request",
+            "message": "The request is not valid: send only the documented fields, a query of 1 to 1,000 characters and a whole-number limit from 1 to 20.",
+            "retryable": false,
+            "requestId": "req-bad-request-boolean-limit"
+          }
+        }
+      }
+    },
+    {
+      "id": "bad-request-unknown-field",
+      "covers": "A field the contract does not define is refused",
+      "origin": "generated",
+      "caller": "Acme app server, asserted user alice (member of finance)",
+      "request": {
+        "method": "POST",
+        "path": "/search",
+        "body": {
+          "query": "mileage",
+          "tenant": "birch"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": {
+            "code": "bad-request",
+            "message": "The request is not valid: send only the documented fields, a query of 1 to 1,000 characters and a whole-number limit from 1 to 20.",
+            "retryable": false,
+            "requestId": "req-bad-request-unknown-field"
+          }
+        }
+      }
+    },
+    {
+      "id": "unsupported-hybrid",
+      "covers": "Hybrid mode is refused until K3, never run as keyword search",
+      "origin": "generated",
+      "caller": "Acme app server, asserted user alice (member of finance)",
+      "request": {
+        "method": "POST",
+        "path": "/search",
+        "body": {
+          "query": "mileage",
+          "mode": "hybrid"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": {
+            "code": "unsupported",
+            "message": "Only keyword search without filters is available. Leave out mode \"hybrid\" and filters.",
+            "retryable": false,
+            "requestId": "req-unsupported-hybrid"
+          }
+        }
+      }
+    },
+    {
+      "id": "unsupported-filters",
+      "covers": "A document filter is refused until it is implemented, never ignored",
+      "origin": "generated",
+      "caller": "Acme app server, asserted user alice (member of finance)",
+      "request": {
+        "method": "POST",
+        "path": "/search",
+        "body": {
+          "query": "mileage",
+          "filters": {
+            "documentIds": [
+              "acme/expenses-policy.docx"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": {
+            "code": "unsupported",
+            "message": "Only keyword search without filters is available. Leave out mode \"hybrid\" and filters.",
+            "retryable": false,
+            "requestId": "req-unsupported-filters"
+          }
+        }
+      }
+    },
+    {
+      "id": "collections-alice",
+      "covers": "The collections a caller can search, with what she can see of each",
+      "origin": "generated",
+      "caller": "Acme app server, asserted user alice (member of finance)",
+      "request": {
+        "method": "GET",
+        "path": "/collections"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "viewRevision": "3c6230e06c14fdfceb151c55187c25d0faa3fc623c9eeb71ada03023b4d78b69",
+          "collections": [
+            {
+              "collectionId": "acme-policies",
+              "kind": "client-runtime",
+              "destinations": [
+                "foundation-app:acme"
+              ],
+              "documents": 4,
+              "lastIngestedAt": "2026-10-29T12:00:00Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "collections-andy",
+      "covers": "The same collection, counted for a caller who cannot see the finance-only document",
+      "origin": "generated",
+      "caller": "Acme app server, asserted user andy (not in finance)",
+      "request": {
+        "method": "GET",
+        "path": "/collections"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "viewRevision": "3481667c05d014d4dddae14722cbd04fadee49de74f3e0c4feae54a7a58c56ed",
+          "collections": [
+            {
+              "collectionId": "acme-policies",
+              "kind": "client-runtime",
+              "destinations": [
+                "foundation-app:acme"
+              ],
+              "documents": 3,
+              "lastIngestedAt": "2026-10-29T12:00:00Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "collections-conductor",
+      "covers": "A project token sees only its reference collection",
+      "origin": "generated",
+      "caller": "Conductor project token over the standards collection",
+      "request": {
+        "method": "GET",
+        "path": "/collections"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "viewRevision": "14f45e6190e90046e2487e207a1bf7862d2b6295bac7834217a1e4e82a28d60b",
+          "collections": [
+            {
+              "collectionId": "standards",
+              "kind": "reference",
+              "destinations": [
+                "local-model",
+                "claude-subscription",
+                "codex-subscription"
+              ],
+              "documents": 3,
+              "lastIngestedAt": "2026-10-29T12:00:00Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "passage-neighbours",
+      "covers": "A passage and one neighbour either side, in document order",
+      "origin": "generated",
+      "caller": "Acme app server, asserted user alice (member of finance)",
+      "request": {
+        "method": "GET",
+        "path": "/passages/8c5c5e3a9d6e96ca1141b4d3d9e03c5700295c3b28218091eae7c01d005303c8?neighbours=1"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "viewRevision": "3c6230e06c14fdfceb151c55187c25d0faa3fc623c9eeb71ada03023b4d78b69",
+          "collectionId": "acme-policies",
+          "documentId": "acme/expenses-policy.docx",
+          "versionId": 2,
+          "title": "Acme Expenses Policy",
+          "passages": [
+            {
+              "chunkId": "8e978b5c67a9e254d967fcfffff3a31d605d85d5de427adac21cfea04b7aade6",
+              "text": "Any single claim over 500 pounds needs approval from a finance manager before payment.",
+              "locator": {
+                "page": null,
+                "sectionPath": [
+                  "Acme Expenses Policy",
+                  "2 Approval"
+                ],
+                "sheet": null,
+                "cellRange": null,
+                "slide": null
+              },
+              "instructionLike": false,
+              "focus": false
+            },
+            {
+              "chunkId": "51d71a22b886e67db6d09cff0701d051fa01d309aa67254b6ef634075b1c6e46",
+              "text": "Staff using their own car for business travel are reimbursed 55 pence per mile.",
+              "locator": {
+                "page": null,
+                "sectionPath": [
+                  "Acme Expenses Policy",
+                  "3 Mileage"
+                ],
+                "sheet": null,
+                "cellRange": null,
+                "slide": null
+              },
+              "instructionLike": false,
+              "focus": true
+            },
+            {
+              "chunkId": "30d723fa96a72d56486f08305995c56be1fcc7fe160c97e79fe0a819823e75db",
+              "text": "The daily meal allowance when travelling overnight is 35 pounds.",
+              "locator": {
+                "page": null,
+                "sectionPath": [
+                  "Acme Expenses Policy",
+                  "4 Meals"
+                ],
+                "sheet": null,
+                "cellRange": null,
+                "slide": null
+              },
+              "instructionLike": false,
+              "focus": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "passage-hidden",
+      "covers": "A passage the caller may not see: 404, as for a missing one",
+      "origin": "generated",
+      "caller": "Acme app server, asserted user andy (not in finance)",
+      "request": {
+        "method": "GET",
+        "path": "/passages/871672fa12f1cb335fe9f315aa26602ca65e33d2c5db2db428cfb95a6c0e19ea?neighbours=1"
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "error": {
+            "code": "not-found",
+            "message": "No such document, or it is not visible to this credential.",
+            "retryable": false,
+            "requestId": "req-passage-hidden"
+          }
+        }
+      }
+    },
+    {
+      "id": "passage-missing",
+      "covers": "A chunk id that does not exist: identical to hidden",
+      "origin": "generated",
+      "caller": "Acme app server, asserted user andy (not in finance)",
+      "request": {
+        "method": "GET",
+        "path": "/passages/d14e0bc375fd74ec1aa02cd576034002fcd318377adef97677355fab966f52cb?neighbours=1"
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "error": {
+            "code": "not-found",
+            "message": "No such document, or it is not visible to this credential.",
+            "retryable": false,
+            "requestId": "req-passage-missing"
+          }
+        }
+      }
+    },
+    {
+      "id": "passage-too-wide",
+      "covers": "More neighbours than the bound is refused",
+      "origin": "generated",
+      "caller": "Acme app server, asserted user alice (member of finance)",
+      "request": {
+        "method": "GET",
+        "path": "/passages/501ca35260587caf7fc0691f46bd311b346f5e206ef719915d6e537f0cc4f07a?neighbours=9"
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": {
+            "code": "bad-request",
+            "message": "The request is not valid: send only the documented fields, a query of 1 to 1,000 characters and a whole-number limit from 1 to 20.",
+            "retryable": false,
+            "requestId": "req-passage-too-wide"
+          }
+        }
+      }
+    },
+    {
+      "id": "health",
+      "covers": "Readiness only: no revision or counts",
+      "origin": "generated",
+      "caller": "Conductor project token over the standards collection",
+      "request": {
+        "method": "GET",
+        "path": "/health"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "status": "ok"
         }
       }
     },
@@ -1770,6 +2106,54 @@
             "local-model"
           ],
           "message": "1 document from company-private-notes kept from claude: that collection may go only to local-model. To use it, run this step with an allowed participant."
+        }
+      }
+    },
+    {
+      "id": "unauthenticated",
+      "covers": "A missing, expired or wrong credential: 401 with fixed wording, never a hint about which",
+      "origin": "authored",
+      "pendingOn": "K6 (HTTP layer: authentication and body limits)",
+      "caller": "Any caller",
+      "request": {
+        "method": "POST",
+        "path": "/search",
+        "body": {
+          "query": "mileage"
+        }
+      },
+      "response": {
+        "status": 401,
+        "body": {
+          "error": {
+            "code": "unauthenticated",
+            "message": "The credential is missing, expired or not valid for this service.",
+            "retryable": false,
+            "requestId": "req-unauthenticated"
+          }
+        }
+      }
+    },
+    {
+      "id": "too-large",
+      "covers": "A request body over 16 KB is refused before it is parsed",
+      "origin": "authored",
+      "pendingOn": "K6 (HTTP layer: authentication and body limits)",
+      "caller": "Any caller",
+      "request": {
+        "method": "POST",
+        "path": "/search",
+        "body": null
+      },
+      "response": {
+        "status": 413,
+        "body": {
+          "error": {
+            "code": "too-large",
+            "message": "The request body is larger than 16 KB.",
+            "retryable": false,
+            "requestId": "req-too-large"
+          }
         }
       }
     }
