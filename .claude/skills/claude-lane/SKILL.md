@@ -26,7 +26,7 @@ The loop is event-driven, not timed. A merged PR, a review comment or a message 
 ## 1. Read the repo (every iteration, before choosing)
 
 1. `git fetch origin` and `git log --oneline -15 origin/main`. List the remote branches and any open PRs (GitHub MCP tools).
-2. Read the plan folder `conductor/docs/superpowers/plans/2026-10-29-two-week-product/`: `04-work-log.md` (statuses and the newest entries first), then `01-task-packets.md` for the chosen packet. Also read `reviews/` and `conductor/docs/operator-app/next.md`.
+2. Read the plan folder `conductor/docs/superpowers/plans/2026-10-29-two-week-product/`: `04-work-log.md` (packet statuses) and `work-log/` (one file per entry, newest last by name; see its README), then `01-task-packets.md` for the chosen packet. Also read `reviews/` and `conductor/docs/operator-app/next.md`.
 3. Note anything that changed since the last iteration: new commits by Codex or Malcolm, new review requests addressed to Claude, and decisions recorded by Malcolm.
 
 ## 2. Choose the next task (first match wins)
@@ -43,10 +43,10 @@ Before starting, post a short line in chat: the task, why it is next, the planne
 
 ## 3. Do the task
 
-- Claim it in `04-work-log.md`: status `IN_PROGRESS`, branch and baseline SHA.
+- Claim it: set the packet's status row in `04-work-log.md` if it changes, and add an entry file in `work-log/` with the branch and baseline SHA.
 - Work in small commits. Prove each change with the repo's own checks: see `05-validation.md`. Run the affected suites and, for UI work, `conductor/operator-web` with `npm test`, `npm run build` and `node e2e/journey.mjs`.
 - **Reproduce before fixing.** For a fix, show the failing check first, then the passing one.
-- Record evidence in the work log with the handoff template from `03-parallel-working.md`. Keep live, fake, skipped and unrun results separate. Never mark DONE on description alone.
+- Record evidence in a new `work-log/` file with the handoff template from `03-parallel-working.md`. Keep live, fake, skipped and unrun results separate. Never mark DONE on description alone.
 
 ## 4. Push and open the PR
 

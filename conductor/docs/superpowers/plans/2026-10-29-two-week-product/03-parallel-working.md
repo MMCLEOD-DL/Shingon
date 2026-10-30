@@ -4,9 +4,9 @@ This plan supports two assistants working at once. Shared chat history is not a 
 
 ## Start each session
 
-1. Read `00-index.md`, the relevant packet, `02-interface-contract.md`, `04-work-log.md`, applicable AGENTS.md and current Git status/log.
+1. Read `00-index.md`, the relevant packet, `02-interface-contract.md`, `04-work-log.md` (statuses), the newest files in `work-log/`, applicable AGENTS.md and current Git status/log.
 2. Verify the intended repository, actual HEAD and pre-existing changes. This plan started at 8c712e9; later packets must start from the named integrated commit, not reset back to the planning baseline.
-3. Claim a packet in the work log with owner, branch/checkout, baseline SHA and owned paths. Use a short claim before editing. If the other assistant cannot see this workspace, Malcolm relays the claim or the shared branch/PR provides the coordination record.
+3. Claim a packet with a new file in `work-log/` (see its README) giving owner, branch/checkout, baseline SHA and owned paths. Use a short claim before editing. If the other assistant cannot see this workspace, Malcolm relays the claim or the shared branch/PR provides the coordination record.
 4. Read known deferrals before raising a finding. Distinguish an accepted limitation from a new regression with a similar symptom.
 
 Cloud tasks are already isolated. Use their checkouts; do not create Git worktrees unless the user explicitly asks. On separate machines/tasks, use separate clones/branches and explicit commits or patches. If both assistants share one checkout, do not independently switch branches, stage broad paths, run resets or alter shared manifests; use disjoint owned paths and a designated integrator. Shells, process state and credentials are not shared merely because Git is.
