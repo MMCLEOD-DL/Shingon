@@ -1,6 +1,6 @@
-# Read-only retrieval contract (proposal v0)
+# Read-only retrieval contract (v1 candidate)
 
-**Packet:** P06, step 5. **Status:** proposal for Codex review. It is not an implemented API, and Conductor and Foundation are not changed by it. Version 0 becomes v1 only when both lanes accept it and a fixture set exists, as with the operator-app contract. The draft fixture set now exists ([§10](#10-fixtures-to-freeze-before-v1)); acceptance and the open points listed there remain.
+**Packet:** P06, step 5. **Status:** v1 candidate, 30 October 2026. Every finding and decision from Codex's reviews is closed ([§11](#11-v1-acceptance)), and the fixture set exists ([§10](#10-fixtures-to-freeze-before-v1)). **Claude accepts this text and `knowledge/contract/kb-contract-v1.json` as v1.** It becomes v1 when Codex records its acceptance in §11, as with the operator-app contract; K6 (the HTTP API) starts then. After that, any change to a wire shape, route, error or rule needs both lanes and a version bump. The service core implements it (K2 onward); there is no HTTP layer yet, and Conductor and Foundation are not changed by it.
 
 **Purpose:** one small contract that Conductor and generated Foundation apps both use to get evidence from a knowledge service. The service must return only what the caller is allowed to see, say where every passage came from, and be safe to put in front of a model.
 
@@ -29,7 +29,7 @@
 
 OAuth token exchange (RFC 8693) with the user's own token is stronger. It is deferred until a client actually has SSO.
 
-## 3. Endpoints (HTTP, JSON, under `/kb/v0`)
+## 3. Endpoints (HTTP, JSON, under `/kb/v1`)
 
 | Method/path | Purpose |
 |---|---|
@@ -220,7 +220,7 @@ Two things consumers must not read into the fixtures:
 - an `allowedDestinations` entry outside §5's list (`foundation-app:` takes a lower-case slug until Foundation fixes the app-id format);
 - a body or container of the wrong type.
 
-**Open points for v1 (for Codex's review):**
+**Open points for v1 (all decided by Codex's review and done):**
 
 1. **Identifiers.** *Decided by Codex's review; done.*
    - Identity is `(collectionId, documentId, versionId)`, and the original route carries all three (§3). The fixtures above show the same `documentId` in two collections.
@@ -232,3 +232,37 @@ Two things consumers must not read into the fixtures:
 3. **Original versions.** *Decided by Codex's review; done.* Current version only, checked in the same query as the document's status and ACL; anything else is the shared 404 (§3).
 4. **Destination-withheld report.** *Decided by Codex's review; the shape is done (§5).* It is accepted as an operator-only report, with stricter values and fixed wording, and the participant gets only a generic notice. K8 still owns enforcement: re-applying the rule at every hop, and re-checking the policy when evidence is assembled.
 
+## 11. v1 acceptance
+
+**Closure record.** Each item was reproduced by Codex, corrected by Claude with a regression that fails on the
+previous source, and closed by Codex on an independent re-run (several on native Windows).
+
+| Item | Correction (PR, commit) | Closed by Codex |
+|---|---|---|
+| KB-R1 same key in two collections | PR34 `5701ab9` | `reviews/2026-10-30-codex-review-kb-corrections.md` |
+| KB-R2 strict wire values | PR31 `4dea212` | same |
+| KB-R3 hidden successor named | PR31 `4dea212` | same |
+| KB-R4 every route and request | PR39 `fee43f0`, with KB-R6 | `reviews/2026-10-30-codex-review-kb-endpoints.md`, `…-kb-fixture-fix.md` |
+| KB-R5 evidence and revision from one snapshot | PR44 `b32a9d6` | `reviews/2026-10-30-codex-review-kb-snapshot-fix.md` |
+| KB-R6 passage fixture identity | PR46 `a99a7cf` | `reviews/2026-10-30-codex-review-kb-fixture-fix.md` |
+| KB-R7 durable original cleanup | PR47 `fa5ca90` | `reviews/2026-10-30-codex-review-kb-cleanup-fix.md` |
+| Decision 1 identifiers, `viewRevision` | PR34, PR37 `7ed04e4`, PR44 | `…-kb-corrections.md`, `…-view-revision.md`, `…-kb-snapshot-fix.md` |
+| Decision 2 removal, authoritative listings | PR41 `86b5496` | `reviews/2026-10-30-codex-review-kb-sync.md` |
+| Decision 3 current-version originals | PR34 | `…-kb-corrections.md` |
+| Decision 4 operator-only withheld report (shape) | PR37 | `…-view-revision.md` |
+
+**What v1 binds, and what it leaves to the tasks that implement it.** These are obligations the contract already
+states; they are not open questions in its text, and accepting v1 does not claim they are done:
+- **K6 (HTTP API):** authentication and the 401 shape; the 16 KB request limit (413) and 64 KB response limit; rate
+  limits (429 with `retryAfter` and `Retry-After`); 503 for an unavailable index; one-segment path decoding; serving
+  each body through `contract.py`'s builders and checkers; re-authorising an original at byte delivery; issuing a
+  request id when the caller sends none; and the authored 401/413/429/503 fixtures becoming generated ones.
+- **K8 (Conductor evidence step):** registered participants and apps; applying the destination rule at every hop
+  that could forward evidence; re-checking policy freshness when evidence is assembled; sending the withheld report
+  only to the operator and `PARTICIPANT_NOTICE` to the participant.
+- **Later tasks:** K3/K4 fill `scores.vector`/`rerank` and replace the keyword evidence thresholds (fixtures change
+  then); K5 fills OCR fields; a live connector (K13) is the only source of `stale`.
+
+**Acceptance.**
+- Claude: accepted, 30 October 2026, at the commit that adds this section.
+- Codex: pending. Codex records acceptance here, or names what blocks it.
