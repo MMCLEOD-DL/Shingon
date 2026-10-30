@@ -1494,7 +1494,7 @@ Temporary PG stopped; GPU worker stays off. Next review PR41; P09 and Windows co
 follow-up remain queued. No high-risk paths; request auto-merge and report disabled setting.
 Merge records the handoff, not source correction or freeze. Stop until submission merges.
 
-### 30 October 2026 — Codex claim: PR41 authoritative sync review
+### 30 October 2026 — Claude task 23 (claude-lane): one snapshot per read (KB-R5)
 
 ```
 Packet/subpacket: K-track contract. Codex review reviews/2026-10-30-codex-review-view-revision.md, KB-R5 [P1].
@@ -1521,6 +1521,50 @@ Live / fake / skipped / unrun: real PostgreSQL with the synthetic corpus; no HTT
 Reviewer disposition and reviewed SHA: re-review requested at the commit below.
 ```
 
+### 30 October 2026 — Codex claim: PR41 authoritative sync review
+
+Reviewer Codex; implementation/correction owner Claude. Status IN_PROGRESS.
+Branch `codex/review-kb-sync`; baseline `0205e37` (PR43 merged).
+Scope: PR41 `86b5496`, explicit complete collections, empty deletion/partial preservation,
+failed-source read-path removal and stale prose. Owned paths: review artifacts/controls and
+ledger only. Next: exercise complete/partial/failed inputs against disposable PostgreSQL,
+verify search/passage/original denial and original-file cleanup; keep upstream listing
+trust and existing KB-R5/R6 gates distinct. GPU worker stays off. No connector/private data,
+model, remote DB, HTTP acceptance or deployment. P09/Windows console work remains queued.
+
+### 30 October 2026 — PR41 authoritative sync review handoff (Codex)
+
+Reviewer Codex; correction owner Claude. Status CHANGES_REQUESTED for KB-R7 [P2].
+PR41 `86b5496`; reviewed baseline `0205e37`. Branch `codex/review-kb-sync`.
+Artifact `reviews/2026-10-30-codex-review-kb-sync.md`; standalone `fixtures/kb-sync-review.py`.
+Complete/partial listing correction passes: empty complete removes last source, partial
+empty retains it; failed source read removes every read path and reports failure, not stale.
+KB-R7: native Windows original held open during deletion survives suppressed rmtree error.
+Source marked deleted, original_path cleared and deletion reported; after close, next sync
+deletes zero and leaves the file. Logical read access denied; no read-ACL leak claimed.
+Underlying _delete predates PR41; this is newly confirmed in the complete-empty review path.
+Checks (Windows Python 3.14.2 UTF-8 mode, isolated PostgreSQL 16.15): knowledge 36/36, zero
+skips, 3.574 s. All independent sync/read-denial positive controls pass; lock/retry probe
+expected exit 1. Whitespace passes. Temporary PG stopped and absent; GPU worker left off.
+Only review artifacts/ledger changed; no private, model, connector, remote DB, HTTP or deploy.
+Claude preserves immediate logical denial, tracks failed byte cleanup durably and retries;
+keep KB-R5/R6 and other K6/K8 gates open. P09/Windows console follow-up remain queued.
+Merge records bounded semantic acceptance and cleanup finding, not v1 freeze or release.
+
+### Codex task submitted — PR41 authoritative sync review
+
+Date: 30 October 2026. Branch `codex/review-kb-sync`.
+Last artifact commit: `72f6b989e72b330d8318186024093234d1eef7f5`.
+PR: https://github.com/MMCLEOD-DL/Shingon/pull/45 (draft opened; ready after this push).
+Evidence: knowledge 36/36, zero skips; independent empty-complete/partial/failed-read controls
+pass. Windows open-original deletion/retry probe expected exit 1 for KB-R7. Whitespace passes.
+Accept examined listing/read-denial semantics; KB-R7 [P2] with Claude for durable cleanup
+tracking/retry and accurate reporting. Existing KB-R5/R6 and K6/K8 remain held. Only review
+artifacts/ledger changed. Temporary PG stopped; GPU worker remains off. No private/model/
+connector/HTTP/deployment acceptance. P09 and Windows console follow-up remain queued.
+No high-risk paths; request auto-merge and report disabled setting. Merge records handoff,
+not source correction, contract freeze or release. Stop until this submission merges.
+
 ### 30 October 2026 — Claude task 24 (claude-lane): passage fixture identity (KB-R6)
 
 ```
@@ -1543,5 +1587,36 @@ Checks (cloud Linux, Python 3.13 unittest, PostgreSQL 16 throwaway), from knowle
   Codex's kb-endpoint-contract-review.py: MISMATCH (exit 1) on c23002f, MATCH (exit 0) now.
 Codex review status: KB-R5 (PR #44, merged) and KB-R6 (this PR) await re-review, with PR #41's sync semantics.
 Live / fake / skipped / unrun: real PostgreSQL with the synthetic corpus; no HTTP layer.
+Reviewer disposition and reviewed SHA: re-review requested at the commit below.
+```
+
+### 30 October 2026 — Claude task 25 (claude-lane): durable cleanup of deleted originals (KB-R7)
+
+```
+Packet/subpacket: K-track contract. Codex review reviews/2026-10-30-codex-review-kb-sync.md, KB-R7 [P2].
+Owner and reviewer: Claude; reviewer Codex.
+Status: IN_REVIEW.
+Baseline SHA: 4d1893a.
+Owned files: knowledge/src/shingon_knowledge/{service.py (_delete, _purge, purge_originals, cleanup_status),
+  migrations/003_original_cleanup.sql (new)}; knowledge/tests/test_permissions_and_sync.py;
+  conductor/docs/knowledge-base/retrieval-contract.md (§8); this ledger.
+What now works:
+  Deletion revokes at once, in its transaction. The stored files are then removed one by one. A file the disk
+    refuses keeps its path and a durable purge_pending mark, with the reason, and is logged as cleanup-pending, not
+    deleted. Every later sync and purge_originals() retries, across restarts, and logs purged when the file is gone.
+    A deleted source is never reactivated or served while its file waits.
+  The deleted event no longer claims the file was deleted. cleanup_status() lists what is still on disk.
+  Ledger: also restores the task 23 entry and Codex's PR41 claim, handoff and submission entries, which the PR45
+    merge damaged (separate commit).
+Checks (cloud Linux, Python 3.13 unittest, PostgreSQL 16 throwaway), from knowledge/:
+  python3 -m unittest discover -s tests: 42 passed.
+  New (Windows' refusal simulated at os.remove, because root on Linux can delete an open file):
+    - a held original: revoked, search and original denied, file kept, cleanup-pending logged; a new service on the
+      same database (a restart) purges it;
+    - a mixed delete: the unheld file goes at once, the held one on the next sync, which deletes no sources.
+  The old service, with the refusal simulated the same way: reported deleted=1 with only a 'deleted' event, file
+    left on disk, retry deleted=0, file still there. That is Codex's finding.
+Not run here: Codex's kb-sync-review.py needs native Windows to hold a file open.
+Live / fake / skipped / unrun: real PostgreSQL and filesystem; Windows file locking simulated, not run.
 Reviewer disposition and reviewed SHA: re-review requested at the commit below.
 ```
