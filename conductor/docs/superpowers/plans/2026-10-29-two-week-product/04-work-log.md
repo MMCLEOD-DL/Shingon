@@ -6,7 +6,7 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude acknow
 |---|---|---|---|---|
 | P00 | Codex | IN_REVIEW | codex/operator-app-v1 | Concrete API/ADR/fixtures ready; Claude acknowledgement pending |
 | P01 | Codex | DONE | `codex/updater-settings-recovery` | Claude approved `06678be`; PR #6 merged as `8e5bf13`; evidence below |
-| P02 | Claude | CHANGES_REQUESTED | `2405aff` reviewed on integrated `18f8f5b` | Original triggers now refused; P02-R2 resolved at reviewed scope. P02-R1 partially fixed: harmless scanner footer still yields unwarned GBP 10.00 at confidence 1 while ignoring GBP 12.40 image. Codex re-review: 323 passed / 6 Linux-only tests filtered out; follow-up review and reproducer below. |
+| P02 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `77a9419` | P02-R2 resolved (Codex). P02-R1 residual: Malcolm chose flag, don't refuse (30 Oct); PDFs with any picture keep text below CONFIDENT plus a warning; Codex re-review due |
 | P03 | Codex | DONE | `codex/decision-receipt-keys` from `d9e88e2` | #12 and #14 independently approved/merged; N5 approval `43d8b0d`, merge `01350f7`; Claude N6 UI merged in #15; optional N7 remains |
 | P04 | Claude | CHANGES_REQUESTED | Reviewed integrated `bee4ae1`, including PR15 N6 | Codex: 54 unit PASS, build PASS, 19/19 real-service browser journey on Windows/Edge. N6 examined controls pass; P04-R1 clipped diff still approvable, P04-R2 delayed older passed report enables approval for new failed evidence at same commit. Review/reproducers below. |
 | P05 | Codex | IN_PROGRESS | codex/operator-app-v1 | Setup/probes/launcher implemented; native Windows/live-model acceptance pending |
@@ -911,4 +911,39 @@ Checks (cloud Linux, Node 22.22.0), from conductor/:
 Live / fake / skipped / unrun: synthetic repos and factory harnesses; no real upgrade with a model.
 Open: Codex may want its reproducer to take the bridged field, or to retire it in favour of the tests.
 Reviewer disposition and reviewed SHA: re-review requested at f5673de.
+```
+
+### 30 October 2026 — Claude task 14 (claude-lane): Codex P02 follow-up, P02-R1 residual (PDF pictures)
+
+```
+Packet/subpacket: P02. Codex review reviews/2026-10-30-codex-review-P02-followup.md, P02-R1 residual [P1].
+Decision (Malcolm, 30 Oct, asked by Claude): "flag, don't refuse". A PDF that holds any picture keeps its text
+  reading, every field says "Please check", and staff see a warning. Refusing every picture would have refused most
+  real e-receipts, which carry a logo.
+Owner and reviewer: Claude; reviewer Codex.
+Status: IN_REVIEW.
+Baseline SHA: 77a9419. Code: ec6ddd8.
+Owned files: foundation/modules/ocr/{src/pdfWorker.ts, src/pdfText.ts, src/local.ts, test/pdf-text.test.ts,
+  test/helpers.ts}; foundation/CHANGELOG.md; this ledger.
+What now works: the pre-scan notes a picture without decoding or drawing anything: an image XObject (/Subtype
+  /Image), any /DCTDecode stream, or an inline image (BI … ID) in a stream it decoded. readPdf (new; readPdfText
+  keeps its shape) caps every line at PDF_PICTURE_CONFIDENCE 0.6 and returns PDF_PICTURE_WARNING. The local engine
+  passes it as the reading's warning, and readReceipt passes it to the proposal. A worker reply that does not say
+  whether there are pictures is not a reply (unopenable). Text-only PDFs are unchanged (confidence 1, no warning).
+  The per-page refusal (image-only page) and the page-count checks stay.
+Trade-off recorded, as Codex asked: an image resource the page never paints, and a decorative logo, are flagged
+  too, deliberately (a test covers painted, unused and inline pictures).
+Checks (cloud Linux, Node 22.22.0), from foundation/:
+  pdf-text.test.ts: 52 passed (twice). Against the previous reader, the 4 new picture tests fail; the "text-only
+    PDF stays confident" control passes on both.
+  Codex's reproducers: p02-followup-reproduce.mts exits 0. The footer case is read at 0.6 with the warning, the
+    image page without a footer is refused, and the non-painted-resource control is now flagged, per the decision.
+    p02-reproduce.mts exits 0, unchanged.
+  npm run lint and typecheck (OCR): clean. umask 022, npm test -- --maxWorkers=1 (PostgreSQL 16): 1,131 passed,
+    6 skipped (the standing ops/deploy skips).
+  Observed once: the first PDF read in pdf-text.test.ts hit the 3 s reader deadline (3,020 ms) on a loaded host. The
+    file passed 47/47 twice straight after, and the e-ticket reads in about 0.5 s standalone. That is the cold start
+    of the reader child (type stripping plus loading pdfjs), and it predates this change. Recorded, not changed.
+Live / fake / skipped / unrun: synthetic PDFs plus the fictional taxi photo; no browser upload, Azure or Windows.
+Reviewer disposition and reviewed SHA: re-review requested at ec6ddd8.
 ```
