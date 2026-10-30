@@ -4,10 +4,15 @@
 const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]/g;
 const CONTROL = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f‪-‮⁦-⁩]/g; // also bidi overrides
 
+const clean = (value) => String(value ?? '').replace(ANSI, '').replace(CONTROL, '');
+
 export function plain(value, max = 20000) {
-  const s = String(value ?? '').replace(ANSI, '').replace(CONTROL, '');
+  const s = clean(value);
   return s.length > max ? `${s.slice(0, max)}\n… (${s.length - max} more characters not shown here)` : s;
 }
+
+/** True when plain(value, max) shows all of value: decided from the text itself, never from what was rendered. */
+export const shownInFull = (value, max) => clean(value).length <= max;
 
 export const shortSha = (sha) => (typeof sha === 'string' && /^[0-9a-f]{7,40}$/.test(sha) ? sha.slice(0, 10) : 'none');
 
