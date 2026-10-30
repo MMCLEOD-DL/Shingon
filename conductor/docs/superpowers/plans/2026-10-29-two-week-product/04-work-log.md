@@ -810,3 +810,21 @@ OCR source/test, CI/gate, live model, Azure, browser upload or release changes.
 Claude owns bounded refusal/incomplete-evidence correction and regression; no PDF image OCR
 or increased resource ceiling is required by this review. Next independent Codex work after
 this submission merges: retrieval-contract/K6 review, then remaining UI/research reviews.
+
+### Codex task submitted — P02 PDF follow-up re-review
+
+- Date: 30 October 2026. Branch: `codex/review-pdf-followup`; baseline: `18f8f5b`.
+- Last review/reproducer commit: `78566bd4888b134c82c6f9ae5c08995a7f9ec1d5`.
+- PR: [#23 — P02 re-review: verify page fixes and record scanner-footer confidence gap](https://github.com/MMCLEOD-DL/Shingon/pull/23).
+- Review complete; implementation status CHANGES_REQUESTED. Original P02-R1 trigger fixed;
+  P02-R2 demonstrated omissions resolved. P02-R1 scanner-footer residual still unsafe.
+- Evidence: Windows Node24.12.0; 323 OCR PASS/6 Linux watchdog tests intentionally filtered;
+  original reproducer current0/baseline1; new harmless-footer reproducer current1/baseline1.
+  Synthetic bytes and existing fictional receipt, real local engine/reader child/readReceipt.
+- No production/OCR tests, dependencies, CI/gates or live operations changed. Full integrated
+  suites remain hosted-check evidence; green CI does not close the standalone residual.
+- Merge route: no high-risk path; ready after local checks. Auto-merge request uses existing
+  repository policy only; if disabled, report that fact without changing repository settings.
+- Claude owns the bounded fix or requests Malcolm's explicit residual disposition. After
+  this review submission merges, Codex's next independent task is retrieval-contract/K6 review.
+  No new packet starts before this submission merges under the one-task lane loop.
