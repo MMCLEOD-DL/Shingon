@@ -989,6 +989,41 @@ record a separate runtime fix with Windows process/cancellation checks. Temporar
 avoids console churn in this review; the runtime defect is not claimed fixed.
 Next supplied peer review: P02 picture-confidence correction PR27; P09 remains in backlog.
 
+### 30 October 2026 — Claude task 14 (claude-lane): Codex P02 follow-up, P02-R1 residual (PDF pictures)
+
+```
+Packet/subpacket: P02. Codex review reviews/2026-10-30-codex-review-P02-followup.md, P02-R1 residual [P1].
+Decision (Malcolm, 30 Oct, asked by Claude): "flag, don't refuse". A PDF that holds any picture keeps its text
+  reading, every field says "Please check", and staff see a warning. Refusing every picture would have refused most
+  real e-receipts, which carry a logo.
+Owner and reviewer: Claude; reviewer Codex.
+Status: IN_REVIEW.
+Baseline SHA: 77a9419. Code: ec6ddd8.
+Owned files: foundation/modules/ocr/{src/pdfWorker.ts, src/pdfText.ts, src/local.ts, test/pdf-text.test.ts,
+  test/helpers.ts}; foundation/CHANGELOG.md; this ledger.
+What now works: the pre-scan notes a picture without decoding or drawing anything: an image XObject (/Subtype
+  /Image), any /DCTDecode stream, or an inline image (BI … ID) in a stream it decoded. readPdf (new; readPdfText
+  keeps its shape) caps every line at PDF_PICTURE_CONFIDENCE 0.6 and returns PDF_PICTURE_WARNING. The local engine
+  passes it as the reading's warning, and readReceipt passes it to the proposal. A worker reply that does not say
+  whether there are pictures is not a reply (unopenable). Text-only PDFs are unchanged (confidence 1, no warning).
+  The per-page refusal (image-only page) and the page-count checks stay.
+Trade-off recorded, as Codex asked: an image resource the page never paints, and a decorative logo, are flagged
+  too, deliberately (a test covers painted, unused and inline pictures).
+Checks (cloud Linux, Node 22.22.0), from foundation/:
+  pdf-text.test.ts: 52 passed (twice). Against the previous reader, the 4 new picture tests fail; the "text-only
+    PDF stays confident" control passes on both.
+  Codex's reproducers: p02-followup-reproduce.mts exits 0. The footer case is read at 0.6 with the warning, the
+    image page without a footer is refused, and the non-painted-resource control is now flagged, per the decision.
+    p02-reproduce.mts exits 0, unchanged.
+  npm run lint and typecheck (OCR): clean. umask 022, npm test -- --maxWorkers=1 (PostgreSQL 16): 1,131 passed,
+    6 skipped (the standing ops/deploy skips).
+  Observed once: the first PDF read in pdf-text.test.ts hit the 3 s reader deadline (3,020 ms) on a loaded host. The
+    file passed 47/47 twice straight after, and the e-ticket reads in about 0.5 s standalone. That is the cold start
+    of the reader child (type stripping plus loading pdfjs), and it predates this change. Recorded, not changed.
+Live / fake / skipped / unrun: synthetic PDFs plus the fictional taxi photo; no browser upload, Azure or Windows.
+Reviewer disposition and reviewed SHA: re-review requested at ec6ddd8.
+```
+
 ### 30 October 2026 — Claude task 15 (claude-lane): Codex review P04-R1 and P04-R2 (approval evidence)
 
 ```
@@ -1020,3 +1055,8 @@ Live / fake / skipped / unrun: fake service for unit tests; real service plus fi
   reproducer; no models.
 Reviewer disposition and reviewed SHA: re-review requested at the code commit below.
 ```
+
+Integration note: PR29 merged during this review. Merged `5adfad9`, preserving Claude tasks
+14 and 15 and restoring the PR28 P06 claim/handoff/submission history omitted by that main
+ledger version. The PR25 reviewed source and affected tests are unchanged by PR29's UI-only
+correction; no repeat of the 107-test run is needed. PR29's P04 re-review joins peer backlog.
