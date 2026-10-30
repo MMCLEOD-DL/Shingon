@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
-import shutil
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -126,8 +126,48 @@ class KnowledgeService:
                 with self.db.transaction():
                     self._delete(run_id, coll, sid, key)
                 counts['deleted'] += 1
+        self._purge(run_id)  # this run's deletions, and any earlier ones a held file blocked
         self.db.commit()
         return counts
+
+    def purge_originals(self, run_id: str) -> list[dict]:
+        """Deletes the stored originals of deleted sources still on disk, as every sync does; returns those that remain."""
+        self._purge(run_id)
+        return self.cleanup_status()
+
+    def cleanup_status(self) -> list[dict]:
+        """Stored originals of deleted sources that are not yet off the disk, with the last reason. None are served."""
+        rows = self.db.execute('SELECT s.collection_id, s.key, v.n, v.purge_error FROM versions v JOIN sources s ON s.id = v.source_id '
+                               'WHERE v.purge_pending ORDER BY s.collection_id, s.key, v.n').fetchall()
+        self.db.commit()
+        return [{'collection': c, 'key': k, 'version': n, 'error': e} for c, k, n, e in rows]
+
+    def _purge(self, run_id: str) -> None:
+        """Removes each pending original. A file that cannot be removed keeps its path and pending mark and is reported
+        as cleanup-pending; it is never reported deleted until it is. A file already gone counts as removed."""
+        rows = self.db.execute('SELECT v.source_id, v.n, v.original_path, s.collection_id, s.key FROM versions v '
+                               'JOIN sources s ON s.id = v.source_id WHERE v.purge_pending ORDER BY v.source_id, v.n').fetchall()
+        self.db.commit()
+        for sid, n, path, coll, key in rows:
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                reason = f'{type(e).__name__}: {e.strerror or e}'
+                with self.db.transaction():
+                    self.db.execute('UPDATE versions SET purge_error = %s WHERE source_id = %s AND n = %s', (reason, sid, n))
+                    self._event(run_id, coll, key, 'cleanup-pending', f'Version {n}: the stored original could not be deleted '
+                                                                      f'yet ({reason}). It is not served, and the next sync tries again.')
+                continue
+            with self.db.transaction():
+                self.db.execute('UPDATE versions SET original_path = NULL, purge_pending = false, purge_error = NULL '
+                                'WHERE source_id = %s AND n = %s', (sid, n))
+                self._event(run_id, coll, key, 'purged', f'Version {n}: stored original deleted from disk.')
+            try:
+                Path(path).parent.rmdir()  # the source's folder, once its last file is gone
+            except OSError:
+                pass
 
     def _sync_one(self, run_id: str, s: dict, path: Path) -> str:
         coll = s['collection']
@@ -211,10 +251,11 @@ class KnowledgeService:
         tenant = self.db.execute('SELECT tenant_id FROM collections WHERE id = %s', (coll,)).fetchone()[0]
         self.db.execute('DELETE FROM chunks WHERE source_id = %s', (sid,))
         self.db.execute("UPDATE sources SET status = 'deleted' WHERE id = %s", (sid,))
-        self.db.execute('UPDATE versions SET original_path = NULL WHERE source_id = %s', (sid,))
-        shutil.rmtree(self.originals / coll / str(sid), ignore_errors=True)  # retention 0 days for now
+        # Revocation is immediate; the files go in _purge() after this commits (retention 0 days for now).
+        self.db.execute('UPDATE versions SET purge_pending = original_path IS NOT NULL WHERE source_id = %s', (sid,))
         self._bump(tenant)
-        self._event(run_id, coll, key, 'deleted', 'Removed at the source: passages and stored original deleted.')
+        self._event(run_id, coll, key, 'deleted', 'Removed at the source: passages removed and the stored original is no '
+                                                  'longer served. Deleting the file from disk is recorded separately.')
 
     def _bump(self, tenant: str) -> None:
         self.db.execute('UPDATE tenants SET index_generation = index_generation + 1 WHERE id = %s', (tenant,))

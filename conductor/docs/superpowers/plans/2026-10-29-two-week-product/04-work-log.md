@@ -1494,7 +1494,7 @@ Temporary PG stopped; GPU worker stays off. Next review PR41; P09 and Windows co
 follow-up remain queued. No high-risk paths; request auto-merge and report disabled setting.
 Merge records the handoff, not source correction or freeze. Stop until submission merges.
 
-### 30 October 2026 — Codex claim: PR41 authoritative sync review
+### 30 October 2026 — Claude task 23 (claude-lane): one snapshot per read (KB-R5)
 
 Reviewer Codex; implementation/correction owner Claude. Status IN_PROGRESS.
 Branch `codex/review-kb-sync`; baseline `0205e37` (PR43 merged).
@@ -1591,6 +1591,50 @@ Next: KB-R6 (the passage fixture's request id differs from its focus id), a sepa
 Live / fake / skipped / unrun: real PostgreSQL with the synthetic corpus; no HTTP layer or cache exists yet.
 Reviewer disposition and reviewed SHA: re-review requested at the commit below.
 ```
+
+### 30 October 2026 — Codex claim: PR41 authoritative sync review
+
+Reviewer Codex; implementation/correction owner Claude. Status IN_PROGRESS.
+Branch `codex/review-kb-sync`; baseline `0205e37` (PR43 merged).
+Scope: PR41 `86b5496`, explicit complete collections, empty deletion/partial preservation,
+failed-source read-path removal and stale prose. Owned paths: review artifacts/controls and
+ledger only. Next: exercise complete/partial/failed inputs against disposable PostgreSQL,
+verify search/passage/original denial and original-file cleanup; keep upstream listing
+trust and existing KB-R5/R6 gates distinct. GPU worker stays off. No connector/private data,
+model, remote DB, HTTP acceptance or deployment. P09/Windows console work remains queued.
+
+### 30 October 2026 — PR41 authoritative sync review handoff (Codex)
+
+Reviewer Codex; correction owner Claude. Status CHANGES_REQUESTED for KB-R7 [P2].
+PR41 `86b5496`; reviewed baseline `0205e37`. Branch `codex/review-kb-sync`.
+Artifact `reviews/2026-10-30-codex-review-kb-sync.md`; standalone `fixtures/kb-sync-review.py`.
+Complete/partial listing correction passes: empty complete removes last source, partial
+empty retains it; failed source read removes every read path and reports failure, not stale.
+KB-R7: native Windows original held open during deletion survives suppressed rmtree error.
+Source marked deleted, original_path cleared and deletion reported; after close, next sync
+deletes zero and leaves the file. Logical read access denied; no read-ACL leak claimed.
+Underlying _delete predates PR41; this is newly confirmed in the complete-empty review path.
+Checks (Windows Python 3.14.2 UTF-8 mode, isolated PostgreSQL 16.15): knowledge 36/36, zero
+skips, 3.574 s. All independent sync/read-denial positive controls pass; lock/retry probe
+expected exit 1. Whitespace passes. Temporary PG stopped and absent; GPU worker left off.
+Only review artifacts/ledger changed; no private, model, connector, remote DB, HTTP or deploy.
+Claude preserves immediate logical denial, tracks failed byte cleanup durably and retries;
+keep KB-R5/R6 and other K6/K8 gates open. P09/Windows console follow-up remain queued.
+Merge records bounded semantic acceptance and cleanup finding, not v1 freeze or release.
+
+### Codex task submitted — PR41 authoritative sync review
+
+Date: 30 October 2026. Branch `codex/review-kb-sync`.
+Last artifact commit: `72f6b989e72b330d8318186024093234d1eef7f5`.
+PR: https://github.com/MMCLEOD-DL/Shingon/pull/45 (draft opened; ready after this push).
+Evidence: knowledge 36/36, zero skips; independent empty-complete/partial/failed-read controls
+pass. Windows open-original deletion/retry probe expected exit 1 for KB-R7. Whitespace passes.
+Accept examined listing/read-denial semantics; KB-R7 [P2] with Claude for durable cleanup
+tracking/retry and accurate reporting. Existing KB-R5/R6 and K6/K8 remain held. Only review
+artifacts/ledger changed. Temporary PG stopped; GPU worker remains off. No private/model/
+connector/HTTP/deployment acceptance. P09 and Windows console follow-up remain queued.
+No high-risk paths; request auto-merge and report disabled setting. Merge records handoff,
+not source correction, contract freeze or release. Stop until this submission merges.
 
 ### 30 October 2026 — Claude task 24 (claude-lane): passage fixture identity (KB-R6)
 
