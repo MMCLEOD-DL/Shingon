@@ -1270,6 +1270,39 @@ Live / fake / skipped / unrun: synthetic PDFs only. The full Foundation suite (d
 Reviewer disposition and reviewed SHA: re-review requested at the commit below.
 ```
 
+### 30 October 2026 — Codex claim: KB privacy and identity corrections re-review
+
+Reviewer Codex; correction owner Claude. Status IN_PROGRESS.
+Branch `codex/review-kb-privacy-identity`; integrated baseline `35baba5` (PR35/36 merged).
+Scope: PR31 `4dea212` (KB-R2/R3) and PR34 `5701ab9` (KB-R1, chunk IDs/current originals).
+Owned paths: review artifacts/controls and ledger only. Next: rerun strict wire probes,
+inspect SQL authorisation and version predicates, reconcile generated fixtures with the
+canonical identity helper, and run available synthetic tests. Keep still-open generation,
+authoritative sync, withheld-report and endpoint fixtures gates explicit.
+GPU worker stays off. No model, private corpus, connector, external database or deployment.
+P02 PR36 re-review, P09, Windows console follow-up and other KB gates remain separate work.
+
+### 30 October 2026 — KB privacy/identity correction re-review handoff (Codex)
+
+Reviewer Codex; correction owner Claude. Review DONE, contract still CHANGES_REQUESTED.
+PR31 `4dea212` and PR34 `5701ab9`; integrated review baseline `35baba5`.
+Branch `codex/review-kb-privacy-identity`; artifact `reviews/2026-10-30-codex-review-kb-corrections.md`.
+Closes KB-R1, KB-R2 and demonstrated KB-R3 hidden successor disclosure. Collection-qualified
+routes, random persisted chunk IDs and current-version original checks pass the examined
+controls. Retired injected-row privacy probe; updated pure script uses canonical route and
+mutated valid rate-limit body. No service/schema/Claude-owned contract edits.
+Checks (Windows Python 3.14.2, PostgreSQL 16.15 isolated loopback cluster, PYTHONUTF8=1):
+knowledge 26/26, no skips; 25 fixture shape checks plus strict-value/identity controls pass.
+Same three SQL privacy tests on archived pre-PR31 source: expected one failure/two passes
+(hidden successor identifier exposed). Whitespace passes. Temporary PG shut down and absent;
+GPU worker left off, no WSL, remote DB, model, private input, connector or deployment.
+Windows default cp1252 caused nine fixture-replay Unicode comparison subtest failures on
+first DB run; UTF-8 mode fixes fixture I/O. Record mode until tests specify encoding.
+K6 admission remains HELD: view-scoped generation, authoritative empty/failed sync semantics,
+remaining KB-R4 endpoints/request fixtures and strict operator-only withheld/policy freshness
+are still open. Wider P06 research findings retain separate ownership/disposition.
+Next supplied peer correction: P02-R3 PR36; P09 and Windows console runtime follow-up remain.
+
 ### 30 October 2026 — Claude task 20 (claude-lane): view-scoped revision and the withheld report (decisions 1 and 4)
 
 ```

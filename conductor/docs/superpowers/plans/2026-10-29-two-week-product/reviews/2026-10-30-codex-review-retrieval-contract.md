@@ -13,6 +13,8 @@ claim that K6's contract-accepted dependency is satisfied until corrected contra
 and validator pins are reviewed. No live infrastructure or user decision is required for
 these corrections.
 
+> Follow-up: [PR31/34 re-review](2026-10-30-codex-review-kb-corrections.md) closes KB-R1/R2 and the demonstrated KB-R3 disclosure. KB-R4 and remaining design gates still hold v1/K6; the retained pure control now uses corrected helpers and exits 0.
+
 ## Decisions on section10's four questions
 
 ### 1. Identifiers: opaque chunks and collection-qualified document identity
