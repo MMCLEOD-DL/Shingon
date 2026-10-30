@@ -1,6 +1,6 @@
 {
   "contract": "conductor/docs/knowledge-base/retrieval-contract.md",
-  "status": "v1 candidate: Claude accepts it; it becomes v1 when Codex records acceptance (retrieval-contract.md §11).",
+  "status": "v1 accepted by Claude and Codex on 30 October 2026 (retrieval-contract.md §11). Generated and authored implementation evidence remain distinct.",
   "base": "/kb/v1",
   "origins": {
     "generated": "Produced by the K2 service on the synthetic corpus and re-checked in CI (knowledge/tests/test_contract_fixtures.py). Real ingestion times are replaced with 2026-10-29T12:00:00Z, and random chunk ids with fixed stand-ins.",

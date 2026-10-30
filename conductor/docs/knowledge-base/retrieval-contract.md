@@ -1,12 +1,12 @@
-# Read-only retrieval contract (v1 candidate)
+# Read-only retrieval contract (v1)
 
-**Packet:** P06, step 5. **Status:** v1 candidate, 30 October 2026. Every finding and decision from Codex's reviews is closed ([§11](#11-v1-acceptance)), and the fixture set exists ([§10](#10-fixtures-to-freeze-before-v1)). **Claude accepts this text and `knowledge/contract/kb-contract-v1.json` as v1.** It becomes v1 when Codex records its acceptance in §11, as with the operator-app contract; K6 (the HTTP API) starts then. After that, any change to a wire shape, route, error or rule needs both lanes and a version bump. The service core implements it (K2 onward); there is no HTTP layer yet, and Conductor and Foundation are not changed by it.
+**Packet:** P06, step 5. **Status:** v1 accepted by Claude and Codex, 30 October 2026 ([§11](#11-v1-acceptance)). All retrieval-contract findings and v1 decisions are closed, and the accepted fixture set exists ([§10](#10-fixtures-to-freeze-before-v1)). This meets K6's contract-acceptance dependency; it is not acceptance of an HTTP implementation. Any change to a wire shape, route, error or rule needs both lanes and a version bump. K2 onward implements the service core; the K6/K8 and later obligations in §11 remain. There is no HTTP layer yet, and Conductor and Foundation are not changed by this acceptance.
 
 **Purpose:** one small contract that Conductor and generated Foundation apps both use to get evidence from a knowledge service. The service must return only what the caller is allowed to see, say where every passage came from, and be safe to put in front of a model.
 
 ## 1. Principles
 
-1. **Read-only.** v0 has no tool or endpoint that creates, edits, moves or deletes knowledge. Ingestion is a separate, operator-run pipeline with its own credentials (see `migration-plan.md`). Babel's MCP connector shows what to avoid: read and delete on one token ([inventory §1.1](inventory.md#11-mcp-tools-exposed-to-this-session-observed)).
+1. **Read-only.** v1 has no tool or endpoint that creates, edits, moves or deletes knowledge. Ingestion is a separate, operator-run pipeline with its own credentials (see `migration-plan.md`). Babel's MCP connector shows what to avoid: read and delete on one token ([inventory §1.1](inventory.md#11-mcp-tools-exposed-to-this-session-observed)).
 2. **Retrieval, not answers.** The service returns ranked, cited passages. Writing the answer is the caller's job, with the caller's model and data policy. A server-side "librarian" hides which evidence was used, moves model spend and data flow inside the KB, and on Babel was too slow to observe (two 60 s timeouts). An answer endpoint can be added later behind the same authorisation, with mandatory citations and abstention.
 3. **Authorise before retrieval.** Permission filters are part of the candidate query (keyword and vector), so unauthorised chunks are never scored, reranked, counted, cached or excerpted. Post-filtering is refused: it leaks through result counts, timing and reranker inputs, and it loses recall.
 4. **Documents are evidence, not instructions.** Text from a document is never executed, never treated as a tool call, never changes a policy, and never counts as an approval. Callers must present passages as quoted data (§6).
@@ -170,7 +170,7 @@ Fixtures must cover:
 - a rate limit;
 - a destination-withheld report from Conductor.
 
-### Draft fixture set (30 October 2026)
+### Accepted v1 fixture set (30 October 2026)
 
 **File:** [`knowledge/contract/kb-contract-v1.json`](../../../knowledge/contract/kb-contract-v1.json). The wire shapes and the shape checks are in `knowledge/src/shingon_knowledge/contract.py`; K6 should serialise with it and check its own output before sending. The test is `knowledge/tests/test_contract_fixtures.py`, which runs in CI.
 
@@ -220,15 +220,14 @@ Two things consumers must not read into the fixtures:
 - an `allowedDestinations` entry outside §5's list (`foundation-app:` takes a lower-case slug until Foundation fixes the app-id format);
 - a body or container of the wrong type.
 
-**Open points for v1 (all decided by Codex's review and done):**
+**Resolved v1 decisions:**
 
 1. **Identifiers.** *Decided by Codex's review; done.*
    - Identity is `(collectionId, documentId, versionId)`, and the original route carries all three (§3). The fixtures above show the same `documentId` in two collections.
    - `chunkId` is a random opaque id (migration `002_opaque_chunk_ids.sql`), not the serial whose gaps revealed ingestion volume.
    - The tenant-wide `indexGeneration` counter is replaced on the wire by `viewRevision`, a digest of the caller's own view (§8).
 2. **Stale versus removed.** *Decided by Codex's review; done.* Removal, and `stale` is narrowed (§3). Sync takes explicit complete listings, so an empty one removes the last document and a failed or partial one deletes nothing (§8).
-   - §3 and §8 describe a source whose last sync failed as served and flagged `stale`. K2 instead removes its passages from search, which is safer for permissions but loses availability.
-   - My recommendation: keep removal, and narrow `stale` to "the source system reports a newer version that has not been ingested yet", which only a connector can know.
+   - An earlier draft served a failed refresh as `stale`; that was superseded. The accepted §3/§8 rule removes failed refreshes from every read path. `stale` is reserved for an upstream-known newer version while the indexed version remains authorised, which only a connector can know.
 3. **Original versions.** *Decided by Codex's review; done.* Current version only, checked in the same query as the document's status and ACL; anything else is the shared 404 (§3).
 4. **Destination-withheld report.** *Decided by Codex's review; the shape is done (§5).* It is accepted as an operator-only report, with stricter values and fixed wording, and the participant gets only a generic notice. K8 still owns enforcement: re-applying the rule at every hop, and re-checking the policy when evidence is assembled.
 
@@ -265,4 +264,4 @@ states; they are not open questions in its text, and accepting v1 does not claim
 
 **Acceptance.**
 - Claude: accepted, 30 October 2026, at the commit that adds this section.
-- Codex: pending. Codex records acceptance here, or names what blocks it.
+- Codex: accepted, 30 October 2026, reviewing candidate `aef2189bd45195318a0521a93e10077bc34bdd7b` at integrated baseline `15a559b`. The specification and fixture set are accepted as v1. Independent native Windows verification: 42 knowledge tests pass (zero failures/skips), plus wire/request/lookup and locked-file retry controls. This closes the contract-acceptance dependency for K6, not its implementation or admission. K6/K8/later obligations above remain mandatory; wider P06 research R4 and D3/D4 remain separate. Evidence: `../superpowers/plans/2026-10-29-two-week-product/reviews/2026-10-30-codex-review-kb-contract-v1.md`.
