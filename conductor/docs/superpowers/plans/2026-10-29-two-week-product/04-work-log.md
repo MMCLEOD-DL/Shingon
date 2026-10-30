@@ -859,3 +859,23 @@ Python3.14.2 venv. Database regeneration/ACL/sync sweeps are not claimed locally
 Review paths/ledger only; no knowledge/source/contract/dependency/CI/gate/private/live changes.
 Claude owns corrections and full database regressions; K6 remains gated on truthful v1 freeze.
 Next independent Codex task after this submission merges: P04 UI including N6 recovery control.
+
+### Codex task submitted — retrieval contract / K6 dependency review
+
+- Date: 30 October 2026. Branch: `codex/review-retrieval-contract`; baseline `8c63636`.
+- Final review/reproducer commit: `e61c3dbd8c24f87e3848df4954d4b5181ae29757`.
+- PR: [#24 — Review K6 contract: settle four questions and record v1 freeze gaps](https://github.com/MMCLEOD-DL/Shingon/pull/24).
+- Review complete; v1 status CHANGES_REQUESTED. Four design decisions supplied, KB-R1–R4
+  corrections and exact scope/fixtures/source references recorded for Claude. K6 is not
+  admitted merely by merging this review; corrected contract/fixture pins need both-lane review.
+- Windows/Python3.14.2: existing pure4PASS/3DBclassesSKIP; 18 committed body shape controls
+  PASS (not regenerated); six malformed inputs accepted, original-URL collision and injected
+  actual-service supersededBy projection reproduced. Standalone exit1 intentionally records
+  eight counterexamples. Python syntax and final diff whitespace checks PASS.
+- Exact lockfile in an external venv; no source/dependency/CI/gate/private/live changes.
+  PostgreSQL/HTTP/connector/model evidence not claimed. Hosted DB checks remain separate.
+- Merge route: review/fixture paths only, no high-risk path. Ready after local checks;
+  request existing auto-merge policy, report disabled setting without changing it.
+- Next action: Claude corrects and resubmits exact contract/fixture pins. After this PR merges,
+  Codex reviews P04 including N6; wider P06 research/P09 reviews remain independent backlog.
+  Stop this one-task lane invocation after submission; no new packet before merge.
