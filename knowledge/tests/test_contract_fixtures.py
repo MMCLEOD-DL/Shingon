@@ -123,14 +123,20 @@ def _collections(kb, creds, fid, covers, who):
 
 
 def _passage(kb, creds, fid, covers, who, chunk_id, neighbours: str | None = '1'):
+    # One mapping from real chunk id to stand-in for the request and the response (Codex review KB-R6), so the
+    # requested id is the focused passage's id in the fixture exactly as it is in the service.
+    stand_ins: dict[str, str] = {}
+    stand_in = lambda real: stand_ins.setdefault(real, _stand_in(fid, len(stand_ins)))  # noqa: E731
+
     def shape(raw):
         body = contract.passage_body(raw)
-        for i, q in enumerate(body['passages']):
+        assert [q['chunkId'] for q in body['passages'] if q['focus']] == [chunk_id], 'the service focused another chunk'
+        for q in body['passages']:
             assert SERVICE_CHUNK_ID.match(q['chunkId']), q['chunkId']
-            q['chunkId'] = _stand_in(fid, i)
+            q['chunkId'] = stand_in(q['chunkId'])
         return body
     query = '' if neighbours is None else f'?neighbours={neighbours}'
-    return _get(fid, covers, who, f'/passages/{_stand_in(fid, "path")}{query}',
+    return _get(fid, covers, who, f'/passages/{stand_in(chunk_id)}{query}',
                 lambda: kb.passage(creds[who], chunk_id, contract.parse_neighbours(neighbours)), shape)
 
 
@@ -278,6 +284,17 @@ class ContractFixtures(ServiceTestCase):
         paths = {self.by_id[f]['request']['path'] for f in ('same-key-other-collection', 'same-key-own-collection')}
         self.assertEqual(len(paths), 2, 'each identity has its own original route')
         self.assertEqual(self.by_id['same-key-own-collection']['response']['status'], 200)
+
+    def test_a_passage_fixture_focuses_the_chunk_it_asked_for(self):
+        # Codex review KB-R6: shape checks alone let the request and the focused passage name different chunks.
+        served = [f for f in self.file['fixtures'] if f['request'] and f['request']['path'].startswith('/passages/')
+                  and f['response']['status'] == 200]
+        self.assertTrue(served)
+        for f in served:
+            with self.subTest(fixture=f['id']):
+                asked = unquote(f['request']['path'].split('/')[2].split('?')[0])
+                focus = [q['chunkId'] for q in f['response']['body']['passages'] if q['focus']]
+                self.assertEqual(focus, [asked])
 
     def test_served_originals_are_the_stored_files(self):
         got = self.by_id['original-current']['response']
