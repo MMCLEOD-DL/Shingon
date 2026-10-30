@@ -24,7 +24,7 @@ from pathlib import Path
 
 from shingon_knowledge import contract
 
-from support import CORPUS, ServiceTestCase
+from support import COLLECTIONS, CORPUS, ServiceTestCase
 
 FILE = Path(__file__).resolve().parents[1] / 'contract' / 'kb-contract-v1.json'
 INGESTED_AT = '2026-10-29T12:00:00Z'  # generated fixtures replace the real ingestion time with this
@@ -171,7 +171,7 @@ def generate(kb, creds, manifest) -> list[dict]:
         _original(kb, creds, 'missing-document', 'A document that does not exist: identical to hidden', 'andy', 'acme-policies', 'acme/no-such-file.docx', 1),
     ]
     # Revocation: the next sync no longer lists the 2025 travel policy.
-    kb.sync('run-3', CORPUS, [x for x in manifest['sources'] if x['key'] != 'acme/travel-policy-2025.pdf'])
+    kb.sync('run-3', CORPUS, [x for x in manifest['sources'] if x['key'] != 'acme/travel-policy-2025.pdf'], complete=COLLECTIONS)
     out += [
         s('revoked-after-sync', 'After the source removed it, the next sync drops its passages and the caller\'s viewRevision changes', 'alice', 'hotel cap London per night'),
         _original(kb, creds, 'revoked-original', 'The stored original of a revoked document is gone', 'alice', 'acme-policies', 'acme/travel-policy-2025.pdf', 1),
@@ -182,7 +182,7 @@ def generate(kb, creds, manifest) -> list[dict]:
     ]
     # Source keys are unique per collection only (Codex review KB-R1): a finance-only copy of the budget, also v1.
     kb.setup({'collections': {'acme-finance': {'tenant': 'acme', 'kind': 'client-runtime', 'destinations': ['foundation-app:acme']}}})
-    kb.sync('run-4', CORPUS, [{'collection': 'acme-finance', 'key': 'acme/budget-2026.xlsx', 'acl': {'groups': ['finance']}}])
+    kb.sync('run-4', CORPUS, [{'collection': 'acme-finance', 'key': 'acme/budget-2026.xlsx', 'acl': {'groups': ['finance']}}], complete=['acme-finance'])
     out += [
         s('same-key-two-collections', 'Two collections hold acme/budget-2026.xlsx at version 1: collectionId tells them apart', 'alice', 'Sales travel budget Q3', limit=8),
         s('same-key-one-visible', 'A caller outside finance sees only the acme-policies copy', 'andy', 'Sales travel budget Q3', limit=8),
@@ -196,14 +196,14 @@ class ContractFixtures(ServiceTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.kb.sync('run-1', CORPUS, cls.manifest['sources'], files={'acme/expenses-policy.docx': CORPUS / 'acme/_v1-expenses-policy.docx'})
-        cls.kb.sync('run-2', CORPUS, cls.manifest['sources'])
+        cls.kb.sync('run-1', CORPUS, cls.manifest['sources'], files={'acme/expenses-policy.docx': CORPUS / 'acme/_v1-expenses-policy.docx'}, complete=COLLECTIONS)
+        cls.kb.sync('run-2', CORPUS, cls.manifest['sources'], complete=COLLECTIONS)
         cls.generated = generate(cls.kb, cls.creds, cls.manifest)
-        committed = json.loads(FILE.read_text()) if FILE.exists() else {'fixtures': []}
+        committed = json.loads(FILE.read_text(encoding='utf-8')) if FILE.exists() else {'fixtures': []}
         if os.environ.get('KB_WRITE_FIXTURES') == '1':
             authored = [f for f in committed['fixtures'] if f['origin'] != 'generated']
             committed['fixtures'] = cls.generated + authored
-            FILE.write_text(json.dumps(committed, indent=2, ensure_ascii=False) + '\n')
+            FILE.write_text(json.dumps(committed, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
         cls.file = committed
         cls.by_id = {f['id']: f for f in committed['fixtures']}
 
@@ -296,7 +296,7 @@ class ShapeChecksRefuseBadBodies(unittest.TestCase):
     """The checkers are what K6 will run on its own output, so they must reject near-misses."""
 
     def setUp(self):
-        fixtures = {f['id']: f for f in json.loads(FILE.read_text())['fixtures']}
+        fixtures = {f['id']: f for f in json.loads(FILE.read_text(encoding='utf-8'))['fixtures']}
         self.good = fixtures['hit-docx']['response']['body']
 
     def mutate(self, fn):
@@ -381,7 +381,7 @@ class ShapeChecksRefuseBadBodies(unittest.TestCase):
         for bad in (None, [], {'error': []}, {'error': None}):
             with self.subTest(error=bad), self.assertRaises(contract.ContractError):
                 contract.check_error_body(status, bad)
-        fixtures = {f['id']: f for f in json.loads(FILE.read_text())['fixtures']}
+        fixtures = {f['id']: f for f in json.loads(FILE.read_text(encoding='utf-8'))['fixtures']}
         report = fixtures['destination-withheld']['response']['body']
         with_dests = lambda dests: contract.withheld_report(report['participant'], report['collectionId'], report['documentIds'], dests)  # noqa: E731
         contract.check_withheld_report(with_dests(['local-model', 'foundation-app:acme']))
@@ -437,7 +437,7 @@ class RequestsAndRoutes(unittest.TestCase):
     """Codex review KB-R4: what a request may say, and the shapes of the routes besides search."""
 
     def setUp(self):
-        self.fixtures = {f['id']: f for f in json.loads(FILE.read_text())['fixtures']}
+        self.fixtures = {f['id']: f for f in json.loads(FILE.read_text(encoding='utf-8'))['fixtures']}
 
     def test_search_requests_are_parsed_strictly(self):
         ok = contract.parse_search_request

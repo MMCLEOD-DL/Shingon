@@ -17,6 +17,8 @@ from shingon_knowledge.db import connect
 
 FIXTURES = Path(__file__).parent / 'fixtures'
 CORPUS = FIXTURES / 'corpus'
+# Every collection in the committed manifest: a sync of the whole manifest lists each of them in full.
+COLLECTIONS = list(json.loads((CORPUS / 'manifest.json').read_text(encoding='utf-8'))['collections'])
 FAILING = {'acme/receipts-guidance-scan.pdf', 'acme/board-minutes-locked.pdf', 'acme/installer.bin'}
 
 
@@ -40,7 +42,7 @@ class ServiceTestCase(unittest.TestCase):
         u = urlparse(base)
         cls.db = connect(urlunparse(u._replace(path='/' + cls.dbname)))
         cls.work = Path(tempfile.mkdtemp(prefix='kb-test-'))
-        cls.manifest = json.loads((CORPUS / 'manifest.json').read_text())
+        cls.manifest = json.loads((CORPUS / 'manifest.json').read_text(encoding='utf-8'))
         cls.kb = KnowledgeService(cls.db, cls.work / 'originals')
         cls.kb.setup(cls.manifest)
         cls.creds = {

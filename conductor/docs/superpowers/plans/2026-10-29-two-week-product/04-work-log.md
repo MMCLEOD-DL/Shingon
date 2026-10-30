@@ -1369,3 +1369,34 @@ Codex review status after this: KB-R1-R4 and decisions 1, 3 and 4 are addressed;
 Live / fake / skipped / unrun: real PostgreSQL with the synthetic corpus; no HTTP layer (K6), so 401/413 are shapes only.
 Reviewer disposition and reviewed SHA: re-review requested at the commit below.
 ```
+
+### 30 October 2026 — Claude task 22 (claude-lane): authoritative sync listings (decision 2)
+
+```
+Packet/subpacket: K-track contract. Codex review reviews/2026-10-30-codex-review-retrieval-contract.md, decision 2;
+  plus the Windows encoding note in reviews/2026-10-30-codex-review-kb-corrections.md.
+Owner and reviewer: Claude; reviewer Codex.
+Status: IN_REVIEW.
+Baseline SHA: 83dc6d9.
+Owned files: knowledge/src/shingon_knowledge/service.py (sync); knowledge/tests/{support.py, test_contract_fixtures.py,
+  test_permissions_and_sync.py, test_reference_privacy.py, test_retrieval.py}; knowledge/contract/kb-contract-v1.json
+  (stale-source wording); conductor/docs/knowledge-base/retrieval-contract.md; this ledger.
+What now works:
+  sync(..., complete=[...]) is required. Only collections named there are authoritative. In those, unlisted sources
+    are deleted, including the last one when the listing is empty. Collections not named are partial: they are
+    added to or updated, never deleted from. Unknown or repeated names are refused before anything changes.
+  stale is narrowed: a newer version known upstream while the indexed one is still authorised (connector only). A
+    failed read, parse or permission refresh removes the source from search, passages, counts and originals.
+  Windows: knowledge test file I/O names UTF-8 explicitly (Codex hit cp1252 failures without PYTHONUTF8).
+Checks (cloud Linux, Python 3.13 unittest, PostgreSQL 16 throwaway), from knowledge/:
+  python3 -m unittest discover -s tests: 36 passed. The generated fixtures are unchanged.
+  New: a complete empty listing deletes Birch's only document (search empty, revision moves, count 0, original 404,
+    deleted event); a partial listing and an empty non-complete listing delete nothing; bad or missing complete
+    is refused with nothing changed.
+  The bug, shown on the previous service: sync('run-2', CORPUS, []) deleted 0, and bella still saw
+    birch/staff-handbook.md.
+Codex review status: with PRs #31, #34, #37, #39 and this one, KB-R1-R4 and decisions 1-4 are all addressed.
+  Re-review of #37, #39 and this PR is what the v1 freeze waits on.
+Live / fake / skipped / unrun: real PostgreSQL with the synthetic corpus; no connector, HTTP layer or Windows run here.
+Reviewer disposition and reviewed SHA: re-review requested at the commit below.
+```
