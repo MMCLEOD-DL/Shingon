@@ -63,7 +63,7 @@ The old Windows project and this two-folder checkout have different histories/la
 
 UI critical path: **P00 → P03 + P04 → P05/P07 → P08**. P01/P02 run early and must not disappear behind UI work. P06 research is independent of UI integration until recommendations are accepted. A KB implementation must not become a hidden dependency of the coding app.
 
-Read [task packets](01-task-packets.md), [interface contract](02-interface-contract.md), and [parallel working/handoff rules](03-parallel-working.md). Use [the work log](04-work-log.md) as the current task ledger and [the validation runbook](05-validation.md) for commands and evidence rules.
+Read [task packets](01-task-packets.md), [interface contract](02-interface-contract.md), and [parallel working/handoff rules](03-parallel-working.md). Use [the work log](04-work-log.md) for packet statuses and [its entries](work-log/), one file each, as the current task ledger and [the validation runbook](05-validation.md) for commands and evidence rules.
 
 ## 4. Daily plan
 
