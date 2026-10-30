@@ -10,7 +10,7 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude acknow
 | P03 | Codex | DONE | `codex/decision-receipt-keys` from `d9e88e2` | #12 and #14 independently approved/merged; N5 approval `43d8b0d`, merge `01350f7`; Claude N6 UI merged in #15; optional N7 remains |
 | P04 | Claude | CHANGES_REQUESTED | Reviewed integrated `bee4ae1`, including PR15 N6 | Codex: 54 unit PASS, build PASS, 19/19 real-service browser journey on Windows/Edge. N6 examined controls pass; P04-R1 clipped diff still approvable, P04-R2 delayed older passed report enables approval for new failed evidence at same commit. Review/reproducers below. |
 | P05 | Codex | IN_PROGRESS | codex/operator-app-v1 | Setup/probes/launcher implemented; native Windows/live-model acceptance pending |
-| P06 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 29 Oct P06 entry; awaiting Codex review and Malcolm's decisions D1–D5 |
+| P06 | Claude | CHANGES_REQUESTED | `claude/adoring-carson-gaa3xh` from `a8ffb91`; research reviewed at `77a9419` | See 30 Oct P06 review: R1–R4 corrections; separate contract findings in PR24. D1/D2/D5 accepted for K2; D3/D4 open |
 | P07 | Codex + Claude review | IN_PROGRESS | codex/operator-app-v1 | Backend boundary tests pass; UI integration and peer review pending |
 
 | P08 | Codex + Claude review | NOT_STARTED | — | — |
@@ -912,3 +912,34 @@ Live / fake / skipped / unrun: synthetic repos and factory harnesses; no real up
 Open: Codex may want its reproducer to take the bridged field, or to retire it in favour of the tests.
 Reviewer disposition and reviewed SHA: re-review requested at f5673de.
 ```
+
+### 30 October 2026 — Codex claim: P06 wider research review
+
+Owner/reviewer Codex; research/correction owner Claude. Status IN_PROGRESS.
+Branch `codex/review-kb-research`; baseline `77a9419` (PR26 and PR25 merged).
+Scope: recommendation/options/inventory/migration/evaluation evidence beyond the separately
+reviewed retrieval contract. Verify decision alignment, primary sources, licence/deployment
+boundary, cost/scale assumptions and stored evaluation arithmetic without private data.
+Owned paths: review artifacts/standalone controls and this ledger only. No edits to
+Claude-owned KB research/service/source or existing accepted architecture decisions.
+Next action: independently recompute stored synthetic results; verify material upstream
+claims; record precise corrections and what remains unmeasured. PR25 upgrade correction
+re-review is newly supplied peer backlog and retained for the next source-review cycle.
+No model/connector/DB/host operation, Babel export, account access or deployment authorised.
+
+### 30 October 2026 — P06 wider research review handoff (Codex)
+
+Owner/reviewer: Codex. Correction owner: Claude. Status: CHANGES_REQUESTED.
+Branch: `codex/review-kb-research`; reviewed baseline `77a9419`.
+Artifact: `reviews/2026-10-30-codex-review-P06-research.md` plus two standalone controls.
+Findings: R1 [P2] MPL/policy classification; R2 [P2] FORCE/BYPASSRLS guidance;
+R3 [P2] shared ANN versus authorise-before-scoring promise; R4 [P3] latency provenance.
+Checks: stored rows independently reproduce 17/25 and 21/25 and all category counts;
+21/21 saved check outcomes agree. Audit exits 1 as expected on 325/0.37/0.83 versus
+saved 350/0.33/0.69 latency mismatch. Existing licence gate control passes (MIT allowed,
+MPL rejected). Quantiles cannot be independently recomputed from the incomplete samples.
+Live/fake/skipped/unrun: historical synthetic artifacts only, no fresh DB/model/connector
+execution, private retrieval/export or deployment; broad product suites unrun (review only).
+Disposition: D1/D2/D5 remain accepted for K2; D3/D4 remain open. Review merge records the
+findings, not their resolution. Claude supplies R1–R4 corrections; Codex re-reviews them.
+Next supplied peer task is PR25 upgrade correction re-review; P09 remains in backlog.
