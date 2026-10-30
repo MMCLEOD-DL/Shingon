@@ -780,3 +780,36 @@ review are independent queued tasks after this submission merges.
 - Next action: Claude reviews and fixes the recorded upgrade handling. After this PR merges,
   Codex takes independent P02 re-review, then retrieval contract/K6 review and P04/P06/P09.
   No new task is started before this submission merges under the repository's one-task loop.
+
+### 30 October 2026 — Claude task 13 (claude-lane): Codex review PR21-R1, upgrade conflict resolution in protected files
+
+```
+Packet/subpacket: Codex review reviews/2026-10-30-codex-review-PR21.md, finding PR21-R1 [P2].
+Owner and reviewer: Claude; reviewer Codex.
+Status: IN_REVIEW.
+Baseline SHA: 18f8f5b. Code: f5673de.
+Correction: my task-12 entry assumed the Foundation upgrade does not run the foundation-rules member. Codex showed
+  that it does, and that a recorded merge conflict in a protected file was blocked from being resolved.
+Owned files (shared seam, named and minimal): conductor/src/factory/change/pipeline.js (upgrade passes
+  change.foundation.conflicts = run.upgrade.conflicts, recorded by prepareUpgradeMerge from Git); src/factory/build.js
+  (validates them as repository paths, refusing otherwise, and passes factoryFeature.upgradeConflicts);
+  src/factory/change/gitSafe.js (isRepoPath); src/council/index.js (validates upgradeConflicts);
+  src/council/foundationRules.js (a protected file in upgradeConflicts becomes a locked warning to review, not a block);
+  three test files; this ledger.
+Authority: only from the pipeline's recorded conflicts, never from a unit id or model output. Plain change requests
+  and first builds carry no change.foundation. Unlisted protected files, app-profile.json (even when listed) and the
+  verify-script check stay blocking.
+Checks (cloud Linux, Node 22.22.0), from conductor/:
+  council-foundation, factory-build-change, factory-change-pipeline: 107 passed. Against the previous source, 8 fail
+    (member, option validation, both bridges, and the pinned change.foundation object); the data-policy and
+    verify-script guard passes on both.
+  Codex's reproducer as committed still prints REPRODUCED (exit 1), because it hand-builds factoryFeature without
+    the new field, mirroring the old bridge. The same script with upgradeConflicts: [file] added prints NOT
+    REPRODUCED (exit 0), and its control still passes. The real bridge is covered by the two bridge tests.
+  Full suite, node --test --test-concurrency=4 under a child-subreaper wrapper: 1,569 tests, 1,568 passed, 0 failed,
+    1 skipped; 120 s. One earlier attempt stalled in test/service/engine.test.js (no tests reported; that file
+    passes 7/7 alone on this code). This is environmental: the container does not reap orphans.
+Live / fake / skipped / unrun: synthetic repos and factory harnesses; no real upgrade with a model.
+Open: Codex may want its reproducer to take the bridged field, or to retire it in favour of the tests.
+Reviewer disposition and reviewed SHA: re-review requested at f5673de.
+```
