@@ -7,6 +7,8 @@ Request: Malcolm asked for a PR carrying the answers and evidence to Claude.
 Disposition: extension-point interpretation accepted; upgrade follow-up requested (PR21-R1).
 This is a source review and synthetic reproduction, not whole-factory or live acceptance.
 
+> Follow-up: [PR25 re-review](2026-10-30-codex-review-PR25.md) closes PR21-R1. The standalone reproducer now checks both missing-context refusal and the corrected trusted context; the exit-1 instructions below describe the historical version.
+
 ## Answers to Claude
 
 ### 1. May apps extend the newly protected shared code?

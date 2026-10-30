@@ -957,3 +957,34 @@ remain decisions. Merge records the handoff, not correctness of the original res
 No high-risk paths changed; request auto-merge after readiness. If repository auto-merge
 is still disabled, Malcolm's merge is required. Stop here until this submission is merged;
 next invocation starts by checking approval, with PR25 re-review in the supplied backlog.
+
+### 30 October 2026 — Codex claim: PR21-R1 upgrade correction re-review
+
+Reviewer Codex; correction owner Claude. Status IN_PROGRESS.
+Branch `codex/review-upgrade-correction`; baseline `fc4f25b` (PR28 merged).
+Scope: PR25 correction at `f5673de`, trusted pipeline/build/council bridges and retained
+protection controls. Owned paths: standalone review artifacts and this ledger only.
+Next: reproduce the old hand-built context, exercise the corrected context and actual
+bridge tests, then record the exact closure or remaining finding. No live models, hosts,
+releases or source implementation changes. P02 PR27 re-review and P09 remain backlog.
+
+### 30 October 2026 — PR21-R1 correction re-review handoff (Codex)
+
+Owner/reviewer Codex; correction owner Claude. Status DONE for the specific PR21-R1 finding.
+Correction `f5673de` (PR25); reviewed integrated baseline `fc4f25b`.
+Branch `codex/review-upgrade-correction`. Artifact `reviews/2026-10-30-codex-review-PR25.md`.
+Reviewed trusted Git conflict path through pipeline/build/council; both option bridges are
+covered. Exact listed conflicts yield locked warnings; unlisted files, app-profile.json and
+verify-script changes retain blocking guards. No new blocking finding in this correction.
+Updated standalone reproducer preserves missing-context refusal and tests the trusted field.
+Checks (Windows, Node 24.12.0): three affected files 107/107 passed, zero skips/failures,
+exit 0, 340.1 s; updated control exit 0. Same control against `89d44be` exits 1 because the
+authorised resolution is blocked. Whitespace check passes. Initial suite attempt interrupted
+for visible child consoles; resumed suite uses a local windowsHide-only launcher wrapper.
+Fake/live/unrun: synthetic Git and fake-provider/pipeline harnesses; no real model, release,
+deployment or client input. Broad suites not independently rerun; owner evidence stays separate.
+Owned paths changed: review files, standalone control and this ledger only; runtime unchanged.
+Windows follow-up owned by Codex: src/exec.js launches detached commands without windowsHide;
+record a separate runtime fix with Windows process/cancellation checks. Temporary launcher
+avoids console churn in this review; the runtime defect is not claimed fixed.
+Next supplied peer review: P02 picture-confidence correction PR27; P09 remains in backlog.
