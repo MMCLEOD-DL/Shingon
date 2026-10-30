@@ -1,9 +1,9 @@
 {
   "contract": "conductor/docs/knowledge-base/retrieval-contract.md",
-  "status": "Draft fixture set for v1. It becomes v1 only when both lanes accept the contract (retrieval-contract.md, status line).",
-  "base": "/kb/v0 (becomes /kb/v1 on acceptance)",
+  "status": "v1 candidate: Claude accepts it; it becomes v1 when Codex records acceptance (retrieval-contract.md §11).",
+  "base": "/kb/v1",
   "origins": {
-    "generated": "Produced by the K2 service on the synthetic corpus and re-checked in CI (knowledge/tests/test_contract_fixtures.py). Real ingestion times are replaced with 2026-10-29T12:00:00Z.",
+    "generated": "Produced by the K2 service on the synthetic corpus and re-checked in CI (knowledge/tests/test_contract_fixtures.py). Real ingestion times are replaced with 2026-10-29T12:00:00Z, and random chunk ids with fixed stand-ins.",
     "authored": "Hand-written for behaviour a later task owns (named in pendingOn). Shape-checked only; not evidence that anything implements it."
   },
   "fixtures": [
