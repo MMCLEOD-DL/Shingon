@@ -122,6 +122,57 @@ test('final-fix 5: the browser gate\'s test:e2e and verify:full scripts are prot
   }
 });
 
+// Foundation v0.2.0 (FOLLOW-UPS: "PROTECTED_PATHS for the v0.2.0 layout (modules, app jobs, receipt pages)").
+test('v0.2.0: the optional modules and the module pages and routes belong to the foundation, added files included', async () => {
+  const f = await scenario([{ 'apps/server/test/expenses/a.test.ts': TESTS }, {
+    'modules/ocr/src/pdfWorker.ts': '// weakened\n',
+    'apps/server/src/modules/ocr/routes.ts': '// changed\n',
+    'apps/web/src/modules/ocr/Extra.tsx': 'export {};\n',
+  }]);
+  for (const p of ['modules/ocr/src/pdfWorker.ts', 'apps/server/src/modules/ocr/routes.ts', 'apps/web/src/modules/ocr/Extra.tsx']) {
+    assert.ok(f.includes(`blocking! ${p} belongs to the foundation and must not be changed`), f.join('\n'));
+  }
+});
+
+test('v0.2.0: app-profile.json (modules and data policy) changes only through the brief, and says so', async () => {
+  const dir = await makeFoundationRepo();
+  const baseSha = (await git(dir, ['rev-parse', 'HEAD'])).stdout.trim();
+  put(dir, 'apps/server/test/expenses/a.test.ts', TESTS); await commit(dir, 'tests');
+  put(dir, 'app-profile.json', JSON.stringify({ schema: 1, modules: ['ocr'], policy: { outbound: ['azure-document-intelligence'], residency: 'any' } }));
+  await commit(dir, 'widen the policy');
+  const [run] = await FOUNDATION.collect({ dir, files: ['app-profile.json'], changed: new Set(['app-profile.json']), baseSha,
+    options: { ...DEFAULT_OPTIONS, factoryFeature: { id: 'expenses', tags: TAGS } } });
+  const found = run.findings.find((x) => x.file === 'app-profile.json');
+  assert.equal(found?.grade, 'blocking');
+  assert.equal(found.locked, true);
+  assert.match(found.detail, /Do not edit it by hand in a factory-built app/);
+});
+
+test('v0.2.0: the job registry, the ops job runner and the shared module, money and receipt code are protected', async () => {
+  const files = ['apps/server/src/jobs/registry.ts', 'ops/src/appJobs.ts', 'packages/shared/src/modules.ts', 'packages/shared/src/appProfileFile.ts',
+    'packages/shared/src/money.ts', 'packages/shared/src/report.ts', 'packages/shared/src/receipts.ts', 'packages/shared/vitest.config.ts'];
+  const f = await scenario([{ 'apps/server/test/expenses/a.test.ts': TESTS }, Object.fromEntries(files.map((p) => [p, '// changed\n']))]);
+  for (const p of files) assert.ok(f.includes(`blocking! ${p} belongs to the foundation and must not be changed`), f.join('\n'));
+});
+
+test('v0.2.0: what BUILDING-ON tells an app to edit stays open (its own job file and index line, shared schemas and permissions)', async () => {
+  const f = await scenario([{ 'apps/server/test/expenses/a.test.ts': TESTS }, {
+    'apps/server/src/jobs/monthly-report.ts': "registerAppJob({ name: 'monthly-report' });\n",
+    'apps/server/src/jobs/index.ts': "export * from './registry.js';\nimport './monthly-report.js';\n",
+    'packages/shared/src/schemas.ts': 'export const CreateExpenseInput = 1;\n',
+    'packages/shared/src/access.ts': "export const PERMISSIONS = { 'expenses:approve': ['admin'] };\n",
+    'apps/server/src/modulesextra/a.ts': 'export {};\n',
+  }]);
+  assert.deepEqual(f.filter((x) => x.includes('belongs to the foundation')), []);
+});
+
+test('v0.2.0: the shared package\'s verify scripts are protected like the others (Ruling Q23)', async () => {
+  const pkg = (test) => JSON.stringify({ name: '@hf/shared', scripts: { test } });
+  const f = await scenario([{ 'apps/server/test/expenses/a.test.ts': TESTS }, { 'packages/shared/package.json': pkg('node -e 0') }],
+    { extra: { 'packages/shared/package.json': pkg('vitest run') } });
+  assert.ok(f.some((x) => /blocking! The checks that npm run verify runs were changed in packages\/shared\/package\.json/.test(x)), f.join('\n'));
+});
+
 test('the reliability test (deploy/smoke) belongs to the foundation: a feature or fix run cannot rewrite it', async () => {
   const f = await scenario([{ 'apps/server/test/expenses/a.test.ts': TESTS }, {
     'deploy/smoke/run-smoke.sh': 'echo SMOKE PASSED\n', 'deploy/smoke/catcher.mjs': '// gone\n',

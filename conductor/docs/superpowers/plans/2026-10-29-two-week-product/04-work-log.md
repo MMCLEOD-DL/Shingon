@@ -709,3 +709,43 @@ Open defects or unknowns (for Codex):
   - Untyped page dictionaries given directly inside /Kids (not by reference) are refused, as pdfjs also rejects them.
 Reviewer disposition and reviewed SHA: re-review requested at 2405aff.
 ```
+
+### 30 October 2026 — Claude task 12 (claude-lane): council protects the Foundation v0.2.0 layout
+
+```
+Packet/subpacket: FOLLOW-UPS (factory acceptance) "PROTECTED_PATHS for the v0.2.0 layout"; next.md housekeeping.
+  Malcolm chose this on 30 Oct. Shared engine seam: named, minimal change, for Codex's review.
+Owner and reviewer: Claude; reviewer Codex.
+Status: IN_REVIEW.
+Baseline SHA: 932dc53. Code: ad2ca8b.
+Owned files: conductor/src/council/foundationRules.js (PROTECTED_PATHS, new PROTECTED_DIRS, PACKAGE_FILES,
+  protectedFindings); conductor/test/council-foundation.test.js; conductor/docs/operator-app/next.md;
+  FOLLOW-UPS.md (item marked done); this ledger.
+What now works: a factory feature build that changes any of these is blocked, locked:
+  - modules/, apps/server/src/modules/, apps/web/src/modules/ (whole folders, added files included);
+  - app-profile.json, with its own reason: BUILDING-ON says the factory writes it from the brief and it must not be
+    edited by hand, and it holds the data policy;
+  - packages/shared/src/{modules,appProfileFile,money,report,receipts}.ts and packages/shared/vitest.config.ts;
+  - apps/server/src/jobs/registry.ts and ops/src/appJobs.ts.
+  packages/shared/package.json joins the verify-script check. What BUILDING-ON tells apps to edit stays open: their
+  own job file plus its jobs/index.ts line, and packages/shared/src/{schemas,access}.ts. Pathspecs are literal.
+  The factory's own app-profile writes (nameApp; the change-mode profile commit) land before each feature's
+  starting commit, so they are not caught.
+Checks (cloud Linux, Node 22.22.0), from conductor/:
+  node --test test/council-foundation.test.js: 18 passed. Against the previous list, the 4 new protection tests
+    fail and the "apps may still edit these" test passes.
+  Every new entry exists in foundation/ (30 files, 3 folders).
+  Full suite: node --test --test-concurrency=4 under a child-subreaper wrapper: 1,564 tests, 1,563 passed,
+    0 failed, 1 skipped; 114 s. Without the wrapper, the run hung after 1,401 passing tests (the container's PID 1
+    does not reap orphans), as Codex's instructions warn.
+Live / fake / skipped / unrun: fixture git repos, no factory end-to-end build with a real model.
+Open defects or unknowns (for Codex):
+  - Is any of the newly protected shared code meant to be extended by apps? I read BUILDING-ON as "use, not edit"
+    for money/report/receipts and the module folders.
+  - The upgrade path (merging a newer Foundation) is assumed not to run this member; v0.1.0 entries already
+    imply that.
+Also: Malcolm asked Claude to send Codex its open items. They are in issue #20
+  (https://github.com/MMCLEOD-DL/Shingon/issues/20), because Codex's agent mail is not reachable from Claude's
+  cloud session.
+Reviewer disposition and reviewed SHA: review requested at ad2ca8b.
+```

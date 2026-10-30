@@ -10,7 +10,7 @@ import { makeFinding } from './findings.js';
 import { TEST_FILE } from './correctness.js';
 import { TOOL_LABEL } from './tools.js';
 
-// Foundation v0.1.0 layout: files a client build must never change.
+// Foundation layout (v0.1.0, plus v0.2.0's modules, app jobs and receipt pages): files a client build must never change.
 export const PROTECTED_PATHS = Object.freeze([
   'foundation.json',
   'apps/server/test/crossing/harness.ts',
@@ -35,10 +35,33 @@ export const PROTECTED_PATHS = Object.freeze([
   'deploy/smoke/run-smoke.sh',
   'deploy/smoke/catcher.mjs',
   'deploy/smoke/RESULT.md',
+  // v0.2.0. The modules and data policy: the factory writes app-profile.json from the approved brief (BUILDING-ON:
+  // "Do not edit it by hand in a factory-built app"); the shared code that reads it and decides what is on.
+  'app-profile.json',
+  'packages/shared/src/modules.ts',
+  'packages/shared/src/appProfileFile.ts',
+  // Money is worked out once, in whole pence (Ruling 3); exports never calculate (Ruling 4). Apps call these.
+  'packages/shared/src/money.ts',
+  'packages/shared/src/report.ts',
+  'packages/shared/src/receipts.ts',
+  'packages/shared/vitest.config.ts',
+  // Scheduled jobs: an app adds its own file under apps/server/src/jobs/ and a line to jobs/index.ts; the registry and
+  // the ops runner that keep "at most once per due time" are the foundation's.
+  'apps/server/src/jobs/registry.ts',
+  'ops/src/appJobs.ts',
+]);
+
+// Whole folders the foundation owns (v0.2.0): every file in them, added ones included. The optional modules
+// themselves, and the module pages and routes an app copies the pattern of ("Copy the receipts pages' pattern")
+// into its own folders instead of editing.
+export const PROTECTED_DIRS = Object.freeze([
+  'modules/',
+  'apps/server/src/modules/',
+  'apps/web/src/modules/',
 ]);
 
 // Ruling Q23: the package.json files whose verify-type scripts must not change (plus any apps/<x>/package.json).
-const PACKAGE_FILES = ['package.json', 'apps/server/package.json', 'apps/web/package.json', 'ops/package.json', 'deploy/package.json'];
+const PACKAGE_FILES = ['package.json', 'apps/server/package.json', 'apps/web/package.json', 'ops/package.json', 'deploy/package.json', 'packages/shared/package.json'];
 const APP_PACKAGE = /^apps\/[^/]+\/package\.json$/;
 
 // test:e2e and verify:full: the browser gate runs npm run test:e2e.
@@ -60,6 +83,7 @@ const PAGES = 'apps/web/e2e/pages.ts';
 
 const BUILDING_ON = {
   protected: 'BUILDING-ON: "Resolve any conflicts (they should be rare if the foundation\'s files were left alone)". Put this file back exactly as the foundation has it and make the change in your own files instead.',
+  profile: 'BUILDING-ON: "The factory writes this file from the approved brief … Do not edit it by hand in a factory-built app." Modules and the data policy change only through a change request to the brief. Put app-profile.json back as it was.',
   verify: 'BUILDING-ON: "npm run verify: lint, type checks, the licence gate and every unit and integration test (including the role-crossing harness). It must pass at every commit." Put the lint, typecheck, licences, test, verify, test:e2e and verify:full scripts in package.json back as they were.',
   tests: 'Every worked example needs a test whose name carries its tag, written before the code, that runs in npm run verify.',
   migration: 'BUILDING-ON: "A Drizzle schema file in apps/server/src/db/schema/ … then npm -w @hf/server run db:generate to write the migration into apps/server/drizzle, and commit both."',
@@ -104,11 +128,13 @@ function addedTextLines(input, file) {
 // The member's own diff with renames off: a protected file renamed away shows as deleted.
 async function protectedFindings(input) {
   if (!input.baseSha) throw new CheckFailed('the starting commit is not known');
-  const r = await mustGit(input.dir, ['diff', '--no-ext-diff', '--no-renames', '--name-only', '-z', input.baseSha, 'HEAD', '--', ...PROTECTED_PATHS],
-    'git could not compare the protected foundation files with the starting commit');
-  const touched = new Set(r.stdout.split('\0').filter(Boolean));
-  return PROTECTED_PATHS.filter((p) => touched.has(p))
-    .map((p) => finding('blocking', `${p} belongs to the foundation and must not be changed`, BUILDING_ON.protected, p));
+  // Literal pathspecs: a protected name is never read as a pattern. A folder covers every file below it.
+  const r = await mustGit(input.dir, ['--literal-pathspecs', 'diff', '--no-ext-diff', '--no-renames', '--name-only', '-z', input.baseSha, 'HEAD', '--',
+    ...PROTECTED_PATHS, ...PROTECTED_DIRS], 'git could not compare the protected foundation files with the starting commit');
+  const touched = [...new Set(r.stdout.split('\0').filter(Boolean))].sort();
+  return touched.filter((p) => PROTECTED_PATHS.includes(p) || PROTECTED_DIRS.some((d) => p.startsWith(d)))
+    .map((p) => finding('blocking', `${p} belongs to the foundation and must not be changed`,
+      p === 'app-profile.json' ? BUILDING_ON.profile : BUILDING_ON.protected, p));
 }
 
 async function fileAt(dir, sha, file) {

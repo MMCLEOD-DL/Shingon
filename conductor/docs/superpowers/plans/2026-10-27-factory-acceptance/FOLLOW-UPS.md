@@ -37,7 +37,7 @@ acceptance run.
 
 ## Conductor
 
-- `PROTECTED_PATHS` for the v0.2.0 layout (modules, app jobs, receipt pages).
+- ~~`PROTECTED_PATHS` for the v0.2.0 layout (modules, app jobs, receipt pages).~~ Done 30 October 2026: see the work log, Claude task 12.
 - When Plans 9/10 read the box through `update --json` / `status --json`, map the new `unknown` update outcome to
   `lost-contact`.
 - The acceptance checker doesn't flag a hand-made commit after the approved version (C15 stays the operator's).
