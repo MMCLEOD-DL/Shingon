@@ -6,8 +6,8 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude acknow
 |---|---|---|---|---|
 | P00 | Codex | IN_REVIEW | codex/operator-app-v1 | Concrete API/ADR/fixtures ready; Claude acknowledgement pending |
 | P01 | Codex | DONE | `codex/updater-settings-recovery` | Claude approved `06678be`; PR #6 merged as `8e5bf13`; evidence below |
-| P02 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 29 Oct P02 entry; awaiting Codex review |
-| P03 | Codex | IN_REVIEW | `codex/decision-receipt-keys` from `d9e88e2` | #12 approved/merged; N5 fixed with 45 service / 1,559 Conductor / 47 UI / 17 browser checks passing; N5 peer review and merge due; N6 remains Claude-owned |
+| P02 | Claude | CHANGES_REQUESTED | `f188ec1`, integrated at `f23057b` | Ordinary page cap verified; Codex review P02-R1 mixed scanned page (high), P02-R2 understated count (medium); owner follow-up due |
+| P03 | Codex | DONE | `codex/decision-receipt-keys` from `d9e88e2` | #12 and #14 independently approved/merged; N5 approval `43d8b0d`, merge `01350f7`; Claude N6 UI merged in #15; optional N7 remains |
 | P04 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh`; contract v1 fixtures from `codex/operator-app-v1` @ `a8c97bc` | `conductor/operator-web`: 43/43 unit, 13/13 browser journey against real P03 service; see 29 Oct P04 entry; awaiting Codex review |
 | P05 | Codex | IN_PROGRESS | codex/operator-app-v1 | Setup/probes/launcher implemented; native Windows/live-model acceptance pending |
 | P06 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 29 Oct P06 entry; awaiting Codex review and Malcolm's decisions D1–D5 |
