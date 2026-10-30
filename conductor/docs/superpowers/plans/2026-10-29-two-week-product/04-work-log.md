@@ -1705,3 +1705,17 @@ passes. No owner source/fixture/test edits. Temporary PG stopped; GPU worker sta
 Close KB-R6, retain KB-R5 closure. PR47 KB-R7 correction supplied but awaiting separate
 review; no wholesale K6/K8 admission or v1 freeze. P09/Windows console follow-up queued.
 Only review artifacts/ledger; no private/model/connector/HTTP/deployment acceptance.
+
+### Codex task submitted — KB-R6 passage-fixture correction re-review
+
+Date: 30 October 2026. Branch `codex/review-kb-fixture-identity`.
+Last artifact commit: `5e6c056f5f032f54ce5f8c32b4b564a3aa0d685a`.
+PR: https://github.com/MMCLEOD-DL/Shingon/pull/49 (draft opened; ready after this push).
+Evidence: knowledge 42/42, zero skips; current independent identity/core controls pass;
+old dfaaf6c JSON retains expected mismatch/exit 1. Whitespace passes. Close KB-R6 at
+9ee1746; prior KB-R5 closure retained. PR47 KB-R7 correction awaits separate re-review;
+K6/K8/final freeze not granted. Review artifacts/ledger only; no owner source/JSON edits.
+Temporary PG stopped; GPU worker stays off. Next queued review PR47; P09 and Windows
+console follow-up remain queued. No private/model/connector/HTTP/deployment acceptance.
+No high-risk paths; request auto-merge and report refusal. Merge accepts bounded closure.
+Stop until this submission merges.
