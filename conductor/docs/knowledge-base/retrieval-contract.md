@@ -37,7 +37,7 @@ OAuth token exchange (RFC 8693) with the user's own token is stronger. It is def
 | `POST /search` | Ranked, cited passages for a query. |
 | `GET /passages/:chunkId` | One passage with ±N neighbouring chunks of the same version, bounded. Used to widen context around a hit. The chunk and its document are re-authorised on every lookup: an opaque id is not a permission. |
 | `GET /collections/:collectionId/documents/:documentId/versions/:versionId/original` | The original file of that exact document version, only while it is the **current** version and the ACL allows it. Served directly to the authenticated caller and re-authorised at delivery; v1 has no download tickets. Headers: `Content-Disposition: attachment`, a fixed `Content-Type` by extension (`application/octet-stream` when unknown), `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`. Any other version, including an older one still retained, gets the same `404` as a hidden or missing document; the latest file is never served in its place. Each identifier is one URL-encoded path segment, decoded once and looked up, never joined to a file path. |
-| `GET /health` | Readiness and index generation. No counts that cross ACL boundaries. |
+| `GET /health` | Readiness only. No revision, counts or anything else that crosses ACL boundaries. |
 
 ### `POST /search` request
 
@@ -55,7 +55,7 @@ OAuth token exchange (RFC 8693) with the user's own token is stronger. It is def
 ### `POST /search` response
 
 ```json
-{ "indexGeneration": 1842,
+{ "viewRevision": "…64 hex characters…",
   "evidence": "strong | weak | none",
   "results": [{
     "chunkId": "…opaque…", "documentId": "finance/expenses-policy.docx", "versionId": 7, "collectionId": "acme-policies",
@@ -91,7 +91,13 @@ Errors use the operator-app shape `{ error: { code, message, retryable, requestI
 
 Every collection carries a `destinations` allow-list: any of `local-model`, `claude-subscription`, `codex-subscription`, `foundation-app:<appId>`.
 
-- Conductor checks it **before** putting any passage in a prompt. A passage from a `local-model`-only collection is never sent to a subscription vendor. Instead the run reports that the evidence was withheld from that participant.
+- Conductor checks it **before** putting any passage in a prompt. A passage from a `local-model`-only collection is never sent to a subscription vendor. Every hop that could forward evidence (planning, review, fallback, retries, onward forwarding) applies the rule again.
+- The policy must be current when the evidence is assembled. A destination change alters the caller's `viewRevision` (§8), so cached policy or evidence from before it is stale. K8 still has to define how Conductor re-checks the policy, and what happens when it cannot.
+- **The withheld report is for the operator only.** When passages are kept from a participant, the operator's UI and transcript get one report per collection, built by `contract.withheld_report()`:
+  - its fields are `type: evidence-withheld`, the `participant` (a Conductor participant name), the exact `collectionId` and `documentIds` withheld, the collection's `allowedDestinations`, and a fixed `message`;
+  - the message is set by the other fields, and the checker refuses any other wording;
+  - it carries no excerpts, titles, source text, prompt text or credentials.
+- **The participant is told only `contract.PARTICIPANT_NOTICE`**, a generic line with no collection, document, title or count. The report itself is never evidence for the participant it concerns.
 - This works like Foundation's `policy.outbound` and Conductor's existing cross-vendor visibility rules. The KB states the policy and the caller enforces it, so both sides log the decision.
 
 ## 6. How callers use passages
@@ -111,8 +117,8 @@ Conductor's [project-folder contract](../superpowers/plans/2026-10-27-factory-ph
 
 ## 8. Caching, sync and deletion
 
-- **Cache key:** `(tenant, principal ACL fingerprint, indexGeneration, normalised request)`. Any permission change, re-ingest or deletion increments `indexGeneration` for the affected tenant, which invalidates its cached results. The cache TTL is at most 10 minutes even without a change.
-- **Deletion or revocation at the source:** the next sync marks the document `revoked` in the same transaction that removes its chunks, embeddings and full-text rows from the searchable tables, and increments `indexGeneration`. The original file is deleted after the retention set for the collection (default 0 days for client-runtime). The time to propagate is bounded by the sync interval, and the UI must show it. Mocked connectors cannot show this propagation actually happens; live connector permission sync stays unverified until tested against the real source.
+- **Cache key:** `(credential, viewRevision, normalised request)`. `viewRevision` is a digest of everything the caller can see: the collections in its scope with their destinations, and each visible document's collection, id, current version, whether it is superseded, and its replacement if that is visible too. Any change to the caller's own view changes it, so its cached results are invalidated. A change to a document the caller cannot see leaves it as it was, so it reveals nothing beyond what the caller could list. The service's internal per-tenant counter never leaves it. The cache TTL is at most 10 minutes even without a change.
+- **Deletion or revocation at the source:** the next sync marks the document `revoked` in the same transaction that removes its chunks, embeddings and full-text rows from the searchable tables, which changes the `viewRevision` of every caller who could see the document. The original file is deleted after the retention set for the collection (default 0 days for client-runtime). The time to propagate is bounded by the sync interval, and the UI must show it. Mocked connectors cannot show this propagation actually happens; live connector permission sync stays unverified until tested against the real source.
 - **Audit:** every search and original-file fetch records credential, principal, collection ids, result document ids and request id. The query text is kept only as a hash by default, because a query can contain personal data.
 
 ## 9. MCP versus direct API
@@ -170,7 +176,7 @@ Each fixture says whether it is **generated** or **authored**:
 | `evidence: none` | `evidence-none` | generated |
 | Scope violation | `scope-violation` (403 `scope`) | generated |
 | Hidden document | `hidden-document` and `missing-document`: identical 404 bodies apart from `requestId` | generated |
-| Revoked after sync | `revoked-after-sync` (passages gone, `indexGeneration` moved on), `revoked-original` (404) | generated |
+| Revoked after sync | `revoked-after-sync` (passages gone, `viewRevision` changed), `revoked-original` (404) | generated |
 | Conflicting versions | `superseded-version`: the replaced document is flagged `supersededBy` and ranked lower | generated |
 | Instruction-like passage | `instruction-like` | generated |
 | XLSX cell range | `hit-xlsx` (`Budget`, `A4:E4`) | generated |
@@ -178,7 +184,7 @@ Each fixture says whether it is **generated** or **authored**:
 | Scanned PDF with OCR confidence | `scanned-pdf-ocr` | authored: K5 |
 | Index unavailable | `index-unavailable` (503) | authored: K6 |
 | Rate limit | `rate-limit` (429, `retryAfter` in the body and a `Retry-After` header) | authored: K6 |
-| Destination-withheld report | `destination-withheld`: a proposed shape | authored: K8 |
+| Destination-withheld report | `destination-withheld`, built with `withheld_report()` (§5) | authored: K8 |
 | Original, current version only (decision 3) | `original-current` (200: attachment headers and the file's size and sha256), `original-replaced-version` and `original-unknown-version` (404) | generated |
 | Same `documentId` in two collections (KB-R1) | `same-key-two-collections`, `same-key-one-visible`, `same-key-other-collection` (404), `same-key-own-collection` (200) | generated |
 
@@ -193,20 +199,20 @@ Two things consumers must not read into the fixtures:
 **What the wire checkers in `contract.py` refuse** (Codex review KB-R2). They are what K6 will run on its own output, so they refuse anything a strict JSON consumer could not take:
 - NaN, infinite or non-JSON values;
 - timestamps that are not real UTC dates and times;
-- `versionId`, `page` or `slide` below 1, or a negative `indexGeneration`;
+- `versionId`, `page` or `slide` below 1, or a `viewRevision` that is not a 64-hex digest;
 - a `retryAfter` outside 1–3600 seconds;
 - an `allowedDestinations` entry outside §5's list (`foundation-app:` takes a lower-case slug until Foundation fixes the app-id format);
 - a body or container of the wrong type.
 
 **Open points for v1 (for Codex's review):**
 
-1. **Identifiers.** *Decided by Codex's review; done except `indexGeneration`.*
+1. **Identifiers.** *Decided by Codex's review; done.*
    - Identity is `(collectionId, documentId, versionId)`, and the original route carries all three (§3). The fixtures above show the same `documentId` in two collections.
    - `chunkId` is a random opaque id (migration `002_opaque_chunk_ids.sql`), not the serial whose gaps revealed ingestion volume.
-   - Still open: `indexGeneration` is a tenant-wide counter, so it moves when documents the caller cannot see change. Codex asks for a view-scoped revision on the wire instead. That is the next contract task.
+   - The tenant-wide `indexGeneration` counter is replaced on the wire by `viewRevision`, a digest of the caller's own view (§8).
 2. **Stale versus removed.** *Decided by Codex's review: removal, as recommended below. Pending: the sync fix for an authoritative empty listing, a later task.*
    - §3 and §8 describe a source whose last sync failed as served and flagged `stale`. K2 instead removes its passages from search, which is safer for permissions but loses availability.
    - My recommendation: keep removal, and narrow `stale` to "the source system reports a newer version that has not been ingested yet", which only a connector can know.
 3. **Original versions.** *Decided by Codex's review; done.* Current version only, checked in the same query as the document's status and ACL; anything else is the shared 404 (§3).
-4. **Destination-withheld report.** *Decided by Codex's review: accepted as an operator-only report, with stricter values. Pending: a later contract task and K8.* The proposed fields are `type`, `participant`, `collectionId`, `documentIds`, `allowedDestinations` and `message`. Conductor owns this shape, so Codex should accept or change it before K8.
+4. **Destination-withheld report.** *Decided by Codex's review; the shape is done (§5).* It is accepted as an operator-only report, with stricter values and fixed wording, and the participant gets only a generic notice. K8 still owns enforcement: re-applying the rule at every hop, and re-checking the policy when evidence is assembled.
 

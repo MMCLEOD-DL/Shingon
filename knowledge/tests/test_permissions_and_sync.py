@@ -75,12 +75,12 @@ class PermissionsSyncDeletion(ServiceTestCase):
         with self.assertRaises(ScopeError):
             kb.search(c['alice'], 'mileage', collections=['birch-handbook'])
 
-        gen = kb.search(c['alice'], 'salary band Senior Analyst')['indexGeneration']
+        rev = kb.search(c['alice'], 'salary band Senior Analyst')['viewRevision']
         kb.set_group_members('acme', 'finance', [])
         oracle.m['tenants']['acme']['groups']['finance'] = []
         r = kb.search(c['alice'], 'salary band Senior Analyst')
         self.assertEqual(r['evidence'], 'none', 'group revocation takes effect on the next search')
-        self.assertGreater(r['indexGeneration'], gen)
+        self.assertNotEqual(r['viewRevision'], rev, 'her view changed, so her revision did')
         self.assertFalse(self.can_fetch('alice', 'acme-policies', 'acme/salary-bands.docx'))
 
         m2 = copy.deepcopy(m)
