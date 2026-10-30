@@ -7,13 +7,19 @@ knowledge/contract/kb-contract-v1.json holds two kinds of fixture:
     destination report in Conductor, stale sources). They are checked against the wire shape only, and each names
     the task it waits for. They are not evidence that anything implements them.
 
+Chunk ids are random, so generated fixtures replace each with a fixed stand-in (sha256 of fixture id and rank), after
+checking that the real one has the service's format. Ingestion times are replaced the same way.
+
 To regenerate after an intended change:
   KB_WRITE_FIXTURES=1 TEST_DATABASE_URL=... python -m unittest discover -s tests -p test_contract_fixtures.py
 then review the diff and update retrieval-contract.md if the contract itself changed.
 """
+import hashlib
 import json
 import os
+import re
 import unittest
+from urllib.parse import unquote
 from pathlib import Path
 
 from shingon_knowledge import contract
@@ -43,7 +49,12 @@ SECTION_10 = {
     'index unavailable': ['index-unavailable'],
     'a rate limit': ['rate-limit'],
     'a destination-withheld report from Conductor': ['destination-withheld'],
+    # Codex review decision 3 and KB-R1: originals by full identity, current version only.
+    'an original, current version only': ['original-current', 'original-replaced-version', 'original-unknown-version'],
+    'the same document key in two collections': ['same-key-two-collections', 'same-key-one-visible',
+                                                 'same-key-other-collection', 'same-key-own-collection'],
 }
+SERVICE_CHUNK_ID = re.compile(r'^[0-9a-f]{64}$')
 
 
 def _search(kb, creds, fid, covers, who, query, *, limit=3, collections=None):
@@ -54,6 +65,8 @@ def _search(kb, creds, fid, covers, who, query, *, limit=3, collections=None):
         raw = kb.search(creds[who], query, limit=limit, collections=collections)
         status, out = 200, contract.search_body(raw)
         for r in out['results']:
+            assert SERVICE_CHUNK_ID.match(r['chunkId']), r['chunkId']
+            r['chunkId'] = hashlib.sha256(f"{fid}#{r['scores']['rank']}".encode()).hexdigest()
             r['source']['ingestedAt'] = INGESTED_AT
     except Exception as e:  # noqa: BLE001 - contract.error_code re-raises anything that is not a contract error
         status, out = contract.error_body(contract.error_code(e), f'req-{fid}')
@@ -63,13 +76,14 @@ def _search(kb, creds, fid, covers, who, query, *, limit=3, collections=None):
 
 def _original(kb, creds, fid, covers, who, collection, key, version):
     try:
-        kb.original(creds[who], collection, key)
-        status, out = 200, None  # served as an attachment; no JSON body
+        data = kb.original(creds[who], collection, key, version).read_bytes()
+        response = {'status': 200, 'headers': contract.original_headers(key), 'body': None,  # the file, not JSON
+                    'file': {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}}
     except Exception as e:  # noqa: BLE001
         status, out = contract.error_body(contract.error_code(e), f'req-{fid}')
-    path = f"/documents/{key.replace('/', '%2F')}/versions/{version}/original"
+        response = {'status': status, 'body': out}
     return {'id': fid, 'covers': covers, 'origin': 'generated', 'caller': CALLERS[who],
-            'request': {'method': 'GET', 'path': path}, 'response': {'status': status, 'body': out}}
+            'request': {'method': 'GET', 'path': contract.original_path(collection, key, version)}, 'response': response}
 
 
 def generate(kb, creds, manifest) -> list[dict]:
@@ -93,6 +107,19 @@ def generate(kb, creds, manifest) -> list[dict]:
     out += [
         s('revoked-after-sync', 'After the source removed it, the next sync drops its passages and bumps indexGeneration', 'alice', 'hotel cap London per night'),
         _original(kb, creds, 'revoked-original', 'The stored original of a revoked document is gone', 'alice', 'acme-policies', 'acme/travel-policy-2025.pdf', 1),
+        # Originals are served for the current version only (Codex review decision 3).
+        _original(kb, creds, 'original-current', 'The current version of a visible document, as an attachment', 'alice', 'acme-policies', 'acme/expenses-policy.docx', 2),
+        _original(kb, creds, 'original-replaced-version', 'Version 1 after version 2 was indexed: 404, never the newer file', 'alice', 'acme-policies', 'acme/expenses-policy.docx', 1),
+        _original(kb, creds, 'original-unknown-version', 'A version that never existed: 404', 'alice', 'acme-policies', 'acme/expenses-policy.docx', 7),
+    ]
+    # Source keys are unique per collection only (Codex review KB-R1): a finance-only copy of the budget, also v1.
+    kb.setup({'collections': {'acme-finance': {'tenant': 'acme', 'kind': 'client-runtime', 'destinations': ['foundation-app:acme']}}})
+    kb.sync('run-4', CORPUS, [{'collection': 'acme-finance', 'key': 'acme/budget-2026.xlsx', 'acl': {'groups': ['finance']}}])
+    out += [
+        s('same-key-two-collections', 'Two collections hold acme/budget-2026.xlsx at version 1: collectionId tells them apart', 'alice', 'Sales travel budget Q3', limit=8),
+        s('same-key-one-visible', 'A caller outside finance sees only the acme-policies copy', 'andy', 'Sales travel budget Q3', limit=8),
+        _original(kb, creds, 'same-key-other-collection', "The finance copy by its full identity, for a caller outside finance: 404", 'andy', 'acme-finance', 'acme/budget-2026.xlsx', 1),
+        _original(kb, creds, 'same-key-own-collection', 'The acme-policies copy by its full identity, for the same caller', 'andy', 'acme-policies', 'acme/budget-2026.xlsx', 1),
     ]
     return out
 
@@ -128,6 +155,9 @@ class ContractFixtures(ServiceTestCase):
                     contract.check_withheld_report(body)
                 elif status == 200 and f['request']['path'] == '/search':
                     contract.check_search_body(body)
+                elif status == 200:
+                    contract.check_original_response(status, f['response']['headers'], unquote(f['request']['path'].split('/')[4]))
+                    self.assertIsNone(body)
                 elif status != 200:
                     contract.check_error_body(status, body)
                 self.assertIn(f['origin'], ('generated', 'authored'))
@@ -154,10 +184,31 @@ class ContractFixtures(ServiceTestCase):
         self.assertEqual(self.by_id['scope-violation']['response']['status'], 403)
 
     def test_hidden_and_missing_documents_are_indistinguishable(self):
-        hidden, missing = (self.by_id[i]['response'] for i in ('hidden-document', 'missing-document'))
-        self.assertEqual(hidden['status'], 404)
+        # Hidden, missing, revoked, replaced, unknown and other-collection versions all get the same 404.
+        refused = ('hidden-document', 'missing-document', 'revoked-original', 'original-replaced-version',
+                   'original-unknown-version', 'same-key-other-collection')
         strip = lambda r: {**r['body']['error'], 'requestId': None}  # noqa: E731
-        self.assertEqual(strip(hidden), strip(missing))
+        first = self.by_id[refused[0]]['response']
+        self.assertEqual(first['status'], 404)
+        for fid in refused[1:]:
+            with self.subTest(fixture=fid):
+                self.assertEqual(self.by_id[fid]['response']['status'], 404)
+                self.assertEqual(strip(self.by_id[fid]['response']), strip(first))
+
+    def test_the_same_key_in_two_collections_stays_two_documents(self):
+        hits = lambda fid: [r for r in self.by_id[fid]['response']['body']['results']  # noqa: E731
+                            if r['documentId'] == 'acme/budget-2026.xlsx']
+        both = {(r['collectionId'], r['documentId'], r['versionId']) for r in hits('same-key-two-collections')}
+        self.assertEqual(both, {('acme-policies', 'acme/budget-2026.xlsx', 1), ('acme-finance', 'acme/budget-2026.xlsx', 1)})
+        self.assertEqual({r['collectionId'] for r in hits('same-key-one-visible')}, {'acme-policies'})
+        paths = {self.by_id[f]['request']['path'] for f in ('same-key-other-collection', 'same-key-own-collection')}
+        self.assertEqual(len(paths), 2, 'each identity has its own original route')
+        self.assertEqual(self.by_id['same-key-own-collection']['response']['status'], 200)
+
+    def test_served_originals_are_the_stored_files(self):
+        got = self.by_id['original-current']['response']
+        data = (CORPUS / 'acme/expenses-policy.docx').read_bytes()
+        self.assertEqual(got['file'], {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()})
 
     def test_revocation_removes_the_document_and_moves_the_generation_on(self):
         before, after = (self.by_id[i]['response']['body'] for i in ('hit-pdf', 'revoked-after-sync'))
@@ -228,6 +279,9 @@ class ShapeChecksRefuseBadBodies(unittest.TestCase):
             'flags not an object': lambda b: r(b).update(flags=[]),
             'body not an object': lambda b: b.clear() or b.update({'x': None}),
             'non-JSON value': lambda b: r(b).update(title=b'bytes'),
+            # Codex review decision 1: chunk ids are opaque, not serial numbers.
+            'serial chunk id': lambda b: r(b).update(chunkId='25'),
+            'chunk id with a slash': lambda b: r(b).update(chunkId='a' * 30 + '/x'),
         }
         for name, fn in bad.items():
             with self.subTest(name), self.assertRaises(contract.ContractError):
@@ -260,6 +314,27 @@ class ShapeChecksRefuseBadBodies(unittest.TestCase):
         for bad in (None, {**report, 'documentIds': 'notes/a.md'}):
             with self.subTest(report=bad), self.assertRaises(contract.ContractError):
                 contract.check_withheld_report(bad)
+
+    def test_originals_are_attachments_at_their_full_identity(self):
+        doc = 'acme/expenses-policy.docx'
+        self.assertEqual(contract.original_path('acme-policies', doc, 2),
+                         '/collections/acme-policies/documents/acme%2Fexpenses-policy.docx/versions/2/original')
+        self.assertNotEqual(contract.original_path('team-a', 'policies/current.md', 1),
+                            contract.original_path('team-b', 'policies/current.md', 1))
+        self.assertEqual(contract.original_path('c', '../x?y#z', 1).count('/'), 7, 'a document id stays one segment')
+        good = contract.original_headers(doc)
+        contract.check_original_response(200, good, doc)
+        self.assertEqual(contract.original_headers('notes/page.html')['Content-Type'], 'application/octet-stream')
+        for name, (status, headers) in {
+            'inline': (200, {**good, 'Content-Disposition': 'inline'}),
+            'sniffable': (200, {k: v for k, v in good.items() if k != 'X-Content-Type-Options'}),
+            'cacheable': (200, {**good, 'Cache-Control': 'max-age=3600'}),
+            'html type': (200, {**good, 'Content-Type': 'text/html'}),
+            'not 200': (206, good),
+            'not an object': (200, None),
+        }.items():
+            with self.subTest(name), self.assertRaises(contract.ContractError):
+                contract.check_original_response(status, headers, doc)
 
 
 if __name__ == '__main__':

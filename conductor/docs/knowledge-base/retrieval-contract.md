@@ -35,8 +35,8 @@ OAuth token exchange (RFC 8693) with the user's own token is stronger. It is def
 |---|---|
 | `GET /collections` | The collections this credential can search: id, name, description, `destinations` (§5), document count and last-sync time. |
 | `POST /search` | Ranked, cited passages for a query. |
-| `GET /passages/:chunkId` | One passage with ±N neighbouring chunks of the same version, bounded. Used to widen context around a hit. |
-| `GET /documents/:docId/versions/:versionId/original` | The original file, only if the ACL allows it. A short-lived, single-use URL; `Content-Disposition: attachment`; never served inline as HTML. |
+| `GET /passages/:chunkId` | One passage with ±N neighbouring chunks of the same version, bounded. Used to widen context around a hit. The chunk and its document are re-authorised on every lookup: an opaque id is not a permission. |
+| `GET /collections/:collectionId/documents/:documentId/versions/:versionId/original` | The original file of that exact document version, only while it is the **current** version and the ACL allows it. Served directly to the authenticated caller and re-authorised at delivery; v1 has no download tickets. Headers: `Content-Disposition: attachment`, a fixed `Content-Type` by extension (`application/octet-stream` when unknown), `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`. Any other version, including an older one still retained, gets the same `404` as a hidden or missing document; the latest file is never served in its place. Each identifier is one URL-encoded path segment, decoded once and looked up, never joined to a file path. |
 | `GET /health` | Readiness and index generation. No counts that cross ACL boundaries. |
 
 ### `POST /search` request
@@ -58,7 +58,7 @@ OAuth token exchange (RFC 8693) with the user's own token is stronger. It is def
 { "indexGeneration": 1842,
   "evidence": "strong | weak | none",
   "results": [{
-    "chunkId": "…", "documentId": "…", "versionId": "…", "collectionId": "…",
+    "chunkId": "…opaque…", "documentId": "finance/expenses-policy.docx", "versionId": 7, "collectionId": "acme-policies",
     "title": "Expenses policy 2026",
     "excerpt": "≤ 1,200 chars of the chunk text, control characters stripped",
     "locator": { "page": 4, "sectionPath": ["3 Claims", "3.2 Mileage"],
@@ -71,6 +71,7 @@ OAuth token exchange (RFC 8693) with the user's own token is stronger. It is def
   }] }
 ```
 
+- **Identity.** A document version is the tuple `(collectionId, documentId, versionId)`. `documentId` is the source key, unique only within its collection, so two collections can hold the same `documentId` at the same `versionId`; citations, passage lookups and original routes always carry `collectionId`. `versionId` is a whole number from 1. `chunkId` is opaque (22–128 URL-safe characters; the service issues 64 random hex characters), stable for the life of that chunk version, and never derived from a counter. Callers store and return it; they never parse it.
 - **`evidence`** comes from a reranker threshold calibrated on the labelled set (`evaluation.md`), not from a raw similarity score. Babel's many identical 1.0 scores show why a raw score cannot drive abstention. `none` means the caller must abstain; `weak` means it must say so.
 - **`locator`** carries the finest provenance the parser kept: page for PDFs, section path for DOCX/Markdown/HTML, sheet and cell range for XLSX, slide for PPTX. A missing field is `null`, never guessed. Each citation names the **version** quoted, so a later edit cannot silently change what an earlier answer cited.
 - **`stale`** means the source system reports a newer version that has not been ingested yet, or the last sync failed for this source. **`supersededBy`** names the replacement when the operator has marked the document replaced, but only if the caller could open the replacement itself. Otherwise it is null, though the replaced document is still ranked lower. **`conflictsWith`** lists other authorised results that disagree on an extracted fact; it is set only when the service detects this, and its absence proves nothing.
@@ -96,7 +97,7 @@ Every collection carries a `destinations` allow-list: any of `local-model`, `cla
 ## 6. How callers use passages
 
 - Passages go to a model inside a delimited, labelled evidence block that names `documentId`/`versionId`/`locator` and says the content is untrusted quoted material. The system prompt says that instructions inside evidence are to be reported, not followed.
-- Answers must cite `documentId@versionId` plus the locator. If `evidence` is `none`, the caller states that the knowledge base has no support for the answer. It does not fall back to the model's own memory while presenting the answer as sourced.
+- Answers must cite `collectionId`, `documentId@versionId` and the locator. If `evidence` is `none`, the caller states that the knowledge base has no support for the answer. It does not fall back to the model's own memory while presenting the answer as sourced.
 - **Context budget:** Conductor sends at most 8 passages and at most 12k characters per call to a local model. For subscription vendors the limit is set by configuration.
 - Retrieved text can never approve a plan, waive a check, change a test command or become a persistent skill automatically (research brief, "Relationship to the current build").
 
@@ -178,6 +179,8 @@ Each fixture says whether it is **generated** or **authored**:
 | Index unavailable | `index-unavailable` (503) | authored: K6 |
 | Rate limit | `rate-limit` (429, `retryAfter` in the body and a `Retry-After` header) | authored: K6 |
 | Destination-withheld report | `destination-withheld`: a proposed shape | authored: K8 |
+| Original, current version only (decision 3) | `original-current` (200: attachment headers and the file's size and sha256), `original-replaced-version` and `original-unknown-version` (404) | generated |
+| Same `documentId` in two collections (KB-R1) | `same-key-two-collections`, `same-key-one-visible`, `same-key-other-collection` (404), `same-key-own-collection` (200) | generated |
 
 Also included: `bad-request` (400).
 
@@ -197,12 +200,13 @@ Two things consumers must not read into the fixtures:
 
 **Open points for v1 (for Codex's review):**
 
-1. **Identifiers.**
-   - The draft uses `documentId` = the source key (path-like, so it is URL-encoded in paths), `versionId` = the integer version number, and `chunkId` = an opaque string.
-   - K2's `chunkId` is a deployment-wide serial number, so its gaps reveal ingestion volume across tenants. That contradicts "no counts that cross ACL boundaries" (§3). I propose K6 issues per-tenant opaque chunk ids.
-2. **Stale versus removed.**
+1. **Identifiers.** *Decided by Codex's review; done except `indexGeneration`.*
+   - Identity is `(collectionId, documentId, versionId)`, and the original route carries all three (§3). The fixtures above show the same `documentId` in two collections.
+   - `chunkId` is a random opaque id (migration `002_opaque_chunk_ids.sql`), not the serial whose gaps revealed ingestion volume.
+   - Still open: `indexGeneration` is a tenant-wide counter, so it moves when documents the caller cannot see change. Codex asks for a view-scoped revision on the wire instead. That is the next contract task.
+2. **Stale versus removed.** *Decided by Codex's review: removal, as recommended below. Pending: the sync fix for an authoritative empty listing, a later task.*
    - §3 and §8 describe a source whose last sync failed as served and flagged `stale`. K2 instead removes its passages from search, which is safer for permissions but loses availability.
    - My recommendation: keep removal, and narrow `stale` to "the source system reports a newer version that has not been ingested yet", which only a connector can know.
-3. **Original versions.** K2 serves the original of the current version only, so a request naming an older version gets 404. v1 should say whether older originals are reachable while they are retained.
-4. **Destination-withheld report.** The proposed fields are `type`, `participant`, `collectionId`, `documentIds`, `allowedDestinations` and `message`. Conductor owns this shape, so Codex should accept or change it before K8.
+3. **Original versions.** *Decided by Codex's review; done.* Current version only, checked in the same query as the document's status and ACL; anything else is the shared 404 (§3).
+4. **Destination-withheld report.** *Decided by Codex's review: accepted as an operator-only report, with stricter values. Pending: a later contract task and K8.* The proposed fields are `type`, `participant`, `collectionId`, `documentIds`, `allowedDestinations` and `message`. Conductor owns this shape, so Codex should accept or change it before K8.
 

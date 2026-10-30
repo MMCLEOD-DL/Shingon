@@ -239,7 +239,7 @@ class KnowledgeService:
         rows = self.db.execute("""
             WITH q AS (SELECT CASE WHEN plainto_tsquery('english', %(q)s)::text = '' THEN NULL
                          ELSE replace(plainto_tsquery('english', %(q)s)::text, '&', '|')::tsquery END AS tsq)
-            SELECT c.id, c.source_id, c.version, c.collection_id, c.title, c.text, c.locator, c.instruction_like,
+            SELECT c.public_id, c.source_id, c.version, c.collection_id, c.title, c.text, c.locator, c.instruction_like,
                    s.key, succ.key AS superseded_by_visible,
                    ts_rank_cd(c.tsv, q.tsq, 32) * CASE WHEN s.superseded_by IS NULL THEN 1 ELSE %(sw)s::real END AS score,
                    to_char(v.ingested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
@@ -272,15 +272,20 @@ class KnowledgeService:
         self.db.commit()
         return {'indexGeneration': generation, 'evidence': evidence, 'results': results, 'ms': ms}
 
-    def original(self, cred: Credential, collection: str, key: str) -> Path:
-        """The stored original of the current version, under the same permission rule as search."""
+    def original(self, cred: Credential, collection: str, key: str, version: int) -> Path:
+        """The stored original of `version`, only while it is the current version, under the same permission rule as
+        search. Any other version gets the same NotFound as a hidden or missing document; the latest bytes are never
+        served in its place (retrieval-contract.md §3)."""
+        if isinstance(version, bool) or not isinstance(version, int):
+            raise NotFound('not-found')
         allowed, groups = self._scope(cred)
         row = self.db.execute("""
             SELECT v.original_path FROM sources s JOIN collections c ON c.id = s.collection_id
             JOIN versions v ON v.source_id = s.id AND v.n = s.current_version
-            WHERE s.key = %s AND s.collection_id = %s AND c.tenant_id = %s AND s.collection_id = ANY(%s::text[]) AND s.status = 'active'
+            WHERE s.key = %s AND s.collection_id = %s AND s.current_version = %s AND c.tenant_id = %s
+              AND s.collection_id = ANY(%s::text[]) AND s.status = 'active'
               AND (s.acl_all OR s.acl_groups && %s::text[] OR %s = ANY(s.acl_principals))""",
-            (key, collection, cred.tenant, allowed, groups, cred.principal or '')).fetchone()
+            (key, collection, version, cred.tenant, allowed, groups, cred.principal or '')).fetchone()
         if row:  # audited like a search: who fetched which original
             self.db.execute('INSERT INTO audit (credential, principal, collections, result_sources, query_sha256) '
                             "SELECT %s, %s, %s::text[], ARRAY[id], 'original' FROM sources WHERE collection_id = %s AND key = %s",
