@@ -10,6 +10,8 @@ core lookup/ACL and request-refusal controls pass. The fixture's request/focus i
 be corrected before accepting it as the v1 dispatch oracle. Existing KB-R5 remains open;
 this review neither duplicates nor closes that snapshot finding. No HTTP service was run.
 
+> Follow-up: [PR46 fixture re-review](2026-10-30-codex-review-kb-fixture-fix.md) closes KB-R6. The retained endpoint control now reports MATCH/exit 0 on corrected fixtures; the mismatch below describes the historical baseline.
+
 ## KB-R6 — [P2] The positive passage fixture's focused chunk is not the requested chunk
 
 Location: `knowledge/tests/test_contract_fixtures.py:125–134`, `_passage()`;
