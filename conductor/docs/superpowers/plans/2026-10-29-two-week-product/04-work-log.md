@@ -8,7 +8,7 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude acknow
 | P01 | Codex | DONE | `codex/updater-settings-recovery` | Claude approved `06678be`; PR #6 merged as `8e5bf13`; evidence below |
 | P02 | Claude | CHANGES_REQUESTED | `2405aff` reviewed on integrated `18f8f5b` | Original triggers now refused; P02-R2 resolved at reviewed scope. P02-R1 partially fixed: harmless scanner footer still yields unwarned GBP 10.00 at confidence 1 while ignoring GBP 12.40 image. Codex re-review: 323 passed / 6 Linux-only tests filtered out; follow-up review and reproducer below. |
 | P03 | Codex | DONE | `codex/decision-receipt-keys` from `d9e88e2` | #12 and #14 independently approved/merged; N5 approval `43d8b0d`, merge `01350f7`; Claude N6 UI merged in #15; optional N7 remains |
-| P04 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh`; contract v1 fixtures from `codex/operator-app-v1` @ `a8c97bc` | `conductor/operator-web`: 43/43 unit, 13/13 browser journey against real P03 service; see 29 Oct P04 entry; awaiting Codex review |
+| P04 | Claude | CHANGES_REQUESTED | Reviewed integrated `bee4ae1`, including PR15 N6 | Codex: 54 unit PASS, build PASS, 19/19 real-service browser journey on Windows/Edge. N6 examined controls pass; P04-R1 clipped diff still approvable, P04-R2 delayed older passed report enables approval for new failed evidence at same commit. Review/reproducers below. |
 | P05 | Codex | IN_PROGRESS | codex/operator-app-v1 | Setup/probes/launcher implemented; native Windows/live-model acceptance pending |
 | P06 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 29 Oct P06 entry; awaiting Codex review and Malcolm's decisions D1–D5 |
 | P07 | Codex + Claude review | IN_PROGRESS | codex/operator-app-v1 | Backend boundary tests pass; UI integration and peer review pending |
@@ -879,3 +879,50 @@ Next independent Codex task after this submission merges: P04 UI including N6 re
 - Next action: Claude corrects and resubmits exact contract/fixture pins. After this PR merges,
   Codex reviews P04 including N6; wider P06 research/P09 reviews remain independent backlog.
   Stop this one-task lane invocation after submission; no new packet before merge.
+
+### 30 October 2026 — Codex claim: P04 operator UI and N6 recovery review
+
+Owner/reviewer Codex; implementation owner Claude. Status: IN_PROGRESS.
+Branch `codex/review-operator-ui`; baseline `bee4ae1` (PR #24 merged).
+Scope: independently review operator-web against service interface/fixtures, including N6
+inspection acknowledgement, approval evidence, stale/error/reconnect and untrusted text.
+Owned paths: review artifacts/standalone controls and this ledger only. No Claude-owned UI,
+service, dependency, CI/gate or live-model changes. Next action: install UI lockfile, run its
+unit/build/browser checks where available, and reproduce concrete failures before judging.
+
+### 30 October 2026 — Codex P04/N6 review handoff
+
+Baseline `bee4ae1`; branch `codex/review-operator-ui`; review owner Codex, fix owner Claude.
+Status CHANGES_REQUESTED for P04; no independent N6 defect reproduced in examined controls.
+Review: `reviews/2026-10-30-codex-review-P04.md` with standalone DOM and browser reproducers.
+P04-R1 UI clips a450k diff at400k but leaves approval enabled (below worker1MiB ceiling).
+P04-R2 delayed old passed review overwrites current failed evidence at the same commit;
+production browser/service reproduction confirms currentReportPassed=false, stalePassedLabel1,
+currentFailedLabel0, approveEnabled=true. Bind full evidence identity and discard stale GETs.
+Windows Node24.12.0/npm11.6.2: UI54PASS/buildPASS; unchanged journey19PASS using Playwright1.64.1
+with explicit system Edge156.0.4314.50 override. Normal journey workers synthetic; N6 includes
+real Git workspace/reconciliation. Extra DOM2expectedFAIL/1PASS; browserexpectedexit1 records
+stale-report gap without approval/landing; source HEAD/index/files unchanged. Desktop/phone
+screenshots inspected; no axe/full accessibility or live model acceptance claim.
+No UI/UX/service/dependency/CI/gate edits; Claude owns corrections and normal regression tests.
+Next independent Codex work after this submission merges: P06 wider research/P09 assessment.
+
+### Codex task submitted — P04 operator UI and N6 review
+
+- Date: 30 October 2026. Branch `codex/review-operator-ui`; baseline `bee4ae1`.
+- Final review/reproducer commit: `de5f5875cd6ab7057f3fcfb4a3798af4f87cfde6`.
+- PR: [#26 — Review P04: reproduce clipped diffs and stale test evidence at approval](https://github.com/MMCLEOD-DL/Shingon/pull/26).
+- Review complete; P04 CHANGES_REQUESTED for clipped-diff approval and same-commit stale
+  passed-test evidence. Claude owns UI corrections. Examined N6 recovery behaviour passes.
+- Windows/Node24.12.0: UI 54 PASS/build PASS; unchanged browser journey 19 PASS with
+  Playwright1.64.1 + explicit system Edge156.0.4314.50 override. Extra DOM 2 expected FAIL /
+  1 positive PASS; real browser/service/Git stale-evidence reproduction expected exit1.
+  Current failed report, stale green UI and enabled approval independently confirmed;
+  no approval/landing, source HEAD/index/files unchanged. Syntax and diff checks PASS.
+- Review paths/ledger only; no UI/UX/service/dependency/CI/gate/model/private/live changes.
+  Full suites/live acceptance and axe are not claimed. Hosted CI is separate evidence and
+  cannot close the intentionally reproduced findings.
+- Merge route: no high-risk path; mark ready after local checks and request existing
+  auto-merge policy, reporting disabled setting without changing repository/approval rules.
+- Next action: Claude corrects and supplies exact pins for re-review. After this submission
+  merges, Codex takes broader P06 research/P09 assessment. No new packet before merge.
