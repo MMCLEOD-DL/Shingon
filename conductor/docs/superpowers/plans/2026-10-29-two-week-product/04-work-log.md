@@ -6,7 +6,7 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude acknow
 |---|---|---|---|---|
 | P00 | Codex | IN_REVIEW | codex/operator-app-v1 | Concrete API/ADR/fixtures ready; Claude acknowledgement pending |
 | P01 | Codex | DONE | `codex/updater-settings-recovery` | Claude approved `06678be`; PR #6 merged as `8e5bf13`; evidence below |
-| P02 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` @ `2405aff` from `f63b83b` | P02-R1 and P02-R2 fixed; Codex reproducer now refuses both; 11 new PDF tests (9 fail before); Foundation 1,126 passed / 6 skipped; Codex re-review due |
+| P02 | Claude | CHANGES_REQUESTED | `2405aff` reviewed on integrated `18f8f5b` | Original triggers now refused; P02-R2 resolved at reviewed scope. P02-R1 partially fixed: harmless scanner footer still yields unwarned GBP 10.00 at confidence 1 while ignoring GBP 12.40 image. Codex re-review: 323 passed / 6 Linux-only tests filtered out; follow-up review and reproducer below. |
 | P03 | Codex | DONE | `codex/decision-receipt-keys` from `d9e88e2` | #12 and #14 independently approved/merged; N5 approval `43d8b0d`, merge `01350f7`; Claude N6 UI merged in #15; optional N7 remains |
 | P04 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh`; contract v1 fixtures from `codex/operator-app-v1` @ `a8c97bc` | `conductor/operator-web`: 43/43 unit, 13/13 browser journey against real P03 service; see 29 Oct P04 entry; awaiting Codex review |
 | P05 | Codex | IN_PROGRESS | codex/operator-app-v1 | Setup/probes/launcher implemented; native Windows/live-model acceptance pending |
@@ -781,6 +781,53 @@ review are independent queued tasks after this submission merges.
   Codex takes independent P02 re-review, then retrieval contract/K6 review and P04/P06/P09.
   No new task is started before this submission merges under the repository's one-task loop.
 
+### 30 October 2026 — Codex claim: P02 independent follow-up review
+
+Owner: Codex; implementation owner: Claude. Status: IN_PROGRESS.
+Branch: `codex/review-pdf-followup`; baseline main: `18f8f5b` (PR #22 merged).
+Malcolm delegated selection of the next review. Scope: re-review `2405aff` (merged PR #19),
+rerun original P02-R1/R2 reproductions and focused reader controls, assess the disclosed
+same-page image-plus-text residual, and record an evidence-based disposition.
+Owned paths: this ledger and review documents/standalone synthetic reproducers under reviews/.
+No edits to Claude-owned OCR implementation/tests, dependencies, CI, approval rules or live probes.
+Next action: install the checked-in Foundation lockfile locally, run the original reproducer,
+then challenge the residual and page-tree completeness before recording findings and a PR.
+
+### 30 October 2026 — Codex P02 follow-up review handoff
+
+Packet: P02 re-review at `2405aff`; baseline `18f8f5b`; branch `codex/review-pdf-followup`.
+Status: CHANGES_REQUESTED. Implementation owner Claude; reviewer Codex.
+Review: `reviews/2026-10-30-codex-review-P02-followup.md`.
+P02-R2 demonstrated cases resolved; P02-R1 original trigger fixed but disclosed footer residual
+still returns an unwarned confidence-1 GBP 10.00 while ignoring a GBP 12.40 receipt image.
+The footer contains no amount: its mere presence bypasses textless-page refusal.
+Original standalone reproducer current exit0 / archived f63b83b exit1; new footer reproducer
+exit1 on both. Real local reader/child/readReceipt with synthetic PDFs and fictional receipt.
+Windows Node24.12.0/npm11.6.2: focused completeness21PASS/26filtered; OCR323PASS/6filtered,
+0fail; the six Linux /proc watchdog tests are intentionally unrun here, never claimed PASS.
+Installed checked-in lockfile and built shared package for standalone imports; no dependency,
+OCR source/test, CI/gate, live model, Azure, browser upload or release changes.
+Claude owns bounded refusal/incomplete-evidence correction and regression; no PDF image OCR
+or increased resource ceiling is required by this review. Next independent Codex work after
+this submission merges: retrieval-contract/K6 review, then remaining UI/research reviews.
+
+### Codex task submitted — P02 PDF follow-up re-review
+
+- Date: 30 October 2026. Branch: `codex/review-pdf-followup`; baseline: `18f8f5b`.
+- Last review/reproducer commit: `78566bd4888b134c82c6f9ae5c08995a7f9ec1d5`.
+- PR: [#23 — P02 re-review: verify page fixes and record scanner-footer confidence gap](https://github.com/MMCLEOD-DL/Shingon/pull/23).
+- Review complete; implementation status CHANGES_REQUESTED. Original P02-R1 trigger fixed;
+  P02-R2 demonstrated omissions resolved. P02-R1 scanner-footer residual still unsafe.
+- Evidence: Windows Node24.12.0; 323 OCR PASS/6 Linux watchdog tests intentionally filtered;
+  original reproducer current0/baseline1; new harmless-footer reproducer current1/baseline1.
+  Synthetic bytes and existing fictional receipt, real local engine/reader child/readReceipt.
+- No production/OCR tests, dependencies, CI/gates or live operations changed. Full integrated
+  suites remain hosted-check evidence; green CI does not close the standalone residual.
+- Merge route: no high-risk path; ready after local checks. Auto-merge request uses existing
+  repository policy only; if disabled, report that fact without changing repository settings.
+- Claude owns the bounded fix or requests Malcolm's explicit residual disposition. After
+  this review submission merges, Codex's next independent task is retrieval-contract/K6 review.
+  No new packet starts before this submission merges under the one-task lane loop.
 ### 30 October 2026 — Claude task 13 (claude-lane): Codex review PR21-R1, upgrade conflict resolution in protected files
 
 ```
