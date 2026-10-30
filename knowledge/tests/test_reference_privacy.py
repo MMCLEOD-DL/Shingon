@@ -10,7 +10,7 @@ import unittest
 
 from shingon_knowledge import contract
 
-from support import CORPUS, ServiceTestCase
+from support import COLLECTIONS, CORPUS, ServiceTestCase
 
 OLD = 'acme/travel-policy-2025.pdf'
 NEW = 'acme/expenses-policy.docx'
@@ -24,7 +24,7 @@ class SupersedingDocumentPrivacy(ServiceTestCase):
         for s in sources:
             if s['key'] == NEW:
                 s['acl'] = {'groups': ['finance']}  # alice is in finance, andy is not
-        cls.kb.sync('run-1', CORPUS, sources)
+        cls.kb.sync('run-1', CORPUS, sources, complete=COLLECTIONS)
 
     def hit(self, who):
         res = self.kb.search(self.creds[who], 'hotel cap London per night', limit=20)
@@ -49,7 +49,7 @@ class OpaqueChunkIds(ServiceTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.kb.sync('run-1', CORPUS, cls.manifest['sources'])
+        cls.kb.sync('run-1', CORPUS, cls.manifest['sources'], complete=COLLECTIONS)
 
     def test_chunk_ids_are_random_not_the_serial(self):
         ids = [r['chunkId'] for r in self.kb.search(self.creds['alice'], 'policy budget travel expenses', limit=20)['results']]
@@ -67,7 +67,7 @@ class OpaqueChunkIds(ServiceTestCase):
         ids = lambda: {r['chunkId'] for r in self.kb.search(self.creds['conductor'], 'standard error logs', limit=20)['results']  # noqa: E731
                        if r['documentId'] == doc}
         before = ids()
-        self.kb.sync('run-2', CORPUS, self.manifest['sources'], files={doc: CORPUS / 'standards/api-errors.md'})
+        self.kb.sync('run-2', CORPUS, self.manifest['sources'], files={doc: CORPUS / 'standards/api-errors.md'}, complete=COLLECTIONS)
         after = ids()
         self.assertTrue(before and after)
         self.assertFalse(before & after)
@@ -78,7 +78,7 @@ class ViewRevision(ServiceTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.kb.sync('run-1', CORPUS, cls.manifest['sources'])
+        cls.kb.sync('run-1', CORPUS, cls.manifest['sources'], complete=COLLECTIONS)
 
     def rev(self, who):
         return self.kb.search(self.creds[who], 'policy')['viewRevision']
@@ -87,7 +87,7 @@ class ViewRevision(ServiceTestCase):
         andy, alice, bella = self.rev('andy'), self.rev('alice'), self.rev('bella')
         self.assertNotEqual(andy, alice, 'different views, different revisions')
         # A new version of a finance-only document: alice sees it, andy and another tenant do not.
-        self.kb.sync('run-2', CORPUS, self.manifest['sources'], files={'acme/salary-bands.docx': CORPUS / 'acme/expenses-policy.docx'})
+        self.kb.sync('run-2', CORPUS, self.manifest['sources'], files={'acme/salary-bands.docx': CORPUS / 'acme/expenses-policy.docx'}, complete=COLLECTIONS)
         self.assertEqual(self.rev('andy'), andy)
         self.assertEqual(self.rev('bella'), bella)
         self.assertNotEqual(self.rev('alice'), alice)

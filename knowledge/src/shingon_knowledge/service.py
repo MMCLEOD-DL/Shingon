@@ -94,22 +94,33 @@ class KnowledgeService:
 
     # ---------- sync ----------
 
-    def sync(self, run_id: str, root: Path, sources: list[dict], files: dict[str, Path] | None = None) -> dict:
+    def sync(self, run_id: str, root: Path, sources: list[dict], files: dict[str, Path] | None = None, *,
+             complete: list[str]) -> dict:
         """Brings the index in line with a source listing. Repeat-safe: an unchanged file (same sha256) is skipped,
         though its ACL and supersession are still applied; a changed file becomes a new version whose chunks replace
-        the old ones; a source no longer listed in its collection is deleted with its chunks and stored original.
-        Every outcome is recorded in import_events. One source's failure never stops the others."""
+        the old ones. Every outcome is recorded in import_events. One source's failure never stops the others.
+
+        `complete` names the collections whose listing is authoritative (Codex review decision 2): in those, a source
+        not listed is deleted with its chunks and stored original, even when the listing is empty, so the last
+        document can be removed. A collection not named is a partial listing: its sources are added or updated, and
+        nothing is deleted. The caller names a collection only when its listing was read in full; a failed or
+        partial read is never passed as complete, because an empty listing from a failure would delete everything."""
         files = files or {}
+        complete = list(complete)
+        known = {r[0] for r in self.db.execute('SELECT id FROM collections WHERE id = ANY(%s::text[])', (complete,)).fetchall()}
+        self.db.commit()
+        if len(set(complete)) != len(complete) or set(complete) - known:
+            raise ValueError('complete must name each declared collection once.')
         counts = {'added': 0, 'updated': 0, 'unchanged': 0, 'deleted': 0, 'failed': 0, 'acl': 0}
-        listed: dict[str, set[str]] = {}
+        listed: dict[str, set[str]] = {c: set() for c in complete}
         for s in sources:
             listed.setdefault(s['collection'], set()).add(s['key'])
             with self.db.transaction():
                 outcome = self._sync_one(run_id, s, files.get(s['key'], root / s['key']))
             counts[outcome] += 1
-        for coll, keys in listed.items():
+        for coll in complete:
             gone = self.db.execute("SELECT id, key FROM sources WHERE collection_id = %s AND status <> 'deleted' AND NOT (key = ANY(%s::text[]))",
-                                   (coll, list(keys))).fetchall()
+                                   (coll, list(listed[coll]))).fetchall()
             for sid, key in gone:
                 with self.db.transaction():
                     self._delete(run_id, coll, sid, key)

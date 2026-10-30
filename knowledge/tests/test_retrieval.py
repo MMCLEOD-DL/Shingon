@@ -9,9 +9,9 @@ Questions about permissions and scope (restricted, scope, cross-tenant) must alw
 import json
 import unittest
 
-from support import CORPUS, FIXTURES, ServiceTestCase
+from support import COLLECTIONS, CORPUS, FIXTURES, ServiceTestCase
 
-QUESTIONS = json.loads((FIXTURES / 'questions.json').read_text())['questions']
+QUESTIONS = json.loads((FIXTURES / 'questions.json').read_text(encoding='utf-8'))['questions']
 KNOWN_MISSES = {'q16', 'q18', 'q24', 'q25'}
 MUST_BE_PERFECT = {'restricted', 'scope', 'cross-tenant'}
 
@@ -39,8 +39,8 @@ class Retrieval(ServiceTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.kb.sync('run-1', CORPUS, cls.manifest['sources'], files={'acme/expenses-policy.docx': CORPUS / 'acme/_v1-expenses-policy.docx'})
-        cls.kb.sync('run-2', CORPUS, cls.manifest['sources'])
+        cls.kb.sync('run-1', CORPUS, cls.manifest['sources'], files={'acme/expenses-policy.docx': CORPUS / 'acme/_v1-expenses-policy.docx'}, complete=COLLECTIONS)
+        cls.kb.sync('run-2', CORPUS, cls.manifest['sources'], complete=COLLECTIONS)
         cls.outcomes = {q['id']: correct(q, cls.kb.search(cls.creds[q['cred']], q['query'])) for q in QUESTIONS}
 
     def test_the_labelled_set_matches_the_recorded_baseline(self):
