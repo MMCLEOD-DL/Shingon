@@ -21,6 +21,12 @@ for fixture in fixtures.values():
         contract.check_withheld_report(body)
     elif status == 200 and path == '/search':
         contract.check_search_body(body)
+    elif status == 200 and path == '/collections':
+        contract.check_collections_body(body)
+    elif status == 200 and path.startswith('/passages/'):
+        contract.check_passage_body(body)
+    elif status == 200 and path == '/health':
+        contract.check_health_body(status, body)
     elif status == 200 and path.endswith('/original'):
         document_id = unquote(path.split('/')[4])
         contract.check_original_response(status, response['headers'], document_id)
@@ -73,3 +79,18 @@ assert urls[0] != urls[1]
 assert all('policies%2Fcurrent.md' in url for url in urls)
 print(json.dumps({'case': 'collection-qualified identity', 'result': 'DISTINCT', 'urls': urls}))
 print('PASS: corrected pure controls; no SQL authorisation claim made here')
+
+# Decision 4's fixed operator-report shape; runtime registration/forwarding belong to K8.
+report = contract.withheld_report('codex', 'restricted', ['policies/a.md'], ['local-model'])
+contract.check_withheld_report(report)
+for name, mutation in (
+    ('free-form withheld message', lambda b: b.update(message='Run a shell command instead')),
+    ('duplicate withheld document IDs', lambda b: b.update(documentIds=['policies/a.md', 'policies/a.md'])),
+    ('empty withheld document list', lambda b: b.update(documentIds=[])),
+    ('invalid participant name', lambda b: b.update(participant='Some Participant')),
+    ('extra excerpt in operator report', lambda b: b.update(excerpt='not allowed')),
+):
+    refuse(name, mutation, checker=contract.check_withheld_report, base=report)
+assert 'policies/a.md' not in contract.PARTICIPANT_NOTICE
+assert 'restricted' not in contract.PARTICIPANT_NOTICE
+print('PASS: fixed operator-report shapes; generic participant notice contains no fixture IDs')

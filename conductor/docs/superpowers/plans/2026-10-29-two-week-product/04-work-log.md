@@ -1404,33 +1404,48 @@ Review artifacts/ledger only; GPU worker stays off. Next peer review PR37; P09 a
 console follow-up remain queued. No high-risk path; request auto-merge and report refusal
 if still disabled. Merge records bounded closure. Stop until this submission is merged.
 
-### 30 October 2026 — Claude task 22 (claude-lane): authoritative sync listings (decision 2)
+### 30 October 2026 — Codex claim: PR37 viewRevision and withheld-report review
 
-```
-Packet/subpacket: K-track contract. Codex review reviews/2026-10-30-codex-review-retrieval-contract.md, decision 2;
-  plus the Windows encoding note in reviews/2026-10-30-codex-review-kb-corrections.md.
-Owner and reviewer: Claude; reviewer Codex.
-Status: IN_REVIEW.
-Baseline SHA: 83dc6d9.
-Owned files: knowledge/src/shingon_knowledge/service.py (sync); knowledge/tests/{support.py, test_contract_fixtures.py,
-  test_permissions_and_sync.py, test_reference_privacy.py, test_retrieval.py}; knowledge/contract/kb-contract-v1.json
-  (stale-source wording); conductor/docs/knowledge-base/retrieval-contract.md; this ledger.
-What now works:
-  sync(..., complete=[...]) is required. Only collections named there are authoritative. In those, unlisted sources
-    are deleted, including the last one when the listing is empty. Collections not named are partial: they are
-    added to or updated, never deleted from. Unknown or repeated names are refused before anything changes.
-  stale is narrowed: a newer version known upstream while the indexed one is still authorised (connector only). A
-    failed read, parse or permission refresh removes the source from search, passages, counts and originals.
-  Windows: knowledge test file I/O names UTF-8 explicitly (Codex hit cp1252 failures without PYTHONUTF8).
-Checks (cloud Linux, Python 3.13 unittest, PostgreSQL 16 throwaway), from knowledge/:
-  python3 -m unittest discover -s tests: 36 passed. The generated fixtures are unchanged.
-  New: a complete empty listing deletes Birch's only document (search empty, revision moves, count 0, original 404,
-    deleted event); a partial listing and an empty non-complete listing delete nothing; bad or missing complete
-    is refused with nothing changed.
-  The bug, shown on the previous service: sync('run-2', CORPUS, []) deleted 0, and bella still saw
-    birch/staff-handbook.md.
-Codex review status: with PRs #31, #34, #37, #39 and this one, KB-R1-R4 and decisions 1-4 are all addressed.
-  Re-review of #37, #39 and this PR is what the v1 freeze waits on.
-Live / fake / skipped / unrun: real PostgreSQL with the synthetic corpus; no connector, HTTP layer or Windows run here.
-Reviewer disposition and reviewed SHA: re-review requested at the commit below.
-```
+Reviewer Codex; implementation/correction owner Claude. Status IN_PROGRESS.
+Branch `codex/review-view-revision`; integrated baseline `29846e2` (PR40 merged).
+Scope: PR37 `7ed04e4`, authorisation-view digest/cache identity and fixed operator report.
+Owned paths: review artifacts/controls and ledger only. Next: inspect snapshot consistency,
+run real PostgreSQL revision/permission tests and strict report controls; reproduce before
+judging. Newer PR39 endpoint work remains a separate review. GPU worker stays off; no model,
+private corpus, live connector, remote DB or deployment. Temporary loopback test DB only.
+
+### 30 October 2026 — PR37 viewRevision/withheld-report review handoff (Codex)
+
+Reviewer Codex; correction owner Claude. Status CHANGES_REQUESTED for KB-R5 [P1].
+PR37 `7ed04e4`; integrated review baseline `29846e2`. Branch `codex/review-view-revision`.
+Artifact `reviews/2026-10-30-codex-review-view-revision.md`; real DB race control
+`reviews/fixtures/kb-view-snapshot-review.py` (outside CI discovery).
+Sequential hidden-change/destination revision controls pass; fixed operator report shape
+accepted at examined scope. K8 registration/forwarding/current-policy enforcement stays open.
+KB-R5: second connection revokes finance membership between candidates and revision. Search
+retains salary document but labels it with current revoked view's digest; fresh search under
+that digest excludes it. Real read-committed SQL, no injected result. Wire checker accepts.
+Consistent repeatable-read diagnostic returns old digest with old rows; fresh read then denies.
+Checks (Windows Python 3.14.2 UTF-8 mode, isolated PostgreSQL 16.15): 33/33, zero skips,
+3.441 s. Pure fixture dispatcher extended for PR39 shapes: 39 shape controls/probes pass.
+Default race expected exit 1; repeatable-read control exit 0. Whitespace passes. Temporary
+DB stopped normally and absent; GPU worker stays off; no model/private/HTTP/deployment use.
+Owned changes: review artifacts/controls and ledger only. Claude corrects KB-R5 snapshot
+semantics before K6 cache admission; keep prior KB-R1/R2/R3 closures and K8/KB-R4/sync gates.
+Next peer review PR39 endpoint semantics; P09 and Windows console follow-up remain queued.
+Merge records the finding and bounded report-shape acceptance, not v1 contract freeze.
+
+### Codex task submitted — PR37 viewRevision and withheld-report review
+
+Date: 30 October 2026. Branch `codex/review-view-revision`.
+Last artifact commit: `b14e2744cb8ef31cd87d55c2b0a7be78bd5d8adf`.
+PR: https://github.com/MMCLEOD-DL/Shingon/pull/42 (draft opened; ready after this push).
+Evidence: knowledge 33/33 with no skips; 39 fixture shape checks plus strict report/value
+controls pass. Real DB default-isolation race expected exit 1; consistent-snapshot control
+exit 0. Whitespace passes. Temporary PostgreSQL stopped; GPU worker stays off.
+Disposition: KB-R5 [P1] with Claude before K6 cache admission. Fixed operator-report shape
+accepted at examined scope; prior KB-R1/R2/R3 closures retained; K8 enforcement and final
+contract/other open gates not closed. Only review artifacts and ledger changed.
+Next peer review PR39 endpoint semantics; P09 and Windows console follow-up remain queued.
+No high-risk paths; request auto-merge and report repository refusal. Merge records handoff,
+not source correction, v1 freeze or deployment approval. Stop until this submission merges.
