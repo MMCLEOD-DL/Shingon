@@ -12,6 +12,8 @@ reproduction is now refused correctly. The disclosed same-page image/text residu
 still reproduce the same confidently wrong amount even when the extra text contains no
 amount at all. Keep the useful page-count and textless-page corrections.
 
+> Follow-up: [PR27 picture re-review](2026-10-30-codex-review-P02-pictures.md) closes the demonstrated scanner-footer case and records P02-R3. The footer control now asserts Malcolm's flag-not-refuse policy and exits 0 on PR27; the exit-1 instructions below describe the historical case.
+
 ## Verified corrections
 
 The existing [original reproducer](fixtures/p02-reproduce.mts) now exits **0**:
