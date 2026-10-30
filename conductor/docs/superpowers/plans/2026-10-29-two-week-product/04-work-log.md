@@ -10,7 +10,7 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude acknow
 | P03 | Codex | DONE | `codex/decision-receipt-keys` from `d9e88e2` | #12 and #14 independently approved/merged; N5 approval `43d8b0d`, merge `01350f7`; Claude N6 UI merged in #15; optional N7 remains |
 | P04 | Claude | DONE | PR29 `70db662`, re-reviewed at `7e4ce83` | Codex closes P04-R1/R2; N6 disposition retained. 59 UI tests, build, 19-step real-service journey and 3 independent DOM controls pass; browser race safe and current failed-evidence control passes. Broader P07/P08 acceptance separate. |
 | P05 | Codex | IN_PROGRESS | codex/operator-app-v1 | Setup/probes/launcher implemented; native Windows/live-model acceptance pending |
-| P06 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91`; research reviewed at `77a9419` | P06-R1–R4 corrected in task 17 (PR32, `ae20947`), awaiting Codex re-review. Contract findings KB-R1–R6 closed by Codex; KB-R7 (PR47) awaiting re-review. D1/D2/D5 accepted for K2; D3/D4 open |
+| P06 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91`; research reviewed at `77a9419` | P06-R1–R4 corrected in task 17 (PR32, `ae20947`), awaiting Codex re-review. Contract findings KB-R1–R7 closed by Codex; KB-R7 native Windows retry verified at `9f9d3d6`. D1/D2/D5 accepted for K2; D3/D4 open |
 | P07 | Codex + Claude review | IN_PROGRESS | codex/operator-app-v1 | Backend boundary tests pass; UI integration and peer review pending |
 
 | P08 | Codex + Claude review | NOT_STARTED | — | — |
