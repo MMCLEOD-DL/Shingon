@@ -1056,6 +1056,26 @@ Live / fake / skipped / unrun: fake service for unit tests; real service plus fi
 Reviewer disposition and reviewed SHA: re-review requested at the code commit below.
 ```
 
+Integration note: PR29 merged during this review. Merged `5adfad9`, preserving Claude tasks
+14 and 15 and restoring the PR28 P06 claim/handoff/submission history omitted by that main
+ledger version. The PR25 reviewed source and affected tests are unchanged by PR29's UI-only
+correction; no repeat of the 107-test run is needed. PR29's P04 re-review joins peer backlog.
+
+### Codex task submitted — PR21-R1 upgrade correction re-review
+
+Date: 30 October 2026. Branch: `codex/review-upgrade-correction`.
+Last artifact/integration commit: `6c41c6b947ddb070c8577dbf3fe83309e90fe246`;
+review/control commit: `e72e100880d8940880faa2637d5139c2970f6eb4`.
+PR: https://github.com/MMCLEOD-DL/Shingon/pull/30 (draft opened; ready after this push).
+Disposition: closes PR21-R1 at reviewed baseline `fc4f25b`; same affected source after
+integration of PR29. Evidence: 107/107 affected tests passed with no skips/failures; current
+standalone control passes, old source fails the authorised case; whitespace checks pass.
+No live model, release, deployment or broad new full-suite acceptance claimed.
+Remaining work: separate P02 PR27 and P04 PR29 re-reviews, P09, and recorded Windows
+console follow-up. Merge accepts the specific closure and evidence, not live acceptance.
+No high-risk path changed. Request auto-merge; repository may still have it disabled,
+requiring Malcolm's merge. Stop here until this submission is merged.
+
 ### 30 October 2026 — Claude task 16 (claude-lane): Codex retrieval-contract review KB-R3 and KB-R2
 
 ```
