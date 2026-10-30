@@ -1449,3 +1449,47 @@ contract/other open gates not closed. Only review artifacts and ledger changed.
 Next peer review PR39 endpoint semantics; P09 and Windows console follow-up remain queued.
 No high-risk paths; request auto-merge and report repository refusal. Merge records handoff,
 not source correction, v1 freeze or deployment approval. Stop until this submission merges.
+
+### 30 October 2026 — Codex claim: PR39 endpoint/request contract review
+
+Reviewer Codex; implementation/correction owner Claude. Status IN_PROGRESS.
+Branch `codex/review-kb-endpoint-contract`; baseline `41fc4cc` (PR42 merged).
+Scope: PR39 `fee43f0`, KB-R4 route fixtures, search/expansion validation and core collection/
+passage privacy. Owned paths: review artifacts/controls and ledger only. Next: exercise
+admitted shapes and unsupported requests, real DB collection/passage/original controls,
+check alignment to the draft HTTP contract. Existing KB-R5 snapshot finding is not closed
+by unrelated passing tests. PR41 sync semantics remain a separate review. GPU worker stays
+off; only isolated loopback PostgreSQL/synthetic data, no model/connector/private/HTTP/deploy.
+
+### 30 October 2026 — PR39 endpoint/request contract review handoff (Codex)
+
+Reviewer Codex; correction owner Claude. Status CHANGES_REQUESTED for KB-R6 [P2].
+PR39 `fee43f0`; reviewed baseline `41fc4cc`. Branch `codex/review-kb-endpoint-contract`.
+Artifact `reviews/2026-10-30-codex-review-kb-endpoints.md`; new standalone endpoint control.
+KB-R6: passage-neighbours fixture requests one stand-in chunk but marks a different stand-in
+as focus; shape/equality tests pass the internal inconsistency. Generator must preserve one
+ID mapping between request and response and assert their equality. Real core focus lookup
+and bounded expansion pass; restricted passage denied to Andy/Bella/Conductor. No runtime
+cross-document leak claimed. Strict keyword/request and unsupported mode/filter controls pass.
+Checks (Windows Python 3.14.2 UTF-8 mode, isolated PostgreSQL 16.15): 36/36, zero skips,
+3.751 s; 39 pure fixture-shape controls pass. Endpoint probe exits 1 expected for KB-R6 after
+real core/parser controls pass. KB-R5 default-isolation revocation race still exits 1 expected.
+Review scripts adapted to PR41's required explicit complete-listing argument; no product,
+owner tests or JSON fixture edits. Whitespace passes. Temporary PG stopped and absent;
+GPU worker stays off; no model/private/HTTP/connector/deployment acceptance.
+Keep K6 held for KB-R5/R6 and transport/policy gates; PR41 sync review remains separate.
+Next peer review PR41; P09 and Windows console follow-up queued. Merge records the handoff.
+
+### Codex task submitted — PR39 endpoint/request contract review
+
+Date: 30 October 2026. Branch `codex/review-kb-endpoint-contract`.
+Last artifact commit: `c832ea81ab9c0d48193391df8a4f83ab8ac1d837`.
+PR: https://github.com/MMCLEOD-DL/Shingon/pull/43 (draft opened; ready after this push).
+Evidence: knowledge 36/36, zero skips; 39 pure fixture shapes and request controls pass.
+Real core focus identity/expansion and three denied-principal controls pass. New fixture
+identity probe expected exit 1 for KB-R6; KB-R5 race still expected exit 1. Whitespace passes.
+Disposition: KB-R6 [P2] with Claude; correct passage fixture normalisation and assert exact
+request/focus identity. K6/v1 held; prior closures retained. No owner product/fixture edits.
+Temporary PG stopped; GPU worker stays off. Next review PR41; P09 and Windows console
+follow-up remain queued. No high-risk paths; request auto-merge and report disabled setting.
+Merge records the handoff, not source correction or freeze. Stop until submission merges.

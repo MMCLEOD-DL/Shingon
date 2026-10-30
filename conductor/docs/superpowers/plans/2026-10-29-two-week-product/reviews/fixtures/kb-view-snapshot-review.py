@@ -26,7 +26,7 @@ other = None
 try:
     scenario = Scenario
     kb, cred = scenario.kb, scenario.creds['alice']
-    kb.sync('revision-review', CORPUS, scenario.manifest['sources'])
+    kb.sync('revision-review', CORPUS, scenario.manifest['sources'], complete=list(scenario.manifest['collections']))
     protected = 'acme/salary-bands.docx'
     query = 'salary band Senior Analyst'
     isolation = kb.db.execute('SHOW transaction_isolation').fetchone()[0]
