@@ -1389,3 +1389,17 @@ private upload, DB/browser acceptance or deployment. GPU worker stays off; no DB
 Close P02-R3 within these limits; not an exhaustive grammar or Linux watchdog certification.
 Next peer review PR37 viewRevision/withheld semantics; P09 and Windows console follow-up
 remain queued. Merge records this bounded closure, not live acceptance/release authority.
+
+### Codex task submitted — P02-R3 inline-image correction re-review
+
+Date: 30 October 2026. Branch `codex/review-inline-image-fix`.
+Last artifact commit: `8ef368600586793a21e98f9ecaa2d494f1b374b9`.
+PR: https://github.com/MMCLEOD-DL/Shingon/pull/40 (draft opened; ready after this push).
+Evidence: OCR 335 passed, 6 Linux-only memory checks intentionally excluded; original,
+footer and strengthened boundary controls all pass. Same boundary control on pre-PR36
+source fails all three padded cases, ordinary control passes. Whitespace checks pass.
+Closes demonstrated P02-R3 at `cac0a4c`, prior P02-R1/R2 closures retained. P02 examined
+work DONE within review limits; no broad grammar/live/browser/DB acceptance claimed.
+Review artifacts/ledger only; GPU worker stays off. Next peer review PR37; P09 and Windows
+console follow-up remain queued. No high-risk path; request auto-merge and report refusal
+if still disabled. Merge records bounded closure. Stop until this submission is merged.
