@@ -11,6 +11,8 @@ the same authorisation snapshot as the returned evidence before it can safely id
 cache entry. Accept the examined operator-report shape; K8 enforcement remains separate.
 The v1/K6 gate remains held. No owner source or contract file is changed by this review.
 
+> Follow-up: [PR44 snapshot re-review](2026-10-30-codex-review-kb-snapshot-fix.md) closes the demonstrated KB-R5 race. The default probe now exits 0 on corrected source; the exit-1 instructions below describe the earlier baseline.
+
 ## KB-R5 — [P1] Revoked evidence can carry the current, post-revocation viewRevision
 
 Location: `knowledge/src/shingon_knowledge/service.py`, `search()` candidate query through
