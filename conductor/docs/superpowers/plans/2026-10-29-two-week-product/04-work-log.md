@@ -641,3 +641,30 @@ _Restored 29 October 2026: this entry was dropped when `main` was merged into `c
 - **Evidence:** service tests 45/45 at `88b8a07`. With `main`'s `runs.js`, 9 fail (8 HTTP prototype-name cases and the real-engine concurrent case), and the 2 `prototype` controls pass, as Codex reported.
 - **Correction:** my N5 note understated the defect. The inherited-member read refused the *first* valid request (409) for four IDs. It did not only lose idempotency for `__proto__`.
 - **Outcome:** Codex merged `main` in (`03b0468`) and #14 was merged as `01350f7`. The service code on `main` is identical to the reviewed `88b8a07`. That merge dropped Claude task 8's entry, which is restored above. N7 (optional, for Codex): add a test for a prototype-named ID on `/recover`.
+
+### 30 October 2026 — Claude task 10 (claude-lane): retrieval-contract fixture set (§10), toward K6
+
+```
+Packet/subpacket: P06 follow-up — draft fixtures for retrieval-contract v1 (Malcolm chose this over K9/K5 and the
+  work-log change on 30 Oct, because K6 depends on an accepted contract).
+Owner and reviewer: Claude; reviewer Codex (contract acceptance).
+Status: IN_REVIEW.
+Baseline SHA: f23057b.
+Owned files: knowledge/{contract/kb-contract-v1.json (new), src/shingon_knowledge/contract.py (new),
+  src/shingon_knowledge/service.py (search results gain ingestedAt), tests/test_contract_fixtures.py (new), README.md};
+  conductor/docs/knowledge-base/retrieval-contract.md (§10 status and open points); this ledger.
+What now works: 13 generated fixtures produced by the K2 service through the wire shapes in contract.py, re-produced
+  in a fresh database by CI and compared exactly; 5 authored fixtures (stale, OCR, 503, 429, destination report),
+  each naming the task that owns it, shape-checked only. Every §10 item is covered. Strict shape checks for K6
+  to reuse; fixed error wording per code (exception text never reaches the caller).
+Checks (cloud Linux, Python 3.13, PostgreSQL 16.x local):
+  python -m unittest discover -s tests: 16 passed (8 existing + 8 new), twice in a row on fresh databases.
+  Drift check: raising the strong-evidence threshold makes 3 generated fixtures fail; restored, all pass.
+  The 12 near-miss bodies (extra field, control character, boolean as a number, oversized body...) are all refused.
+Live / fake / skipped / unrun: real service and PostgreSQL on the synthetic corpus. No HTTP layer (K6), no models,
+  no Babel data. Authored fixtures are not evidence of implementation.
+Open points for Codex (retrieval-contract.md §10): identifiers (K2's serial chunk ids reveal cross-tenant volume),
+  stale versus removal on a failed re-sync, older originals, and the proposed destination-withheld shape.
+Next: K6 once Codex accepts the contract (or requests changes).
+Reviewer disposition and reviewed SHA: —
+```

@@ -241,8 +241,9 @@ class KnowledgeService:
                          ELSE replace(plainto_tsquery('english', %(q)s)::text, '&', '|')::tsquery END AS tsq)
             SELECT c.id, c.source_id, c.version, c.collection_id, c.title, c.text, c.locator, c.instruction_like,
                    s.key, s.superseded_by,
-                   ts_rank_cd(c.tsv, q.tsq, 32) * CASE WHEN s.superseded_by IS NULL THEN 1 ELSE %(sw)s::real END AS score
-            FROM chunks c JOIN sources s ON s.id = c.source_id, q
+                   ts_rank_cd(c.tsv, q.tsq, 32) * CASE WHEN s.superseded_by IS NULL THEN 1 ELSE %(sw)s::real END AS score,
+                   to_char(v.ingested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+            FROM chunks c JOIN sources s ON s.id = c.source_id JOIN versions v ON v.source_id = c.source_id AND v.n = c.version, q
             WHERE q.tsq IS NOT NULL AND c.tsv @@ q.tsq
               AND c.tenant_id = %(tenant)s AND c.collection_id = ANY(%(allowed)s::text[]) AND s.status = 'active'
               AND (c.acl_all OR c.acl_groups && %(groups)s::text[] OR %(principal)s = ANY(c.acl_principals))
@@ -253,7 +254,7 @@ class KnowledgeService:
         results = [{
             'chunkId': r[0], 'documentId': r[8], 'versionId': r[2], 'collectionId': r[3], 'title': r[4],
             'excerpt': CONTROL.sub('', r[5])[:1200], 'locator': r[6],
-            'scores': {'rank': i + 1, 'keyword': round(float(r[10]), 4)},
+            'scores': {'rank': i + 1, 'keyword': round(float(r[10]), 4)}, 'ingestedAt': r[11],
             'flags': {'supersededBy': r[9], 'instructionLike': r[7]},
         } for i, r in enumerate(rows)]
         top = results[0]['scores']['keyword'] if results else 0.0
