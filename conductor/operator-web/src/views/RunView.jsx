@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, newRequestId } from '../api.js';
 import { applyEvents, followRun, STREAM } from '../events.js';
 import { ErrorNote } from '../components/ErrorNote.jsx';
-import { Coverage, ReviewDetails } from '../components/Evidence.jsx';
+import { Coverage, ReviewDetails, diffShownInFull } from '../components/Evidence.jsx';
 import { plain, shortSha, statusText, when } from '../text.js';
 
 const ACTIVE = new Set(['queued', 'running', 'awaiting-decision', 'cancelling']);
@@ -20,6 +20,18 @@ const STREAM_TEXT = {
   [STREAM.resync]: 'Progress view reloaded from the service.',
   [STREAM.closed]: '',
 };
+
+/**
+ * The review is the evidence this question names: the same commit, diff and test reports, in order (Codex review
+ * P04-R2). A matching commit alone is not enough: a resumed run can ask again at the same commit with new test results.
+ */
+function sameEvidence(review, evidence) {
+  if (!review || !evidence) return false;
+  const ids = (v) => (Array.isArray(v) ? v : []);
+  const a = ids(review.testReportIds);
+  const b = ids(evidence.testReportIds);
+  return review.commit === evidence.commit && review.diffId === evidence.diffId && a.length === b.length && a.every((x, i) => x === b[i]);
+}
 
 function Decision({ api, run, review, onAnswered, onStale }) {
   const d = run.decision;
@@ -52,13 +64,16 @@ function Decision({ api, run, review, onAnswered, onStale }) {
   };
 
   const needsEvidence = d.kind === 'result';
-  const evidenceShown = !needsEvidence || (review && review.commit === d.evidence?.commit);
+  const evidenceShown = !needsEvidence || sameEvidence(review, d.evidence);
+  // Approval needs every change on screen: a diff too long to show in full cannot be approved here (P04-R1).
+  const complete = !needsEvidence || (evidenceShown && diffShownInFull(review.diff));
   return (
     <section className="decision" aria-labelledby="decision-title">
       <h2 id="decision-title" tabIndex={-1} ref={heading}>{KIND_TITLE[d.kind] ?? 'A decision is needed'}</h2>
       <p className="prompt">{plain(d.prompt, 4000)}</p>
       {d.kind === 'fallback' && <p>Continuing uses your Claude Code and Codex subscriptions for the work the local model would have done. It never switches to paid API keys.</p>}
       {needsEvidence && (evidenceShown ? <ReviewDetails review={review} /> : <p className="warn" role="status">Loading the exact changes and test results for commit <code>{shortSha(d.evidence?.commit)}</code>… Approval stays unavailable until they are shown.</p>)}
+      {needsEvidence && evidenceShown && !complete && <p className="warn" role="alert">These changes are too long to show here in full, so they cannot be approved on this page. Reject them, and ask for the work in smaller steps.</p>}
       {needsEvidence && (
         <label>If you reject, what should change? (optional, kept with the run)
           <textarea rows={3} maxLength={2000} value={feedback} onChange={(e) => setFeedback(e.target.value)} />
@@ -70,7 +85,7 @@ function Decision({ api, run, review, onAnswered, onStale }) {
           {d.choices.map((c) => (
             <div key={c.id} className="choice">
               <button type="button" className={c.id === 'approve' || c.id === 'continue' ? 'primary' : ''}
-                disabled={sending !== null || (c.id === 'approve' && !evidenceShown)} onClick={() => answer(c.id)}>
+                disabled={sending !== null || (c.id === 'approve' && !complete)} onClick={() => answer(c.id)}>
                 {sending === c.id ? 'Sending…' : (d.kind === 'result' && c.id === 'approve' ? 'Approve: create a branch' : plain(c.label, 60))}
               </button>
               <span className="consequence">{plain(c.consequence, 300)}</span>
@@ -158,6 +173,10 @@ export function RunView({ api, runId, go }) {
   const answeredAt = useRef(null); // lastEventSeq when the answer was accepted
   const follower = useRef(null);
   const eventsRef = useRef([]);
+  // Review evidence belongs to one question: a new question clears it, and only the latest request may set it, so a
+  // slow response for an earlier question never stands in for the current one (Codex review P04-R2).
+  const reviewFor = useRef(null);
+  const reviewTicket = useRef(0);
 
   const refresh = useCallback(async () => {
     try {
@@ -165,8 +184,14 @@ export function RunView({ api, runId, go }) {
       setRun(r);
       // A snapshot taken before the service recorded the answer must not bring the old question or Stop back.
       if (answeredAt.current === null || r.lastEventSeq > answeredAt.current) { answeredAt.current = null; setAnswered(false); }
+      const question = r.decision ? `${r.decision.id} ${r.decision.revision}` : r.status;
+      if (question !== reviewFor.current) { reviewFor.current = question; setReview(null); }
       if (r.decision?.kind === 'result' || ['completed', 'rejected'].includes(r.status)) {
-        try { setReview(await api.review(runId)); } catch (e) { if (!(e instanceof ApiError && e.status === 404)) setError(e); }
+        const ticket = ++reviewTicket.current;
+        try {
+          const rv = await api.review(runId);
+          if (ticket === reviewTicket.current) setReview(rv);
+        } catch (e) { if (ticket === reviewTicket.current && !(e instanceof ApiError && e.status === 404)) setError(e); }
       }
       return r;
     } catch (e) { setError(e); return null; }

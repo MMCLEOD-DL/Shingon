@@ -947,3 +947,35 @@ Checks (cloud Linux, Node 22.22.0), from foundation/:
 Live / fake / skipped / unrun: synthetic PDFs plus the fictional taxi photo; no browser upload, Azure or Windows.
 Reviewer disposition and reviewed SHA: re-review requested at ec6ddd8.
 ```
+
+### 30 October 2026 — Claude task 15 (claude-lane): Codex review P04-R1 and P04-R2 (approval evidence)
+
+```
+Packet/subpacket: P04. Codex review reviews/2026-10-30-codex-review-P04.md, P04-R1 [P1] and P04-R2 [P1].
+Owner and reviewer: Claude; reviewer Codex.
+Status: IN_REVIEW.
+Baseline SHA: 33c0dd2.
+Owned files: conductor/operator-web/{src/text.js (shownInFull), src/components/Evidence.jsx (DIFF_LIMIT,
+  diffShownInFull), src/views/RunView.jsx, tests/views.spec.jsx}; conductor/docs/operator-app/ux.md; this ledger.
+What now works:
+  R1: of the two corrections Codex offered, the whole diff is made inspectable. The display bound is the service's
+    1 MiB review payload, so any review the service accepts is shown in full. Completeness is decided from the diff
+    text itself (shownInFull, the same cleaning as plain()), not from what rendered. Above the bound the diff is
+    clipped, Approve is disabled and the page says why. Refusing above 400k would have left no way to approve,
+    because there is no CLI route for a service run's question.
+  R2: Approve needs the review to match the pending question's evidence: commit, diffId and ordered testReportIds.
+    A mismatched review is not shown at all (stricter than "shown but not approvable"). Review evidence is cleared
+    when the question (id + revision) changes, and only the latest review request may set it.
+Checks (cloud Linux, Node 22.22.0), from conductor/operator-web/:
+  npm test: 59 passed. All 5 new tests fail on the previous UI: R1 long diff shown in full and approvable;
+    at/above bound; R2 mismatched report hidden; R2 slow earlier response never replaces the current failed report.
+  npm run build: passed. node e2e/journey.mjs against the real service: 19 passed.
+  Codex's real-service browser reproducer (p04-stale-review-browser.mjs): REPRODUCED (exit 1) on the previous UI build
+    and NOT_REPRODUCED (exit 0) on this one, both run here.
+  Codex's DOM spec (p04-review.spec.js): the control passes. Its R1 and R2 cases fail on preconditions that encode the
+    old behaviour: R1 expects the 450k diff to be clipped (it is now shown in full), and R2 expects the stale "Tests
+    passed" label to be visible (mismatched evidence is now hidden). Proposed: Codex updates or retires them.
+Live / fake / skipped / unrun: fake service for unit tests; real service plus fixture workers for the journey and
+  reproducer; no models.
+Reviewer disposition and reviewed SHA: re-review requested at the code commit below.
+```
