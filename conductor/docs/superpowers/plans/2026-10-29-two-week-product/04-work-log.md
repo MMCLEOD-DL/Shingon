@@ -913,47 +913,69 @@ Open: Codex may want its reproducer to take the bridged field, or to retire it i
 Reviewer disposition and reviewed SHA: re-review requested at f5673de.
 ```
 
-### 30 October 2026 — Codex claim: P06 wider research review
+### 30 October 2026 — Claude task 14 (claude-lane): Codex P02 follow-up, P02-R1 residual (PDF pictures)
 
-Owner/reviewer Codex; research/correction owner Claude. Status IN_PROGRESS.
-Branch `codex/review-kb-research`; baseline `77a9419` (PR26 and PR25 merged).
-Scope: recommendation/options/inventory/migration/evaluation evidence beyond the separately
-reviewed retrieval contract. Verify decision alignment, primary sources, licence/deployment
-boundary, cost/scale assumptions and stored evaluation arithmetic without private data.
-Owned paths: review artifacts/standalone controls and this ledger only. No edits to
-Claude-owned KB research/service/source or existing accepted architecture decisions.
-Next action: independently recompute stored synthetic results; verify material upstream
-claims; record precise corrections and what remains unmeasured. PR25 upgrade correction
-re-review is newly supplied peer backlog and retained for the next source-review cycle.
-No model/connector/DB/host operation, Babel export, account access or deployment authorised.
+```
+Packet/subpacket: P02. Codex review reviews/2026-10-30-codex-review-P02-followup.md, P02-R1 residual [P1].
+Decision (Malcolm, 30 Oct, asked by Claude): "flag, don't refuse". A PDF that holds any picture keeps its text
+  reading, every field says "Please check", and staff see a warning. Refusing every picture would have refused most
+  real e-receipts, which carry a logo.
+Owner and reviewer: Claude; reviewer Codex.
+Status: IN_REVIEW.
+Baseline SHA: 77a9419. Code: ec6ddd8.
+Owned files: foundation/modules/ocr/{src/pdfWorker.ts, src/pdfText.ts, src/local.ts, test/pdf-text.test.ts,
+  test/helpers.ts}; foundation/CHANGELOG.md; this ledger.
+What now works: the pre-scan notes a picture without decoding or drawing anything: an image XObject (/Subtype
+  /Image), any /DCTDecode stream, or an inline image (BI … ID) in a stream it decoded. readPdf (new; readPdfText
+  keeps its shape) caps every line at PDF_PICTURE_CONFIDENCE 0.6 and returns PDF_PICTURE_WARNING. The local engine
+  passes it as the reading's warning, and readReceipt passes it to the proposal. A worker reply that does not say
+  whether there are pictures is not a reply (unopenable). Text-only PDFs are unchanged (confidence 1, no warning).
+  The per-page refusal (image-only page) and the page-count checks stay.
+Trade-off recorded, as Codex asked: an image resource the page never paints, and a decorative logo, are flagged
+  too, deliberately (a test covers painted, unused and inline pictures).
+Checks (cloud Linux, Node 22.22.0), from foundation/:
+  pdf-text.test.ts: 52 passed (twice). Against the previous reader, the 4 new picture tests fail; the "text-only
+    PDF stays confident" control passes on both.
+  Codex's reproducers: p02-followup-reproduce.mts exits 0. The footer case is read at 0.6 with the warning, the
+    image page without a footer is refused, and the non-painted-resource control is now flagged, per the decision.
+    p02-reproduce.mts exits 0, unchanged.
+  npm run lint and typecheck (OCR): clean. umask 022, npm test -- --maxWorkers=1 (PostgreSQL 16): 1,131 passed,
+    6 skipped (the standing ops/deploy skips).
+  Observed once: the first PDF read in pdf-text.test.ts hit the 3 s reader deadline (3,020 ms) on a loaded host. The
+    file passed 47/47 twice straight after, and the e-ticket reads in about 0.5 s standalone. That is the cold start
+    of the reader child (type stripping plus loading pdfjs), and it predates this change. Recorded, not changed.
+Live / fake / skipped / unrun: synthetic PDFs plus the fictional taxi photo; no browser upload, Azure or Windows.
+Reviewer disposition and reviewed SHA: re-review requested at ec6ddd8.
+```
 
-### 30 October 2026 — P06 wider research review handoff (Codex)
+### 30 October 2026 — Claude task 15 (claude-lane): Codex review P04-R1 and P04-R2 (approval evidence)
 
-Owner/reviewer: Codex. Correction owner: Claude. Status: CHANGES_REQUESTED.
-Branch: `codex/review-kb-research`; reviewed baseline `77a9419`.
-Artifact: `reviews/2026-10-30-codex-review-P06-research.md` plus two standalone controls.
-Findings: R1 [P2] MPL/policy classification; R2 [P2] FORCE/BYPASSRLS guidance;
-R3 [P2] shared ANN versus authorise-before-scoring promise; R4 [P3] latency provenance.
-Checks: stored rows independently reproduce 17/25 and 21/25 and all category counts;
-21/21 saved check outcomes agree. Audit exits 1 as expected on 325/0.37/0.83 versus
-saved 350/0.33/0.69 latency mismatch. Existing licence gate control passes (MIT allowed,
-MPL rejected). Quantiles cannot be independently recomputed from the incomplete samples.
-Live/fake/skipped/unrun: historical synthetic artifacts only, no fresh DB/model/connector
-execution, private retrieval/export or deployment; broad product suites unrun (review only).
-Disposition: D1/D2/D5 remain accepted for K2; D3/D4 remain open. Review merge records the
-findings, not their resolution. Claude supplies R1–R4 corrections; Codex re-reviews them.
-Next supplied peer task is PR25 upgrade correction re-review; P09 remains in backlog.
-
-### Codex task submitted — P06 wider research review
-
-Date: 30 October 2026. Branch: `codex/review-kb-research`.
-Last artifact commit: `357d2ef77e4dfb8130f1242050cccf5e9861c18d`.
-PR: https://github.com/MMCLEOD-DL/Shingon/pull/28 (opened draft; ready after this push).
-Evidence: stored-evidence arithmetic/category checks pass; 21/21 saved outcomes agree;
-latency audit expected exit 1 reproduces P06-R4. Existing licence control passes.
-`git diff --check` passes. No product suites or fresh DB/model/live/private execution.
-Open: Claude owns P06-R1–R4 corrections; separate contract review remains open; D3/D4
-remain decisions. Merge records the handoff, not correctness of the original research.
-No high-risk paths changed; request auto-merge after readiness. If repository auto-merge
-is still disabled, Malcolm's merge is required. Stop here until this submission is merged;
-next invocation starts by checking approval, with PR25 re-review in the supplied backlog.
+```
+Packet/subpacket: P04. Codex review reviews/2026-10-30-codex-review-P04.md, P04-R1 [P1] and P04-R2 [P1].
+Owner and reviewer: Claude; reviewer Codex.
+Status: IN_REVIEW.
+Baseline SHA: 33c0dd2.
+Owned files: conductor/operator-web/{src/text.js (shownInFull), src/components/Evidence.jsx (DIFF_LIMIT,
+  diffShownInFull), src/views/RunView.jsx, tests/views.spec.jsx}; conductor/docs/operator-app/ux.md; this ledger.
+What now works:
+  R1: of the two corrections Codex offered, the whole diff is made inspectable. The display bound is the service's
+    1 MiB review payload, so any review the service accepts is shown in full. Completeness is decided from the diff
+    text itself (shownInFull, the same cleaning as plain()), not from what rendered. Above the bound the diff is
+    clipped, Approve is disabled and the page says why. Refusing above 400k would have left no way to approve,
+    because there is no CLI route for a service run's question.
+  R2: Approve needs the review to match the pending question's evidence: commit, diffId and ordered testReportIds.
+    A mismatched review is not shown at all (stricter than "shown but not approvable"). Review evidence is cleared
+    when the question (id + revision) changes, and only the latest review request may set it.
+Checks (cloud Linux, Node 22.22.0), from conductor/operator-web/:
+  npm test: 59 passed. All 5 new tests fail on the previous UI: R1 long diff shown in full and approvable;
+    at/above bound; R2 mismatched report hidden; R2 slow earlier response never replaces the current failed report.
+  npm run build: passed. node e2e/journey.mjs against the real service: 19 passed.
+  Codex's real-service browser reproducer (p04-stale-review-browser.mjs): REPRODUCED (exit 1) on the previous UI build
+    and NOT_REPRODUCED (exit 0) on this one, both run here.
+  Codex's DOM spec (p04-review.spec.js): the control passes. Its R1 and R2 cases fail on preconditions that encode the
+    old behaviour: R1 expects the 450k diff to be clipped (it is now shown in full), and R2 expects the stale "Tests
+    passed" label to be visible (mismatched evidence is now hidden). Proposed: Codex updates or retires them.
+Live / fake / skipped / unrun: fake service for unit tests; real service plus fixture workers for the journey and
+  reproducer; no models.
+Reviewer disposition and reviewed SHA: re-review requested at the code commit below.
+```

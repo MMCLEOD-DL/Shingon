@@ -7,6 +7,7 @@ import { Setup } from '../src/views/Setup.jsx';
 import { History } from '../src/views/History.jsx';
 import { NewTask } from '../src/views/NewTask.jsx';
 import { createApi } from '../src/api.js';
+import { DIFF_LIMIT } from '../src/components/Evidence.jsx';
 import { fakeService, fixtures } from './fakeService.js';
 import { FakeEventSource } from './setup.js';
 
@@ -249,6 +250,82 @@ test('uncertain landing explains repository inspection instead of offering resum
   expect(await screen.findByText(/The approved result may already be in the repository/)).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Resume' })).toBeNull();
   expect(screen.queryByText(/It has no saved work to resume/)).toBeNull();
+});
+
+// Codex review P04: approval needs the whole diff on screen (R1) and the evidence of this question, not an older one (R2).
+describe('approval evidence is complete and current', () => {
+  const lines = (n, tail) => `diff --git a/big.txt b/big.txt\n${`+${'x'.repeat(9999)}\n`.repeat(n)}${tail}\n`;
+  const withDiff = (diff) => ({ ...structuredClone(fixtures.review), diff });
+  const approveButton = () => screen.findByRole('button', { name: 'Approve: create a branch' });
+
+  test('R1: a long diff (450,000 characters, change in its tail) is shown in full and can be approved', async () => {
+    const diff = lines(45, '+IMPORTANT_CHANGE_IN_TAIL');
+    expect(diff.length).toBeGreaterThan(450000);
+    showRun(fixtures.awaitingResult, { review: withDiff(diff) });
+    const approve = await approveButton();
+    await waitFor(() => expect(document.querySelector('.diff').textContent).toContain('+IMPORTANT_CHANGE_IN_TAIL'));
+    expect(document.querySelector('.diff').textContent).not.toMatch(/more characters not shown here/);
+    expect(approve.disabled).toBe(false);
+  });
+
+  test.each([['at', 0, false], ['above', 1, true]])('R1: a diff %s the display limit: clipped only above it, and then not approvable here', async (_label, extra, clipped) => {
+    const head = lines(104, '');
+    const diff = head + '+'.repeat(DIFF_LIMIT - head.length + extra);
+    expect(diff.length).toBe(DIFF_LIMIT + extra);
+    showRun(fixtures.awaitingResult, { review: withDiff(diff) });
+    const approve = await approveButton();
+    await waitFor(() => expect(document.querySelector('.diff')).not.toBeNull());
+    expect(/more characters not shown here/.test(document.querySelector('.diff').textContent)).toBe(clipped);
+    expect(approve.disabled).toBe(clipped);
+    expect(screen.queryByText(/too long to show here in full/) !== null).toBe(clipped);
+  });
+
+  test('R2: a review whose test reports differ from the question is not shown, and approval stays off', async () => {
+    const run = structuredClone(fixtures.awaitingResult);
+    run.decision.evidence.testReportIds = ['newer-failed-report'];
+    run.decision.revision = 'newer-revision';
+    showRun(run, { review: structuredClone(fixtures.review) });
+    const approve = await approveButton();
+    await screen.findByText(/Loading the exact changes and test results/);
+    expect(screen.queryByText('Tests passed')).toBeNull();
+    expect(approve.disabled).toBe(true);
+  });
+
+  test('R2: a slow review for the earlier question never replaces the current one (same commit, new failed tests)', async () => {
+    const oldRun = structuredClone(fixtures.awaitingResult);
+    const passed = structuredClone(fixtures.review);
+    const svc = fakeService({ run: oldRun, review: passed });
+    let reviews = 0;
+    let releaseOld;
+    const fetchImpl = async (url, init = {}) => {
+      if (url.endsWith('/review') && ++reviews === 2) {
+        const answer = await svc.fetchImpl(url, init); // the earlier question's (passed) review, held back
+        await new Promise((r) => { releaseOld = r; });
+        return answer;
+      }
+      return svc.fetchImpl(url, init);
+    };
+    render(<RunView api={createApi({ fetchImpl })} runId={oldRun.id} go={() => {}} />);
+    await screen.findByText('Tests passed');
+    const es = () => FakeEventSource.all.at(-1);
+    await waitFor(() => expect(es()).toBeTruthy());
+    // Something happens on the earlier question: its refresh asks for the review again, and that answer is slow.
+    es().emit({ seq: 3, type: 'event', message: 'still waiting', at: new Date().toISOString() });
+    await waitFor(() => expect(releaseOld).toBeTypeOf('function'));
+    // The run was resumed: a new question at the same commit, whose tests now fail.
+    const newRun = structuredClone(oldRun);
+    newRun.decision = { ...newRun.decision, id: 'decision-2', revision: 'revision-2', evidence: { ...newRun.decision.evidence, testReportIds: ['failed-report'] } };
+    newRun.lastEventSeq += 2;
+    svc.state.run = newRun;
+    svc.state.review = { ...passed, testReportIds: ['failed-report'], tests: { ran: true, passed: false, code: 1, output: 'one failure' } };
+    es().emit({ seq: 4, type: 'decision-pending', message: 'Review the finished work', at: new Date().toISOString() });
+    await screen.findByText(/Tests failed/);
+    releaseOld();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByText(/Tests failed/)).toBeTruthy();
+    expect(screen.queryByText('Tests passed')).toBeNull();
+    expect((await approveButton()).disabled).toBe(false); // approvable, with the failed report shown
+  });
 });
 
 describe('recovery after an uncertain landing', () => {

@@ -1,8 +1,16 @@
-import { plain, shortSha } from '../text.js';
+import { plain, shortSha, shownInFull } from '../text.js';
+
+/**
+ * The most diff characters shown: the service's whole review payload (1 MiB), so any review it accepts is shown in
+ * full and can be inspected before approval (Codex review P04-R1). A longer one is clipped, and diffShownInFull says
+ * so, so the approval gate never relies on what happened to be rendered.
+ */
+export const DIFF_LIMIT = 1024 * 1024;
+export const diffShownInFull = (diff) => typeof diff === 'string' && shownInFull(diff, DIFF_LIMIT);
 
 /** A diff as text lines. Never HTML; never turns text into links. */
 export function Diff({ diff }) {
-  const text = plain(diff, 400000);
+  const text = plain(diff, DIFF_LIMIT);
   if (!text.trim()) return <p className="muted">No file changes were reported.</p>;
   const lines = text.split('\n');
   return (
