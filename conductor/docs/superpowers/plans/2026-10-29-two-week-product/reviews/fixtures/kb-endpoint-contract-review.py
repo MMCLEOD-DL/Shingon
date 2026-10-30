@@ -4,7 +4,7 @@ Exit 1 means a positive passage fixture's requested chunk differs from its focus
 Optional --database also checks real core lookup identity and cross-principal refusal,
 using a disposable TEST_DATABASE_URL; no HTTP/model/real data is involved.
 """
-from copy import deepcopy
+import argparse
 import json
 from pathlib import Path
 import sys
@@ -12,7 +12,11 @@ from urllib.parse import unquote, urlsplit
 from shingon_knowledge import contract
 
 ROOT = Path(__file__).resolve().parents[7]
-fixtures = json.loads((ROOT / 'knowledge/contract/kb-contract-v1.json').read_text(encoding='utf-8'))['fixtures']
+parser = argparse.ArgumentParser()
+parser.add_argument('--fixture-file', type=Path, default=ROOT / 'knowledge/contract/kb-contract-v1.json')
+parser.add_argument('--database', action='store_true')
+args = parser.parse_args()
+fixtures = json.loads(args.fixture_file.read_text(encoding='utf-8'))['fixtures']
 gaps = []
 for fixture in fixtures:
     request = fixture.get('request') or {}
@@ -52,7 +56,7 @@ for body in ({'query': 'policy', 'mode': 'hybrid'}, {'query': 'policy', 'filters
         raise AssertionError('Unsupported narrowing was silently accepted')
 print('PASS: ordinary scoped request and invalid/unsupported request controls')
 
-if '--database' in sys.argv:
+if args.database:
     sys.path.insert(0, str(ROOT / 'knowledge/tests'))
     from support import CORPUS, ServiceTestCase
     from shingon_knowledge import NotFound

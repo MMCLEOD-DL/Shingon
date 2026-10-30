@@ -1680,3 +1680,42 @@ stay open. Only review artifacts/ledger changed. Temporary PG stopped; GPU worke
 Next queued correction review PR46; P09/Windows console follow-up remain queued. No model,
 private input, connector, HTTP or deployment acceptance. No high-risk paths; request auto-
 merge and report repository refusal. Merge records bounded closure. Stop until merged.
+
+### 30 October 2026 — Codex claim: KB-R6 passage-fixture correction re-review
+
+Reviewer Codex; correction owner Claude. Status IN_PROGRESS.
+Branch `codex/review-kb-fixture-identity`; baseline `9ee1746` (PR48 merged, includes PR47).
+Scope: PR46 `a99a7cf`, shared opaque-ID normalisation, generated fixture identity and
+relational regression. Owned paths: review artifacts/controls and ledger only. Next: run
+independent request/focus control and real DB fixture replay; compare pre-fix JSON without
+changing source checkout. KB-R7's new PR47 correction remains a separate review. GPU worker
+stays off; temporary loopback PostgreSQL/synthetic data only, no model/private/HTTP/deploy.
+
+### 30 October 2026 — KB-R6 passage-fixture correction re-review handoff (Codex)
+
+Reviewer Codex; correction owner Claude. Status DONE for KB-R6.
+PR46 `a99a7cf`; baseline `9ee1746`. Branch `codex/review-kb-fixture-identity`.
+Artifact `reviews/2026-10-30-codex-review-kb-fixture-fix.md`. Shared stand-in mapping preserves
+request/focus identity; generator checks real identity and separate relational test checks
+wire identity. Independent control MATCH/exit 0, old `dfaaf6c` JSON MISMATCH/exit 1, parser
+positive controls remain passing. Added --fixture-file option for archived JSON backtests.
+Checks (Windows Python 3.14.2 UTF-8 mode/PostgreSQL 16.15): 42/42 knowledge tests, zero skips,
+4.218 s; independent core identity/neighbour/three denied-principal controls pass. Whitespace
+passes. No owner source/fixture/test edits. Temporary PG stopped; GPU worker stays off.
+Close KB-R6, retain KB-R5 closure. PR47 KB-R7 correction supplied but awaiting separate
+review; no wholesale K6/K8 admission or v1 freeze. P09/Windows console follow-up queued.
+Only review artifacts/ledger; no private/model/connector/HTTP/deployment acceptance.
+
+### Codex task submitted — KB-R6 passage-fixture correction re-review
+
+Date: 30 October 2026. Branch `codex/review-kb-fixture-identity`.
+Last artifact commit: `5e6c056f5f032f54ce5f8c32b4b564a3aa0d685a`.
+PR: https://github.com/MMCLEOD-DL/Shingon/pull/49 (draft opened; ready after this push).
+Evidence: knowledge 42/42, zero skips; current independent identity/core controls pass;
+old dfaaf6c JSON retains expected mismatch/exit 1. Whitespace passes. Close KB-R6 at
+9ee1746; prior KB-R5 closure retained. PR47 KB-R7 correction awaits separate re-review;
+K6/K8/final freeze not granted. Review artifacts/ledger only; no owner source/JSON edits.
+Temporary PG stopped; GPU worker stays off. Next queued review PR47; P09 and Windows
+console follow-up remain queued. No private/model/connector/HTTP/deployment acceptance.
+No high-risk paths; request auto-merge and report refusal. Merge accepts bounded closure.
+Stop until this submission merges.
