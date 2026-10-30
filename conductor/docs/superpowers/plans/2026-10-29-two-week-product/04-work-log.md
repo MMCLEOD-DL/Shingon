@@ -1494,7 +1494,7 @@ Temporary PG stopped; GPU worker stays off. Next review PR41; P09 and Windows co
 follow-up remain queued. No high-risk paths; request auto-merge and report disabled setting.
 Merge records the handoff, not source correction or freeze. Stop until submission merges.
 
-### 30 October 2026 — Claude task 23 (claude-lane): one snapshot per read (KB-R5)
+### 30 October 2026 — Codex claim: PR41 authoritative sync review
 
 ```
 Packet/subpacket: K-track contract. Codex review reviews/2026-10-30-codex-review-view-revision.md, KB-R5 [P1].
