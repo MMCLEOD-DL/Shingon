@@ -3,9 +3,10 @@ import type { ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { Worker } from 'node:worker_threads';
 import { createLocalEngine, readReceipt, UnreadableError, type OcrEngine } from '../src/index.js';
-import { readPdfText, PARTLY_SCANNED_PDF, PDF_MEMORY_CEILING, TOO_MANY_PAGES_PDF, type PdfReadOptions } from '../src/pdfText.js';
+import { CONFIDENT } from '@hf/shared';
+import { readPdfText, PARTLY_SCANNED_PDF, PDF_MEMORY_CEILING, PDF_PICTURE_WARNING, TOO_MANY_PAGES_PDF, type PdfReadOptions } from '../src/pdfText.js';
 import {
-  blankPagePdf, bookmarkedPdf, bypassBombs, formFeedPdf, mixedPdf, modernPdf, n4Bomb, pdfBomb, pdfWithContent, predictorBomb, textPdf, treePdf, trickyBombs, untypedHiddenPagePdf,
+  blankPagePdf, bookmarkedPdf, bypassBombs, scannerFooterPdf, textWithPicturePdf, formFeedPdf, mixedPdf, modernPdf, n4Bomb, pdfBomb, pdfWithContent, predictorBomb, textPdf, treePdf, trickyBombs, untypedHiddenPagePdf,
 } from './helpers.js';
 
 let engine: OcrEngine;
@@ -67,6 +68,33 @@ describe('a PDF is read whole or not at all', () => {
 
   test('a text page followed by a blank page is refused too (blank pages are not told apart from pictures)', async () => {
     await expect(engine.read({ bytes: blankPagePdf(), type: 'application/pdf' })).rejects.toMatchObject({ userMessage: PARTLY_SCANNED_PDF });
+  });
+
+  // Codex review P02-R1 residual (follow-up): a picture is never read, so text beside it is not all the evidence.
+  // Malcolm's decision (30 October 2026): flag, don't refuse. Every field says "Please check", with a warning.
+  test('a scanned page with a scanner footer no longer gives a confident total from the other page', async () => {
+    const r = await read4(scannerFooterPdf());
+    expect(r.lines.map((l) => l.text)).toEqual(['Total GBP 10.00', 'Scanned with PhoneScan']);
+    expect(r.warnings).toEqual([PDF_PICTURE_WARNING]);
+    const p = readReceipt(r, '2026-10-30');
+    expect(p.amountPence?.value).toBe(1000);
+    expect(p.amountPence?.confidence).toBeLessThan(CONFIDENT);
+    expect(p.warnings).toContain(PDF_PICTURE_WARNING);
+  });
+
+  test.each(['painted', 'unused', 'inline'] as const)('a text PDF with a %s picture is flagged the same way, every field below CONFIDENT', async (kind) => {
+    const r = await read4(textWithPicturePdf(kind));
+    expect(r.lines.every((l) => l.confidence < CONFIDENT)).toBe(true);
+    expect(r.warnings).toEqual([PDF_PICTURE_WARNING]);
+    const p = readReceipt(r, '2026-10-30');
+    for (const f of [p.amountPence, p.vatPence, p.date, p.merchant]) if (f) expect(f.confidence).toBeLessThan(CONFIDENT);
+  });
+
+  test('a text PDF with no picture is still confident and carries no warning', async () => {
+    const r = await read([['Northside Taxis', 'Total GBP 12.40']]);
+    expect(r.lines.every((l) => l.confidence === 1)).toBe(true);
+    expect(r.warnings).toEqual([]);
+    expect(readReceipt(r, '2026-10-30').amountPence).toEqual({ value: 1240, confidence: 1 });
   });
 
   // Codex review P02-R2: the declared page count is not evidence that every page was read.
