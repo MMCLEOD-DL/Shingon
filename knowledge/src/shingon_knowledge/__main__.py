@@ -5,6 +5,7 @@ line, so it does not show in process listings or shell history.
   python -m shingon_knowledge credentials issue-project NAME COLLECTION [COLLECTION ...]
   python -m shingon_knowledge credentials issue-app NAME TENANT
   python -m shingon_knowledge credentials revoke NAME
+  python -m shingon_knowledge mcp      (STDIO MCP adapter; KB_API_URL and KB_TOKEN from the environment)
 
 Issued tokens and assertion keys are printed once, to standard output only. Store them with the caller's secrets.
 """
@@ -43,7 +44,12 @@ def main(argv: list[str] | None = None) -> int:
     ia.add_argument('name')
     ia.add_argument('tenant')
     c.add_parser('revoke').add_argument('name')
+    sub.add_parser('mcp', help='the STDIO MCP adapter over the HTTP API (KB_API_URL, KB_TOKEN)')
     a = p.parse_args(argv)
+
+    if a.command == 'mcp':
+        from .mcp import main as mcp_main
+        return mcp_main()
 
     if a.command == 'serve':
         logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')

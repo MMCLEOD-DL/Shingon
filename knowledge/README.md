@@ -12,12 +12,13 @@ Permission-filtered, versioned, cited document retrieval for Conductor (referenc
 - permission-checked access to originals;
 - an audit trail that stores query hashes, not query text.
 - the contract's wire shapes and checks (`contract.py`), with the v1 fixture set in [`contract/kb-contract-v1.json`](contract/kb-contract-v1.json) (retrieval-contract.md §10–11);
-- the HTTP API (`http.py`, K6) with its credentials (`auth.py`): see [The HTTP API](#the-http-api-k6) and [Credentials](#credentials-k6).
+- the HTTP API (`http.py`, K6) with its credentials (`auth.py`): see [The HTTP API](#the-http-api-k6) and [Credentials](#credentials-k6);
+- a local MCP adapter over that API for coding sessions (`mcp.py`, K7): see [MCP](#mcp-k7).
 
 **Not yet:**
 - vector and hybrid retrieval (K3) and a calibrated reranker (K4);
 - Docling/OCR parsing in an isolated worker (K5);
-- the MCP adapter (K7);
+- a remote (HTTP, OAuth) MCP adapter: the local STDIO one exists (K7), the remote one waits for hosting (D4);
 - the Conductor evidence step (K8);
 - backups (K9).
 
@@ -40,6 +41,7 @@ TEST_DATABASE_URL=postgres://user:pass@127.0.0.1:5432/postgres python -m unittes
   - two weak-but-not-none abstentions, to be fixed by K4 calibrated reranking.
 - **Credential refusal** (secrets in files) and migration idempotence.
 - **Credentials** (`test_auth.py`): what each kind of token reaches, and every way a request can fail to prove who it is.
+- **MCP** (`test_mcp.py`): both protocol eras, the evidence blocks, and the real adapter process over a real K6 server giving the API's answers. `tests/conformance/mcp_schema_check.py` (needs `jsonschema`, so not in CI) checks every kind of message against the published schemas.
 - **HTTP** (`test_http.py`): path decoding, delivery-time re-authorisation of originals, refusing to send a body that breaks the contract, outages, transport limits, the bind rule and the command line. The contract fixtures themselves are produced over HTTP.
 - **Contract fixtures:** the generated fixtures are produced again in a fresh database and must match the committed file exactly, and every fixture is checked against the wire shape. After an intended change, regenerate with `KB_WRITE_FIXTURES=1` (see `tests/test_contract_fixtures.py`) and review the diff.
 
@@ -62,6 +64,24 @@ python -m shingon_knowledge credentials revoke conductor:shingon
 - **Every JSON body is built and checked by `contract.py` before it is sent.** One that fails its check is never sent: the caller gets `503` and the log gets the reason. Any fault, timeout (5 s per statement) or unreachable database is `503 index-unavailable`; nothing from an exception reaches a caller.
 - **Originals:** checked, opened, then checked again before any byte is sent, so a revocation between the two stops the delivery. Downloads carry the contract's attachment, nosniff and no-store headers.
 - **Logs:** request lines and refusal reasons, never headers, so never a token or an assertion.
+
+## MCP (K7)
+
+A local STDIO server for Claude Code and Codex sessions, over the K6 API (retrieval-contract.md §9). Run it from the session's MCP configuration as `python -m shingon_knowledge mcp`, with two variables in the environment it is launched from:
+- `KB_API_URL`: the K6 address, such as `http://127.0.0.1:8765/kb/v1`. Only loopback or private addresses are accepted.
+- `KB_TOKEN`: a **project** token. Keep it in the environment or a secret store, never in a committed configuration file.
+
+It offers three read-only tools: `kb_list_collections`, `kb_search` (keyword) and `kb_read_passage`.
+
+**Evidence blocks (§6).** Passages reach the model only inside labelled evidence blocks:
+- each block names the collection, document@version, locator and chunk id;
+- the markers carry a random value for each response, so quoted text cannot close a block early;
+- the label says the content is data, not instructions;
+- `evidence: none` comes with an instruction to abstain.
+
+There is no `structuredContent`, so a client cannot pass raw passages to the model by mistake. Refusals from the API come back as tool errors (`isError`), which the model can act on.
+
+**Protocol.** It is dual-era: MCP 2026-07-28, which is stateless, with `_meta` on every request and `server/discover`; and the `initialize` handshake of 2025-11-25, 2025-06-18 and 2025-03-26. It has no dependencies.
 
 ## Credentials (K6)
 

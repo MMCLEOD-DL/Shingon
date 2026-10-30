@@ -151,6 +151,8 @@ So:
 
 The same revision removed the `initialize` handshake and sessions, so pin the SDK version and test against it. The spec's tool rules also require servers to validate inputs and sanitise outputs, and ask clients to validate tool results before they reach the model ([tools](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2026-07-28/server/tools.mdx)). That matches §6.
 
+**Built (K7):** the local STDIO adapter, `python -m shingon_knowledge mcp` (knowledge/README.md), a thin layer over the K6 API that holds a project token from the environment. It is dual-era: 2026-07-28, plus the `initialize` handshake for 2025-11-25 and earlier clients. The remote, OAuth-protected adapter waits for a hosting decision (D4).
+
 **Recommendation:** implement the HTTP API once and make MCP a thin adapter over it. Then there is one place where permissions are enforced, MCP and API cannot drift apart, and Foundation apps never need an MCP runtime. For local Qwen runs, Conductor calls the API and injects passages itself, so the same §5–6 policy applies whichever model runs.
 
 ## 10. Fixtures to freeze before v1
