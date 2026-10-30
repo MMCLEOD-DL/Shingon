@@ -85,4 +85,3 @@ gaps.append('ACL-unchecked supersededBy projection')
 print(json.dumps({'reproduced_contract_gaps':len(gaps),
                   'scope':'Pure shape checks and documented URL mapping only; no SQL or HTTP behaviour claimed.'}))
 raise SystemExit(1 if gaps else 0)
-
