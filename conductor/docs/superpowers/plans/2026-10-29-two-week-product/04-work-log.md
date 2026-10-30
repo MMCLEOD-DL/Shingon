@@ -6,7 +6,7 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude acknow
 |---|---|---|---|---|
 | P00 | Codex | IN_REVIEW | codex/operator-app-v1 | Concrete API/ADR/fixtures ready; Claude acknowledgement pending |
 | P01 | Codex | DONE | `codex/updater-settings-recovery` | Claude approved `06678be`; PR #6 merged as `8e5bf13`; evidence below |
-| P02 | Claude | CHANGES_REQUESTED | PR27 `ec6ddd8`, reviewed at `740d355` | P02-R1 scanner-footer case and P02-R2 demonstrated cases resolved. New P02-R3: inline-header whitespace bypasses picture warning/cap; see 30 Oct picture review |
+| P02 | Claude | DONE | PR36 `380aeb9`, re-reviewed at `cac0a4c` | Codex closes demonstrated P02-R3 inline-header gap; P02-R1/R2 closures retained. 335 OCR checks pass, 6 Linux-only cases excluded on Windows; all three standalone controls pass, padded-header backtest fails old source as expected. |
 | P03 | Codex | DONE | `codex/decision-receipt-keys` from `d9e88e2` | #12 and #14 independently approved/merged; N5 approval `43d8b0d`, merge `01350f7`; Claude N6 UI merged in #15; optional N7 remains |
 | P04 | Claude | DONE | PR29 `70db662`, re-reviewed at `7e4ce83` | Codex closes P04-R1/R2; N6 disposition retained. 59 UI tests, build, 19-step real-service journey and 3 independent DOM controls pass; browser race safe and current failed-evidence control passes. Broader P07/P08 acceptance separate. |
 | P05 | Codex | IN_PROGRESS | codex/operator-app-v1 | Setup/probes/launcher implemented; native Windows/live-model acceptance pending |
@@ -1362,3 +1362,30 @@ and ledger only; no product changes. Temporary PG stopped; GPU worker left off.
 Next peer review: P02 PR36; PR37 semantic review, P09 and Windows console follow-up queued.
 No high-risk paths changed; request auto-merge. Report GitHub refusal if still disabled.
 Merge accepts these scoped closures, not deployment or v1 freeze. Stop until merged.
+
+### 30 October 2026 — Codex claim: P02-R3 inline-image correction re-review
+
+Reviewer Codex; correction owner Claude. Status IN_PROGRESS.
+Branch `codex/review-inline-image-fix`; reviewed baseline `cac0a4c` (PR38 merged).
+Scope: PR36 `380aeb9`, unbounded inline-header detection/refusal and retained resource/page
+controls. Owned paths: review artifacts/controls and this ledger only. Next: run original,
+footer and boundary controls plus supported Windows OCR suite; inspect token scanning and
+backtest the boundary against pre-correction source. GPU worker stays off; no model, private
+input, browser/DB acceptance, live provider or deployment. PR37/P09 remain separate reviews.
+
+### 30 October 2026 — P02-R3 inline-image correction re-review handoff (Codex)
+
+Reviewer Codex; correction owner Claude. Status DONE for examined P02 work.
+PR36 `380aeb9`; reviewed baseline `cac0a4c`. Branch `codex/review-inline-image-fix`.
+Artifact `reviews/2026-10-30-codex-review-P02-inline-fix.md`; strengthened boundary control
+requires warnings/all non-null fields below CONFIDENT and adds the 100k-space Flate case.
+P02-R3 resolved for demonstrated boundary; prior P02-R1/R2 closures retained. No new blocker.
+Checks (Windows Node 24.12.0): OCR 335 passed, 6 Linux-/proc-dependent tests intentionally
+excluded, zero failed, seven files, 20.57 s. Original/footer/boundary controls all exit 0.
+Same boundary script on pre-PR36 `7e4ce83`: ordinary control passes, all three padded cases
+unflagged, expected exit 1. Whitespace passes. No product, test-owner or limit changes.
+Live/fake/unrun: real local PDF child and parser on synthetic input; no model/cloud OCR,
+private upload, DB/browser acceptance or deployment. GPU worker stays off; no DB started.
+Close P02-R3 within these limits; not an exhaustive grammar or Linux watchdog certification.
+Next peer review PR37 viewRevision/withheld semantics; P09 and Windows console follow-up
+remain queued. Merge records this bounded closure, not live acceptance/release authority.
