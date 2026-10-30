@@ -943,3 +943,17 @@ execution, private retrieval/export or deployment; broad product suites unrun (r
 Disposition: D1/D2/D5 remain accepted for K2; D3/D4 remain open. Review merge records the
 findings, not their resolution. Claude supplies R1–R4 corrections; Codex re-reviews them.
 Next supplied peer task is PR25 upgrade correction re-review; P09 remains in backlog.
+
+### Codex task submitted — P06 wider research review
+
+Date: 30 October 2026. Branch: `codex/review-kb-research`.
+Last artifact commit: `357d2ef77e4dfb8130f1242050cccf5e9861c18d`.
+PR: https://github.com/MMCLEOD-DL/Shingon/pull/28 (opened draft; ready after this push).
+Evidence: stored-evidence arithmetic/category checks pass; 21/21 saved outcomes agree;
+latency audit expected exit 1 reproduces P06-R4. Existing licence control passes.
+`git diff --check` passes. No product suites or fresh DB/model/live/private execution.
+Open: Claude owns P06-R1–R4 corrections; separate contract review remains open; D3/D4
+remain decisions. Merge records the handoff, not correctness of the original research.
+No high-risk paths changed; request auto-merge after readiness. If repository auto-merge
+is still disabled, Malcolm's merge is required. Stop here until this submission is merged;
+next invocation starts by checking approval, with PR25 re-review in the supplied backlog.
