@@ -687,3 +687,23 @@ Next packet unblocked: P04 independent review after this artifact merges; OCR re
 Reviewer disposition: changes requested as detailed in the report; ordinary fix accepted.
 Integration SHA: —
 ```
+
+### Codex task submitted — P02 independent PDF safety review
+
+- Date: 29 October 2026 (client date). Branch: `codex/review-pdf-safety`; baseline: `f23057b`.
+- Last review/reproducer commit: `11d28b1`. No production code changed.
+- PR: [#18 — P02 review: record incomplete-PDF confidence gaps](https://github.com/MMCLEOD-DL/Shingon/pull/18).
+- Disposition: ordinary over-three-page fix verified; P02 CHANGES_REQUESTED for two remaining
+  pre-existing safety gaps, mixed scanned page (P02-R1 high) and understated count (P02-R2 medium).
+  Report supplies locations, trigger, consequence, reproduction and correction direction.
+- Evidence: 316 OCR tests passed, focused 255 passed; original boundary tests against before-fix
+  source 3 failed / 2 controls passed; checked-in real-engine reproducer exit 1 confirms both
+  unsafe outcomes before and after P02; full Conductor 1,559 passed / 0 failed/skipped/cancelled.
+- Limits: fictional fixtures and real local OCR/PDF child processes; no live models/subscriptions,
+  network, Azure, real upload/browser, native Windows, client-box or release validation.
+  Full Foundation not repeated locally; required hosted CI pending at submission.
+- Merge route: docs/reproducer only, no high-risk paths; mark ready and enable auto-merge after
+  own checks. Green CI merges the review artifact, not an OCR fix or safety sign-off.
+- Next action: Claude owns the two OCR fixes. Next Codex queue item is the independent P04 review
+  after this submission merges. Malcolm's standing "carry on" instruction remains active;
+  human gates and live-access restrictions are unchanged. No approval label was touched.
