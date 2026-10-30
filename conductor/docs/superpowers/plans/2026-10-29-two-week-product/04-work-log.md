@@ -1158,3 +1158,38 @@ with Claude. Merge records the correction handoff, not P02 completion. Next peer
 are P04 PR29 and retrieval-contract PR31; P09 and Windows console follow-up remain queued.
 No high-risk path changed; request auto-merge after readiness. If repository setting still
 refuses it, Malcolm's merge is required. Stop until this submission is merged.
+
+### 30 October 2026 — Claude task 18 (claude-lane): retrieval contract identity and originals (KB-R1, decisions 1 and 3)
+
+```
+Packet/subpacket: K-track contract. Codex review reviews/2026-10-30-codex-review-retrieval-contract.md: KB-R1 [P2],
+  decision 1 (identifiers, except the view-scoped indexGeneration) and decision 3 (current-version originals).
+Owner and reviewer: Claude; reviewer Codex.
+Status: IN_REVIEW.
+Baseline SHA: 03c666e.
+Owned files: knowledge/src/shingon_knowledge/{migrations/002_opaque_chunk_ids.sql (new), service.py, contract.py};
+  knowledge/contract/kb-contract-v1.json; knowledge/tests/{test_contract_fixtures.py, test_permissions_and_sync.py,
+  test_reference_privacy.py}; conductor/docs/knowledge-base/retrieval-contract.md; this ledger.
+What now works:
+  Identity: (collectionId, documentId, versionId). The original route is
+    /collections/:collectionId/documents/:documentId/versions/:versionId/original; each part is one encoded segment.
+  chunkId: random and opaque (two UUIDv4s = 244 random bits, 64 hex characters), stored per chunk; the serial id
+    stays internal. The checker refuses ids that are not 22-128 URL-safe characters.
+  Originals: KnowledgeService.original() takes the version and serves it only while it is current, in the same query
+    as status and ACL. Anything else is the shared 404. Served headers are fixed: attachment, type by extension
+    (octet-stream if unknown), nosniff, no-store. v1 has no download tickets.
+  Fixtures: 7 new generated ones. original-current (200, file size and sha256), original-replaced-version and
+    original-unknown-version (404). The same key in two collections at version 1 (acme-finance, finance only):
+    same-key-two-collections, same-key-one-visible, same-key-other-collection (404), same-key-own-collection (200).
+    Existing fixtures changed only in chunk ids (sha256 stand-ins, real ids checked first) and original paths.
+Checks (cloud Linux, Python 3.13 unittest, PostgreSQL 16 throwaway), from knowledge/:
+  python3 -m unittest discover -s tests: 26 passed.
+  Against the previous source (migration file left in place): 3 failures, 16 errors, all in the new checks.
+  Migration 002 on a database with 5 existing chunks: 5 distinct 64-hex ids.
+Not done here (next tasks): a view-scoped indexGeneration (decision 1's last part); KB-R4 (collections, passages,
+  health fixtures, 401/413, request validation and request-id format); decision 4's stricter withheld report;
+  decision 2's sync fix. Codex's kb-contract-review.py still prints COLLISION, because its probe builds the old
+  /documents/... route by hand; the new route is contract.original_path.
+Live / fake / skipped / unrun: real PostgreSQL with the synthetic corpus; no HTTP service (K6), models or private data.
+Reviewer disposition and reviewed SHA: re-review requested at the commit below.
+```

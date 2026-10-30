@@ -29,7 +29,7 @@
           "evidence": "strong",
           "results": [
             {
-              "chunkId": "5",
+              "chunkId": "7cdf6125778b4fed7f23b195aa822ce140d7e4d8eab0f2a9dc9ed5accadcf9af",
               "documentId": "standards/logging.md",
               "versionId": 1,
               "collectionId": "standards",
@@ -67,7 +67,7 @@
               }
             },
             {
-              "chunkId": "1",
+              "chunkId": "f0cb600508067fedc9d6cd9430e4fd13125fdce0c94bb7a4b07bec5d04ddb41a",
               "documentId": "standards/api-errors.md",
               "versionId": 1,
               "collectionId": "standards",
@@ -130,7 +130,7 @@
           "evidence": "strong",
           "results": [
             {
-              "chunkId": "25",
+              "chunkId": "2858795234e253b93443413c2b3ae63b955302824de78de402cccbd6042ae7d3",
               "documentId": "acme/expenses-policy.docx",
               "versionId": 2,
               "collectionId": "acme-policies",
@@ -168,7 +168,7 @@
               }
             },
             {
-              "chunkId": "12",
+              "chunkId": "6ee1587ff6f4a6a3043b6362397c01ddb6fa177823f03cb632d0a6a76a56d250",
               "documentId": "acme/travel-policy-2025.pdf",
               "versionId": 1,
               "collectionId": "acme-policies",
@@ -228,7 +228,7 @@
           "evidence": "weak",
           "results": [
             {
-              "chunkId": "11",
+              "chunkId": "9067e038e641550d7879fbf23d7486c921783c3ec0df0eb2642196c1583f40ed",
               "documentId": "acme/travel-policy-2025.pdf",
               "versionId": 1,
               "collectionId": "acme-policies",
@@ -263,7 +263,7 @@
               }
             },
             {
-              "chunkId": "25",
+              "chunkId": "ef862d1e089b13725805b888656e797ddc98d2524407e66023edb00915bc9d4e",
               "documentId": "acme/expenses-policy.docx",
               "versionId": 2,
               "collectionId": "acme-policies",
@@ -301,7 +301,7 @@
               }
             },
             {
-              "chunkId": "12",
+              "chunkId": "cad94f293a71fadf08e7c70ab8fe5a11fe30b58ee4fbba910d87406ff37d364e",
               "documentId": "acme/travel-policy-2025.pdf",
               "versionId": 1,
               "collectionId": "acme-policies",
@@ -361,7 +361,7 @@
           "evidence": "strong",
           "results": [
             {
-              "chunkId": "17",
+              "chunkId": "701ae27760b07553865fac3e85254db3553d242b2c2d8ffb5e4493cc5e575881",
               "documentId": "acme/budget-2026.xlsx",
               "versionId": 1,
               "collectionId": "acme-policies",
@@ -396,7 +396,7 @@
               }
             },
             {
-              "chunkId": "15",
+              "chunkId": "d873464d34f11122ef21c70c683fe3a30c76877cebfffed0d17e9080ffc007c4",
               "documentId": "acme/budget-2026.xlsx",
               "versionId": 1,
               "collectionId": "acme-policies",
@@ -431,7 +431,7 @@
               }
             },
             {
-              "chunkId": "16",
+              "chunkId": "7f952841c7efdb9288bcff1f622144a265e661bbf25b5febc7bc7631afe53a5e",
               "documentId": "acme/budget-2026.xlsx",
               "versionId": 1,
               "collectionId": "acme-policies",
@@ -515,7 +515,7 @@
           "evidence": "strong",
           "results": [
             {
-              "chunkId": "4",
+              "chunkId": "4b68b748c1a407cb6d0b2c7d92a30cda444317e6439e8f23d72375124e6920a2",
               "documentId": "standards/release-checklist.md",
               "versionId": 1,
               "collectionId": "standards",
@@ -553,7 +553,7 @@
               }
             },
             {
-              "chunkId": "3",
+              "chunkId": "d089d4227cd439f70659fb701e7e95ea10be9167491b1e98777ab12f2282c628",
               "documentId": "standards/release-checklist.md",
               "versionId": 1,
               "collectionId": "standards",
@@ -616,7 +616,7 @@
           "evidence": "weak",
           "results": [
             {
-              "chunkId": "25",
+              "chunkId": "bb14535f5b25f70fb392c45cfb10fb6089bbdc48db8921c9e4fba63901ced1f6",
               "documentId": "acme/expenses-policy.docx",
               "versionId": 2,
               "collectionId": "acme-policies",
@@ -654,7 +654,7 @@
               }
             },
             {
-              "chunkId": "12",
+              "chunkId": "6dce6e85219a0ab79fe1f003490f192af34c50ccfb129b1731493d87a15020cb",
               "documentId": "acme/travel-policy-2025.pdf",
               "versionId": 1,
               "collectionId": "acme-policies",
@@ -756,7 +756,7 @@
       "caller": "Acme app server, asserted user andy (not in finance)",
       "request": {
         "method": "GET",
-        "path": "/documents/acme%2Fsalary-bands.docx/versions/1/original"
+        "path": "/collections/acme-policies/documents/acme%2Fsalary-bands.docx/versions/1/original"
       },
       "response": {
         "status": 404,
@@ -777,7 +777,7 @@
       "caller": "Acme app server, asserted user andy (not in finance)",
       "request": {
         "method": "GET",
-        "path": "/documents/acme%2Fno-such-file.docx/versions/1/original"
+        "path": "/collections/acme-policies/documents/acme%2Fno-such-file.docx/versions/1/original"
       },
       "response": {
         "status": 404,
@@ -813,7 +813,7 @@
           "evidence": "weak",
           "results": [
             {
-              "chunkId": "25",
+              "chunkId": "68ae69dcf56735b0fb3b6ba876bab75172542a8283b33b2cb6b5ce5624b26712",
               "documentId": "acme/expenses-policy.docx",
               "versionId": 2,
               "collectionId": "acme-policies",
@@ -861,7 +861,7 @@
       "caller": "Acme app server, asserted user alice (member of finance)",
       "request": {
         "method": "GET",
-        "path": "/documents/acme%2Ftravel-policy-2025.pdf/versions/1/original"
+        "path": "/collections/acme-policies/documents/acme%2Ftravel-policy-2025.pdf/versions/1/original"
       },
       "response": {
         "status": 404,
@@ -872,6 +872,698 @@
             "retryable": false,
             "requestId": "req-revoked-original"
           }
+        }
+      }
+    },
+    {
+      "id": "original-current",
+      "covers": "The current version of a visible document, as an attachment",
+      "origin": "generated",
+      "caller": "Acme app server, asserted user alice (member of finance)",
+      "request": {
+        "method": "GET",
+        "path": "/collections/acme-policies/documents/acme%2Fexpenses-policy.docx/versions/2/original"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "Content-Disposition": "attachment; filename*=UTF-8''expenses-policy.docx",
+          "X-Content-Type-Options": "nosniff",
+          "Cache-Control": "no-store"
+        },
+        "body": null,
+        "file": {
+          "bytes": 36874,
+          "sha256": "ff7b500ea0c5a746dcaf093367d66fc56b7f1bc2b080353afce90536b845fdd0"
+        }
+      }
+    },
+    {
+      "id": "original-replaced-version",
+      "covers": "Version 1 after version 2 was indexed: 404, never the newer file",
+      "origin": "generated",
+      "caller": "Acme app server, asserted user alice (member of finance)",
+      "request": {
+        "method": "GET",
+        "path": "/collections/acme-policies/documents/acme%2Fexpenses-policy.docx/versions/1/original"
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "error": {
+            "code": "not-found",
+            "message": "No such document, or it is not visible to this credential.",
+            "retryable": false,
+            "requestId": "req-original-replaced-version"
+          }
+        }
+      }
+    },
+    {
+      "id": "original-unknown-version",
+      "covers": "A version that never existed: 404",
+      "origin": "generated",
+      "caller": "Acme app server, asserted user alice (member of finance)",
+      "request": {
+        "method": "GET",
+        "path": "/collections/acme-policies/documents/acme%2Fexpenses-policy.docx/versions/7/original"
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "error": {
+            "code": "not-found",
+            "message": "No such document, or it is not visible to this credential.",
+            "retryable": false,
+            "requestId": "req-original-unknown-version"
+          }
+        }
+      }
+    },
+    {
+      "id": "same-key-two-collections",
+      "covers": "Two collections hold acme/budget-2026.xlsx at version 1: collectionId tells them apart",
+      "origin": "generated",
+      "caller": "Acme app server, asserted user alice (member of finance)",
+      "request": {
+        "method": "POST",
+        "path": "/search",
+        "body": {
+          "query": "Sales travel budget Q3",
+          "mode": "keyword",
+          "limit": 8,
+          "clientRequestId": "req-same-key-two-collections"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "indexGeneration": 13,
+          "evidence": "strong",
+          "results": [
+            {
+              "chunkId": "c86496b098da2dea48247a55a04d7f4255295fc54406ac1ceb814a04531f7fa6",
+              "documentId": "acme/budget-2026.xlsx",
+              "versionId": 1,
+              "collectionId": "acme-policies",
+              "title": "budget-2026",
+              "excerpt": "Budget — Department: Sales travel; Q1: 8000; Q2: 7500; Q3: 11250; Q4: 6000",
+              "locator": {
+                "page": null,
+                "sectionPath": null,
+                "sheet": "Budget",
+                "cellRange": "A4:E4",
+                "slide": null
+              },
+              "source": {
+                "display": "acme-policies › acme/budget-2026.xlsx",
+                "versionLabel": "v1",
+                "modifiedAt": null,
+                "ingestedAt": "2026-10-29T12:00:00Z"
+              },
+              "scores": {
+                "rank": 1,
+                "keyword": 0.3333,
+                "vector": null,
+                "rerank": null
+              },
+              "flags": {
+                "stale": false,
+                "supersededBy": null,
+                "conflictsWith": [],
+                "ocr": false,
+                "ocrConfidence": null,
+                "instructionLike": false
+              }
+            },
+            {
+              "chunkId": "e7f3d7721590165bcd274740a11c0a602d6797e93eecd23278141fdca14229b2",
+              "documentId": "acme/budget-2026.xlsx",
+              "versionId": 1,
+              "collectionId": "acme-finance",
+              "title": "budget-2026",
+              "excerpt": "Budget — Department: Sales travel; Q1: 8000; Q2: 7500; Q3: 11250; Q4: 6000",
+              "locator": {
+                "page": null,
+                "sectionPath": null,
+                "sheet": "Budget",
+                "cellRange": "A4:E4",
+                "slide": null
+              },
+              "source": {
+                "display": "acme-finance › acme/budget-2026.xlsx",
+                "versionLabel": "v1",
+                "modifiedAt": null,
+                "ingestedAt": "2026-10-29T12:00:00Z"
+              },
+              "scores": {
+                "rank": 2,
+                "keyword": 0.3333,
+                "vector": null,
+                "rerank": null
+              },
+              "flags": {
+                "stale": false,
+                "supersededBy": null,
+                "conflictsWith": [],
+                "ocr": false,
+                "ocrConfidence": null,
+                "instructionLike": false
+              }
+            },
+            {
+              "chunkId": "f70888ce511abf1d7ee677589411ac4d8e67ea2e69d3057185dfda0fc6b83ef6",
+              "documentId": "acme/budget-2026.xlsx",
+              "versionId": 1,
+              "collectionId": "acme-policies",
+              "title": "budget-2026",
+              "excerpt": "Budget — Department: Marketing; Q1: 12000; Q2: 15000; Q3: 9000; Q4: 21000",
+              "locator": {
+                "page": null,
+                "sectionPath": null,
+                "sheet": "Budget",
+                "cellRange": "A2:E2",
+                "slide": null
+              },
+              "source": {
+                "display": "acme-policies › acme/budget-2026.xlsx",
+                "versionLabel": "v1",
+                "modifiedAt": null,
+                "ingestedAt": "2026-10-29T12:00:00Z"
+              },
+              "scores": {
+                "rank": 3,
+                "keyword": 0.2308,
+                "vector": null,
+                "rerank": null
+              },
+              "flags": {
+                "stale": false,
+                "supersededBy": null,
+                "conflictsWith": [],
+                "ocr": false,
+                "ocrConfidence": null,
+                "instructionLike": false
+              }
+            },
+            {
+              "chunkId": "8a3f9c4c0bbed53e38e32590509e14a4c598396e6ddbb1d1b5b7c82edfb3b2ff",
+              "documentId": "acme/budget-2026.xlsx",
+              "versionId": 1,
+              "collectionId": "acme-policies",
+              "title": "budget-2026",
+              "excerpt": "Budget — Department: Engineering; Q1: 30000; Q2: 30000; Q3: 32000; Q4: 34000",
+              "locator": {
+                "page": null,
+                "sectionPath": null,
+                "sheet": "Budget",
+                "cellRange": "A3:E3",
+                "slide": null
+              },
+              "source": {
+                "display": "acme-policies › acme/budget-2026.xlsx",
+                "versionLabel": "v1",
+                "modifiedAt": null,
+                "ingestedAt": "2026-10-29T12:00:00Z"
+              },
+              "scores": {
+                "rank": 4,
+                "keyword": 0.2308,
+                "vector": null,
+                "rerank": null
+              },
+              "flags": {
+                "stale": false,
+                "supersededBy": null,
+                "conflictsWith": [],
+                "ocr": false,
+                "ocrConfidence": null,
+                "instructionLike": false
+              }
+            },
+            {
+              "chunkId": "abf89d0bcbd11a99fd0e80e144a158843d2a36a850f9cf9de84b1c81956c8763",
+              "documentId": "acme/budget-2026.xlsx",
+              "versionId": 1,
+              "collectionId": "acme-finance",
+              "title": "budget-2026",
+              "excerpt": "Budget — Department: Marketing; Q1: 12000; Q2: 15000; Q3: 9000; Q4: 21000",
+              "locator": {
+                "page": null,
+                "sectionPath": null,
+                "sheet": "Budget",
+                "cellRange": "A2:E2",
+                "slide": null
+              },
+              "source": {
+                "display": "acme-finance › acme/budget-2026.xlsx",
+                "versionLabel": "v1",
+                "modifiedAt": null,
+                "ingestedAt": "2026-10-29T12:00:00Z"
+              },
+              "scores": {
+                "rank": 5,
+                "keyword": 0.2308,
+                "vector": null,
+                "rerank": null
+              },
+              "flags": {
+                "stale": false,
+                "supersededBy": null,
+                "conflictsWith": [],
+                "ocr": false,
+                "ocrConfidence": null,
+                "instructionLike": false
+              }
+            },
+            {
+              "chunkId": "0b92fc8cad8b891571da2662358405df6a6302ddfc375e831ab20f74d25018e4",
+              "documentId": "acme/budget-2026.xlsx",
+              "versionId": 1,
+              "collectionId": "acme-finance",
+              "title": "budget-2026",
+              "excerpt": "Budget — Department: Engineering; Q1: 30000; Q2: 30000; Q3: 32000; Q4: 34000",
+              "locator": {
+                "page": null,
+                "sectionPath": null,
+                "sheet": "Budget",
+                "cellRange": "A3:E3",
+                "slide": null
+              },
+              "source": {
+                "display": "acme-finance › acme/budget-2026.xlsx",
+                "versionLabel": "v1",
+                "modifiedAt": null,
+                "ingestedAt": "2026-10-29T12:00:00Z"
+              },
+              "scores": {
+                "rank": 6,
+                "keyword": 0.2308,
+                "vector": null,
+                "rerank": null
+              },
+              "flags": {
+                "stale": false,
+                "supersededBy": null,
+                "conflictsWith": [],
+                "ocr": false,
+                "ocrConfidence": null,
+                "instructionLike": false
+              }
+            },
+            {
+              "chunkId": "80c904ac41d27280f1cf006841a48b68478ce09ff2f565b84294eb34df0b3363",
+              "documentId": "acme/budget-2026.xlsx",
+              "versionId": 1,
+              "collectionId": "acme-policies",
+              "title": "budget-2026",
+              "excerpt": "Budget — Department: Total",
+              "locator": {
+                "page": null,
+                "sectionPath": null,
+                "sheet": "Budget",
+                "cellRange": "A5:E5",
+                "slide": null
+              },
+              "source": {
+                "display": "acme-policies › acme/budget-2026.xlsx",
+                "versionLabel": "v1",
+                "modifiedAt": null,
+                "ingestedAt": "2026-10-29T12:00:00Z"
+              },
+              "scores": {
+                "rank": 7,
+                "keyword": 0.1667,
+                "vector": null,
+                "rerank": null
+              },
+              "flags": {
+                "stale": false,
+                "supersededBy": null,
+                "conflictsWith": [],
+                "ocr": false,
+                "ocrConfidence": null,
+                "instructionLike": false
+              }
+            },
+            {
+              "chunkId": "be29a11564bf220579e9b95a7704d896de9d393bf3c7c38757a6592637d0e6ed",
+              "documentId": "acme/budget-2026.xlsx",
+              "versionId": 1,
+              "collectionId": "acme-finance",
+              "title": "budget-2026",
+              "excerpt": "Budget — Department: Total",
+              "locator": {
+                "page": null,
+                "sectionPath": null,
+                "sheet": "Budget",
+                "cellRange": "A5:E5",
+                "slide": null
+              },
+              "source": {
+                "display": "acme-finance › acme/budget-2026.xlsx",
+                "versionLabel": "v1",
+                "modifiedAt": null,
+                "ingestedAt": "2026-10-29T12:00:00Z"
+              },
+              "scores": {
+                "rank": 8,
+                "keyword": 0.1667,
+                "vector": null,
+                "rerank": null
+              },
+              "flags": {
+                "stale": false,
+                "supersededBy": null,
+                "conflictsWith": [],
+                "ocr": false,
+                "ocrConfidence": null,
+                "instructionLike": false
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "same-key-one-visible",
+      "covers": "A caller outside finance sees only the acme-policies copy",
+      "origin": "generated",
+      "caller": "Acme app server, asserted user andy (not in finance)",
+      "request": {
+        "method": "POST",
+        "path": "/search",
+        "body": {
+          "query": "Sales travel budget Q3",
+          "mode": "keyword",
+          "limit": 8,
+          "clientRequestId": "req-same-key-one-visible"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "indexGeneration": 13,
+          "evidence": "strong",
+          "results": [
+            {
+              "chunkId": "1a2201444df9c15fdd2891ce5b435800bd609873be7947af90ebdfeab0a69680",
+              "documentId": "acme/budget-2026.xlsx",
+              "versionId": 1,
+              "collectionId": "acme-policies",
+              "title": "budget-2026",
+              "excerpt": "Budget — Department: Sales travel; Q1: 8000; Q2: 7500; Q3: 11250; Q4: 6000",
+              "locator": {
+                "page": null,
+                "sectionPath": null,
+                "sheet": "Budget",
+                "cellRange": "A4:E4",
+                "slide": null
+              },
+              "source": {
+                "display": "acme-policies › acme/budget-2026.xlsx",
+                "versionLabel": "v1",
+                "modifiedAt": null,
+                "ingestedAt": "2026-10-29T12:00:00Z"
+              },
+              "scores": {
+                "rank": 1,
+                "keyword": 0.3333,
+                "vector": null,
+                "rerank": null
+              },
+              "flags": {
+                "stale": false,
+                "supersededBy": null,
+                "conflictsWith": [],
+                "ocr": false,
+                "ocrConfidence": null,
+                "instructionLike": false
+              }
+            },
+            {
+              "chunkId": "69d8a09a0be0d5c8db15d942856692212d4b92cddd9dec9b7333af09c90a9a77",
+              "documentId": "acme/budget-2026.xlsx",
+              "versionId": 1,
+              "collectionId": "acme-policies",
+              "title": "budget-2026",
+              "excerpt": "Budget — Department: Marketing; Q1: 12000; Q2: 15000; Q3: 9000; Q4: 21000",
+              "locator": {
+                "page": null,
+                "sectionPath": null,
+                "sheet": "Budget",
+                "cellRange": "A2:E2",
+                "slide": null
+              },
+              "source": {
+                "display": "acme-policies › acme/budget-2026.xlsx",
+                "versionLabel": "v1",
+                "modifiedAt": null,
+                "ingestedAt": "2026-10-29T12:00:00Z"
+              },
+              "scores": {
+                "rank": 2,
+                "keyword": 0.2308,
+                "vector": null,
+                "rerank": null
+              },
+              "flags": {
+                "stale": false,
+                "supersededBy": null,
+                "conflictsWith": [],
+                "ocr": false,
+                "ocrConfidence": null,
+                "instructionLike": false
+              }
+            },
+            {
+              "chunkId": "e55a41728422ae7ca6f8b9b8ebdc0b7f8c7a756885df63a65025e2fe81652618",
+              "documentId": "acme/budget-2026.xlsx",
+              "versionId": 1,
+              "collectionId": "acme-policies",
+              "title": "budget-2026",
+              "excerpt": "Budget — Department: Engineering; Q1: 30000; Q2: 30000; Q3: 32000; Q4: 34000",
+              "locator": {
+                "page": null,
+                "sectionPath": null,
+                "sheet": "Budget",
+                "cellRange": "A3:E3",
+                "slide": null
+              },
+              "source": {
+                "display": "acme-policies › acme/budget-2026.xlsx",
+                "versionLabel": "v1",
+                "modifiedAt": null,
+                "ingestedAt": "2026-10-29T12:00:00Z"
+              },
+              "scores": {
+                "rank": 3,
+                "keyword": 0.2308,
+                "vector": null,
+                "rerank": null
+              },
+              "flags": {
+                "stale": false,
+                "supersededBy": null,
+                "conflictsWith": [],
+                "ocr": false,
+                "ocrConfidence": null,
+                "instructionLike": false
+              }
+            },
+            {
+              "chunkId": "622ddbab74c375e8b3fdcef02487069bc202623b6cd2099a409bbfe7cd157f01",
+              "documentId": "acme/budget-2026.xlsx",
+              "versionId": 1,
+              "collectionId": "acme-policies",
+              "title": "budget-2026",
+              "excerpt": "Budget — Department: Total",
+              "locator": {
+                "page": null,
+                "sectionPath": null,
+                "sheet": "Budget",
+                "cellRange": "A5:E5",
+                "slide": null
+              },
+              "source": {
+                "display": "acme-policies › acme/budget-2026.xlsx",
+                "versionLabel": "v1",
+                "modifiedAt": null,
+                "ingestedAt": "2026-10-29T12:00:00Z"
+              },
+              "scores": {
+                "rank": 4,
+                "keyword": 0.1667,
+                "vector": null,
+                "rerank": null
+              },
+              "flags": {
+                "stale": false,
+                "supersededBy": null,
+                "conflictsWith": [],
+                "ocr": false,
+                "ocrConfidence": null,
+                "instructionLike": false
+              }
+            },
+            {
+              "chunkId": "c624b1defeed1868ec38b8883656f1cb0e4855c4d2dbcfcc2c092ad4fbd54cd5",
+              "documentId": "acme/budget-2026.xlsx",
+              "versionId": 1,
+              "collectionId": "acme-policies",
+              "title": "budget-2026",
+              "excerpt": "[import note] 4 cells had formulas with no saved result and were not indexed.",
+              "locator": {
+                "page": null,
+                "sectionPath": null,
+                "sheet": null,
+                "cellRange": null,
+                "slide": null
+              },
+              "source": {
+                "display": "acme-policies › acme/budget-2026.xlsx",
+                "versionLabel": "v1",
+                "modifiedAt": null,
+                "ingestedAt": "2026-10-29T12:00:00Z"
+              },
+              "scores": {
+                "rank": 5,
+                "keyword": 0.0909,
+                "vector": null,
+                "rerank": null
+              },
+              "flags": {
+                "stale": false,
+                "supersededBy": null,
+                "conflictsWith": [],
+                "ocr": false,
+                "ocrConfidence": null,
+                "instructionLike": false
+              }
+            },
+            {
+              "chunkId": "38ba6337e0b87f5bdbad68aab9017ff8be249b969c04cb901de47965a23c6bfc",
+              "documentId": "acme/expenses-policy.docx",
+              "versionId": 2,
+              "collectionId": "acme-policies",
+              "title": "Acme Expenses Policy",
+              "excerpt": "Staff using their own car for business travel are reimbursed 55 pence per mile.",
+              "locator": {
+                "page": null,
+                "sectionPath": [
+                  "Acme Expenses Policy",
+                  "3 Mileage"
+                ],
+                "sheet": null,
+                "cellRange": null,
+                "slide": null
+              },
+              "source": {
+                "display": "acme-policies › acme/expenses-policy.docx",
+                "versionLabel": "v2",
+                "modifiedAt": null,
+                "ingestedAt": "2026-10-29T12:00:00Z"
+              },
+              "scores": {
+                "rank": 6,
+                "keyword": 0.0909,
+                "vector": null,
+                "rerank": null
+              },
+              "flags": {
+                "stale": false,
+                "supersededBy": null,
+                "conflictsWith": [],
+                "ocr": false,
+                "ocrConfidence": null,
+                "instructionLike": false
+              }
+            },
+            {
+              "chunkId": "fd3c5feac58ec0f6f59e590510f23855b57e33277b3f77210653c16d5d08cb38",
+              "documentId": "acme/expenses-policy.docx",
+              "versionId": 2,
+              "collectionId": "acme-policies",
+              "title": "Acme Expenses Policy",
+              "excerpt": "The daily meal allowance when travelling overnight is 35 pounds.",
+              "locator": {
+                "page": null,
+                "sectionPath": [
+                  "Acme Expenses Policy",
+                  "4 Meals"
+                ],
+                "sheet": null,
+                "cellRange": null,
+                "slide": null
+              },
+              "source": {
+                "display": "acme-policies › acme/expenses-policy.docx",
+                "versionLabel": "v2",
+                "modifiedAt": null,
+                "ingestedAt": "2026-10-29T12:00:00Z"
+              },
+              "scores": {
+                "rank": 7,
+                "keyword": 0.0909,
+                "vector": null,
+                "rerank": null
+              },
+              "flags": {
+                "stale": false,
+                "supersededBy": null,
+                "conflictsWith": [],
+                "ocr": false,
+                "ocrConfidence": null,
+                "instructionLike": false
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "same-key-other-collection",
+      "covers": "The finance copy by its full identity, for a caller outside finance: 404",
+      "origin": "generated",
+      "caller": "Acme app server, asserted user andy (not in finance)",
+      "request": {
+        "method": "GET",
+        "path": "/collections/acme-finance/documents/acme%2Fbudget-2026.xlsx/versions/1/original"
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "error": {
+            "code": "not-found",
+            "message": "No such document, or it is not visible to this credential.",
+            "retryable": false,
+            "requestId": "req-same-key-other-collection"
+          }
+        }
+      }
+    },
+    {
+      "id": "same-key-own-collection",
+      "covers": "The acme-policies copy by its full identity, for the same caller",
+      "origin": "generated",
+      "caller": "Acme app server, asserted user andy (not in finance)",
+      "request": {
+        "method": "GET",
+        "path": "/collections/acme-policies/documents/acme%2Fbudget-2026.xlsx/versions/1/original"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "Content-Disposition": "attachment; filename*=UTF-8''budget-2026.xlsx",
+          "X-Content-Type-Options": "nosniff",
+          "Cache-Control": "no-store"
+        },
+        "body": null,
+        "file": {
+          "bytes": 5037,
+          "sha256": "37e887da5a26b768e694588d202bddfee40c2b1b106e8331f5e4cf6d2df44c39"
         }
       }
     },
@@ -898,7 +1590,7 @@
           "evidence": "strong",
           "results": [
             {
-              "chunkId": "25",
+              "chunkId": "bb548e6e363a86bdd31f788f25a60d24ef3a68b79241359108016cfe1dc722de",
               "documentId": "acme/expenses-policy.docx",
               "versionId": 2,
               "collectionId": "acme-policies",
@@ -962,7 +1654,7 @@
           "evidence": "weak",
           "results": [
             {
-              "chunkId": "902",
+              "chunkId": "1cc264894d3cce856636e16287681079f28ed4bc9effc614e5305227e59894aa",
               "documentId": "acme/receipts-guidance-scan.pdf",
               "versionId": 1,
               "collectionId": "acme-policies",

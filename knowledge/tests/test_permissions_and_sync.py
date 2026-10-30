@@ -22,9 +22,9 @@ class PermissionsSyncDeletion(ServiceTestCase):
                 bad += sum(1 for r in self.kb.search(cred, q['query'], limit=20)['results'] if not oracle.visible(cred, r['documentId']))
         return bad
 
-    def can_fetch(self, who, collection, key) -> bool:
+    def can_fetch(self, who, collection, key, version=1) -> bool:
         try:
-            self.kb.original(self.creds[who], collection, key)
+            self.kb.original(self.creds[who], collection, key, version)
             return True
         except NotFound:
             return False
@@ -63,8 +63,12 @@ class PermissionsSyncDeletion(ServiceTestCase):
 
         self.assertTrue(self.can_fetch('alice', 'acme-policies', 'acme/salary-bands.docx'))
         self.assertFalse(self.can_fetch('andy', 'acme-policies', 'acme/salary-bands.docx'))
-        self.assertFalse(self.can_fetch('bella', 'acme-policies', 'acme/expenses-policy.docx'))
-        self.assertFalse(self.can_fetch('conductor', 'acme-policies', 'acme/expenses-policy.docx'))
+        self.assertFalse(self.can_fetch('bella', 'acme-policies', 'acme/expenses-policy.docx', 2))
+        self.assertFalse(self.can_fetch('conductor', 'acme-policies', 'acme/expenses-policy.docx', 2))
+        # Only the current version's original is served: never the latest bytes in place of a replaced version.
+        self.assertTrue(self.can_fetch('alice', 'acme-policies', 'acme/expenses-policy.docx', 2))
+        self.assertFalse(self.can_fetch('alice', 'acme-policies', 'acme/expenses-policy.docx', 1))
+        self.assertFalse(self.can_fetch('alice', 'acme-policies', 'acme/expenses-policy.docx', 3))
 
         with self.assertRaises(ScopeError):
             kb.issue_project_token('conductor:bad', ['standards', 'acme-policies'])

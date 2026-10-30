@@ -15,6 +15,8 @@ import json
 import math
 import re
 from datetime import datetime
+from pathlib import PurePosixPath
+from urllib.parse import quote
 
 from .service import NotFound, ScopeError
 
@@ -29,6 +31,16 @@ MAX_RETRY_AFTER = 3600  # seconds
 # retrieval-contract.md §5: the destinations a collection may allow.
 DESTINATIONS = ('local-model', 'claude-subscription', 'codex-subscription')
 APP_DESTINATION = re.compile(r'^foundation-app:[a-z0-9][a-z0-9-]{0,63}$')
+# Chunk ids are opaque: callers store and send them back, never parse them (§3). The service's are 64 hex characters.
+CHUNK_ID = re.compile(r'^[A-Za-z0-9_-]{22,128}$')
+# Originals are always downloads. Anything without a known type is octet-stream, never guessed from content.
+MEDIA_TYPES = {
+    '.pdf': 'application/pdf',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.md': 'text/markdown; charset=utf-8',
+}
+ORIGINAL_HEADERS = ('Content-Type', 'Content-Disposition', 'X-Content-Type-Options', 'Cache-Control')
 
 # Fixed wording per error: exception text never reaches the caller.
 ERRORS = {
@@ -82,6 +94,21 @@ def error_body(code: str, request_id: str, *, retry_after: int | None = None) ->
     if retry_after is not None:
         err['retryAfter'] = retry_after
     return status, {'error': err}
+
+
+def original_path(collection_id: str, document_id: str, version_id: int) -> str:
+    """The canonical original route (retrieval-contract.md §3). Each identifier is one encoded path segment, so a
+    path-like documentId cannot add segments; the service decodes it once and looks it up, never joining it to a path."""
+    enc = lambda v: quote(str(v), safe='')  # noqa: E731
+    return f'/collections/{enc(collection_id)}/documents/{enc(document_id)}/versions/{enc(version_id)}/original'
+
+
+def original_headers(document_id: str) -> dict:
+    """The headers of a served original: always an attachment, never sniffed, never cached."""
+    name = PurePosixPath(document_id).name
+    return {'Content-Type': MEDIA_TYPES.get(PurePosixPath(name).suffix.lower(), 'application/octet-stream'),
+            'Content-Disposition': f"attachment; filename*=UTF-8''{quote(name, safe='')}",
+            'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store'}
 
 
 # ---------- shape checks ----------
@@ -180,6 +207,8 @@ def check_search_body(body: dict) -> None:
         _keys(r, p, ('chunkId', 'documentId', 'versionId', 'collectionId', 'title', 'excerpt', 'locator', 'source', 'scores', 'flags'))
         for k in ('chunkId', 'documentId', 'collectionId', 'title'):
             _text(r[k], f'{p}.{k}')
+        if not CHUNK_ID.match(r['chunkId']):
+            _fail(f'{p}.chunkId', 'must be an opaque id of 22-128 URL-safe characters')
         _positive(r['versionId'], f'{p}.versionId')
         _text(r['excerpt'], f'{p}.excerpt', max_len=MAX_EXCERPT)
         loc = r['locator']
@@ -258,3 +287,13 @@ def check_withheld_report(report: dict) -> None:
     for j, v in enumerate(report['allowedDestinations']):
         if v not in DESTINATIONS and not APP_DESTINATION.match(v):
             _fail(f'$.allowedDestinations[{j}]', f'unknown destination {v!r}')
+
+
+@_checked
+def check_original_response(status: int, headers: dict, document_id: str) -> None:
+    """Raises ContractError unless (status, headers) is how a permitted original is served."""
+    if status != 200:
+        _fail('status', 'a served original is HTTP 200; refusals use check_error_body')
+    _keys(headers, '$headers', ORIGINAL_HEADERS)
+    if headers != original_headers(document_id):
+        _fail('$headers', 'an original is an attachment with a fixed type, nosniff and no-store')

@@ -1,5 +1,9 @@
-"""References from a visible result to another document never name a document the caller cannot see (Codex review
-KB-R3). A real two-principal database regression: the successor of a public, superseded policy is restricted."""
+"""What a result says about other documents never reveals what the caller cannot see.
+
+- References (Codex review KB-R3): a real two-principal database regression, where the successor of a public,
+  superseded policy is restricted.
+- Chunk ids (Codex review decision 1): opaque random ids, not the internal serial, whose gaps would show how much was
+  ingested under ACLs the caller does not hold."""
 import copy
 import unittest
 
@@ -37,6 +41,35 @@ class SupersedingDocumentPrivacy(ServiceTestCase):
     def test_the_superseded_document_is_still_ranked_down_for_both(self):
         # Demotion is decided from the stored link, whoever asks, so it is the same for both callers.
         self.assertEqual(self.hit('andy')[0]['scores']['keyword'], self.hit('alice')[0]['scores']['keyword'])
+
+
+
+class OpaqueChunkIds(ServiceTestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.kb.sync('run-1', CORPUS, cls.manifest['sources'])
+
+    def test_chunk_ids_are_random_not_the_serial(self):
+        ids = [r['chunkId'] for r in self.kb.search(self.creds['alice'], 'policy budget travel expenses', limit=20)['results']]
+        self.assertGreater(len(ids), 3)
+        self.assertEqual(len(set(ids)), len(ids))
+        serials = {str(r[0]) for r in self.kb.db.execute('SELECT id FROM chunks').fetchall()}
+        for i in ids:
+            with self.subTest(chunk=i):
+                self.assertRegex(i, r'^[0-9a-f]{64}$')
+                self.assertNotIn(i, serials)
+        contract.check_search_body(contract.search_body(self.kb.search(self.creds['alice'], 'policy budget')))
+
+    def test_a_new_version_gets_new_ids(self):
+        doc = 'standards/logging.md'
+        ids = lambda: {r['chunkId'] for r in self.kb.search(self.creds['conductor'], 'standard error logs', limit=20)['results']  # noqa: E731
+                       if r['documentId'] == doc}
+        before = ids()
+        self.kb.sync('run-2', CORPUS, self.manifest['sources'], files={doc: CORPUS / 'standards/api-errors.md'})
+        after = ids()
+        self.assertTrue(before and after)
+        self.assertFalse(before & after)
 
 
 if __name__ == '__main__':
