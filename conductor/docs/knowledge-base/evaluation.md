@@ -72,7 +72,7 @@ By category, keyword → with demotion:
 | ingest-failure | 1/2 | 1/2 |
 | paraphrase | 0/2 | 0/2 |
 
-Latency over 350 searches: p50 0.33 ms, p95 0.69 ms, maximum 2.41 ms. At this size that means nothing beyond showing the ACL predicate adds no visible cost on a GIN-indexed table. The 350 are 25 questions × 2 ranking variants, plus 2 permission sweeps × 25 questions × 6 credentials, as saved in [results.json](../../spikes/knowledge-base-evaluation/results/results.json). Only the 50 question timings are stored individually, so the quantiles cannot be recomputed from the file. An earlier draft quoted an older run.
+Latency over 350 searches: p50 0.33 ms, p95 0.69 ms, maximum 2.41 ms. At this size that means nothing beyond showing the ACL predicate adds no visible cost on a GIN-indexed table. The 350 are 25 questions × 2 ranking variants, plus 3 permission sweeps × 25 questions × 4 credentials (the sweeps run initially, after the permission changes and after the deletion), as saved in [results.json](../../spikes/knowledge-base-evaluation/results/results.json). Only the 50 question timings are stored individually, so the quantiles cannot be recomputed from the file. An earlier draft quoted an older run.
 
 ### What the misses mean
 
