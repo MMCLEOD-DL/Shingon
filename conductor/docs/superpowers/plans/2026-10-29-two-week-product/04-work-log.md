@@ -828,6 +828,58 @@ this submission merges: retrieval-contract/K6 review, then remaining UI/research
 - Claude owns the bounded fix or requests Malcolm's explicit residual disposition. After
   this review submission merges, Codex's next independent task is retrieval-contract/K6 review.
   No new packet starts before this submission merges under the one-task lane loop.
+
+### 30 October 2026 — Codex claim: retrieval-contract and fixture review (K6 unblock)
+
+Owner/reviewer: Codex; implementation owner: Claude. Status: IN_PROGRESS.
+Branch: `codex/review-retrieval-contract`; baseline main: `8c63636` (PR #23 merged).
+Scope: decide the four retrieval-contract section10 questions, independently validate the
+committed wire fixtures and counterexamples, trace K2's identity/ACL/sync/original semantics,
+and publish concrete v1/K6 acceptance conditions. Review paths and this ledger only;
+Claude-owned knowledge code and contract documents remain unchanged.
+Next action: run pure contract checks in an isolated Python environment, distinguish any
+unavailable PostgreSQL tests, and reproduce specific contract/security gaps before judging.
+No Babel/private data, live connectors/models, remote hosts, credentials or deployment.
+
+### 30 October 2026 — Codex retrieval-contract review handoff
+
+Packet: P06 retrieval contract/fixtures, K6 dependency; baseline `8c63636`.
+Owner/reviewer Codex; correction owner Claude. Status: CHANGES_REQUESTED (v1 not frozen).
+Review: `reviews/2026-10-30-codex-review-retrieval-contract.md`.
+Four decisions: collection-qualified document identity + opaque chunks; failed-sync removal;
+current-version-only originals in v1; operator-only destination-withheld report with strict
+policy revalidation. Corrected prose/fixtures/validator and both-lane acceptance still due.
+KB-R1 collection-local identity collision; KB-R2 malformed JSON/semantic validator admission;
+KB-R3 ACL-unchecked supersededBy metadata; KB-R4 missing route/request/positive-original fixtures.
+18 committed fixture shape controls PASS (13 generated labels/5 authored); six malformed
+cases accepted, URL collision and injected actual-service projection reproduced (expected
+standalone exit1, no SQL/HTTP claim). Existing pure suite4PASS/3DBclassesSKIP because local
+TEST_DATABASE_URL unset; no database/service started. Exact lockfile installed in isolated
+Python3.14.2 venv. Database regeneration/ACL/sync sweeps are not claimed locally verified.
+Review paths/ledger only; no knowledge/source/contract/dependency/CI/gate/private/live changes.
+Claude owns corrections and full database regressions; K6 remains gated on truthful v1 freeze.
+Next independent Codex task after this submission merges: P04 UI including N6 recovery control.
+
+### Codex task submitted — retrieval contract / K6 dependency review
+
+- Date: 30 October 2026. Branch: `codex/review-retrieval-contract`; baseline `8c63636`.
+- Final review/reproducer commit: `e61c3dbd8c24f87e3848df4954d4b5181ae29757`.
+- PR: [#24 — Review K6 contract: settle four questions and record v1 freeze gaps](https://github.com/MMCLEOD-DL/Shingon/pull/24).
+- Review complete; v1 status CHANGES_REQUESTED. Four design decisions supplied, KB-R1–R4
+  corrections and exact scope/fixtures/source references recorded for Claude. K6 is not
+  admitted merely by merging this review; corrected contract/fixture pins need both-lane review.
+- Windows/Python3.14.2: existing pure4PASS/3DBclassesSKIP; 18 committed body shape controls
+  PASS (not regenerated); six malformed inputs accepted, original-URL collision and injected
+  actual-service supersededBy projection reproduced. Standalone exit1 intentionally records
+  eight counterexamples. Python syntax and final diff whitespace checks PASS.
+- Exact lockfile in an external venv; no source/dependency/CI/gate/private/live changes.
+  PostgreSQL/HTTP/connector/model evidence not claimed. Hosted DB checks remain separate.
+- Merge route: review/fixture paths only, no high-risk path. Ready after local checks;
+  request existing auto-merge policy, report disabled setting without changing it.
+- Next action: Claude corrects and resubmits exact contract/fixture pins. After this PR merges,
+  Codex reviews P04 including N6; wider P06 research/P09 reviews remain independent backlog.
+  Stop this one-task lane invocation after submission; no new packet before merge.
+
 ### 30 October 2026 — Claude task 13 (claude-lane): Codex review PR21-R1, upgrade conflict resolution in protected files
 
 ```
