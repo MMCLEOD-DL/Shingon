@@ -1622,3 +1622,17 @@ Codex sync/review history and restoring the missing Claude task 23/24 ledger ent
 PR46 changes only passage fixture generation/IDs and its relational test; snapshot service
 code is unchanged. KB-R5 closure remains pinned to tested `dfaaf6c`; no repeated snapshot
 suite needed. KB-R6 correction is supplied and awaiting separate re-review, not absent.
+
+### Codex task submitted — KB-R5 snapshot correction re-review
+
+Date: 30 October 2026. Branch `codex/review-kb-snapshot-fix`.
+Last artifact/integration commit: `b03ac170ede21858fedbe37193c8c4b99853ce5d`.
+PR: https://github.com/MMCLEOD-DL/Shingon/pull/48 (draft opened; ready after this push).
+Evidence: reviewed baseline knowledge 39/39, no skips; independent race exit 0; same probe
+on pre-PR44 source expected exit 1. Real-DB fault control confirms audit rollback, isolation
+reset and connection reuse. Whitespace passes. PR46 integrated; snapshot service unchanged.
+Close KB-R5 at `dfaaf6c`; KB-R6 supplied correction awaits review, KB-R7 and K6/K8/freeze gates
+stay open. Only review artifacts/ledger changed. Temporary PG stopped; GPU worker remains off.
+Next queued correction review PR46; P09/Windows console follow-up remain queued. No model,
+private input, connector, HTTP or deployment acceptance. No high-risk paths; request auto-
+merge and report repository refusal. Merge records bounded closure. Stop until merged.
