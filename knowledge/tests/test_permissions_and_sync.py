@@ -2,11 +2,13 @@
 plus credential refusal and migrations. Run: TEST_DATABASE_URL=... python -m unittest discover -s tests"""
 import copy
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from shingon_knowledge import NotFound, ScopeError, find_secret, parse, ImportProblem
+from shingon_knowledge import ImportProblem, KnowledgeService, NotFound, ScopeError, find_secret, parse
 from shingon_knowledge.db import migrate
 
 from support import COLLECTIONS, CORPUS, FIXTURES, Oracle, ServiceTestCase
@@ -177,3 +179,58 @@ class AuthoritativeListings(ServiceTestCase):
         with self.assertRaises(TypeError):
             self.kb.sync('run-6', CORPUS, [])  # pylint: disable=missing-kwoa
         self.assertEqual(self.counts(), before)
+
+
+class OriginalCleanup(ServiceTestCase):
+    """Codex review KB-R7: a stored original that cannot be deleted (Windows refuses while any process holds it open)
+    stays revoked, stays tracked, is reported as pending rather than deleted, and goes on a later sync, even after a
+    restart. Linux lets root delete an open file, so the refusal is simulated where the service removes the file."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.kb.sync('run-1', CORPUS, cls.manifest['sources'], complete=COLLECTIONS)
+
+    def stored(self, key):
+        return Path(self.kb.db.execute('SELECT v.original_path FROM versions v JOIN sources s ON s.id = v.source_id '
+                                       'WHERE s.key = %s ORDER BY v.n DESC LIMIT 1', (key,)).fetchone()[0])
+
+    def outcomes(self, run):
+        return [e['outcome'] for e in self.kb.import_status(run)]
+
+    def test_a_held_original_is_revoked_now_and_deleted_once_released(self):
+        path = self.stored('birch/staff-handbook.md')
+        held = PermissionError(13, 'The process cannot access the file because it is being used by another process')
+        with mock.patch('shingon_knowledge.service.os.remove', side_effect=held):
+            out = self.kb.sync('run-held', CORPUS, [], complete=['birch-handbook'])
+        self.assertEqual(out['deleted'], 1)
+        self.assertTrue(path.exists(), 'the refusal left the file on disk')
+        self.assertEqual(self.kb.search(self.creds['bella'], 'mileage pence per mile')['results'], [])
+        with self.assertRaises(NotFound):
+            self.kb.original(self.creds['bella'], 'birch-handbook', 'birch/staff-handbook.md', 1)
+        self.assertEqual(self.outcomes('run-held'), ['deleted', 'cleanup-pending'])
+        [pending] = self.kb.cleanup_status()
+        self.assertEqual((pending['key'], pending['version']), ('birch/staff-handbook.md', 1))
+        self.assertIn('PermissionError', pending['error'])
+        # A restart: a new service on the same database finds the pending file and removes it.
+        restarted = KnowledgeService(self.kb.db, self.kb.originals)
+        self.assertEqual(restarted.purge_originals('run-after'), [])
+        self.assertFalse(path.exists())
+        self.assertEqual(self.outcomes('run-after'), ['purged'])
+        self.assertEqual(self.kb.search(self.creds['bella'], 'mileage pence per mile')['results'], [], 'still deleted')
+
+    def test_a_later_sync_retries_and_an_unheld_original_goes_at_once(self):
+        logging, errors = self.stored('standards/logging.md'), self.stored('standards/api-errors.md')
+        keep = [s for s in self.manifest['sources'] if s['collection'] == 'standards' and s['key'] not in
+                ('standards/logging.md', 'standards/api-errors.md')]
+        real = os.remove
+        held = lambda p: (_ for _ in ()).throw(PermissionError(13, 'in use')) if str(p) == str(logging) else real(p)  # noqa: E731
+        with mock.patch('shingon_knowledge.service.os.remove', side_effect=held):
+            self.kb.sync('run-mixed', CORPUS, keep, complete=['standards'])
+        self.assertFalse(errors.exists(), 'nothing held it, so it went in the same sync')
+        self.assertTrue(logging.exists())
+        self.assertEqual(sorted(self.outcomes('run-mixed')).count('purged'), 1)
+        self.assertEqual(self.kb.sync('run-retry', CORPUS, keep, complete=['standards'])['deleted'], 0)
+        self.assertFalse(logging.exists(), 'the next sync retried the held file')
+        self.assertIn('purged', self.outcomes('run-retry'))
+        self.assertEqual(self.kb.cleanup_status(), [])

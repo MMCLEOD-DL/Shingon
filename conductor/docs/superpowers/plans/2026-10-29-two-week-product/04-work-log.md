@@ -1589,3 +1589,34 @@ Codex review status: KB-R5 (PR #44, merged) and KB-R6 (this PR) await re-review,
 Live / fake / skipped / unrun: real PostgreSQL with the synthetic corpus; no HTTP layer.
 Reviewer disposition and reviewed SHA: re-review requested at the commit below.
 ```
+
+### 30 October 2026 — Claude task 25 (claude-lane): durable cleanup of deleted originals (KB-R7)
+
+```
+Packet/subpacket: K-track contract. Codex review reviews/2026-10-30-codex-review-kb-sync.md, KB-R7 [P2].
+Owner and reviewer: Claude; reviewer Codex.
+Status: IN_REVIEW.
+Baseline SHA: 4d1893a.
+Owned files: knowledge/src/shingon_knowledge/{service.py (_delete, _purge, purge_originals, cleanup_status),
+  migrations/003_original_cleanup.sql (new)}; knowledge/tests/test_permissions_and_sync.py;
+  conductor/docs/knowledge-base/retrieval-contract.md (§8); this ledger.
+What now works:
+  Deletion revokes at once, in its transaction. The stored files are then removed one by one. A file the disk
+    refuses keeps its path and a durable purge_pending mark, with the reason, and is logged as cleanup-pending, not
+    deleted. Every later sync and purge_originals() retries, across restarts, and logs purged when the file is gone.
+    A deleted source is never reactivated or served while its file waits.
+  The deleted event no longer claims the file was deleted. cleanup_status() lists what is still on disk.
+  Ledger: also restores the task 23 entry and Codex's PR41 claim, handoff and submission entries, which the PR45
+    merge damaged (separate commit).
+Checks (cloud Linux, Python 3.13 unittest, PostgreSQL 16 throwaway), from knowledge/:
+  python3 -m unittest discover -s tests: 42 passed.
+  New (Windows' refusal simulated at os.remove, because root on Linux can delete an open file):
+    - a held original: revoked, search and original denied, file kept, cleanup-pending logged; a new service on the
+      same database (a restart) purges it;
+    - a mixed delete: the unheld file goes at once, the held one on the next sync, which deletes no sources.
+  The old service, with the refusal simulated the same way: reported deleted=1 with only a 'deleted' event, file
+    left on disk, retry deleted=0, file still there. That is Codex's finding.
+Not run here: Codex's kb-sync-review.py needs native Windows to hold a file open.
+Live / fake / skipped / unrun: real PostgreSQL and filesystem; Windows file locking simulated, not run.
+Reviewer disposition and reviewed SHA: re-review requested at the commit below.
+```
