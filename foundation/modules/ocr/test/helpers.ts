@@ -368,6 +368,20 @@ export function textWithPicturePdf(kind: 'painted' | 'unused' | 'inline'): Buffe
     textStream(draw), ...(kind === 'inline' ? [] : [jpegObject()])]);
 }
 
+/**
+ * Codex review P02-R3: one text page with `Total GBP 10.00` and a 1×1 inline image whose header has `padding` extra
+ * spaces after BI (5,000 once hid it from a 4,096-character lookahead). `filtered` names a Flate filter for the image
+ * data; `flate` compresses the whole content stream.
+ */
+export function paddedInlinePicturePdf(opts: { padding: number; filtered?: boolean; flate?: boolean }): Buffer {
+  const image = opts.filtered ? `/W 1 /H 1 /CS /G /BPC 8 /F /Fl ID ${deflateSync(Buffer.from([0x80])).toString('latin1')}` : '/W 1 /H 1 /CS /G /BPC 8 ID \x80';
+  const content = Buffer.from(`q 10 0 0 10 10 780 cm BI${' '.repeat(opts.padding + 1)}${image} EI Q BT /F1 12 Tf 10 760 Td (Total GBP 10.00) Tj ET`, 'latin1');
+  const data = opts.flate ? deflateSync(content) : content;
+  return pdfOf(['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [4 0 R] /Count 1 >>', FONT,
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /Font << /F1 3 0 R >> >> /Contents 5 0 R >>',
+    Buffer.concat([Buffer.from(`<< /Length ${String(data.length)}${opts.flate ? ' /Filter /FlateDecode' : ''} >>\nstream\n`, 'latin1'), data, Buffer.from('\nendstream', 'latin1')])]);
+}
+
 /** One text page (`Total GBP 10.00`) and one page with nothing on it. */
 export function blankPagePdf(): Buffer {
   const page = (contents: number): string => `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /Font << /F1 3 0 R >> >> /Contents ${String(contents)} 0 R >>`;
