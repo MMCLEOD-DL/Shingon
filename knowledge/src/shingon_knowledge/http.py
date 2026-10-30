@@ -1,7 +1,8 @@
 """The HTTP API (K6): retrieval-contract.md v1 over HTTP, under /kb/v1, on loopback or a private network only.
 
 Api.handle() is the whole behaviour and has no socket in it; serve() puts it behind Python's threading HTTP server.
-Every request gets its own database connection, a 5-second statement timeout and the service's one-snapshot reads.
+Every request gets its own database connection, one 5-second budget for all its database work, and the service's
+one-snapshot reads.
 Every JSON body is built and checked by contract.py before it is sent; a body that fails its check is never sent (the
 caller gets 503 and the server log the reason). Nothing from an exception reaches a caller.
 
@@ -35,7 +36,8 @@ from .service import KnowledgeService, NotFound
 log = logging.getLogger('shingon_knowledge.http')
 
 BASE = '/kb/v1'
-STATEMENT_TIMEOUT_MS = 5000
+REQUEST_SECONDS = 5.0  # retrieval-contract.md §4: a request returns or fails within this, from its arrival
+ASCII_DIGITS = re.compile(r'[0-9]+')
 BAD_ESCAPE = re.compile(r'%(?![0-9A-Fa-f]{2})')
 JSON_HEADERS = {'Content-Type': 'application/json; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store'}
 
@@ -69,7 +71,9 @@ class RateLimiter:
 
 
 class Api:
-    def __init__(self, connect: Callable[[], Db], originals: Path, *, limiter: RateLimiter | None = None,
+    """`connect(timeout=seconds)` opens a database connection that gives up after `timeout`: the request's budget left."""
+
+    def __init__(self, connect: Callable[..., Db], originals: Path, *, limiter: RateLimiter | None = None,
                  wall: Callable[[], float] = time.time):
         self.connect, self.originals, self.limiter, self.wall = connect, originals, limiter or RateLimiter(), wall
 
@@ -77,12 +81,13 @@ class Api:
         """One request. `headers` is case-insensitive (an http.client.HTTPMessage or similar); `body(n)` reads n bytes."""
         sent_id = headers.get('X-Request-Id')
         request_id = sent_id if sent_id and contract.REQUEST_ID.match(sent_id) else f'kb-{secrets.token_hex(8)}'
+        deadline = time.monotonic() + REQUEST_SECONDS
         try:
-            return self._route(method, target, headers, body, request_id)
+            return self._route(method, target, headers, body, request_id, deadline)
         except _Refusal as r:
             return self._error(r.code, r.request_id or request_id, r.retry_after)
 
-    def _route(self, method, target, headers, body, request_id) -> Response:
+    def _route(self, method, target, headers, body, request_id, deadline) -> Response:
         path, _, query = target.partition('?')
         if not path.startswith(BASE + '/') or BAD_ESCAPE.search(path):
             raise _Refusal('not-found' if not BAD_ESCAPE.search(path) else 'bad-request')
@@ -93,13 +98,15 @@ class Api:
         if any(not p for p in parts):
             raise _Refusal('not-found')
         if (method, parts) == ('GET', ['health']):
-            return self._with_db(lambda kb: self._json(contract.check_health_body, kb.health(), request_id, status=200))
+            return self._with_db(lambda kb: self._json(contract.check_health_body, kb.health(), request_id, status=200),
+                                 None, deadline)
         payload = None
         if method == 'POST':
             payload = self._read_json(headers, body)
             request_id = payload.get('clientRequestId', request_id) if isinstance(payload, dict) and \
                 isinstance(payload.get('clientRequestId'), str) and contract.REQUEST_ID.match(payload['clientRequestId']) else request_id
-        return self._with_db(lambda kb: self._authorised(kb, method, parts, query, headers, payload, request_id), request_id)
+        return self._with_db(lambda kb: self._authorised(kb, method, parts, query, headers, payload, request_id),
+                             request_id, deadline)
 
     def _authorised(self, kb, method, parts, query, headers, payload, request_id) -> Response:
         try:
@@ -153,27 +160,30 @@ class Api:
         return Response(200, headers, file=f)
 
     def _read_json(self, headers, body):
-        if headers.get('Transfer-Encoding'):
+        get_all = getattr(headers, 'get_all', None)
+        lengths = (get_all('Content-Length') or []) if get_all else [v for v in [headers.get('Content-Length')] if v is not None]
+        if headers.get('Transfer-Encoding') or len(lengths) != 1 or not ASCII_DIGITS.fullmatch(lengths[0]):
             raise _Refusal('bad-request')
-        length = headers.get('Content-Length')
-        if length is None or not length.isdigit():
-            raise _Refusal('bad-request')
-        if int(length) > contract.MAX_REQUEST_BYTES:
+        # Compared as text before conversion (Codex review K6-H1): str.isdigit() admits non-ASCII digits that int()
+        # refuses, and int() refuses very long numerals; either escaped as a dropped connection instead of an answer.
+        digits = lengths[0].lstrip('0') or '0'
+        if len(digits) > len(str(contract.MAX_REQUEST_BYTES)) or int(digits) > contract.MAX_REQUEST_BYTES:
             raise _Refusal('too-large')
         try:
-            return json.loads(body(int(length)).decode('utf-8'), parse_constant=_no_constant)
+            return json.loads(body(int(digits)).decode('utf-8'), parse_constant=_no_constant)
         except (UnicodeDecodeError, ValueError):
             raise _Refusal('bad-request') from None
 
-    def _with_db(self, work, request_id=None) -> Response:
+    def _with_db(self, work, request_id, deadline) -> Response:
         try:
-            db = self.connect()
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise TimeoutError('the request used its time budget before reaching the database')
+            db = _Budgeted(self.connect(timeout=left), deadline)
         except Exception:  # noqa: BLE001 - any failure to reach the index is the same outage to the caller
             log.exception('503 %s: no database connection', request_id)
             raise _Refusal('index-unavailable', request_id) from None
         try:
-            db.execute(f'SET statement_timeout = {STATEMENT_TIMEOUT_MS}')
-            db.commit()
             return work(KnowledgeService(db, self.originals))
         except _Refusal:
             raise
@@ -200,6 +210,25 @@ class Api:
         if retry_after is not None:
             headers['Retry-After'] = str(retry_after)
         return Response(status, headers, json.dumps(body, ensure_ascii=False).encode())
+
+
+class _Budgeted(Db):
+    """One deadline over all of a request's database work (Codex review K6-H2). Before each statement the server's
+    statement_timeout is set to what is left of the budget, so waits in authentication and retrieval add up to at most
+    REQUEST_SECONDS instead of each getting a fresh allowance; past the deadline no statement is sent. The server cancels
+    a statement that runs out, and the connection's socket timeout (set at connect) bounds a server that stops
+    answering. SET takes no snapshot, so it may come before SET TRANSACTION ISOLATION LEVEL."""
+
+    def __init__(self, db: Db, deadline: float):
+        super().__init__(db.conn)
+        self.deadline = deadline
+
+    def execute(self, sql: str, params=None):
+        left_ms = math.floor((self.deadline - time.monotonic()) * 1000)
+        if left_ms < 1:
+            raise TimeoutError('the request used its time budget')
+        super().execute(f'SET statement_timeout = {left_ms}')
+        return super().execute(sql, params)
 
 
 class _Refusal(Exception):

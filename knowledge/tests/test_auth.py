@@ -92,6 +92,21 @@ class Credentials(ServiceTestCase):
         # Not even after it has been tidied away, while it is unexpired.
         self.refused(self.app, a, now=NOW + 60)
 
+    def test_a_user_id_that_is_not_database_text_is_refused_like_any_other(self):
+        # Codex review K6-A1: correctly signed, but NUL or a lone surrogate cannot be PostgreSQL text.
+        for user in ('alice\x00suffix', 'alice\ud800'):
+            with self.subTest(user=ascii(user)):
+                nonce = f'bad-user-{len(user)}-0123456789'
+                self.refused(self.app, self.assertion(user, nonce=nonce))
+                self.assertEqual(self.db.execute('SELECT count(*) FROM assertion_nonces WHERE nonce = %s', (nonce,)).fetchone()[0], 0,
+                                 'no nonce consumed')
+                self.assertEqual(self.db.execute('SELECT 1').fetchone()[0], 1, 'the connection still answers')
+                self.db.commit()
+                self.assertEqual(self.login(self.app, self.assertion('alice')).principal, 'alice', 'and still authenticates')
+        with self.db.transaction():
+            self.db.execute("INSERT INTO principals VALUES ('acme', 'zoë') ON CONFLICT DO NOTHING")
+        self.assertEqual(self.login(self.app, self.assertion('zoë')).principal, 'zoë', 'valid Unicode ids still work')
+
     def test_revocation_takes_effect_on_the_next_request(self):
         token = auth.issue_project_credential(self.db, 'conductor:short-lived', ['standards'])
         self.login(token)

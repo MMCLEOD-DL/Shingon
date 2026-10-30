@@ -120,7 +120,7 @@ def start_api(test: type, *, limiter=None, connect_db=None):
     from shingon_knowledge.http import Api, make_server
     u = urlparse(admin_url())
     url = urlunparse(u._replace(path='/' + test.dbname))
-    api = Api(connect_db or (lambda: connect(url)), test.kb.originals, limiter=limiter)
+    api = Api(connect_db or (lambda timeout: connect(url, timeout=timeout)), test.kb.originals, limiter=limiter)
     server = make_server(api, '127.0.0.1', 0)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server, server.server_address[1]

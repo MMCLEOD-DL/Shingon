@@ -29,7 +29,7 @@ from shingon_knowledge.http import RateLimiter
 from support import COLLECTIONS, CORPUS, ApiClient, ServiceTestCase, issue_http_callers, start_api
 
 
-def _unreachable():
+def _unreachable(timeout):
     raise ConnectionRefusedError('the test says the database is down')
 
 FILE = Path(__file__).resolve().parents[1] / 'contract' / 'kb-contract-v1.json'

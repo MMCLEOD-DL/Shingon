@@ -26,11 +26,11 @@ from .db import connect, migrate
 from .http import Api, make_server
 
 
-def _db():
+def _db(timeout: float | None = None):
     url = os.environ.get('KB_DATABASE_URL')
     if not url:
         sys.exit('Set KB_DATABASE_URL to the knowledge database (postgres://...).')
-    return connect(url)
+    return connect(url, timeout=timeout)
 
 
 def main(argv: list[str] | None = None) -> int:
