@@ -1223,3 +1223,18 @@ Synthetic/live/unrun: real local HTTP/SSE and Git with fixture workers, no live 
 private input, remote host, deployment or broad Foundation/Conductor suite rerun.
 Next peer reviews: KB retrieval-contract corrections PR31/34; P09 and Windows console
 follow-up remain queued. P02-R3 remains with Claude. Merge accepts this bounded closure.
+
+### Codex task submitted — P04 approval-evidence correction re-review
+
+Date: 30 October 2026. Branch `codex/review-approval-evidence-fix`.
+Last artifact commit: `1f2f2aff6855b178f463a2a40d9230ecd65eef47`.
+PR: https://github.com/MMCLEOD-DL/Shingon/pull/35 (draft opened; ready after this push).
+Evidence: UI 59/59, build, unchanged 19-step real-service journey, independent DOM 3/3,
+and strengthened real-browser race/current-evidence control pass. Same DOM controls fail
+old UI in two cases while positive control passes. Whitespace checks pass.
+Disposition: P04-R1/R2 closed, N6 retained; bounded P04 UI work DONE. P05/P07/P08, live
+inference and deployments remain separate. Only review artifacts and ledger changed.
+Next peer work: KB retrieval-contract corrections PR31/34; P09 and Windows console follow-up
+remain queued, P02-R3 remains with Claude. Merge records this bounded closure.
+No high-risk paths changed; request auto-merge. If GitHub still refuses repository-disabled
+auto-merge or readiness, report the exact state. Stop until this submission is merged.
