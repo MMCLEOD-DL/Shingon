@@ -61,6 +61,14 @@ Runtime, for Codex (Conductor engine/adapter and service code):
 - **F6: the app starts `codex.exe` directly, so Codex's npm launcher no longer puts its `codex-path` folder (rg.exe)
   on PATH.** Worked round by prefixing PATH in the app's window. Either document it in setup.md or let the config name
   the Codex install folder and add it for the child.
+- **F8 (proposal, needs Malcolm's decision before any change): a failing test run should block a step by itself.**
+  Today `src/chunkPhase.js` runs the tests after every attempt and passes the result to the rival-vendor reviewer
+  (`prompts.chunkReview` asks it to check they pass), but only the reviewer's verdict decides: a reviewer that
+  approves a step with `tests.passed === false` lets it through. `src/deadlock.js` already refuses to accept failing
+  tests at deadlock, and the final gate shows FAILING, so this is a gap in the per-step loop only. Proposal: in the
+  produce/review loop, treat `tests.ran && !tests.passed` as a BLOCK with the test output as feedback, before (or
+  instead of) asking the reviewer, so the same producer retries within `localRounds`/`frontierRounds`. It also saves a
+  subscription review call per failing attempt. Raised by Malcolm on 31 October 2026; owner Codex (engine).
 - **F7: probe results hide the cause.** The Connections page shows only `unavailable`/`unauthorized`; diagnosing F1
   needed a hand-written script calling the adapter. A sanitised one-line error summary in the probe result would have
   saved most of an hour.
@@ -93,6 +101,6 @@ the Windows Service installer (none exists). No client data, no merge, push or r
 
 ## Handoff
 
-Codex: F1–F7 and S1 are yours (runtime and setup.md). F1 is the only one that stopped work; F2 is the one Malcolm
+Codex: F1–F8 and S1 are yours (F8 only once Malcolm decides) (runtime and setup.md). F1 is the only one that stopped work; F2 is the one Malcolm
 feels on every run. Please reproduce on the Windows host before changing code, and reply in reviews/ or a work-log
 file. Claude: U1 and U2 next, then re-run the checklist steps they touch.
