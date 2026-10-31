@@ -106,6 +106,17 @@ def authenticate(db: Db, authorization: str | None, assertion: str | None, *, no
     return Credential(name, tenant, _user(db, m.group(1), name, tenant, key, assertion, now), tuple(collections))
 
 
+def _database_text(value: str) -> bool:
+    """PostgreSQL text holds neither NUL nor anything that is not strict UTF-8 (a lone surrogate). Checked before the
+    query (Codex review K6-A1): the driver would otherwise fail on its own error, and a failed encode can leave the
+    connection out of step for the next query."""
+    try:
+        value.encode('utf-8')
+    except UnicodeEncodeError:
+        return False
+    return '\x00' not in value
+
+
 def _user(db: Db, cid: str, name: str, tenant: str, key: str, assertion: str | None, now: float) -> str:
     if not assertion or len(assertion) > MAX_ASSERTION_BYTES or assertion.count('.') != 1:
         raise Unauthenticated(f'{name} sent no well-formed user assertion')
@@ -124,6 +135,8 @@ def _user(db: Db, cid: str, name: str, tenant: str, key: str, assertion: str | N
         raise Unauthenticated(f'{name} sent an expired assertion, or one valid for over {MAX_ASSERTION_SECONDS} s')
     if claims['tenant'] != tenant or not isinstance(user, str) or not isinstance(nonce, str) or not NONCE.match(nonce):
         raise Unauthenticated(f'{name} asserted another tenant, or a malformed user or nonce')
+    if not _database_text(user):
+        raise Unauthenticated(f'{name} asserted a user id that is not valid text')
     with db.transaction():
         if db.execute('SELECT 1 FROM principals WHERE tenant_id = %s AND id = %s', (tenant, user)).fetchone() is None:
             raise Unauthenticated(f'{name} asserted a user unknown to {tenant}')

@@ -50,13 +50,15 @@ class Db:
         self.conn.close()
 
 
-def connect(url: str) -> Db:
-    """Connects from a postgres:// URL (user, password, host, port, database)."""
+def connect(url: str, *, timeout: float | None = None) -> Db:
+    """Connects from a postgres:// URL (user, password, host, port, database). `timeout` bounds connecting and each
+    later wait on the socket, in seconds."""
     u = urlparse(url)
     if u.scheme not in ('postgres', 'postgresql'):
         raise ValueError('Use a postgres:// URL.')
     conn = pg8000.dbapi.connect(user=unquote(u.username or ''), password=unquote(u.password) if u.password else None,
-                                host=u.hostname or 'localhost', port=u.port or 5432, database=(u.path or '/postgres')[1:] or 'postgres')
+                                host=u.hostname or 'localhost', port=u.port or 5432, database=(u.path or '/postgres')[1:] or 'postgres',
+                                timeout=timeout)
     return Db(conn)
 
 

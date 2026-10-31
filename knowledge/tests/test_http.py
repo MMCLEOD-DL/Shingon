@@ -3,15 +3,19 @@ originals, refusing to send a body that breaks the contract, outages, transport 
 The fixtures themselves are produced over HTTP in test_contract_fixtures.py."""
 import json
 import os
+import socket
 import subprocess
 import sys
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
 from urllib.parse import urlparse, urlunparse
 
 from shingon_knowledge import contract
-from shingon_knowledge.http import RateLimiter, check_bind_address
+from shingon_knowledge.db import connect
+from shingon_knowledge.http import REQUEST_SECONDS, RateLimiter, check_bind_address
 from shingon_knowledge.service import KnowledgeService, NotFound
 
 from support import COLLECTIONS, CORPUS, ApiClient, ServiceTestCase, admin_url, issue_http_callers, start_api
@@ -126,6 +130,39 @@ class Http(ServiceTestCase):
                 self.assertEqual(self.error('alice', 'POST', '/search', **kw)[:2], (400, 'bad-request'))
         self.assertEqual(self.error('alice', 'POST', '/search', raw=b'{"query": "%s"}' % (b'x' * contract.MAX_REQUEST_BYTES))[:2],
                          (413, 'too-large'))
+
+    def test_content_length_is_checked_as_ascii_digits_before_conversion(self):
+        # Codex review K6-H1: these used to drop the connection instead of answering.
+        for name, length, expected in (('non-ASCII digit', '\u00b2', (400, 'bad-request')),
+                                       ('5,000 digits', '9' * 5000, (413, 'too-large')),
+                                       ('sign', '+17', (400, 'bad-request'))):
+            with self.subTest(name):
+                self.assertEqual(self.error('alice', 'POST', '/search', raw=b'{}', headers={'Content-Length': length})[:2], expected)
+        body = b'{"query": "mileage"}'
+        self.assertEqual(self.call('alice', 'POST', '/search', raw=body, headers={'Content-Length': f'000{len(body)}'})[0], 200,
+                         'leading zeros are the same number')
+        with socket.create_connection(('127.0.0.1', self.api.port), timeout=10) as s:  # two lengths: which one is the body?
+            s.sendall(b'POST /kb/v1/search HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\nContent-Length: 20\r\n\r\n{}')
+            self.assertTrue(s.recv(100).startswith(b'HTTP/1.1 400 '))
+        self.assertEqual(self.call(None, 'GET', '/health')[0], 200)
+
+    def test_one_time_budget_covers_the_whole_request(self):
+        # Codex review K6-H2: a wait in authentication and another in retrieval used to get 5 seconds each.
+        url = urlunparse(urlparse(admin_url())._replace(path='/' + self.dbname))
+        creds, chunks = connect(url), connect(url)
+        self.addCleanup(chunks.close)
+        self.addCleanup(creds.close)
+        creds.execute('LOCK TABLE credentials IN ACCESS EXCLUSIVE MODE')
+        chunks.execute('LOCK TABLE chunks IN ACCESS EXCLUSIVE MODE')
+        threading.Timer(1.25, creds.rollback).start()
+        started = time.monotonic()
+        with self.assertLogs('shingon_knowledge.http', 'ERROR'):
+            status, code, _ = self.error('alice', 'POST', '/search', body={'query': 'mileage'})
+        elapsed = time.monotonic() - started
+        chunks.rollback()
+        self.assertEqual((status, code), (503, 'index-unavailable'))
+        self.assertLess(elapsed, REQUEST_SECONDS + 0.5, 'one budget for the request, plus a little scheduling')
+        self.assertEqual(self.call('alice', 'POST', '/search', body={'query': 'mileage'})[0], 200, 'and it recovers')
 
     def test_the_rate_limit_is_per_credential_and_user_and_refills(self):
         now = [0.0]
