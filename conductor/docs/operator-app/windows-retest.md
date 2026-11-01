@@ -19,6 +19,9 @@ Windows/Node/CLI versions and local model name. Do not publish credential values
 bootstrap links or raw CLI traces. Run `--version` with each configured executable;
 that proves installation only. The first live run used Codex 0.163.0; record the
 actual version and any change rather than assuming all later versions were tested.
+For local-agent Connections checks, stable 0.163.0 is now the supported minimum.
+Older, unrecognized or prerelease version output stops that check with upgrade/path
+guidance before a model request. A found executable alone is insufficient.
 
 Stop the foreground Conductor app before updating its checkout. Preserve unrelated
 Git edits; update/build with the normal checkout procedure. From `conductor/operator-web`,

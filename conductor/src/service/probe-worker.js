@@ -8,6 +8,16 @@ import { classifyFailure } from '../health.js';
 import { redact } from '../secrets.js';
 import { probeGuidance } from './probe-guidance.js';
 
+// P08 S1: 0.163.0 is Conductor's supported local-harness baseline. This
+// installation check cannot prove model compatibility; that still needs a probe.
+function supportedLocalCodex(stdout) {
+  if (typeof stdout !== 'string' || stdout.length > 256) return false;
+  const match = /^(?:codex(?:-cli)?|OpenAI Codex)[ \t]+v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(stdout.trim());
+  if (!match) return false;
+  const [major, minor, patch] = match.slice(1).map(Number);
+  return [major, minor, patch].every(Number.isSafeInteger) && (major > 0 || minor >= 163);
+}
+
 export async function performProbe({ participant, kind, command = runCommand }) {
   const result = { participantId: participant.name, adapter: participant.adapter.kind,
     executable: 'unknown', authentication: participant.adapter.kind === 'local-agent' ? 'not-applicable' : 'unknown',
@@ -17,6 +27,9 @@ export async function performProbe({ participant, kind, command = runCommand }) 
   if (installed.timedOut) return { ...result, reason: 'timeout', action: 'The CLI did not finish its installation check in time. Check that it starts normally, then retry.' };
   result.executable = installed.code === 0 && !installed.timedOut ? 'found' : 'missing';
   if (result.executable === 'missing') return { ...result, reason: 'not-installed', action: 'Install the supported CLI on this host, then retry.' };
+  if (participant.adapter.kind === 'local-agent' && !supportedLocalCodex(installed.stdout)) {
+    return { ...result, reason: 'version-skew', action: 'Local coding checks require a recognized stable Codex 0.163.0 or later. Check the native executable version, install a supported release if needed, and update its configured path before retrying.' };
+  }
   if (kind === 'installation') return result;
   let dir;
   try {
