@@ -9,6 +9,7 @@ import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import path from 'node:path';
 import { openPrivateCodexHome } from './privateCodexHome.js';
+import { codexSearchEnv } from './codexSearchEnv.js';
 
 // Private homes live outside the temp dir: Codex refuses to install its helper shims under /tmp,
 // and the workspace-write sandbox lets the model write anywhere in /tmp.
@@ -49,7 +50,7 @@ export class CodexAdapter {
       for (const kv of this.extraConfig) args.push('-c', kv);
       args.push('--sandbox', sandbox);
 
-      const env = childEnv({ allow: this.envAllow });
+      const env = codexSearchEnv(this.bin, childEnv({ allow: this.envAllow }));
       if (this.homeConfig != null) {
         privateHome = await openPrivateCodexHome({
           base: codexHomeBase(), config: this.homeConfig,
