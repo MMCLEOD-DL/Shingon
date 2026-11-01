@@ -1,0 +1,7 @@
+# Codex claim — Windows UTF-8 configuration loading (P05/P08 S5)
+
+- Owner Codex; branch `codex/windows-config-bom`, baseline `a1f7445` (PR77 merged including submission `77d2b1a`; all five latest-head checks green; no review comments). Clean checkout before claim.
+- Evidence/priority: first live run S5 records Windows PowerShell 5.1 UTF-8 config output rejected because its leading byte-order mark reaches JSON.parse. The historical workaround is ASCII, which is unsuitable for non-ASCII model/path values. This is a concrete remaining Windows setup defect, independent of live sign-in/UAC acceptance.
+- Narrow shared seam: one config-file JSON reader in `src/config.js`, used by `loadConfig` and owned service setup loading. Strip exactly one leading UTF-8 BOM; preserve JSON/schema validation, embedded string contents and original file bytes. No broad JSON/state/factory parser normalization.
+- Owned paths: config/service config readers, focused config regression, Codex setup/retest docs and work-log records. Preserve Claude checklist/UI/U1/U2 ownership. No credential read/copy, auth/status/model calls, worker operations, policy/deployment or old Agent Mail resumption.
+- Next: reproduce with exact EF BB BF bytes and non-ASCII synthetic values; verify both loading paths, setup save/reload, strict rejection controls and offline home preparation. Submit one focused PR after native checks. Live acceptance remains a separate operator gate.

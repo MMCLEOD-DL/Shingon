@@ -28,6 +28,11 @@ loaded code until restarted.
 
 Check the trusted on-disk config locally:
 
+Use UTF-8, including PowerShell 5.1 `Set-Content -Encoding utf8` if writing it there.
+The participant config readers accept its leading byte-order mark, preserving
+Unicode text. Do not use Windows PowerShell 5.1's default UTF-16 `Out-File` encoding or fall
+back to ASCII for non-ASCII paths/model names (first-run S5).
+
 - Both Codex participants name the actual native executable. Recheck after CLI updates.
 - The local participant keeps its chosen `windowsSandbox`; Windows defaults to
   `elevated`. Remove the obsolete `extraConfig` sandbox workaround if present,
