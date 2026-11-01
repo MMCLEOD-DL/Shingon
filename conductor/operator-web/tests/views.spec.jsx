@@ -144,6 +144,13 @@ describe('other decision kinds use their own choices', () => {
     showRun({ ...fixtures.runningRun, status: 'awaiting-decision', decision: fixtures.fallbackDecision });
     expect(await screen.findByText(/never switches to paid API keys/)).toBeTruthy();
   });
+  test('spending subscription allowance is never the highlighted choice', async () => {
+    showRun({ ...fixtures.runningRun, status: 'awaiting-decision', decision: fixtures.fallbackDecision });
+    const pause = await screen.findByRole('button', { name: 'Pause' });
+    const spend = screen.getByRole('button', { name: 'Use subscriptions' });
+    expect(spend.className).toBe(pause.className);
+    expect(spend.classList.contains('primary')).toBe(false);
+  });
 });
 
 describe('live progress', () => {
@@ -162,6 +169,14 @@ describe('live progress', () => {
     const es = FakeEventSource.all[0];
     for (const e of [...fixtures.events.slice(0, 1), ...fixtures.events.slice(0, 1)]) es.emit(e);
     expect(await screen.findByText('Activity log (1)')).toBeTruthy();
+  });
+  test('the activity log and status line use plain words, not internal step names', async () => {
+    showRun({ ...fixtures.runningRun, phase: 'chunk' });
+    expect(await screen.findByText(/— coding/)).toBeTruthy();
+    const es = FakeEventSource.all[0];
+    es.emit({ ...fixtures.events[0], seq: 1, message: 'chunk', data: { engineType: 'chunk' } });
+    expect((await screen.findAllByText(/Started the next coding step\./)).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/^\s*chunk\s*$/)).toBeNull();
   });
 });
 
