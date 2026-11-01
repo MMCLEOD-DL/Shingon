@@ -5,9 +5,10 @@ import { getRolePreset } from '../roles.js';
 import { makeResult } from '../result.js';
 import { summarizeFailure, isInfrastructureFailure, isContextOverflow } from '../health.js';
 import { childEnv } from '../secrets.js';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import path from 'node:path';
+import { openPrivateCodexHome } from './privateCodexHome.js';
 
 // Private homes live outside the temp dir: Codex refuses to install its helper shims under /tmp,
 // and the workspace-write sandbox lets the model write anywhere in /tmp.
@@ -16,7 +17,8 @@ export function codexHomeBase(env = process.env) {
 }
 
 export class CodexAdapter {
-  constructor({ bin = 'codex', model = null, timeoutMs = 120000, extraConfig = [], sandbox = null, envAllow = [], homeConfig = null } = {}) {
+  constructor({ bin = 'codex', model = null, timeoutMs = 120000, extraConfig = [], sandbox = null, envAllow = [], homeConfig = null, reuseHome = false } = {}) {
+    if (reuseHome && homeConfig == null) throw new Error('Home reuse requires a generated private config');
     this.kind = 'codex';
     this.bin = bin;
     this.model = model;
@@ -24,8 +26,9 @@ export class CodexAdapter {
     this.extraConfig = extraConfig;
     this.sandbox = sandbox;
     this.envAllow = envAllow; // SCRUB_ENV keys this CLI itself needs (the local provider key)
-    // config.toml text for a private, per-call CODEX_HOME; null keeps the user's ~/.codex (frontier auth).
+    // null keeps the user's ~/.codex (frontier auth); local Windows retains setup state.
     this.homeConfig = homeConfig;
+    this.reuseHome = reuseHome;
   }
 
   async run(role, task, context = '', opts = {}) {
@@ -36,7 +39,7 @@ export class CodexAdapter {
       (context ? `\n\n---\nContext:\n${context}` : '');
 
     const outDir = mkdtempSync(path.join(tmpdir(), 'codex-out-'));
-    let home = null;
+    let privateHome = null;
     try {
       const outFile = path.join(outDir, 'last-message.txt');
       const sandbox = opts.write ? 'workspace-write' : (this.sandbox ?? 'read-only');
@@ -48,11 +51,11 @@ export class CodexAdapter {
 
       const env = childEnv({ allow: this.envAllow });
       if (this.homeConfig != null) {
-        const base = codexHomeBase();
-        mkdirSync(base, { recursive: true, mode: 0o700 });
-        home = mkdtempSync(path.join(base, 'home-')); // mkdtemp creates it 0700
-        writeFileSync(path.join(home, 'config.toml'), this.homeConfig, { mode: 0o600 });
-        env.CODEX_HOME = home;
+        privateHome = await openPrivateCodexHome({
+          base: codexHomeBase(), config: this.homeConfig,
+          identity: [this.bin, this.extraConfig], reuse: this.reuseHome, cwd: opts.cwd,
+        });
+        env.CODEX_HOME = privateHome.home;
       }
 
       const { stdout, stderr, code, timedOut } = await runCommand({
@@ -83,8 +86,8 @@ export class CodexAdapter {
         ok: true,
       });
     } finally {
-      rmSync(outDir, { recursive: true, force: true });
-      if (home) rmSync(home, { recursive: true, force: true });
+      try { rmSync(outDir, { recursive: true, force: true }); }
+      finally { if (privateHome) await privateHome.close(); }
     }
   }
 }

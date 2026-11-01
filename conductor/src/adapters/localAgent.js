@@ -14,11 +14,11 @@ const tomlString = (s) => JSON.stringify(String(s)); // JSON escapes are valid T
 
 // The whole config.toml of the local agent's private CODEX_HOME: the operator's own ~/.codex
 // (MCP servers, plugins, project trust, ChatGPT auth) never reaches the local model.
-export function localCodexConfig({ provider, baseUrl, envKey, contextWindow = null, windowsSandbox }) {
+export function localCodexConfig({ provider, baseUrl, envKey, contextWindow = null, windowsSandbox }, platform = process.platform) {
   if (windowsSandbox !== undefined && !['elevated', 'unelevated'].includes(windowsSandbox)) {
     throw new Error('LocalAgentAdapter: windowsSandbox must be elevated or unelevated');
   }
-  const windowsMode = windowsSandbox ?? (process.platform === 'win32' ? 'elevated' : null);
+  const windowsMode = windowsSandbox ?? (platform === 'win32' ? 'elevated' : null);
   const lines = [];
   if (contextWindow != null) lines.push(`model_context_window = ${Number(contextWindow)}`);
   // Private homes do not inherit the operator's Windows sandbox selection.
@@ -58,6 +58,8 @@ export class LocalAgentAdapter {
       // No fixed sandbox: write:true gives workspace-write, write:false read-only (Codex's default rule).
       envAllow: [envKey], // only the Codex harness itself gets the provider key
       homeConfig: localCodexConfig({ provider, baseUrl, envKey, contextWindow, windowsSandbox }),
+      // Codex owns setup markers/secrets under this home; keep them in place.
+      reuseHome: process.platform === 'win32',
     });
   }
 
