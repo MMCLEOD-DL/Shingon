@@ -6,6 +6,7 @@ import { appConfig } from './config.js';
 import { runCommand, killAllChildren } from '../exec.js';
 import { classifyFailure } from '../health.js';
 import { redact } from '../secrets.js';
+import { probeGuidance } from './probe-guidance.js';
 
 export async function performProbe({ participant, kind, command = runCommand }) {
   const result = { participantId: participant.name, adapter: participant.adapter.kind,
@@ -13,6 +14,7 @@ export async function performProbe({ participant, kind, command = runCommand }) 
     endpoint: participant.adapter.kind === 'local-agent' ? 'unknown' : 'not-applicable', agenticExecution: 'unknown',
     checkedAt: new Date().toISOString(), probeKind: kind, reason: null, action: null };
   const installed = await command({ cmd: participant.adapter.bin, args: ['--version'], timeoutMs: 15000 });
+  if (installed.timedOut) return { ...result, reason: 'timeout', action: 'The CLI did not finish its installation check in time. Check that it starts normally, then retry.' };
   result.executable = installed.code === 0 && !installed.timedOut ? 'found' : 'missing';
   if (result.executable === 'missing') return { ...result, reason: 'not-installed', action: 'Install the supported CLI on this host, then retry.' };
   if (kind === 'installation') return result;
@@ -29,18 +31,31 @@ export async function performProbe({ participant, kind, command = runCommand }) 
       : `Reply with exactly this synthetic connection-check text: ${nonce}. Do not use tools or read files.`;
     // Keep a synthetic marker in the directory for human diagnosis, not a secret.
     writeFileSync(path.join(dir, 'README.txt'), 'Disposable Conductor model connection check.\n');
-    const answer = await participant.adapter.run('reviewer', prompt, '', { cwd: dir, write: kind === 'agentic', timeoutMs: 60000 });
+    let answer;
+    try {
+      answer = await participant.adapter.run('reviewer', prompt, '', { cwd: dir, write: kind === 'agentic', timeoutMs: 60000 });
+    } catch (error) {
+      answer = { ok: false, error: typeof error?.message === 'string' ? error.message : '' };
+    }
+    answer ??= { ok: false };
+    let evidence = kind === 'agentic' ? 'file-missing' : 'wrong-reply';
     const good = answer.ok && (kind === 'agentic'
-      ? (() => { try { return readFileSync(path.join(dir, filename), 'utf8').trim() === nonce; } catch { return false; } })()
-      : answer.text?.includes(nonce));
+      ? (() => {
+        try {
+          const matches = readFileSync(path.join(dir, filename), 'utf8').trim() === nonce;
+          evidence = matches ? null : 'file-mismatch';
+          return matches;
+        } catch (error) { evidence = error.code === 'ENOENT' ? 'file-missing' : 'file-unreadable'; return false; }
+      })()
+      : typeof answer.text === 'string' && answer.text.includes(nonce));
     if (good) {
       if (participant.adapter.kind === 'local-agent') result.endpoint = 'reachable';
       else result.authentication = 'verified';
       if (kind === 'agentic') result.agenticExecution = 'verified';
     } else {
-      result.reason = answer.failure === 'timeout' ? 'timeout' : classifyFailure(answer.error ?? '');
+      result.reason = answer.failure === 'timeout' ? 'timeout' : classifyFailure(typeof answer.error === 'string' ? answer.error : '');
       if (result.reason === 'unauthorized') result.authentication = 'required';
-      result.action = 'Check the installed CLI account, selected model and endpoint; retry explicitly. This check may use subscription allowance.';
+      result.action = probeGuidance({ reason: result.reason, evidence: answer.ok ? evidence : null, error: answer.error });
     }
     return result;
   } finally { if (dir) rmSync(dir, { recursive: true, force: true }); }

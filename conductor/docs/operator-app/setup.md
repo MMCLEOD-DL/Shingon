@@ -88,6 +88,19 @@ Initial browser setup accepts a local endpoint/model and creates default Claude/
 
 ## Subscription use and model checks
 
+Failed connection checks keep their short reason code and show a safe explanation
+under **What to do**. The explanation distinguishes missing/wrong/unreadable
+verification files, an unexpected challenge response, time limits, sign-in and
+usage limits, configuration/version problems, and recognized sandbox/access
+refusals. Missing file evidence suggests checking workspace-write permission;
+it does not prove the sandbox was the cause. Installation timeouts leave executable
+status unknown. Unexpected adapter failures receive generic safe guidance.
+
+These explanations come from a fixed catalog. Raw CLI output, model replies,
+paths, account details, endpoint URLs and challenge values are not returned to the
+browser. Unknown failures remain general rather than echoing potentially private
+diagnostics. Successful checks keep their existing verification requirements.
+
 Installation checks only run `--version`. An authenticated probe sends a fresh synthetic challenge through the selected CLI. An agentic probe asks the model to write a fresh nonce file in a disposable directory and verifies the result. The last two can use subscription allowance and must be explicitly chosen. No paid API fallback is provided by the local app. Worker environments remove ANTHROPIC_API_KEY and OPENAI_API_KEY so these do not silently switch the subscription CLIs to API billing; normal CLI account stores and supported subscription OAuth remain on the host. The actual providers' entitlement/rate limits still apply.
 
 Existing local-provider credentials remain in the host environment using the configured envKey; they are not submitted through the browser or committed to Git. Do not copy raw subscription session files. If headless sign-in is unavailable, sign in using the supported native CLI flow on the service machine. A found executable is never labelled authenticated automatically.
