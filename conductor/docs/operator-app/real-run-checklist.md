@@ -109,7 +109,7 @@ Create `C:\conductor-trial\config.json`, using the `.exe` paths from step 2. In 
       "roles": ["author", "reviewer"], "capabilities": { "is_agentic": true, "can_edit_files": true } },
     { "name": "local", "adapter": "local-agent", "bin": "<codex.exe path>", "model": "<your local model>",
       "baseUrl": "http://192.168.1.110:8081/v1", "contextWindow": 32768,
-      "extraConfig": ["windows.sandbox=elevated"],
+      "windowsSandbox": "elevated",
       "roles": ["grunt"], "capabilities": { "is_agentic": true, "can_edit_files": true } }
   ],
   "routing": { "allowApi": false, "localDown": "ask" },
@@ -119,7 +119,7 @@ Create `C:\conductor-trial\config.json`, using the `.exe` paths from step 2. In 
 
 Set the local model here, not in the browser: the browser's settings page accepts only `https` or `localhost` model addresses, and LocalAI is on another machine over plain `http`. That is a deliberate guard, not a fault.
 
-*Learned 31 Oct:* the `extraConfig` line is a **workaround for a Conductor defect** (Codex is fixing it). Conductor runs the local model's Codex with a private settings folder, which lacks the Windows sandbox setting your own Codex saved (`[windows] sandbox = "elevated"` in `%USERPROFILE%\.codex\config.toml`). Without it, every command the local model tries is refused as read-only, so it cannot write files. Use whatever value your own `config.toml` has.
+*Learned 31 Oct:* Conductor runs the local model's Codex with a private settings folder, which did not have the Windows sandbox setting your own Codex saved (`[windows] sandbox = "elevated"` in `%USERPROFILE%\.codex\config.toml`), so every command the local model tried was refused as read-only. Fixed on 1 November (P08 F1): `"windowsSandbox"` sets it, and `elevated` is the default on Windows, so the line above is optional. Use `"unelevated"` if you have chosen Codex's unelevated mode. If your config still has the first run's `"extraConfig": ["windows.sandbox=elevated"]` workaround, remove it: it overrides this field. With `elevated`, Windows may ask "Do you want to allow this app to make changes?" during local-model runs (F2, still open).
 
 ## 6. Start the app
 
