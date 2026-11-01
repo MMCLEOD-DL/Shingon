@@ -11,6 +11,26 @@ This is a backend candidate for Claude's operator UI, not the finished graphical
 
 The target selected by Malcolm is **Windows browser + native Windows service process**. Linux engineering tests have run; native Windows sign-in, process-tree cancellation, filesystem behaviour and installation are unverified. No WSL dependency is intended: configured tests use cmd.exe on Windows and sh on POSIX. Cancellation uses taskkill by owned PID/tree on Windows. Use vendor-supported native CLI executables; npm .cmd shims are not established as compatible with this shell-free subprocess launcher. Do not report Windows support as accepted until the checks below pass.
 
+### Local-agent Windows sandbox
+
+On native Windows, the local participant's private Codex configuration now sets
+`[windows] sandbox = "elevated"` by default. It does not read or copy your personal
+Codex settings. Codex may request administrator approval to set up that sandbox.
+If you have chosen Codex's unelevated fallback, set `"windowsSandbox": "unelevated"`
+on the `local-agent` participant in the on-disk JSON config. The only accepted
+values are `elevated` and `unelevated`. Other hosts omit this setting by default.
+See the [official Windows sandbox configuration](https://developers.openai.com/codex/config-basic).
+
+Remove the first-run checklist's `extraConfig` sandbox workaround when using this
+field: existing `extraConfig` CLI overrides still take precedence over the private
+config file. Coding requests still use `workspace-write`; reviews use `read-only`.
+The sandbox mode selects the Windows implementation and does not grant full access.
+
+This corrects PR66's missing private-home setting (F1). Private homes remain
+temporary per call, so repeated administrator prompts (F2) are still an open
+acceptance item. A stand-in CLI checks the generated config; the corrected build
+still needs a real local-model write and repeated-run check on Windows.
+
 ## Run from a checkout
 
 The Conductor root has no third-party runtime dependencies to install. From `conductor/`:

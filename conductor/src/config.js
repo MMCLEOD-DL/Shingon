@@ -17,7 +17,7 @@ export function buildAdapter(spec) {
     case 'codex': return new CodexAdapter({ ...opts, extraConfig: spec.extraConfig });
     case 'local-agent': return new LocalAgentAdapter({ // throws if model missing
       ...opts, provider: spec.provider, baseUrl: spec.baseUrl, contextWindow: spec.contextWindow,
-      extraConfig: spec.extraConfig, envKey: spec.envKey,
+      extraConfig: spec.extraConfig, envKey: spec.envKey, windowsSandbox: spec.windowsSandbox,
     });
     case 'anthropic-api':
     case 'openai-api': {
