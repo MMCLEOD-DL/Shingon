@@ -4,7 +4,7 @@ import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { performProbe } from '../../src/service/probe-worker.js';
 
-const command = async () => ({ code: 0, stdout: '', stderr: '' });
+const command = async () => ({ code: 0, stdout: 'codex-cli 0.163.0\n', stderr: '' });
 const participant = (run, kind = 'codex') => ({ name: 'test', adapter: { kind, bin: 'synthetic', run } });
 test('installation check cannot claim authenticated or agentic execution', async () => {
   const r = await performProbe({ participant: participant(() => assert.fail('No model call for installation probe')), kind: 'installation', command });

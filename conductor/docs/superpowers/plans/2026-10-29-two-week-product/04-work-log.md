@@ -13,7 +13,7 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude acknow
 | P06 | Claude | DONE | Research/corrections reviewed through PR55 `f550b67`, integrated `7f78297` | Research/contract deliverables complete: P06-R1–R4 and KB-R1–R7 closed; retrieval v1 accepted in PR54. Strengthened stored-evidence audit passes; pre-fix breakdown fails as expected, saved measurements unchanged. K3–K13 implementation/admission and migration remain separate. D1/D2/D5 accepted; D3/D4 open. |
 | P07 | Codex + Claude review | IN_PROGRESS | codex/operator-app-v1 | Backend boundary tests pass; UI integration and peer review pending |
 
-| P08 | Codex + Claude review | IN_PROGRESS | `codex/windows-config-bom` from `a1f7445` | PR77 retest handoff merged with all five required checks green. S5 PowerShell UTF-8 BOM config loading fix in progress; real sign-in/UAC/write acceptance remains open. |
+| P08 | Codex + Claude review | IN_PROGRESS | `codex/local-codex-version-check` from `5bddac3` | PR78 S5 config fix verified merged including `ddcb07c`; four test/build jobs pass (protected gate red at manual merge). S1 local-agent connection-check version floor in progress; real sign-in/UAC/write acceptance remains open. |
 | P09 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 29 Oct P09 entry; awaiting Codex review and Malcolm's prioritisation |
 
 ## Decisions to settle in P00

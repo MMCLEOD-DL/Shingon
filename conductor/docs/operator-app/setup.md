@@ -15,6 +15,21 @@ checklist's personal Codex login and manual search-path/diagnostic workarounds.
 
 The target selected by Malcolm is **Windows browser + native Windows service process**. Linux engineering tests have run; native Windows sign-in, process-tree cancellation, filesystem behaviour and installation are unverified. No WSL dependency is intended: configured tests use cmd.exe on Windows and sh on POSIX. Cancellation uses taskkill by owned PID/tree on Windows. Use vendor-supported native CLI executables; npm .cmd shims are not established as compatible with this shell-free subprocess launcher. Do not report Windows support as accepted until the checks below pass.
 
+### Local-agent Codex version
+
+Conductor's supported local-agent harness baseline is stable **Codex 0.163.0** or
+later (first-run S1). Connections checks run `--version` first. A local participant
+with an older, unrecognized or prerelease version gets `version-skew` and fixed
+upgrade/path guidance before any Git or model request. The executable can still
+be labelled found; its endpoint and coding ability stay unknown. Use the actual
+native binary, and update its configured path after a CLI upgrade.
+
+This floor applies to the app's local-agent connection checks. Frontier Codex and
+Claude checks retain their existing behavior, and direct CLI/engine health checks
+are unchanged. Passing the version floor establishes installation compatibility
+only; it does not certify every later release or the configured model. Run the
+explicit authenticated/coding checks when authorized to establish those results.
+
 ### Native Codex search tools
 
 When a configured absolute native Codex executable is under `bin/` (or the older
