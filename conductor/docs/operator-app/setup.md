@@ -11,6 +11,21 @@ This is a backend candidate for Claude's operator UI, not the finished graphical
 
 The target selected by Malcolm is **Windows browser + native Windows service process**. Linux engineering tests have run; native Windows sign-in, process-tree cancellation, filesystem behaviour and installation are unverified. No WSL dependency is intended: configured tests use cmd.exe on Windows and sh on POSIX. Cancellation uses taskkill by owned PID/tree on Windows. Use vendor-supported native CLI executables; npm .cmd shims are not established as compatible with this shell-free subprocess launcher. Do not report Windows support as accepted until the checks below pass.
 
+### Native Codex search tools
+
+When a configured absolute native Codex executable is under `bin/` (or the older
+`codex/` folder), Conductor checks for the installation's adjacent
+`codex-path/rg.exe` on Windows (`codex-path/rg` on POSIX). If that file exists, its
+directory is prepended only to that Codex child's PATH. This applies to both the
+frontier Codex adapter and the local-agent adapter. The app/terminal PATH is not
+changed, and missing helpers, bare commands and other layouts retain their current
+environment. No package search, download or cwd-relative helper lookup occurs.
+
+This covers PR66 F6's reported layout without the manual terminal PATH prefix.
+It does not resolve npm `.cmd` shims or select/update a CLI installation; continue
+to configure the actual native binary. Recheck the configured path after an update.
+The native stand-in test proves child lookup, not real-model tool execution.
+
 ### Local-agent Windows sandbox
 
 On native Windows, the local participant's private Codex configuration now sets

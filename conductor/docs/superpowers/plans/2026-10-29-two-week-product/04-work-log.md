@@ -13,7 +13,7 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude acknow
 | P06 | Claude | DONE | Research/corrections reviewed through PR55 `f550b67`, integrated `7f78297` | Research/contract deliverables complete: P06-R1–R4 and KB-R1–R7 closed; retrieval v1 accepted in PR54. Strengthened stored-evidence audit passes; pre-fix breakdown fails as expected, saved measurements unchanged. K3–K13 implementation/admission and migration remain separate. D1/D2/D5 accepted; D3/D4 open. |
 | P07 | Codex + Claude review | IN_PROGRESS | codex/operator-app-v1 | Backend boundary tests pass; UI integration and peer review pending |
 
-| P08 | Codex + Claude review | IN_PROGRESS | `codex/windows-hidden-children` from `630598d` | PR72 redaction correction merged with green CI; F5 hidden child consoles in progress; real UAC/write acceptance and dedicated frontier sign-in/isolation remain open. |
+| P08 | Codex + Claude review | IN_PROGRESS | `codex/codex-search-path` from `bacb098` | PR73 F5 merged with green CI; F6 adjacent search-tool PATH in progress; real UAC/write acceptance and dedicated frontier sign-in/isolation remain open. |
 | P09 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 29 Oct P09 entry; awaiting Codex review and Malcolm's prioritisation |
 
 ## Decisions to settle in P00
