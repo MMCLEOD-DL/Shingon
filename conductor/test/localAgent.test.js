@@ -94,13 +94,15 @@ test('escapes base_url and rejects provider names that are not bare TOML keys', 
   assert.throws(() => new LocalAgentAdapter({ model: 'm', contextWindow: '32k' }), /contextWindow/);
 });
 
-test('frontier codex keeps the user codex home', async () => {
+test('frontier codex uses retained generated settings without a parent CODEX_HOME', async () => {
   const bin = writeStubCli(mkdtempSync(path.join(tmpdir(), 'la-')), 'codex', HOME_ECHO);
   const prev = process.env.CODEX_HOME;
   delete process.env.CODEX_HOME;
   try {
     const seen = JSON.parse((await new CodexAdapter({ bin }).run('reviewer', 't')).text);
-    assert.equal(seen.home, null);
+    assert.ok(seen.home);
+    assert.match(seen.cfg, /^forced_login_method = "chatgpt"$/m);
+    assert.equal(existsSync(seen.home), true);
   } finally {
     if (prev !== undefined) process.env.CODEX_HOME = prev;
   }

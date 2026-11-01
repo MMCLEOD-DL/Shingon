@@ -108,7 +108,7 @@ test('a second process is excluded and its lease disappears on process death', a
 });
 
 test('persistent reuse cannot accidentally use personal frontier configuration', () => {
-  assert.throws(() => new CodexAdapter({ reuseHome: true }), /generated private config/);
+  assert.throws(() => new CodexAdapter({ homeConfig: null, reuseHome: true }), /generated private config/);
 });
 
 test('repeated persistent local calls retain setup state and refresh generated config', async () => {

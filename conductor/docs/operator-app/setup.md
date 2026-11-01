@@ -51,7 +51,7 @@ and may require setup again. Other hosts keep temporary per-call homes.
 Only one process may use a particular retained home at a time. A concurrent call
 is refused as busy; the operating system releases the lease even if its owner
 crashes. Generated `config.toml` is refreshed before every call. Nothing is copied
-from your personal Codex home, and subscription Codex behavior is unchanged.
+from your personal Codex home. Frontier Codex has its own retained home as described below.
 Codex may retain logs/session metadata and protected sandbox state there; treat
 this as private local state and do not share it or delete it routinely. Stop all
 calls before deliberately clearing the cache; the next run will need setup again.
@@ -60,6 +60,61 @@ The source and stand-in checks establish state retention, not the actual number
 of administrator prompts. The corrected build still needs a real local-model
 write, repeated-run and crash/restart check on Windows. The elevated default is
 unchanged; no automatic switch to the unelevated fallback is made.
+
+### Dedicated frontier Codex sign-in
+
+Frontier `codex` participants now use a retained Conductor home too (PR66 F3/F4).
+Conductor generates its `config.toml`; it does not load or modify your personal
+Codex user config, project-trust entries, or home-scoped MCP/plugin settings.
+It never reads, copies or links existing authentication files. Codex itself owns
+authentication and sandbox setup state in the dedicated home. System/managed
+policy, repository configuration and separately discovered skills still apply.
+
+**Migration requires a one-time ChatGPT sign-in in the dedicated home.** Signing
+in to the ordinary CLI home is insufficient. The supported `CODEX_HOME` variable
+selects both settings and authentication: file credentials live there, and the
+CLI's OS-keyring key is also derived from that home. See the
+[official authentication guide](https://developers.openai.com/codex/auth) and
+[pinned keyring implementation](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/login/src/auth/storage.rs).
+The generated frontier config selects `forced_login_method = "chatgpt"`; it has
+the same elevated Windows sandbox default. Trusted on-disk `extraConfig` overrides
+continue to apply to coding calls. Keep any required runtime settings there.
+
+Stop Conductor runs/probes before signing in. From the same checkout, OS account
+and cache environment as the service, run this preparation command in PowerShell,
+using the service's actual config and frontier participant name:
+
+```powershell
+$prepared = node bin/conductor-codex-home.js --config '<absolute-config.json>' --participant codex | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0 -or -not $prepared.home -or -not $prepared.bin) { throw 'Home preparation failed.' }
+$previousCodexHome = $env:CODEX_HOME
+try {
+    $env:CODEX_HOME = $prepared.home
+    & $prepared.bin login
+} finally {
+    if ($null -eq $previousCodexHome) { Remove-Item Env:CODEX_HOME -ErrorAction SilentlyContinue }
+    else { $env:CODEX_HOME = $previousCodexHome }
+}
+```
+
+Preparation only creates/refreshes generated settings and prints the selected
+home and configured executable as JSON. It runs no CLI, checks no credentials
+and makes no model request; an absent CLI can be prepared but cannot sign in.
+The following `login` is an explicit operator action using Codex's normal browser
+flow. Choose ChatGPT sign-in, then return to Conductor and explicitly run its
+connection checks when ready to use subscription allowance. No credentials go
+through Conductor's browser. The terminal's previous home selection is restored.
+
+The home is stable for the cache location, generated config and configured
+executable, across model/role/extraConfig changes. A different executable path or
+cache location needs its own sign-in. Each call refreshes generated settings;
+do not customize the home config directly. State is separate from local-provider
+homes and personal settings. Keep it private and persistent; clearing it removes
+its sign-in/setup state. Calls sharing a home are refused as busy until the lease
+is released. On Windows/Linux the lease uses a named pipe/abstract socket; other
+hosts use a loopback port and fail closed on collisions. Native Windows stand-ins
+verify these seams. Actual ChatGPT sign-in, Codex policy/plugin loading and
+repeated UAC/write behavior still require live acceptance on the corrected build.
 
 ## Run from a checkout
 
@@ -101,7 +156,7 @@ paths, account details, endpoint URLs and challenge values are not returned to t
 browser. Unknown failures remain general rather than echoing potentially private
 diagnostics. Successful checks keep their existing verification requirements.
 
-Installation checks only run `--version`. An authenticated probe sends a fresh synthetic challenge through the selected CLI. An agentic probe asks the model to write a fresh nonce file in a disposable directory and verifies the result. The last two can use subscription allowance and must be explicitly chosen. No paid API fallback is provided by the local app. Worker environments remove ANTHROPIC_API_KEY and OPENAI_API_KEY so these do not silently switch the subscription CLIs to API billing; normal CLI account stores and supported subscription OAuth remain on the host. The actual providers' entitlement/rate limits still apply.
+Installation checks only run `--version`. An authenticated probe sends a fresh synthetic challenge through the selected CLI. An agentic probe asks the model to write a fresh nonce file in a disposable directory and verifies the result. The last two can use subscription allowance and must be explicitly chosen. No paid API fallback is provided by the local app. Worker environments remove ANTHROPIC_API_KEY and OPENAI_API_KEY so these do not silently switch the subscription CLIs to API billing. Claude uses its supported host account store; frontier Codex uses the dedicated sign-in above. The actual providers' entitlement/rate limits still apply.
 
 Existing local-provider credentials remain in the host environment using the configured envKey; they are not submitted through the browser or committed to Git. Do not copy raw subscription session files. If headless sign-in is unavailable, sign in using the supported native CLI flow on the service machine. A found executable is never labelled authenticated automatically.
 

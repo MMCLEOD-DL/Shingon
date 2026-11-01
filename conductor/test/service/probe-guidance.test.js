@@ -52,6 +52,16 @@ test('a version-check timeout remains unknown and never calls a model', async ()
   assert.match(result.action, /installation check/);
 });
 
+test('Codex authentication guidance points to its dedicated home; Claude keeps its supported login flow', async () => {
+  const run = async () => ({ok:false, error:'401 unauthorized'});
+  const codex = await probe(run, 'authenticated');
+  assert.match(codex.action, /dedicated Conductor Codex home/);
+  const p = participant(run); p.adapter.kind = 'claude-code';
+  const claude = await performProbe({participant:p, kind:'authenticated', command});
+  assert.match(claude.action, /supported login flow/);
+  assert.doesNotMatch(claude.action, /Codex home/);
+});
+
 test('adapter exceptions become safe diagnostics rather than raw worker failures', async () => {
   const result = await probe(async () => {throw new Error('Private local Codex home is busy or unavailable; SYNTHETIC_PRIVATE_TOKEN');});
   assert.match(result.action, /settings.*busy or unavailable/);

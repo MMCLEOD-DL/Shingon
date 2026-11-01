@@ -55,7 +55,7 @@ export async function performProbe({ participant, kind, command = runCommand }) 
     } else {
       result.reason = answer.failure === 'timeout' ? 'timeout' : classifyFailure(typeof answer.error === 'string' ? answer.error : '');
       if (result.reason === 'unauthorized') result.authentication = 'required';
-      result.action = probeGuidance({ reason: result.reason, evidence: answer.ok ? evidence : null, error: answer.error });
+      result.action = probeGuidance({ reason: result.reason, evidence: answer.ok ? evidence : null, error: answer.error, adapter: participant.adapter.kind });
     }
     return result;
   } finally { if (dir) rmSync(dir, { recursive: true, force: true }); }

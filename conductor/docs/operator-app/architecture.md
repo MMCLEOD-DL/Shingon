@@ -28,6 +28,14 @@ Loopback alone is insufficient against malicious web pages. Exact Host/origin/fe
 
 All artifacts/decisions are bounded. API responses never dump the process environment or subscription session files. Explicit probe/run workers drop API-billing key variables while preserving supported CLI subscription authentication. Current local credentials use existing envKey bindings. User-triggered authenticated probes may consume subscription allowance; merely opening setup does not run them.
 
+Frontier Codex uses a retained, generated Conductor `CODEX_HOME`, with a separate
+supported operator-run ChatGPT login. Personal Codex home settings and auth are
+never copied into it. The offline `conductor-codex-home.js` command selects the
+same home as adapter calls without launching Codex or inspecting credentials.
+Generated config is refreshed under an OS-owned lease; authentication/setup state
+survives calls and process death. System/managed/project configuration and other
+skill discovery remain Codex's responsibility. See the migration steps in `setup.md`.
+
 ## Native Windows seam changes
 
 The old test command always used `sh`. It now chooses cmd.exe on Windows with AutoRun disabled, while retaining the POSIX shell elsewhere. Child-tree cancellation uses taskkill against the tracked numeric PID on Windows, with existing process-group handling on POSIX. These are small shared engine changes requiring reciprocal review and native-host verification. Vendor-supported native CLI executables are the intended target; npm .cmd shim support is unverified.

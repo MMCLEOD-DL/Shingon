@@ -1,0 +1,7 @@
+# Codex claim — frontier Codex home isolation (P08 F3/F4)
+
+- Owner: Codex; branch `codex/frontier-codex-home`, baseline `2988702` (PR75 merged, including `38c75dc`). Working tree clean on claim. PR75 has no review comments.
+- Scope: default frontier Codex runs use a retained Conductor-generated settings home, separate from personal/local-provider homes. Provide an offline home-preparation command and a supported operator-run ChatGPT sign-in procedure. Minimal shared seams: `src/adapters/codex.js`, `privateCodexHome.js`, `src/config.js`, their tests; owned CLI/docs and narrowly relevant service guidance if needed. Claude U1/U2 and UI ownership preserved.
+- Reproduce first with a native Node stand-in and synthetic personal settings/auth sentinels; verify the new home selection, retention, configuration refresh, preparation/runtime agreement and refusal cases. No personal credential read/copy, Codex login/status, model calls, worker operations, policy changes or Agent Mail resumption.
+- Source: official Codex authentication docs and pinned CLI storage implementation establish that `CODEX_HOME` affects both configuration and authentication, including the keyring namespace. A new home needs its own supported login; existing credentials will not be migrated. System/managed/project configuration remains applicable.
+- Next: add regression, observe baseline failure, implement one focused PR. Native subscription sign-in and actual model/sandbox acceptance stay with Malcolm after merge and applicable permission.
