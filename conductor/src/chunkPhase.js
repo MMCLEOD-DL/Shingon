@@ -9,6 +9,7 @@ import { askUser } from './askUser.js';
 import { checkHealth } from './health.js';
 import { redact } from './secrets.js';
 import { LOCAL_DOWN_WARNING } from './team.js';
+import { makeResult } from './result.js';
 
 // Local failures that the same prompt to the same backend cannot fix: go to the fallback now.
 export const LOCAL_FATAL = new Set(['infrastructure', 'timeout', 'context-overflow', 'no-participant']);
@@ -124,6 +125,15 @@ async function runChunkFrom(ctx, chunk, index, base, reset) {
     };
   };
   const review = async (a) => {
+    // Executed failures are objective evidence, not a reviewer preference.
+    // Reuse the normal bounded retry/fallback loop without spending a review call.
+    if (a.tests?.ran && a.tests.passed === false) {
+      log.event('chunk-tests-failed', { index, code: a.tests.code });
+      return makeResult({
+        verdict: { decision: 'BLOCK', reason: 'The step tests failed; fix them before review.' },
+        text: prompts.formatTests(a.tests),
+      });
+    }
     const rv = await callAgent(ctx, reviewer, 'reviewer',
       prompts.chunkReview({ request, plan, chunk, index, total, diff: a.diff, tests: a.tests, base }), readOpts);
     noteSameVendor(ctx, { phase: 'chunk', index, producerVendor: a.vendor, result: rv, participant: reviewer });

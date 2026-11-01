@@ -252,18 +252,26 @@ test('a failed rollback is recorded in chunk-error and the original error is ret
   assert.equal(ev.resetError, 'reset broke');
 });
 
-test('tests rerun on round 2 and FAILED output reaches the reviewer', async () => {
+test('tests rerun each round and FAILED output reaches the producer before rival review', async () => {
   const reviews = [block('add more'), approve()];
   const t = team({
     local: (role, task, c, opts, n) => { writeFileSync(path.join(opts.cwd, `try${n}.txt`), 'x'); return { text: 'ok' }; },
     reviewer: () => reviews.shift(),
   });
-  const ctx = await ctxFor(t, { testCommand: 'if [ -f try1.txt ]; then echo SECOND-RUN-FAIL; exit 3; fi' });
+  const ctx = await ctxFor(t, { localRounds: 3 });
+  let attempt = 0;
+  ctx.ws.runTests = async () => ++attempt === 2
+    ? { ran: true, passed: false, code: 3, output: 'SECOND-RUN-FAIL' }
+    : { ran: true, passed: true, code: 0, output: '' };
   const r = await runChunk(ctx, PLAN.chunks[0], 0);
   assert.equal(r.status, 'done');
   assert.match(t.reviewer.calls[0].task, /Tests: PASSED/);
-  assert.match(t.reviewer.calls[1].task, /Tests: FAILED \(exit 3\)/);
-  assert.match(t.reviewer.calls[1].task, /SECOND-RUN-FAIL/);
+  assert.equal(t.local.calls.length, 3);
+  assert.equal(t.reviewer.calls.length, 2);
+  assert.match(t.reviewer.calls[1].task, /Tests: PASSED/);
+  assert.match(t.local.calls[2].task, /Tests: FAILED \(exit 3\)/);
+  assert.match(t.local.calls[2].task, /SECOND-RUN-FAIL/);
+  assert.doesNotMatch(t.reviewer.calls[1].task, /SECOND-RUN-FAIL/);
 });
 
 for (const [label, reply] of [['gives no VERDICT line', { text: 'looks fine to me' }], ['crashes', { ok: false, error: 'reviewer timed out' }]]) {
