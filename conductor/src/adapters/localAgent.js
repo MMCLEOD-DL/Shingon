@@ -14,9 +14,16 @@ const tomlString = (s) => JSON.stringify(String(s)); // JSON escapes are valid T
 
 // The whole config.toml of the local agent's private CODEX_HOME: the operator's own ~/.codex
 // (MCP servers, plugins, project trust, ChatGPT auth) never reaches the local model.
-export function localCodexConfig({ provider, baseUrl, envKey, contextWindow = null }) {
+export function localCodexConfig({ provider, baseUrl, envKey, contextWindow = null, windowsSandbox }) {
+  if (windowsSandbox !== undefined && !['elevated', 'unelevated'].includes(windowsSandbox)) {
+    throw new Error('LocalAgentAdapter: windowsSandbox must be elevated or unelevated');
+  }
+  const windowsMode = windowsSandbox ?? (process.platform === 'win32' ? 'elevated' : null);
   const lines = [];
   if (contextWindow != null) lines.push(`model_context_window = ${Number(contextWindow)}`);
+  // Private homes do not inherit the operator's Windows sandbox selection.
+  // Keep this a separate table, before the provider, and never read personal config.
+  if (windowsMode) lines.push('', '[windows]', `sandbox = ${tomlString(windowsMode)}`);
   lines.push(
     '',
     `[model_providers.${provider}]`,
@@ -29,7 +36,7 @@ export function localCodexConfig({ provider, baseUrl, envKey, contextWindow = nu
 }
 
 export class LocalAgentAdapter {
-  constructor({ bin = 'codex', provider = 'localai', model, baseUrl = DEFAULT_BASE_URL, contextWindow = null, timeoutMs = 120000, extraConfig = [], envKey = 'LOCALAI_API_KEY' } = {}) {
+  constructor({ bin = 'codex', provider = 'localai', model, baseUrl = DEFAULT_BASE_URL, contextWindow = null, windowsSandbox, timeoutMs = 120000, extraConfig = [], envKey = 'LOCALAI_API_KEY' } = {}) {
     if (!model) throw new Error('LocalAgentAdapter requires a model');
     if (!PROVIDER_NAME.test(provider)) throw new Error(`LocalAgentAdapter: invalid provider name "${provider}"`);
     if (contextWindow != null && !(Number.isInteger(contextWindow) && contextWindow > 0)) {
@@ -50,7 +57,7 @@ export class LocalAgentAdapter {
       extraConfig: [`model_provider=${provider}`, `model=${model}`, ...extraConfig, SHELL_ENV_EXCLUDE],
       // No fixed sandbox: write:true gives workspace-write, write:false read-only (Codex's default rule).
       envAllow: [envKey], // only the Codex harness itself gets the provider key
-      homeConfig: localCodexConfig({ provider, baseUrl, envKey, contextWindow }),
+      homeConfig: localCodexConfig({ provider, baseUrl, envKey, contextWindow, windowsSandbox }),
     });
   }
 

@@ -68,6 +68,7 @@ test('runs codex with a private CODEX_HOME holding only the provider block, remo
   assert.ok(!seen.home.startsWith(tmpdir() + path.sep), `home ${seen.home} is under the temp dir`);
   assert.equal(seen.cfg, [
     'model_context_window = 32768',
+    ...(process.platform === 'win32' ? ['', '[windows]', 'sandbox = "elevated"'] : []),
     '',
     '[model_providers.localai]',
     'name = "localai"',
