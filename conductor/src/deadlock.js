@@ -15,7 +15,7 @@ export function settleDeadlock({ reason, tests = null, produced = true, evidence
   const escalate = (situation, note, recommendation) => ({ action: 'escalate', situation, note, recommendation });
   if (!produced) return escalate('unproduced', `No usable result was produced. Last problem: ${shown}`, 'Reject: there is nothing usable to continue with.');
   if (UNREVIEWED.test(r)) return escalate('unreviewed', `The work could not be reviewed: ${shown}`, 'Reject: this work was never successfully checked.');
-  if (tests?.ran && tests.passed === false) return escalate('tests-failing', `Tests are failing and the reviewers still disagree: ${shown}`, 'Reject: the tests do not pass.');
+  if (tests?.ran && tests.passed === false) return escalate('tests-failing', `Tests are failing: ${shown}`, 'Reject: the tests do not pass.');
   if (r.toUpperCase().includes(IRREVERSIBLE_MARK)) {
     return escalate('irreversible', `The reviewer flagged a hard-to-undo concern: ${shown}`, 'Reject, unless you are sure this change is what you want; it is hard to undo.');
   }

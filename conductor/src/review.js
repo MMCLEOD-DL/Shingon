@@ -21,7 +21,7 @@ export async function reviewLoop({ produce, review, maxRounds }) {
   if (!Number.isInteger(maxRounds) || maxRounds < 1) throw new Error(`maxRounds must be an integer >= 1 (got ${maxRounds})`);
   const history = [];
   let feedback = null;
-  let feedbackKind = null; // 'blocked' | 'failed'
+  let feedbackKind = null; // 'blocked' | 'failed' | 'tests-failed'
   let artifact = null;
   let lastGood = null;
   let lastReason = '';
@@ -44,8 +44,10 @@ export async function reviewLoop({ produce, review, maxRounds }) {
     if (artifact?.fatal) return { status: 'exhausted', artifact, lastGood, rounds: round, lastReason, history };
     if (v.decision === 'APPROVE') return { status: 'approved', artifact, lastGood, rounds: round, lastReason, history };
     // The fixer gets the reviewer's whole critique, not just the one-liner.
-    feedback = v.detail ? `${v.reason}\n\nReviewer's full notes:\n${v.detail}` : v.reason;
-    feedbackKind = artifact == null || artifact.error ? 'failed' : 'blocked';
+    feedbackKind = artifact == null || artifact.error ? 'failed'
+      : artifact.tests?.ran && artifact.tests.passed === false ? 'tests-failed' : 'blocked';
+    const label = feedbackKind === 'tests-failed' ? 'Test output' : "Reviewer's full notes";
+    feedback = v.detail ? `${v.reason}\n\n${label}:\n${v.detail}` : v.reason;
   }
   return { status: 'exhausted', artifact, lastGood, rounds: maxRounds, lastReason, history };
 }

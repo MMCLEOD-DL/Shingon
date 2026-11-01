@@ -11,7 +11,7 @@ const WHAT_HAPPENED = {
   chunk: {
     disagree: 'The two AI reviewers could not agree on one step of the work within the allowed rounds.',
     unreviewed: 'The AI reviewer could not check this step (it failed or gave no clear answer).',
-    'tests-failing': 'The tests are failing, and the AI reviewers could not agree on this step within the allowed rounds.',
+    'tests-failing': 'The tests are failing after the allowed attempts to fix this step.',
     irreversible: 'The two AI reviewers could not agree on one step of the work, and the open concern is about something hard to undo.',
     unproduced: 'Neither AI produced a usable version of this step.',
   },

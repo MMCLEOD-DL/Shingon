@@ -127,6 +127,14 @@ Use the explicit workspace path: app workspaces are under the service data direc
 
 ## Acceptance still required
 
+During each coding step, an executed failing test run now blocks that attempt
+before rival review. The producer receives the test output and retries within
+the configured local/frontier round limits. Passing attempts still require rival
+review; projects with no configured tests retain the existing review path.
+If both producer budgets are exhausted with failing tests, the existing explicit
+escalation is shown with a reject recommendation. A deliberate operator override
+remains separate from automatic approval. Final result approval is unchanged.
+
 1. Native Windows clean start/second start/stop/restart with actual vendor CLI executables.
 2. Signed-in bounded probes for both subscriptions and an actual LocalAI/Qwen agentic probe.
 3. One synthetic coding task with real local work, both vendors' review, actual tests and operator branch approval.
