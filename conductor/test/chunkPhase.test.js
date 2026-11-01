@@ -95,7 +95,7 @@ test('odd chunks swap reviewer and fallback', async () => {
 
 test('frontier deadlock, reversible with passing tests: accepted with a note', async () => {
   const t = team({ local: writes('a.txt'), reviewer: () => block('style preference') });
-  const ctx = await ctxFor(t, { localRounds: 1, frontierRounds: 1, testCommand: 'true' });
+  const ctx = await ctxFor(t, { localRounds: 1, frontierRounds: 1, testCommand: 'node --version' });
   const r = await runChunk(ctx, PLAN.chunks[0], 0);
   assert.equal(r.status, 'done');
   assert.match(r.note, /style preference/);
@@ -206,7 +206,7 @@ test('an approved chunk that changed nothing returns sha null and no commit', as
 
 test('an unexpected error mid-chunk rolls the workspace back to base and rethrows', async () => {
   const t = team({ local: writes('a.txt') });
-  const ctx = await ctxFor(t, { testCommand: 'true' });
+  const ctx = await ctxFor(t, { testCommand: 'node --version' });
   const base = await ctx.ws.head();
   // squashSince runs after approval, outside any attempt, so this is a genuine throw.
   ctx.ws.squashSince = async () => { throw new Error('disk on fire'); };
@@ -277,7 +277,7 @@ test('tests rerun each round and FAILED output reaches the producer before rival
 for (const [label, reply] of [['gives no VERDICT line', { text: 'looks fine to me' }], ['crashes', { ok: false, error: 'reviewer timed out' }]]) {
   test(`fallback reviewer that ${label} escalates, never accepts; reject leaves 0 commits`, async () => {
     const t = team({ local: writes('a.txt'), reviewer: () => reply });
-    const ctx = await ctxFor(t, { localRounds: 1, frontierRounds: 1, testCommand: 'true' });
+    const ctx = await ctxFor(t, { localRounds: 1, frontierRounds: 1, testCommand: 'node --version' });
     const base = await ctx.ws.head();
     const r = await runChunk(ctx, PLAN.chunks[0], 0);
     assert.equal(r.status, 'stopped');
@@ -329,7 +329,7 @@ test('a test-runner failure inside an attempt resets to base and the next round 
   const t = team({
     local: (role, task, c, opts, n) => { writeFileSync(path.join(opts.cwd, `try${n}.txt`), 'x'); return { text: 'ok' }; },
   });
-  const ctx = await ctxFor(t, { testCommand: 'true' });
+  const ctx = await ctxFor(t, { testCommand: 'node --version' });
   const base = await ctx.ws.head();
   const real = ctx.ws.runTests.bind(ctx.ws);
   ctx.ws.runTests = async (...a) => { if (fail) { fail = false; throw new Error('runner exploded'); } return real(...a); };
@@ -344,7 +344,7 @@ test('a test-runner failure inside an attempt resets to base and the next round 
 test('if the reset after an inspection failure itself fails, the chunk throws (infrastructure)', async () => {
   const events = [];
   const t = team({ local: writes('a.txt') });
-  const ctx = await ctxFor(t, { testCommand: 'true' }, { onEvent: (e) => events.push(e) });
+  const ctx = await ctxFor(t, { testCommand: 'node --version' }, { onEvent: (e) => events.push(e) });
   ctx.ws.runTests = async () => { throw new Error('runner exploded'); };
   ctx.ws.resetHard = async () => { throw new Error('reset broke'); };
   await assert.rejects(runChunk(ctx, PLAN.chunks[0], 0), /reset broke/);
@@ -368,7 +368,7 @@ test('the fixer receives the reviewer\'s full notes, not just the one-line reaso
 
 test('an escalation because the reviewer crashed says so, not that the reviewers disagreed (I4)', async () => {
   const t = team({ local: writes('a.txt'), reviewer: () => ({ ok: false, error: 'codex timed out' }) });
-  const ctx = await ctxFor(t, { localRounds: 1, frontierRounds: 1, testCommand: 'true' });
+  const ctx = await ctxFor(t, { localRounds: 1, frontierRounds: 1, testCommand: 'node --version' });
   await runChunk(ctx, PLAN.chunks[0], 0);
   const msg = ctx.hookCalls[0].arg.message;
   assert.match(msg, /What happened: The AI reviewer could not check this step \(it failed or gave no clear answer\)/);
