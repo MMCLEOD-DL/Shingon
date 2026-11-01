@@ -31,7 +31,7 @@ export function runCommand({ cmd, args = [], cwd, input = null, timeoutMs = 1200
     };
 
     try {
-      child = spawn(cmd, args, { cwd, env, detached: true });
+      child = spawn(cmd, args, { cwd, env, detached: true, windowsHide: true });
     } catch (err) {
       resolve({ stdout, stderr: String(err?.message ?? err), code: -1, timedOut });
       return;
@@ -63,7 +63,7 @@ export function runCommand({ cmd, args = [], cwd, input = null, timeoutMs = 1200
 
 // A long-lived child the caller wires up itself (streams): tracked so Ctrl-C ends it with its process group.
 export function spawnTracked(cmd, args, opts = {}) {
-  const child = spawn(cmd, args, { ...opts, detached: true });
+  const child = spawn(cmd, args, { ...opts, detached: true, windowsHide: true });
   LIVE.add(child);
   const done = () => LIVE.delete(child);
   child.on('close', done);

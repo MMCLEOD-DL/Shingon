@@ -48,6 +48,13 @@ unchanged; no automatic switch to the unelevated fallback is made.
 
 ## Run from a checkout
 
+Conductor's shared command runners request hidden console windows for background
+children on native Windows. Output still travels through the existing pipes, and
+Stop/timeout still targets the tracked process and its descendants. This hides
+ordinary console windows only; Windows administrator consent (UAC) remains a
+separate sandbox-setup prompt. The launcher flag and cancellation are covered by
+offline/native tests; real-model desktop presentation remains a live check.
+
 The Conductor root has no third-party runtime dependencies to install. From `conductor/`:
 
 ```

@@ -73,7 +73,11 @@ test('killAllChildren ends every live child; their runs resolve', async () => {
 
 test('spawnTracked children are killed by killAllChildren', async () => {
   const child = spawnTracked(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], {});
-  const closed = new Promise((r) => child.on('close', (code, signal) => r(signal)));
+  const closed = new Promise((r) => child.on('close', (code, signal) => r({ code, signal })));
   killAllChildren();
-  assert.equal(await closed, 'SIGKILL');
+  const outcome = await closed;
+  // Native Windows taskkill reports an exit code, not a POSIX signal.
+  if (process.platform === 'win32') assert.notEqual(outcome.code, 0);
+  else assert.equal(outcome.signal, 'SIGKILL');
+  assert.throws(() => process.kill(child.pid, 0), /ESRCH|no such process|not found/i);
 });
