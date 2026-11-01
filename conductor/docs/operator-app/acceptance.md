@@ -1,5 +1,26 @@
 # Backend candidate validation — 29 October 2026
 
+## Current P08 handoff — 1 November 2026
+
+The historical engineering results below remain tied to their named commits.
+Malcolm's [31 October first live run](../superpowers/plans/2026-10-29-two-week-product/work-log/2026-10-31-1427-claude-task-36-first-live-run.md)
+at `b15a156` reported approve/reject/Stop/orderly restart-resume/local-outage PASS
+after setup workarounds; these were operator reports recorded by Claude.
+
+Windows reliability fixes F1–F8 are now merged through PR76, `4c1d504`, including
+submission head `fe3d461`. At that head, GitHub's foundation, knowledge, conductor
+and operator-web CI jobs passed. The protected-path risk gate remained red;
+Malcolm manually merged. This is not an all-five-checks-green claim. PR76 also has
+80 focused native Windows checks passing with synthetic subprocess/IPC fixtures.
+
+The corrected build still needs real dedicated-home sign-in, Codex settings/tool
+loading observations, repeated UAC/write and recovery acceptance. Follow the
+[Windows retest handoff](windows-retest.md), whose live results start NOT RUN.
+No actual login, model request, worker restart or live acceptance was performed
+while preparing that handoff. P08 remains IN_PROGRESS.
+
+## Historical backend evidence
+
 P00/P03 and initial P05 backend evidence; this is not acceptance of a finished GUI or native Windows product. Claude UI integration and peer review remain pending. No live subscription or actual local-model requests were made.
 
 ## Demonstrated

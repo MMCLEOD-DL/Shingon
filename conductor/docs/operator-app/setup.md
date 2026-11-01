@@ -2,6 +2,10 @@
 
 This is a backend candidate for Claude's operator UI, not the finished graphical app or a Windows Service Control Manager installer. Keep the existing terminal workflow available.
 
+After the first live run, use the [corrected-build Windows retest](windows-retest.md)
+for the current setup sequence and a fresh evidence table. It supersedes the old
+checklist's personal Codex login and manual search-path/diagnostic workarounds.
+
 ## Requirements
 
 - Node 22.13+ and Git, installed natively on the service host.
