@@ -3,7 +3,7 @@ import { ApiError, newRequestId } from '../api.js';
 import { applyEvents, followRun, STREAM } from '../events.js';
 import { ErrorNote } from '../components/ErrorNote.jsx';
 import { Coverage, ReviewDetails, diffShownInFull } from '../components/Evidence.jsx';
-import { plain, shortSha, statusText, when } from '../text.js';
+import { eventText, phaseText, plain, shortSha, statusText, when } from '../text.js';
 
 const ACTIVE = new Set(['queued', 'running', 'awaiting-decision', 'cancelling']);
 const KIND_TITLE = {
@@ -82,9 +82,10 @@ function Decision({ api, run, review, onAnswered, onStale }) {
       <ErrorNote error={error} />
       {sent ? <p role="status">Answer saved. Waiting for Conductor to continue — this does not yet mean the work is finished.</p> : (
         <div className="choices">
+          {/* Only approving a reviewed result is highlighted: a choice that spends subscription allowance never looks like the default. */}
           {d.choices.map((c) => (
             <div key={c.id} className="choice">
-              <button type="button" className={c.id === 'approve' || c.id === 'continue' ? 'primary' : ''}
+              <button type="button" className={c.id === 'approve' ? 'primary' : ''}
                 disabled={sending !== null || (c.id === 'approve' && !complete)} onClick={() => answer(c.id)}>
                 {sending === c.id ? 'Sending…' : (d.kind === 'result' && c.id === 'approve' ? 'Approve: create a branch' : plain(c.label, 60))}
               </button>
@@ -255,9 +256,9 @@ export function RunView({ api, runId, go }) {
       <h1>{plain(run.title, 200) || 'Run'}</h1>
       <p className={`status status-${plain(run.status, 30)}`} role="status" aria-live="polite">
         <strong>{statusText(run.status)}</strong>
-        {active && run.phase ? <> — {plain(run.phase, 80)}</> : null}
+        {active && phaseText(run.phase) ? <> — {phaseText(run.phase)}</> : null}
       </p>
-      {active && !pending && last && <p>{plain(last.message, 500)}{last.participant ? <span className="muted"> ({plain(last.participant, 60)})</span> : null}</p>}
+      {active && !pending && last && <p>{eventText(last)}{last.participant ? <span className="muted"> ({plain(last.participant, 60)})</span> : null}</p>}
       {active && STREAM_TEXT[stream] && <p className={stream === STREAM.live ? 'muted small' : 'warn'}>{STREAM_TEXT[stream]}</p>}
       <ErrorNote error={error} onDismiss={() => setError(null)} />
       {notice && <p role="status" className="notice">{notice}</p>}
@@ -302,7 +303,7 @@ export function RunView({ api, runId, go }) {
         <summary>Activity log ({events.length})</summary>
         <ol>
           {events.map((e) => (
-            <li key={e.seq}><span className="muted">{when(e.at)}</span> {plain(e.message, 1000)}{e.participant ? <span className="muted"> — {plain(e.participant, 60)}</span> : null}</li>
+            <li key={e.seq}><span className="muted">{when(e.at)}</span> {eventText(e)}{e.participant ? <span className="muted"> — {plain(e.participant, 60)}</span> : null}</li>
           ))}
         </ol>
       </details>
