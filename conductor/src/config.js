@@ -29,8 +29,14 @@ export function buildAdapter(spec) {
   }
 }
 
+// Windows PowerShell 5.1 writes UTF-8 with a leading BOM. Remove that one
+// encoding marker only; keep JSON/schema validation and embedded strings intact.
+export function readConfigJson(filePath) {
+  return JSON.parse(readFileSync(filePath, 'utf8').replace(/^\uFEFF/, ''));
+}
+
 export function loadConfig(filePath) {
-  const parsed = JSON.parse(readFileSync(filePath, 'utf8'));
+  const parsed = readConfigJson(filePath);
   if (!Array.isArray(parsed.participants)) throw new Error('config must have a "participants" array');
   const options = parsed.options ?? {};
   for (const k of Object.keys(options)) {

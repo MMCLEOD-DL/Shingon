@@ -139,6 +139,14 @@ Or `npm run app -- --config <path> --data <path> --port 4318`.
 
 Use a local path appropriate to your OS; do not copy this cloud task's `/workspace` paths onto Windows. Defaults: config at the existing CLI location `~/.config/conductor/config.json`; data under `%LOCALAPPDATA%/conductor/operator-app` on Windows or `$XDG_STATE_HOME/conductor/operator-app` / `~/.local/state/conductor/operator-app` on Linux. Flags override these.
 
+Participant configuration files accept UTF-8 with or without a leading byte-order
+mark, including Windows PowerShell 5.1 `Set-Content -Encoding utf8` output (first-run
+S5). Unicode model names and executable paths are preserved. The old checklist's
+ASCII workaround is unnecessary for these readers. UTF-16 output from Windows
+PowerShell 5.1's default `Out-File` remains unsupported; select UTF-8 explicitly. Malformed JSON and
+invalid configuration are still rejected. Loading does not rewrite the file;
+an explicit setup save writes the usual UTF-8 JSON.
+
 The launcher prints a short-lived private bootstrap URL. Open it locally. Once the UI exists at `operator-web/dist`, it exchanges the URL fragment for a session cookie and clears the fragment. Until the UI is built, the page explicitly reports that the backend is running without a UI. No browser is opened automatically and no credentials/model probes are triggered on start.
 
 For UI integration, build Claude's `operator-web` package using its checked-in lockfile/scripts, then start the service; it serves those assets and API on the same origin. Do not start a permissive public/LAN dev server or paste bootstrap links into shared logs. See [the exact API contract](interface.md).

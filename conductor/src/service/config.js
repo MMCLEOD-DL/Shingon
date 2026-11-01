@@ -1,10 +1,10 @@
-import { readFileSync, existsSync, lstatSync } from 'node:fs';
+import { existsSync, lstatSync } from 'node:fs';
 import { atomicJson, requireValue } from './state.js';
-import { loadConfig } from '../config.js';
+import { loadConfig, readConfigJson } from '../config.js';
 
 const SUPPORTED = new Set(['claude-code', 'codex', 'local-agent']);
 export function readSetup(file) {
-  const raw = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : { participants: [], routing: { allowApi: false } };
+  const raw = existsSync(file) ? readConfigJson(file) : { participants: [], routing: { allowApi: false } };
   requireValue(raw && Array.isArray(raw.participants), 'The configured Conductor file is invalid.');
   return raw;
 }
