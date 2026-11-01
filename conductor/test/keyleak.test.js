@@ -49,18 +49,32 @@ test('a key leaking through test output is redacted from prompts, transcript, st
     approveResult: async (arg) => { hookCalls.push({ name: 'approveResult', arg }); return true; },
   };
   const out = await runTask({
-    repoDir: await makeRepo(), request: 'x', team, hooks,
+    repoDir: await makeRepo({
+      'README.md': 'synthetic redaction fixture\n',
+      'leak-check.cjs': `const fs = require('node:fs');
+        console.log(fs.readFileSync('one.txt', 'utf8'));
+        console.log('env=[' + (process.env.X_API_KEY || '') + '] local=[' + (process.env.LOCALAI_API_KEY || '') + ']');
+        process.exit(1);\n`,
+      'leak-check.cmd': '@echo off\r\ntype one.txt\r\nif defined X_API_KEY (echo env=[%X_API_KEY%]) else (echo env=[])\r\nif defined LOCALAI_API_KEY (echo local=[%LOCALAI_API_KEY%]) else (echo local=[])\r\nexit /b 1\r\n',
+    }), request: 'x', team, hooks,
     baseDir: mkdtempSync(path.join(tmpdir(), 'leak-')),
-    options: { localRounds: 1, frontierRounds: 1, testCommand: 'cat one.txt; echo "env=[$X_API_KEY] local=[$LOCALAI_API_KEY]"; exit 1', keepWorkspace: true },
+    options: { localRounds: 2, frontierRounds: 1, testCommand: process.platform === 'win32' ? 'leak-check.cmd' : 'node leak-check.cjs', keepWorkspace: true },
   });
   assert.equal(out.status, 'landed');
 
-  // The leak path was really exercised: the reviewer saw the (redacted) test output.
-  const reviewPrompt = team.reviewer.calls.find((c) => /Review chunk 1/.test(c.task)).task;
-  assert.ok(reviewPrompt.includes(`token=${REDACTED}`), 'test output reached the reviewer, redacted');
+  // F8 blocks failing rounds before rival review. Exercise both the new producer
+  // retry path and final review after the explicit operator override.
+  assert.equal(team.reviewer.calls.filter(c => /Review chunk 1/.test(c.task)).length, 0);
+  const retryPrompt = team.local.calls[1].task;
+  assert.ok(retryPrompt.includes(`token=${REDACTED}`), 'failed output reached the producer, redacted');
+  assert.ok(retryPrompt.includes('env=[]'), 'secret-named vars are absent from failed-test feedback');
+  assert.ok(retryPrompt.includes('local=[]'), 'local key is absent from failed-test feedback');
+  const reviewPrompt = team.reviewer.calls.find((c) => /Review the whole branch/.test(c.task)).task;
+  assert.ok(reviewPrompt.includes(`token=${REDACTED}`), 'test output reached final review, redacted');
   assert.ok(reviewPrompt.includes('env=[]'), 'secret-named vars are dropped from the test env (N2)');
   assert.ok(reviewPrompt.includes('local=[]'), 'LOCALAI_API_KEY was scrubbed from the test env');
-  assert.ok(hookCalls.find((h) => h.name === 'escalate').arg.message.includes(REDACTED));
+  assert.match(hookCalls.find((h) => h.name === 'escalate').arg.message, /tests are failing/);
+  assert.ok(JSON.stringify(hookCalls.find((h) => h.name === 'approveResult').arg.finalReview).includes(REDACTED), 'reviewer-quoted keys are redacted in the final approval hook');
   // N2: the gate warns that the change itself contains something credential-like.
   assert.match(hookCalls.find((h) => h.name === 'approveResult').arg.summary, /Warning: this change contains something that looks like a credential/);
 
