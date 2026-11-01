@@ -66,7 +66,7 @@ export class Runs {
     this.idle();
     run.status = 'running'; run.activeDecisionId = null; this.store.save();
     // Subscription-only mode must not inherit API billing credentials. Supported
-    // subscription CLI authentication remains on the host's normal account store.
+    // Claude retains its supported account store; Codex uses its dedicated home.
     const env = { ...process.env };
     delete env.ANTHROPIC_API_KEY; delete env.OPENAI_API_KEY;
     const child = fork(this.workerFile, ['--operator-worker'], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], env, windowsHide: true, execArgv: [] });

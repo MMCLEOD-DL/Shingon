@@ -17,7 +17,9 @@ async function acquireLease(key) {
     ? `\\\\.\\pipe\\conductor-codex-${key}`
     : process.platform === 'linux'
       ? `\0conductor-codex-${key}`
-      : path.join(process.env.TMPDIR || '/tmp', `cc-${key.slice(0, 24)}.sock`);
+      // Other hosts use an OS-owned loopback port rather than a filesystem socket
+      // that could remain after a crash. A hash collision fails closed as busy.
+      : { host: '127.0.0.1', port: 49152 + (parseInt(key.slice(0, 8), 16) % 16384), exclusive: true };
   const server = createServer(socket => socket.destroy());
   await new Promise((resolve, reject) => {
     server.once('error', () => reject(new Error('Private local Codex home is busy or unavailable; retry after the other call finishes')));

@@ -17,9 +17,16 @@ export function codexHomeBase(env = process.env) {
   return path.join(env.XDG_CACHE_HOME || path.join(homedir(), '.cache'), 'conductor', 'codex-homes');
 }
 
+export function frontierCodexConfig(platform = process.platform) {
+  // A subscription participant must sign in separately in this generated home.
+  // Personal MCP/plugins/trust/auth are neither read nor copied by Conductor.
+  return 'forced_login_method = "chatgpt"\n' +
+    (platform === 'win32' ? '\n[windows]\nsandbox = "elevated"\n' : '');
+}
+
 export class CodexAdapter {
-  constructor({ bin = 'codex', model = null, timeoutMs = 120000, extraConfig = [], sandbox = null, envAllow = [], homeConfig = null, reuseHome = false } = {}) {
-    if (reuseHome && homeConfig == null) throw new Error('Home reuse requires a generated private config');
+  constructor({ bin = 'codex', model = null, timeoutMs = 120000, extraConfig = [], sandbox = null, envAllow = [], homeConfig, reuseHome } = {}) {
+    if (homeConfig !== undefined && typeof homeConfig !== 'string') throw new Error('Codex requires a generated private config');
     this.kind = 'codex';
     this.bin = bin;
     this.model = model;
@@ -27,9 +34,26 @@ export class CodexAdapter {
     this.extraConfig = extraConfig;
     this.sandbox = sandbox;
     this.envAllow = envAllow; // SCRUB_ENV keys this CLI itself needs (the local provider key)
-    // null keeps the user's ~/.codex (frontier auth); local Windows retains setup state.
-    this.homeConfig = homeConfig;
-    this.reuseHome = reuseHome;
+    this.homeConfig = homeConfig ?? frontierCodexConfig();
+    this.reuseHome = reuseHome ?? (homeConfig === undefined);
+    // Keep the existing local-agent identity. Frontier auth survives model/role/
+    // CLI override changes; a different executable gets a separate account home.
+    this.homeIdentity = homeConfig === undefined ? ['frontier', this.bin] : [this.bin, this.extraConfig];
+  }
+
+  openHome({ cwd } = {}) {
+    return openPrivateCodexHome({
+      base: codexHomeBase(), config: this.homeConfig,
+      identity: this.homeIdentity, reuse: this.reuseHome, cwd,
+    });
+  }
+
+  // Offline preparation only: never launch Codex or inspect authentication state.
+  async prepareHome(opts = {}) {
+    if (!this.reuseHome) throw new Error('Sign-in preparation requires a retained private Codex home');
+    const lease = await this.openHome(opts);
+    try { return lease.home; }
+    finally { await lease.close(); }
   }
 
   async run(role, task, context = '', opts = {}) {
@@ -51,13 +75,11 @@ export class CodexAdapter {
       args.push('--sandbox', sandbox);
 
       const env = codexSearchEnv(this.bin, childEnv({ allow: this.envAllow }));
-      if (this.homeConfig != null) {
-        privateHome = await openPrivateCodexHome({
-          base: codexHomeBase(), config: this.homeConfig,
-          identity: [this.bin, this.extraConfig], reuse: this.reuseHome, cwd: opts.cwd,
-        });
-        env.CODEX_HOME = privateHome.home;
+      privateHome = await this.openHome({ cwd: opts.cwd });
+      if (process.platform === 'win32') {
+        for (const key of Object.keys(env)) if (key.toUpperCase() === 'CODEX_HOME') delete env[key];
       }
+      env.CODEX_HOME = privateHome.home;
 
       const { stdout, stderr, code, timedOut } = await runCommand({
         cmd: this.bin, args, cwd: opts.cwd, timeoutMs: opts.timeoutMs ?? this.timeoutMs, env,

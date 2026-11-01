@@ -75,7 +75,9 @@ test('buildAdapter forwards baseUrl and contextWindow to the local agent home co
   assert.equal(l.baseUrl, 'http://h:1/v1');
   assert.match(l._codex.homeConfig, /^model_context_window = 4096$/m);
   assert.match(l._codex.homeConfig, /^base_url = "http:\/\/h:1\/v1"$/m);
-  assert.equal(buildAdapter({ name: 'c', adapter: 'codex' }).homeConfig, null);
+  const frontier = buildAdapter({ name: 'c', adapter: 'codex' });
+  assert.match(frontier.homeConfig, /^forced_login_method = "chatgpt"$/m);
+  assert.equal(frontier.reuseHome, true);
 });
 
 import { writeFileSync as writeCfg, mkdtempSync as mkCfgDir } from 'node:fs';

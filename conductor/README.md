@@ -13,7 +13,7 @@ before anything reaches your code.
 ## What you need
 
 - Node.js 20 or newer, and `git`.
-- The `claude` (Claude Code) and `codex` (Codex) command-line programs, both signed in.
+- The `claude` (Claude Code) and `codex` (Codex) command-line programs, both signed in. Frontier Codex needs its [dedicated Conductor home sign-in](docs/operator-app/setup.md#dedicated-frontier-codex-sign-in); personal CLI authentication is separate.
 - Optionally, a local model server that speaks the OpenAI API (LocalAI, Ollama, LM Studio),
   driven through `codex`.
 
