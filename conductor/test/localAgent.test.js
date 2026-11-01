@@ -59,7 +59,7 @@ const HOME_ECHO = `
   fs.writeFileSync(args[oi+1], JSON.stringify({ home: home ?? null, cfg, mode: home ? (fs.statSync(home).mode & 0o777) : null }));
 `;
 
-test('runs codex with a private CODEX_HOME holding only the provider block, removed afterwards', async () => {
+test('runs codex with a private CODEX_HOME holding generated config', async () => {
   const bin = writeStubCli(mkdtempSync(path.join(tmpdir(), 'la-')), 'codex', HOME_ECHO);
   const a = new LocalAgentAdapter({ bin, model: 'm', baseUrl: 'http://127.0.0.1:8091/v1', contextWindow: 32768 });
   const seen = JSON.parse((await a.run('grunt', 't', '', { write: true })).text);
@@ -78,7 +78,7 @@ test('runs codex with a private CODEX_HOME holding only the provider block, remo
     '',
   ].join('\n'));
   assert.doesNotMatch(seen.cfg, /mcp|plugin|projects/);
-  assert.equal(existsSync(seen.home), false);
+  assert.equal(existsSync(seen.home), process.platform === 'win32');
 });
 
 test('provider block always carries a base_url, defaulting to local LocalAI', async () => {

@@ -18,9 +18,8 @@ test('private config emits the selected Windows sandbox in its own TOML table', 
 });
 
 test('Windows default is elevated; other hosts omit Windows config', () => {
-  const config = localCodexConfig(provider);
-  if (process.platform === 'win32') assert.match(config, /\[windows\]\nsandbox = "elevated"/);
-  else assert.doesNotMatch(config, /\[windows\]/);
+  assert.match(localCodexConfig(provider, 'win32'), /\[windows\]\nsandbox = "elevated"/);
+  for (const platform of ['linux', 'darwin']) assert.doesNotMatch(localCodexConfig(provider, platform), /\[windows\]/);
 });
 
 test('rejects unsupported Windows modes instead of writing arbitrary TOML', () => {
@@ -36,6 +35,9 @@ test('participant config forwards the Windows sandbox choice', () => {
 
 test('native child receives isolated Windows config and requested write mode on repeated calls', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'conductor-win-config-'));
+  const cache = mkdtempSync(path.join(tmpdir(), 'conductor-win-cache-'));
+  const oldCache = process.env.XDG_CACHE_HOME;
+  process.env.XDG_CACHE_HOME = cache;
   // Node is the native stand-in executable; its first argument (exec) is our script.
   writeFileSync(path.join(dir, 'exec'), `
     const fs = require('node:fs');
@@ -56,11 +58,13 @@ test('native child receives isolated Windows config and requested write mode on 
       assert.match(seen.cfg, /\[windows\]\nsandbox = "unelevated"/);
       assert.equal(seen.args[seen.args.indexOf('--sandbox') + 1], write ? 'workspace-write' : 'read-only');
       assert.ok(seen.args.includes('shell_environment_policy.exclude=["*KEY*","*TOKEN*","*SECRET*","*PASSWORD*","*CREDENTIAL*"]'));
-      assert.equal(existsSync(seen.home), false);
+      assert.equal(existsSync(seen.home), process.platform === 'win32');
       homes.push(seen.home);
     }
-    assert.equal(new Set(homes).size, 3);
+    assert.equal(new Set(homes).size, process.platform === 'win32' ? 1 : 3);
   } finally {
+    if (oldCache === undefined) delete process.env.XDG_CACHE_HOME; else process.env.XDG_CACHE_HOME = oldCache;
     rmSync(dir, { recursive: true, force: true });
+    rmSync(cache, { recursive: true, force: true });
   }
 });

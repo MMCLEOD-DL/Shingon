@@ -26,10 +26,25 @@ field: existing `extraConfig` CLI overrides still take precedence over the priva
 config file. Coding requests still use `workspace-write`; reviews use `read-only`.
 The sandbox mode selects the Windows implementation and does not grant full access.
 
-This corrects PR66's missing private-home setting (F1). Private homes remain
-temporary per call, so repeated administrator prompts (F2) are still an open
-acceptance item. A stand-in CLI checks the generated config; the corrected build
-still needs a real local-model write and repeated-run check on Windows.
+This corrects PR66's missing private-home setting (F1). On native Windows, the
+local agent now retains its private home between calls so Codex can retain its
+own sandbox setup markers and protected setup state (F2). The home is keyed by
+the generated configuration, executable and CLI overrides, under Conductor's
+`codex-homes` cache outside the workspace. A changed configuration gets a new home
+and may require setup again. Other hosts keep temporary per-call homes.
+
+Only one process may use a particular retained home at a time. A concurrent call
+is refused as busy; the operating system releases the lease even if its owner
+crashes. Generated `config.toml` is refreshed before every call. Nothing is copied
+from your personal Codex home, and subscription Codex behavior is unchanged.
+Codex may retain logs/session metadata and protected sandbox state there; treat
+this as private local state and do not share it or delete it routinely. Stop all
+calls before deliberately clearing the cache; the next run will need setup again.
+
+The source and stand-in checks establish state retention, not the actual number
+of administrator prompts. The corrected build still needs a real local-model
+write, repeated-run and crash/restart check on Windows. The elevated default is
+unchanged; no automatic switch to the unelevated fallback is made.
 
 ## Run from a checkout
 
