@@ -5,6 +5,7 @@ import path from 'node:path';
 import { EXIT } from './main.js';
 import { findConfig } from './config.js';
 import { loadConfig } from '../config.js';
+import { refuseKnowledge } from '../knowledge/run.js';
 import { factoryConfig } from '../factory/config.js';
 import { validateSlug, createProject, readProject, listProjects } from '../factory/projects.js';
 import { currentBriefInfo, briefPaths, ukDate, loadBrief, terminalText } from '../factory/brief.js';
@@ -174,6 +175,7 @@ async function briefCommand(cli, ctx) {
         if (!ctx.configPath) findConfig({ cwd: ctx.cwd, env: ctx.env, home: ctx.home }); // throws its own plain message
         config = loadConfig(ctx.configPath);
       }
+      refuseKnowledge(config.options, 'the factory');
     } catch (e) {
       say(`Conductor could not read its config: ${e.message}`);
       return EXIT.usage;

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { EXIT } from './main.js';
 import { prepareTeam } from './prepareRun.js';
 import { loadConfig } from '../config.js';
+import { refuseKnowledge } from '../knowledge/run.js';
 import { readProject, projectDir as projectDirOf } from '../factory/projects.js';
 import { lockProject } from '../factory/projectLock.js';
 import { runBuild } from '../factory/build.js';
@@ -32,7 +33,9 @@ const printer = (ctx) => (s) => ctx.stdout.write(`${redact(String(s))}\n`);
 function readConfig(ctx) {
   if (ctx.config) return ctx.config;
   if (!ctx.configPath) throw new Error('no config file was found (give one with --config <file>).');
-  return loadConfig(ctx.configPath);
+  const config = loadConfig(ctx.configPath);
+  refuseKnowledge(config.options, 'conductor build');
+  return config;
 }
 
 // The project whose folder (or app/, or anything under it) cwd is in, or null.

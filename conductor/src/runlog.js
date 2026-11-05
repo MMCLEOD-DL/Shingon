@@ -5,6 +5,7 @@ import { makeResult } from './result.js';
 import { clip } from './text.js';
 import { redact } from './secrets.js';
 import { vendorOf, isApiKind } from './vendors.js';
+import { knowledgeForCall } from './knowledge/run.js';
 
 // Two-vendor rule at run time (spec §7): a frontier model's work reviewed by the same
 // vendor is allowed, but the run is flagged so the summary can say so. Local work never counts.
@@ -99,7 +100,15 @@ export async function callRole(log, participant, role, task, context = '', opts 
 // A repaired git-dir tamper turns the call into ok:false with `gitdirTampered`,
 // so it counts as a failed attempt / BLOCK; an unrepairable one throws.
 export async function callAgent(ctx, participant, role, task, opts = {}) {
-  let result = await callRole(ctx.log, participant, role, task, '', opts);
+  // K8 (knowledge/run.js): evidence travels in callRole's context, checked before every call; once evidence has been
+  // used, a call that cannot be confirmed safe is stopped as a resumable pause ('no-participant'), never sent.
+  let context = '';
+  if (ctx.options?.knowledge || ctx.state?.knowledge?.sent) {
+    const k = await knowledgeForCall(ctx, participant);
+    if (k.stop) return makeResult({ ok: false, failure: 'no-participant', error: k.stop });
+    context = k.context;
+  }
+  let result = await callRole(ctx.log, participant, role, task, context, opts);
   // Usage totals (spec §7 budget awareness): cost as the CLIs/APIs report it, and paid API calls.
   const servedKind = result.servedKind ?? participant.adapter?.kind;
   const usage = (ctx.state.usage ??= { costUsd: 0, apiCostUsd: 0, apiCalls: 0 });

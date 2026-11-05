@@ -118,15 +118,20 @@ export function selectEvidence({ collections, search, seats, maxPassages = 8, ma
  * call can be routed to (for example a seat or fallback added after the evidence was chosen).
  */
 export function evidenceForCall(selection, seatOrParticipant) {
-  if (!selection) return '';
+  return evidenceFor(selection, seatOrParticipant).text;
+}
+
+/** evidenceForCall(), plus whether the text carries any passage (`sent`), which is what provenance records. */
+export function evidenceFor(selection, seatOrParticipant) {
+  if (!selection) return { text: '', sent: false };
   const recipients = recipientsOf(seatOrParticipant);
   const passages = selection.passages.filter((p) => allowsAll(selection.policy[p.collectionId] ?? [], recipients));
   const notice = selection.withheld || passages.length < selection.passages.length ? PARTICIPANT_NOTICE : '';
-  if (selection.evidence === 'none') return [NO_SUPPORT, ...(notice ? [notice] : [])].join('\n');
-  if (!passages.length) return notice;
+  if (selection.evidence === 'none') return { text: [NO_SUPPORT, ...(notice ? [notice] : [])].join('\n'), sent: false };
+  if (!passages.length) return { text: notice, sent: false };
   let text = render(passages, selection.evidence, notice);
   while (text.length > selection.maxChars && passages.length > 1) { passages.pop(); text = render(passages, selection.evidence, notice); }
-  return text.length <= selection.maxChars ? text : notice;
+  return text.length <= selection.maxChars ? { text, sent: true } : { text: notice, sent: false };
 }
 
 /** True only if the service confirms the same viewRevision now. Any failure or change is false: fail closed. */

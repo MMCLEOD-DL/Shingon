@@ -25,4 +25,5 @@ export const DEFAULT_OPTIONS = Object.freeze({
   factoryFeature: null,   // { id, tags }: set by conductor build for each feature
   firstChunk: null,       // { title, instructions }: a step decided in advance that runs first; the author plans the rest (factory features)
   confirmLocalFallback: false, // true: ask (hooks.confirmLocalFallback) before the frontier does a step because the local model is down (factory spec §4.2)
+  knowledge: null,        // K8: { url, collections?, maxPassages?, maxChars? }: company knowledge-base evidence for ordinary runs (token in CONDUCTOR_KB_TOKEN); null = off
 });

@@ -17,12 +17,20 @@ const FRONTIER_KEYS = new Set(['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'CLAUDE_CO
 
 // A local provider configured with a different env key is scrubbed from every other child too.
 export function addScrubEnv(name) {
+  if (isReservedEnvName(name)) throw new Error(`${KB_TOKEN_ENV} is reserved for Conductor's knowledge-base client; it cannot be a model provider key or a wake variable.`);
   if (typeof name === 'string' && name && !FRONTIER_KEYS.has(name) && !SCRUB_ENV.includes(name)) SCRUB_ENV.push(name);
 }
+
+// K8: the knowledge-base project token. Only Conductor's own KB client reads it (in the CLI or the operator worker);
+// no child process ever inherits it, whatever a caller's allow list says, in any spelling (Windows environment names
+// are case-insensitive). It can be neither a local provider key nor a wake variable (addScrubEnv refuses it).
+export const KB_TOKEN_ENV = 'CONDUCTOR_KB_TOKEN';
+export function isReservedEnvName(name) { return typeof name === 'string' && name.toUpperCase() === KB_TOKEN_ENV; }
 
 export function childEnv({ allow = [], env = process.env } = {}) {
   const out = { ...env };
   for (const k of SCRUB_ENV) if (!allow.includes(k)) delete out[k];
+  for (const k of Object.keys(out)) if (isReservedEnvName(k)) delete out[k];
   return out;
 }
 
