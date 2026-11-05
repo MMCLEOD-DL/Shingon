@@ -307,17 +307,19 @@ test('a fire skipped because the last run is still going is logged each time and
   await withJobDeps(async (deps) => {
     const { monitor, sent } = testMonitor();
     let release!: () => void;
+    let started!: () => void;
+    const begun = new Promise<void>((r) => { started = r; });
     let calls = 0;
     const job: AppJob = {
       name: 'slow', label: 'slow job', cron: '*/5 * * * *', catchUp: 'skip',
-      run: () => (++calls === 1 ? new Promise<string>((r) => { release = () => { r('done'); }; }) : Promise.resolve('quick')),
+      run: () => (++calls === 1 ? new Promise<string>((r) => { release = () => { r('done'); }; started(); }) : Promise.resolve('quick')),
     };
     const failure = onJobFailure(deps, monitor);
     const fire: Record<string, (at?: Date) => Promise<unknown>> = {};
     const s = startScheduler(scheduleAppJobs(deps, [job], failure).jobs, failure, (_c, name, f) => { fire[name] = f; return { stop: () => undefined }; });
     try {
       const first = fire['slow']!(new Date('2026-03-02T09:00:00Z'));
-      await new Promise((r) => setTimeout(r, 50));
+      await begun;   // the first run is really under way (release is set), however long the scheduler's start bookkeeping takes
       deps.now = () => new Date('2026-03-02T09:05:00Z');
       expect(await fire['slow']!(new Date('2026-03-02T09:05:00Z'))).toBe('skipped');
       deps.now = () => new Date('2026-03-02T09:10:00Z');
