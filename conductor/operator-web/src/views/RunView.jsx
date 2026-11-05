@@ -40,18 +40,24 @@ function Decision({ api, run, review, onAnswered, onStale }) {
   const [sending, setSending] = useState(null);
   const [sent, setSent] = useState(false);
   const heading = useRef(null);
-  // One request id per decision: retrying after a lost response is answered from the service's receipt.
-  const requestId = useRef({ decision: null, id: null });
-  if (requestId.current.decision !== d.id) requestId.current = { decision: d.id, id: newRequestId() };
+  // One request id per exact answer: retrying the same answer after a lost response is answered from the service's
+  // receipt. A different answer gets a new id, so if the first one did arrive the service says plainly that the
+  // question was already answered, rather than refusing a reused id.
+  const requestId = useRef({ answer: null, id: null });
+  const idFor = (answer) => {
+    if (requestId.current.answer !== answer) requestId.current = { answer, id: newRequestId() };
+    return requestId.current.id;
+  };
 
   useEffect(() => { heading.current?.focus(); }, [d.id]);
 
   const answer = async (choiceId) => {
     setError(null); setSending(choiceId);
+    const note = d.kind === 'result' && choiceId === 'reject' && feedback.trim() ? feedback.trim() : undefined;
     try {
       await api.answer(run.id, d.id, {
         choiceId, expectedRevision: d.revision, reviewedCommit: d.evidence?.commit ?? null,
-        clientRequestId: requestId.current.id, feedback: d.kind === 'result' && choiceId === 'reject' && feedback.trim() ? feedback.trim() : undefined,
+        clientRequestId: idFor(JSON.stringify([d.id, d.revision, choiceId, note ?? null])), feedback: note,
       });
       setSent(true);
       onAnswered(choiceId);
