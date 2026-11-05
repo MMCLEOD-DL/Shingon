@@ -1,4 +1,4 @@
-# Codex UAC follow-up — 5 November 2026
+# Windows UAC follow-up — 5 November 2026
 
 Baseline: PR82 merge `b68e3b003828dfb9d0110966eb7a57845941d6c9`, including final
 submission `b93b461`; all five required checks pass. This follows the
@@ -40,10 +40,54 @@ consulted on 5 November, confirms that elevated setup needs administrator approv
 It does not establish the recurrence cause for this installed CLI/version. No
 sandbox implementation or policy was changed to suppress consent.
 
-Next acceptance dependency: independently observe the configured local participant
-with its own retained home, using the applicable live permission and the existing
-LocalAI key through a hidden local prompt if it is unavailable in the test process.
-The earlier isolated service is stopped and its key was not persisted. Do not read
-another process's credentials or silently start/reconfigure the shared worker.
-Full browser presentation, abrupt/power-loss recovery and live failed-step gating
-remain separate from these nonce-writing checks.
+## Local participant follow-up
+
+Malcolm then explicitly requested the LocalAI test. Baseline: PR83 merge
+`0dc247cd29b1377070513fe6171cbd4344fa6d44`, including final submission `a7d2002`;
+all five final-head checks passed by the end of the local checks. Runtime remains
+the PR82 code. Worker readiness was HTTP200; no worker start/restart was needed.
+
+The existing configured local model `shingon-qwen3.8-27b-q4` used native
+Codex0.163.0 and its own retained generated home. The process lacked the provider
+key, so Malcolm entered it once through a secure hidden-input PowerShell prompt.
+A private controller retained it in process environment for both calls, passed
+only the local participant its required binding, and removed API/subscription
+credential alternatives. No key was written to chat, files, arguments or reports.
+No authentication or sandbox-secret file contents were inspected/copied.
+
+Each call requested and verified one nonce file in the same fresh synthetic
+repository. Attempts/results stayed outside the model workspace; both attempts
+are spent. Each call used a separate native CLI process with the same retained
+home. The visible key-entry terminal was expected and was not counted as UAC.
+
+| Check | Started–finished (UTC) | File verification | Operator-reported UAC prompts | New setup-success / missing-marker-version events |
+|---|---|---|---|---|
+| Local write 1 | 11:38:55–11:39:31 | PASS | 1 | 1 / 1 |
+| Local write 2, same folder and home | 11:39:50–11:40:18 | PASS | 0 | 0 / 0 |
+
+Read-only dated sandbox-log comparison finds 43 lines for Check1 and 24 for
+Check2, with no OS error32 in either interval. The first observed UAC prompt
+coincides with fresh setup; the immediate repeat reuses it without another prompt.
+This does not establish why the previously retained home needed setup again, or
+whether the marker was absent versus a version mismatch. No marker, credential,
+ACL, firewall or sandbox-policy state was manually repaired to suppress consent.
+
+Both actual local writes and immediate reuse pass. The result is **1 then 0**
+prompts, not a zero-prompt first-call claim or permanent closure of recurrence.
+Different folders, service/host restarts, longer idle periods and the original
+three prompts remain outside this pair. No additional model calls were used to
+manufacture a broader conclusion.
+
+After both checks the controller removed its key binding and exited; the parent
+prompt cleared its environment binding, disposed the secure input and exited.
+Both owned processes were verified absent. The shared worker was left running;
+the earlier isolated service remains stopped. Only the two expected nonce files
+are untracked in the disposable repository; no source/client repository was
+modified by these model calls.
+
+Remaining acceptance: explain the retained-home setup invalidation if it recurs,
+then separately observe any authorized different-folder/restart/reboot case.
+Full browser presentation, ordinary console-flash observation, abrupt/power-loss
+recovery and live failed-step gating remain separate. Do not recover credentials
+from another process, silently restart/reconfigure the worker, weaken sandbox
+policies or launch further checks without applicable permission and readiness.

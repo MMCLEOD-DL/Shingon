@@ -8,10 +8,11 @@ Windows trial layout, after supported dedicated sign-in, authorized worker start
 and the probe-role correction. Subsequent PR81/82 correct packaged-app profile-path
 identity and captured Windows test output; their full live-layout acceptance is
 separate. The [observed Codex UAC follow-up](windows-uac-2026-11-05.md) verifies two
-same-folder writes with zero prompts each. Original prompt attribution and the
-local participant's separate UAC case remain open. Browser presentation and
-abrupt/power-loss recovery are not certified. This supersedes neither the named
-historical evidence nor the need for independent review.
+same-folder writes with zero prompts each. The subsequent LocalAI pair also
+verifies both files, with one setup/UAC prompt on the first call and zero on the
+repeat. Original prompt attribution and setup invalidation across other sessions
+remain open. Browser presentation and abrupt/power-loss recovery are not certified.
+This supersedes neither the named historical evidence nor independent review.
 
 ## Current P08 handoff — 1 November 2026
 
