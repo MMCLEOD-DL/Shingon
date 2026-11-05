@@ -466,3 +466,44 @@ test('a refused answer is still reported after the reload removes the question (
   expect(screen.getByText(/This question changed or was already answered/)).toBeTruthy();
   expect(screen.queryByText(/Answer saved/)).toBeNull();
 });
+
+describe('after an accepted answer, the page says what happened next', () => {
+  // The service accepts the answer, then the run moves on (a later snapshot with a higher event sequence).
+  const answerThen = async (run, choice, next) => {
+    const svc = fakeService({ run });
+    render(<RunView api={createApi({ fetchImpl: svc.fetchImpl })} runId={run.id} go={() => {}} />);
+    const button = await screen.findByRole('button', { name: choice });
+    await waitFor(() => expect(button.disabled).toBe(false));
+    await userEvent.click(button);
+    await screen.findByText(/Answer saved/);
+    svc.state.run = { ...next, lastEventSeq: run.lastEventSeq + 3 };
+    FakeEventSource.all.at(-1).emit({ seq: run.lastEventSeq + 3, type: 'finished', message: 'landed', at: new Date().toISOString() });
+    return svc;
+  };
+
+  test('a finished run does not still say the answer is waiting', async () => {
+    await answerThen(fixtures.awaitingResult, 'Approve: create a branch', fixtures.completedRun);
+    expect(await screen.findByText(/was created in the repository/)).toBeTruthy();
+    expect(screen.queryByText(/Answer saved/)).toBeNull();
+  });
+
+  test('a new question is not shown under the previous answer\'s "waiting" note', async () => {
+    const asking = { ...fixtures.runningRun, status: 'awaiting-decision', activeDecisionId: fixtures.fallbackDecision.id, decision: fixtures.fallbackDecision };
+    const again = { ...fixtures.fallbackDecision, id: 'fallback-again', revision: 'r-again', prompt: 'The local model failed on this step.' };
+    await answerThen(asking, 'Use subscriptions', { ...asking, activeDecisionId: again.id, decision: again });
+    expect(await screen.findByText('The local model failed on this step.')).toBeTruthy();
+    expect(screen.queryByText(/Answer saved/)).toBeNull();
+  });
+
+  test('the note stays while the run is still working on the answer', async () => {
+    await answerThen(fixtures.awaitingResult, 'Approve: create a branch', fixtures.runningRun);
+    await screen.findByText('Working');
+    expect(screen.getByText(/Answer saved/)).toBeTruthy();
+  });
+});
+
+test('a paused run with no saved work says it cannot be resumed, and offers no Resume', async () => {
+  showRun({ ...fixtures.pausedRun, resumable: false });
+  expect(await screen.findByText(/It has no saved work to resume: start the task again/)).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Resume' })).toBeNull();
+});

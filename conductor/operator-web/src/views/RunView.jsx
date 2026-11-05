@@ -80,7 +80,7 @@ function Decision({ api, run, review, onAnswered, onStale }) {
         </label>
       )}
       <ErrorNote error={error} />
-      {sent ? <p role="status">Answer saved. Waiting for Conductor to continue — this does not yet mean the work is finished.</p> : (
+      {sent ? <p role="status">{ANSWER_SAVED}</p> : (
         <div className="choices">
           {/* Only approving a reviewed result is highlighted: a choice that spends subscription allowance never looks like the default. */}
           {d.choices.map((c) => (
@@ -99,6 +99,9 @@ function Decision({ api, run, review, onAnswered, onStale }) {
   );
 }
 
+// Shown once the service accepts an answer, and only until the run has moved on: next to a finished run or a new
+// question it would wrongly say the old answer is still waiting.
+const ANSWER_SAVED = 'Answer saved. Waiting for Conductor to continue — this does not yet mean the work is finished.';
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const MAY_HAVE_LANDED = 'The approved result may already be in the repository. Inspect its branches before recovering this run; automatic resume is disabled.';
 
@@ -261,7 +264,7 @@ export function RunView({ api, runId, go }) {
       {active && !pending && last && <p>{eventText(last)}{last.participant ? <span className="muted"> ({plain(last.participant, 60)})</span> : null}</p>}
       {active && STREAM_TEXT[stream] && <p className={stream === STREAM.live ? 'muted small' : 'warn'}>{STREAM_TEXT[stream]}</p>}
       <ErrorNote error={error} onDismiss={() => setError(null)} />
-      {notice && <p role="status" className="notice">{notice}</p>}
+      {notice && !(notice === ANSWER_SAVED && (!active || (pending && !answered))) && <p role="status" className="notice">{notice}</p>}
 
       {run.status === 'completed' && (
         <div className="outcome ok">
@@ -280,10 +283,10 @@ export function RunView({ api, runId, go }) {
         <Recovery api={api} run={run} repositoryPath={repositoryPath} onRefused={(e) => { setError(e); refresh(); }}
           onRecorded={() => { setError(null); setNotice('Inspection recorded. Nothing has started and no branch was changed. Resume when you are ready.'); refresh(); }} />
       )}
-      {run.status === 'paused' && <div className="outcome"><p>Paused. {run.resumable ? 'Resume when ready.' : ''}</p></div>}
+      {run.status === 'paused' && <div className="outcome"><p>Paused. {run.resumable ? 'Resume when ready.' : 'It has no saved work to resume: start the task again when you are ready.'}</p></div>}
 
       {pending && !answered && <Decision api={api} run={run} review={review} onStale={(e) => { setError(e); refresh(); }}
-        onAnswered={() => { answeredAt.current = run.lastEventSeq; setAnswered(true); setNotice('Answer saved. Waiting for Conductor to continue — this does not yet mean the work is finished.'); refresh(); }} />}
+        onAnswered={() => { answeredAt.current = run.lastEventSeq; setAnswered(true); setNotice(ANSWER_SAVED); refresh(); }} />}
 
       <Coverage coverage={run.coverage} />
       {['completed', 'rejected'].includes(run.status) && review && <details><summary>What was reviewed</summary><ReviewDetails review={review} /></details>}

@@ -1,5 +1,5 @@
 // Browser journey: the built UI (dist/) against the REAL operator service (P03) in Chromium. At the end it runs
-// e2e/real-engine.mjs, the same UI against the real engine with stand-in model CLIs (P07).
+// e2e/real-engine.mjs and e2e/resume-and-fallback.mjs, the same UI against the real engine with stand-in model CLIs (P07).
 // The engine is Codex's deterministic IPC fixture worker (no models, no Git landing), so this
 // proves the UI drives the real HTTP/SSE contract, not that coding works (that is P07/P08).
 //
@@ -344,4 +344,8 @@ console.log(`\n${results.length - failed} passed, ${failed} failed (UI ${uiDir};
 console.log('\nReal engine (e2e/real-engine.mjs):');
 const engine = spawn(process.execPath, [path.join(here, 'real-engine.mjs'), '--service', conductorDir], { stdio: 'inherit' });
 const engineCode = await new Promise((r) => engine.on('exit', (code) => r(code ?? 1)));
-process.exit(failed || engineCode ? 1 : 0);
+// And restart/Resume and the local-model fallback with the real engine (e2e/resume-and-fallback.mjs).
+console.log('\nRestart, Resume and fallback (e2e/resume-and-fallback.mjs):');
+const resumed = spawn(process.execPath, [path.join(here, 'resume-and-fallback.mjs'), '--service', conductorDir], { stdio: 'inherit' });
+const resumeCode = await new Promise((r) => resumed.on('exit', (code) => r(code ?? 1)));
+process.exit(failed || engineCode || resumeCode ? 1 : 0);
