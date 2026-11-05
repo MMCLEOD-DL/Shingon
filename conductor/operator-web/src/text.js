@@ -66,6 +66,12 @@ const ENGINE_TEXT = {
   decision: 'Your decision was recorded.',
   'gate-note': 'A note was added for your final review.',
   'landed-before-crash': 'The branch had already been created before the interruption.',
+  // K8 knowledge-base evidence (the engine's knowledge/run.js). Never names documents or passages.
+  'evidence-used': 'Evidence from the company knowledge base was given to the models.',
+  'evidence-withheld': 'Some knowledge-base evidence was kept from the models by its data policy.',
+  'evidence-dropped': 'Knowledge-base evidence was dropped because its policy could not be confirmed; the run carried on without it.',
+  'evidence-stopped': 'The knowledge-base policy could not be confirmed after its evidence was used, so nothing built from it was passed on.',
+  'evidence-unavailable': 'The knowledge base was not available, so the run carried on without its evidence.',
   interrupted: 'Interrupted.',
   finish: 'Finished.',
 };
