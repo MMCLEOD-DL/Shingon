@@ -10,5 +10,6 @@ The research requested in [the research backlog](../RESEARCH-BACKLOG.md). It is 
 | [retrieval-contract.md](retrieval-contract.md) | Proposed read-only contract shared by Conductor and Foundation apps |
 | [evaluation.md](evaluation.md) | Synthetic experiment: permissions, sync, deletion, retrieval; what was not tested |
 | [migration-plan.md](migration-plan.md) | Staged Babel plan, rollback, implementation tasks K1–K13 |
+| [k8-conductor-evidence.md](k8-conductor-evidence.md) | K8 design proposal: how Conductor would use KB evidence and enforce destinations (not built) |
 
 Code for the experiment: [`conductor/spikes/knowledge-base-evaluation/`](../../spikes/knowledge-base-evaluation/).
