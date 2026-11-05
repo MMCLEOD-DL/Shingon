@@ -19,9 +19,20 @@ import { fakeParticipant, makeCtx } from './helpers/fakes.js';
 import { writeStubCli } from './helpers/stubCli.js';
 
 const TOKEN = `kb1.${'c'.repeat(32)}.${'D'.repeat(43)}`;
-const previousToken = process.env[KB_TOKEN_ENV];
+// The token is set, and the route settings that would make Claude Code or Codex unverifiable are cleared (this cloud
+// container sets ANTHROPIC_BASE_URL for its own session); everything is restored afterwards.
+const ROUTE_ENV = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'OPENAI_BASE_URL'];
+const savedEnv = Object.fromEntries([KB_TOKEN_ENV, ...ROUTE_ENV].map((k) => [k, process.env[k]]));
+for (const k of ROUTE_ENV) delete process.env[k];
 process.env[KB_TOKEN_ENV] = TOKEN;
-after(() => { if (previousToken === undefined) delete process.env[KB_TOKEN_ENV]; else process.env[KB_TOKEN_ENV] = previousToken; });
+after(() => { for (const [k, v] of Object.entries(savedEnv)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
+const APPROVED = { claude: 'claude-subscription', codex: 'codex-subscription', local: 'local-model' };
+// Fake participants with the route details a real config gives them: a private local endpoint, Codex's frontier home.
+function routed(p) {
+  if (p.adapter.kind === 'local-agent') p.adapter.baseUrl = 'http://127.0.0.1:8080/v1';
+  if (p.adapter.kind === 'codex') { p.adapter.homeIdentity = ['frontier', 'codex']; p.adapter.extraConfig = []; }
+  return p;
+}
 
 const EXCERPT = 'EXCERPT-Never log passwords or session tokens.';
 const ALL = ['local-model', 'claude-subscription', 'codex-subscription'];
@@ -53,12 +64,12 @@ async function kbStub({ destinations = ALL, revision = 'a'.repeat(64), evidence 
 }
 const ok = () => ({ text: 'done' });
 const teamOf = () => ({
-  author: fakeParticipant({ name: 'claude', kind: 'claude-code', script: ok }),
-  reviewer: fakeParticipant({ name: 'codex', kind: 'codex', script: ok }),
-  local: fakeParticipant({ name: 'local', kind: 'local-agent', script: ok }),
+  author: routed(fakeParticipant({ name: 'claude', kind: 'claude-code', script: ok })),
+  reviewer: routed(fakeParticipant({ name: 'codex', kind: 'codex', script: ok })),
+  local: routed(fakeParticipant({ name: 'local', kind: 'local-agent', script: ok })),
 });
 const ctxWith = async (kb, extra = {}) => makeCtx({ team: extra.team ?? teamOf(), request: 'add logging without secrets',
-  options: { knowledge: kb ? { url: kb.url } : null, ...(extra.options ?? {}) } });
+  options: { knowledge: kb ? { url: kb.url, participants: extra.participants ?? APPROVED } : null, ...(extra.options ?? {}) } });
 const events = (ctx, type) => readFileSync(ctx.log.transcript, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((e) => e.type === type);
 
 test('off by default: no knowledge request, and calls carry no evidence context', async () => {
@@ -212,16 +223,18 @@ test('council and factory runs never fetch evidence (backstop), and their entry 
 });
 
 test('options.knowledge is validated: private origin, known settings, bounded values, not with the council', () => {
-  assert.doesNotThrow(() => checkKnowledgeOptions({ knowledge: { url: 'http://127.0.0.1:8700', collections: ['standards'], maxPassages: 5, maxChars: 8000 } }));
+  const P = { participants: APPROVED };
+  assert.doesNotThrow(() => checkKnowledgeOptions({ knowledge: { url: 'http://127.0.0.1:8700', ...P, collections: ['standards'], maxPassages: 5, maxChars: 8000 } }));
   for (const [k, re] of [
-    [{ url: 'https://kb.example.com' }, /private network/], [{ url: 'http://127.0.0.1:1', token: 'x' }, /unknown setting "token"/],
-    [{ url: 'http://127.0.0.1:1', maxPassages: 50 }, /maxPassages/], [{ url: 'http://127.0.0.1:1', maxChars: 100 }, /maxChars/],
-    [{ url: 'http://127.0.0.1:1', collections: [] }, /collections/], ['http://127.0.0.1:1', /must be an object/],
+    [{ url: 'https://kb.example.com', ...P }, /private network/], [{ url: 'http://127.0.0.1:1', ...P, token: 'x' }, /unknown setting "token"/],
+    [{ url: 'http://127.0.0.1:1', ...P, maxPassages: 50 }, /maxPassages/], [{ url: 'http://127.0.0.1:1', ...P, maxChars: 100 }, /maxChars/],
+    [{ url: 'http://127.0.0.1:1', ...P, collections: [] }, /collections/], ['http://127.0.0.1:1', /must be an object/],
+    [{ url: 'http://127.0.0.1:1' }, /participants must approve/], [{ url: 'http://127.0.0.1:1', participants: { claude: 'anthropic-api' } }, /participants must approve/],
   ]) assert.throws(() => checkKnowledgeOptions({ knowledge: k }), re, JSON.stringify(k));
-  assert.throws(() => checkKnowledgeOptions({ knowledge: { url: 'http://127.0.0.1:1' }, council: true }), /council/);
+  assert.throws(() => checkKnowledgeOptions({ knowledge: { url: 'http://127.0.0.1:1', ...P }, council: true }), /council/);
   const dir = mkdtempSync(path.join(tmpdir(), 'kb-config-'));
   const file = path.join(dir, 'config.json');
-  writeFileSync(file, JSON.stringify({ participants: [], options: { knowledge: { url: 'https://kb.example.com' } } }));
+  writeFileSync(file, JSON.stringify({ participants: [], options: { knowledge: { url: 'https://kb.example.com', participants: APPROVED } } }));
   assert.throws(() => loadConfig(file), /options\.knowledge\.url/);
 });
 
@@ -256,9 +269,9 @@ import { approve } from './helpers/fakes.js';
 const PLAN = { summary: 'S', chunks: [{ title: 'One', instructions: 'make one' }] };
 function runTeam(onAuthor = () => {}) {
   return {
-    author: fakeParticipant({ name: 'claude', kind: 'claude-code', script: (role) => { if (role === 'reviewer') return approve(); onAuthor(); return { text: '```json\n' + JSON.stringify(PLAN) + '\n```' }; } }),
-    reviewer: fakeParticipant({ name: 'codex', kind: 'codex', script: () => approve() }),
-    local: fakeParticipant({ name: 'local', kind: 'local-agent', roles: ['grunt'], script: (role, task, c, opts) => { writeFileSync(path.join(opts.cwd, 'one.txt'), 'x\n'); return { text: 'ok' }; } }),
+    author: routed(fakeParticipant({ name: 'claude', kind: 'claude-code', script: (role) => { if (role === 'reviewer') return approve(); onAuthor(); return { text: '```json\n' + JSON.stringify(PLAN) + '\n```' }; } })),
+    reviewer: routed(fakeParticipant({ name: 'codex', kind: 'codex', script: () => approve() })),
+    local: routed(fakeParticipant({ name: 'local', kind: 'local-agent', roles: ['grunt'], script: (role, task, c, opts) => { writeFileSync(path.join(opts.cwd, 'one.txt'), 'x\n'); return { text: 'ok' }; } })),
   };
 }
 const runHooks = () => ({ escalate: async () => 'reject', approveResult: async () => true, approveChunk: async () => true });
@@ -268,7 +281,7 @@ test('a whole run with evidence lands; every agent got the evidence; state keeps
   try {
     const team = runTeam();
     const out = await runTask({ repoDir: await makeRepo(), request: 'Add one', team, hooks: runHooks(), baseDir: mkdtempSync(path.join(tmpdir(), 'kb-run-')),
-      options: { knowledge: { url: kb.url }, keepWorkspace: true } });
+      options: { knowledge: { url: kb.url, participants: APPROVED }, keepWorkspace: true } });
     assert.equal(out.status, 'landed');
     for (const p of [team.author, team.reviewer, team.local]) assert.ok(p.calls.every((c) => /EXCERPT-Never log/.test(c.context)), p.name);
     const state = readFileSync(path.join(`${out.workspaceDir}.conductor`, 'state.json'), 'utf8');
@@ -284,7 +297,7 @@ test('the policy changes after the author used evidence: the run pauses before t
     const team = runTeam(() => { if (first) { first = false; kb.revision = 'b'.repeat(64); } });
     const repo = await makeRepo();
     const out = await runTask({ repoDir: repo, request: 'Add one', team, hooks: runHooks(), baseDir: mkdtempSync(path.join(tmpdir(), 'kb-run-')),
-      options: { knowledge: { url: kb.url } } });
+      options: { knowledge: { url: kb.url, participants: APPROVED } } });
     assert.equal(out.status, 'paused');
     assert.match(out.reason, /could not be confirmed after evidence had been used/);
     assert.equal(team.reviewer.calls.length, 0, 'the evidence-derived plan was never sent to the reviewer');
@@ -293,5 +306,76 @@ test('the policy changes after the author used evidence: the run pauses before t
     const resumed = await resume({ workspaceDir: out.workspaceDir, repoDir: repo, team: again, hooks: runHooks() });
     assert.equal(resumed.status, 'landed');
     assert.ok(again.reviewer.calls.length > 0);
+  } finally { await kb.close(); }
+});
+
+// ---- Codex review of PR101: trusted destinations, and the gate inside Seat.run's retry boundary ----
+import { trustedDestination } from '../src/knowledge/run.js';
+
+test('a destination is trusted only if the operator approved the name and nothing visible contradicts the route', () => {
+  const p = (name, kind, adapter = {}) => ({ name, adapter: { kind, ...adapter } });
+  const approved = { local: 'local-model', lan: 'local-model', claude: 'claude-subscription', codex: 'codex-subscription', odd: 'claude-subscription' };
+  const clean = trustedDestination(approved, {});
+  assert.equal(clean(p('local', 'local-agent', { baseUrl: 'http://127.0.0.1:8080/v1' })), 'local-model');
+  assert.equal(clean(p('lan', 'local-agent', { baseUrl: 'http://10.0.0.5:8080/v1' })), 'local-model');
+  assert.equal(clean(p('local', 'local-agent', { baseUrl: 'https://example.invalid/v1' })), null, 'a public endpoint is not the local model');
+  assert.equal(clean(p('claude', 'claude-code')), 'claude-subscription');
+  assert.equal(clean(p('codex', 'codex', { homeIdentity: ['frontier', 'codex'], extraConfig: [] })), 'codex-subscription');
+  assert.equal(clean(p('codex', 'codex', { homeIdentity: ['frontier', 'codex'], extraConfig: ['model_provider=other'] })), null, 'provider override');
+  assert.equal(clean(p('codex', 'codex', { homeIdentity: ['frontier', 'codex'], extraConfig: ['model_providers.x.base_url="https://x"'] })), null);
+  assert.equal(clean(p('codex', 'codex', { homeIdentity: ['codex', []], extraConfig: [] })), null, 'not the frontier home');
+  assert.equal(clean(p('odd', 'local-agent', { baseUrl: 'http://127.0.0.1:1/v1' })), null, 'approved destination does not match the kind');
+  assert.equal(clean(p('stranger', 'claude-code')), null, 'not approved');
+  assert.equal(clean(p('claude-api', 'anthropic-api')), null);
+  for (const k of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX']) {
+    assert.equal(trustedDestination(approved, { [k]: 'x' })(p('claude', 'claude-code')), null, k);
+  }
+  assert.equal(trustedDestination(approved, { OPENAI_BASE_URL: 'https://x' })(p('codex', 'codex', { homeIdentity: ['frontier', 'codex'], extraConfig: [] })), null);
+});
+
+test('a local model whose endpoint is not private makes the collection unusable for the whole run', async () => {
+  const kb = await kbStub();
+  try {
+    const team = teamOf();
+    team.local.adapter.baseUrl = 'https://example.invalid/v1';
+    const ctx = await ctxWith(kb, { team });
+    for (const seat of ['author', 'local']) await callAgent(ctx, team[seat], 'author', 'go');
+    assert.doesNotMatch(team.author.calls[0].context + team.local.calls[0].context, /EXCERPT/);
+    assert.deepEqual(events(ctx, 'evidence-withheld').map((e) => e.report.participant), ['local']);
+  } finally { await kb.close(); }
+});
+
+test('revocation between attempts inside one Seat.run: the next candidate is never sent anything, and there is no failover', async () => {
+  const kb = await kbStub();
+  try {
+    const first = routed(fakeParticipant({ name: 'claude', kind: 'claude-code', script: () => { kb.revision = 'b'.repeat(64); return { ok: false, failure: 'infrastructure', error: 'reset' }; } }));
+    const second = routed(fakeParticipant({ name: 'claude-b', kind: 'claude-code', script: ok }));
+    const team = { ...teamOf(), author: new Seat({ name: 'claude', candidates: [first, second] }) };
+    const ctx = await ctxWith(kb, { team, participants: { ...APPROVED, 'claude-b': 'claude-subscription' } });
+    const r = await callAgent(ctx, team.author, 'author', 'plan it');
+    assert.match(first.calls[0].context, /EXCERPT/, 'the first attempt was cleared and carried evidence');
+    assert.equal(second.calls.length, 0, 'the retry after the policy changed was never dispatched');
+    assert.equal(r.ok, false);
+    assert.equal(r.failure, 'no-participant', 'a resumable pause, not a failover');
+    assert.match(r.error, /could not be confirmed after evidence had been used/, 'the knowledge stop itself, not the router running out of candidates');
+    assert.equal(r.servedBy, 'claude-b', 'stopped at the candidate it was about to try');
+    assert.ok(events(ctx, 'evidence-stopped').length >= 1);
+  } finally { await kb.close(); }
+});
+
+test('a candidate added to a seat after evidence was used is outside the approved scope and is stopped', async () => {
+  const kb = await kbStub();
+  try {
+    const cli = routed(fakeParticipant({ name: 'claude', kind: 'claude-code', script: ok }));
+    const seat = new Seat({ name: 'claude', candidates: [cli] });
+    const team = { ...teamOf(), author: seat };
+    const ctx = await ctxWith(kb, { team, participants: { ...APPROVED, late: 'claude-subscription' } });
+    await callAgent(ctx, seat, 'author', 'plan it');
+    assert.equal(ctx.state.knowledge.sent, true);
+    const late = routed(fakeParticipant({ name: 'late', kind: 'claude-code', script: ok }));
+    seat.candidates.unshift(late); // e.g. a route added after the evidence was chosen
+    const r = await callAgent(ctx, seat, 'author', 'next, from the plan');
+    assert.equal(r.failure, 'no-participant');
+    assert.equal(late.calls.length, 0);
   } finally { await kb.close(); }
 });

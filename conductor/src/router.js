@@ -82,6 +82,9 @@ export class Seat {
   }
 
   async run(role, task, context = '', opts = {}) {
+    // K8: an optional gate checked immediately before each candidate is tried (knowledge/run.js knowledgeGate). A stop
+    // ends the call as a resumable pause; it is never treated as a candidate failure to fail over from.
+    const { beforeDispatch, ...candidateOpts } = opts;
     let waited = false;
     for (;;) {
       for (const c of this.candidates) {
@@ -90,9 +93,13 @@ export class Seat {
           this.announced.add(c.name); // before the call: it may cost money
           this.emit('api-in-use', { seat: this.name, participant: c.name });
         }
+        if (beforeDispatch) {
+          const gate = await beforeDispatch(c);
+          if (gate?.stop) return Object.assign(makeResult({ ok: false, failure: 'no-participant', error: gate.stop }), { servedBy: c.name, servedKind: c.adapter.kind });
+        }
         let r;
         try {
-          r = await c.run(role, task, context, opts);
+          r = await c.run(role, task, context, candidateOpts);
         } catch (e) {
           r = makeResult({ ok: false, error: String(e?.message ?? e) });
         }
