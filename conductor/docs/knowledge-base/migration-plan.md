@@ -89,7 +89,7 @@ A Foundation optional module (`knowledge`), enabled from the brief's `modules`, 
 | K5 | Parser upgrade: Docling with a permissively licensed OCR engine for scans, page/bbox/sheet-cell locators | K2 | Scanned and table fixtures cited with correct locators; the pinned OCR, model and native dependency set passes the licence policy (or Malcolm records an exception) |
 | K6 | HTTP API per contract v1 (+ fixtures), loopback or private network only | K2; contract accepted | Contract fixtures pass; negative auth tests |
 | K7 | MCP adapter (three read tools) over K6 | K6 | Same results as API; no write tools; audience-bound tokens |
-| K8 | Conductor evidence step + destination policy, behind a flag | K6 | Synthetic run cites passages; withheld-destination report; injection test |
+| K8 | Conductor evidence step + destination policy, behind a flag ([design proposal](k8-conductor-evidence.md)) | K6 | Synthetic run cites passages; withheld-destination report; injection test |
 | K9 | Backups + restore drill automation | K2 | Monthly drill passes |
 | K10 | Babel export-to-staging tool + triage sheet (read-only) | K1 | Export reproducible; private docs excluded |
 | K11 | Stage 3 import of approved documents | K10, K2–K5 | Verification list in Stage 3 |
