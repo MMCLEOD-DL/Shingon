@@ -39,3 +39,11 @@ Start with a read-only integration. Write-back, automatic document editing and a
 Next-phase backlog, covering KB implementation order alongside the other post-fortnight items: [`operator-app/next.md`](operator-app/next.md).
 
 Delivery planning: [two-week product plan, 30 October–12 November 2026](superpowers/plans/2026-10-29-two-week-product/00-index.md), especially P06 and P09.
+
+## Teaching a local model Hoon
+
+Recorded: 5 November 2026. Status: design note written, awaiting Malcolm's decision; nothing built.
+
+Malcolm wants the local Qwen model to write Hoon (Urbit) well enough to use through Conductor, using the compiler and
+tests to manufacture training data because public Hoon code is scarce. The proposal, its guardrails and the first two
+cheap stages (prove the tooling, measure today's model) are in [`research/hoon-local-model.md`](research/hoon-local-model.md).
