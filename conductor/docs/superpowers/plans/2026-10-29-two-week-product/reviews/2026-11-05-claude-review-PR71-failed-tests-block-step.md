@@ -30,6 +30,7 @@
   2. **continue**: in that case the step gate compares against the baseline rather than requiring a pass. Matching on the exit code alone is weak; a per-test comparison needs a test-output format.
 
   Option 1 alone is small and closes the spend problem. Either way, an override at one step should not make every later step burn its full budget.
+- **Malcolm's decision (5 November 2026): option 1, stop.** The run checks the tests once on the base commit and stops before any work if they already fail; option 2 is not taken. Recorded in `work-log/2026-11-05-1930-claude-pr71-r1-decision.md`, with what Codex's change should show.
 - **Not a defect in the code as written.** The PR implements F8 exactly as proposed. This is a policy gap; recording it here rather than as a bug in Codex's work.
 
 ## Notes (low)
