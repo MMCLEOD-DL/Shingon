@@ -1,0 +1,6 @@
+# Codex claim — independent browser acceptance cross-review
+
+- P07 review, Codex reviewer, Claude owner. Branch `codex/review-browser-acceptance` from combined main `4c8b2fbbb38f94201540807d39b0dea3823cd053`, including verified final submissions for merged PR86 and PR87. PR87 all five final-head required checks pass; Windows fixture implementation is complete.
+- Review target: Claude PR86 `6025fd6b16407a54b64cb826e580f471b30ee80e`, code `aa033b6`. Review accepted-answer notice lifetime, paused-run guidance, added browser coverage and residual boundary claims. Run current UI unit/build checks on native Windows, inspect new journey and CI evidence; distinguish Linux synthetic browser coverage from native/live acceptance.
+- Scope: read-only review of Claude-owned UI/journeys, own review/handoff record and packet ledger only. No UI/engine/service edits, live models, worker operation, credentials, policy change, deployment, or browser-security-policy workaround. Preserve Claude ownership and both existing automation pauses.
+- Next: test the actual merged UI, assess plausible state/decision races, report concrete findings or no blocking findings at the exact reviewed SHA. Keep residual native/browser, response-loss and backend fallback questions explicit rather than silently expanding the fix.
