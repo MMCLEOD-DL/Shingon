@@ -1,6 +1,6 @@
 // PR81 review (Claude, 5 Nov 2026; mutation control: replace the realpath comparison in src/workspace.js with `sameDirectory = true` in a scratch copy): does guardGitDir's git-common-dir comparison catch a broken workspace .git that
 // makes Git fall through to an enclosing repository? Synthetic repos only.
-//   node pr81-parent-repo.mjs <conductor dir>
+//   node pr81-enclosing-repository.mjs <conductor dir>
 import { mkdtempSync, rmSync, unlinkSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
