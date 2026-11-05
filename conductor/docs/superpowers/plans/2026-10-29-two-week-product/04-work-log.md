@@ -13,7 +13,7 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude acknow
 | P06 | Claude | DONE | Research/corrections reviewed through PR55 `f550b67`, integrated `7f78297` | Research/contract deliverables complete: P06-R1–R4 and KB-R1–R7 closed; retrieval v1 accepted in PR54. Strengthened stored-evidence audit passes; pre-fix breakdown fails as expected, saved measurements unchanged. K3–K13 implementation/admission and migration remain separate. D1/D2/D5 accepted; D3/D4 open. |
 | P07 | Codex + Claude review | IN_PROGRESS | codex/operator-app-v1 | Backend boundary tests pass; UI integration and peer review pending |
 
-| P08 | Codex + Claude review | IN_PROGRESS | `codex/windows-uac-diagnosis` from PR82 merge `b68e3b0` | PR82 output correction merged including `b93b461`; all five checks pass, 53 native checks plus Linux 1620 pass/2 Windows-only skips. Two operator-observed Codex writes verify with UAC counts 0/0; no new sandbox setup/error32 events. Bounded frontier case passes; original attribution/local-home and broader live/browser/abrupt acceptance remain open. See new UAC report. |
+| P08 | Codex + Claude review | IN_PROGRESS | `codex/local-uac-checks` from PR83 merge `0dc247c` | PR83 frontier report merged including `a7d2002`, all five checks pass. Two authorized local writes verify with UAC 1/0 and fresh setup only on first call; controller/key prompt exited. Frontier 0/0 and local immediate reuse pass; retained-home invalidation/original attribution and broader live/browser/abrupt acceptance stay open. See UAC report. |
 | P09 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 29 Oct P09 entry; awaiting Codex review and Malcolm's prioritisation |
 
 ## Decisions to settle in P00
