@@ -26,6 +26,16 @@ describe('plain words for engine steps', () => {
     expect(eventText({ type: 'finished', message: 'You did not approve the plan, so nothing was changed.' }))
       .toBe('You did not approve the plan, so nothing was changed.');
   });
+  // K8: knowledge-base evidence events (conductor/src/knowledge/run.js). The service forwards them as progress events
+  // with no sentence of their own; the run's activity log says what happened, never which documents or passages.
+  test('the knowledge-base evidence events read as what happened', () => {
+    expect(eventText(progress('evidence-used', 'evidence-used'))).toBe('Evidence from the company knowledge base was given to the models.');
+    expect(eventText(progress('evidence-withheld', 'evidence-withheld'))).toBe('Some knowledge-base evidence was kept from the models by its data policy.');
+    expect(eventText(progress('evidence-dropped', 'evidence-dropped'))).toBe('Knowledge-base evidence was dropped because its policy could not be confirmed; the run carried on without it.');
+    expect(eventText(progress('evidence-stopped', 'evidence-stopped'))).toBe('The knowledge-base policy could not be confirmed after its evidence was used, so nothing built from it was passed on.');
+    expect(eventText(progress('evidence-unavailable', 'evidence-unavailable'))).toBe('The knowledge base was not available, so the run carried on without its evidence.');
+    expect(phaseText('evidence-used')).toBeNull();
+  });
   test('untrusted text is still cleaned', () => {
     expect(eventText({ type: 'progress', message: 'done \x1b[31mred', data: {} })).toBe('done red');
   });
