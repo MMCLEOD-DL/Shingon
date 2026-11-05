@@ -507,3 +507,55 @@ test('a paused run with no saved work says it cannot be resumed, and offers no R
   expect(await screen.findByText(/It has no saved work to resume: start the task again/)).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Resume' })).toBeNull();
 });
+
+describe('an answer whose response was lost', () => {
+  // The service records the answer, but the browser never sees the reply (connection dropped). The live stream is down
+  // too, so the question stays on screen and the operator tries again.
+  const lostOnce = () => {
+    const svc = fakeService({ run: fixtures.awaitingResult });
+    const receipts = new Map();
+    let dropped = false;
+    const fetchImpl = async (url, init = {}) => {
+      if (!url.includes('/decisions/')) return svc.fetchImpl(url, init);
+      const body = JSON.parse(init.body);
+      svc.state.calls.push({ method: 'POST', path: url, body });
+      const identity = JSON.stringify([body.choiceId, body.expectedRevision, body.reviewedCommit, body.feedback ?? null]);
+      const saved = receipts.get(body.clientRequestId);
+      if (saved) return saved === identity ? { ok: true, status: 200, json: async () => ({ accepted: true }) }
+        : { ok: false, status: 409, json: async () => ({ error: { code: 'conflict', message: 'Request ID conflict.', retryable: false, requestId: 'r' } }) };
+      if (receipts.size) return { ok: false, status: 409, json: async () => fixtures.staleDecision }; // already answered
+      receipts.set(body.clientRequestId, identity);
+      if (!dropped) { dropped = true; throw new TypeError('Failed to fetch'); } // recorded, reply lost
+      return { ok: true, status: 200, json: async () => ({ accepted: true }) };
+    };
+    render(<RunView api={createApi({ fetchImpl })} runId={fixtures.awaitingResult.id} go={() => {}} />);
+    return svc;
+  };
+  const decisionPosts = (svc) => svc.state.calls.filter((c) => c.path.includes('/decisions/'));
+
+  test('retrying the same answer reuses its request id and is confirmed from the service receipt', async () => {
+    const svc = lostOnce();
+    const approve = await screen.findByRole('button', { name: 'Approve: create a branch' });
+    await waitFor(() => expect(approve.disabled).toBe(false));
+    await userEvent.click(approve);
+    expect(await screen.findByText(/not answering/)).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Approve: create a branch' }));
+    expect(await screen.findAllByText(/Answer saved/)).toBeTruthy();
+    const [first, second] = decisionPosts(svc);
+    expect(second.body.clientRequestId).toBe(first.body.clientRequestId);
+  });
+
+  test('a changed answer after a lost reply is told plainly that the first answer already counted', async () => {
+    const svc = lostOnce();
+    const reject = await screen.findByRole('button', { name: 'Reject' });
+    await userEvent.type(screen.getByLabelText(/If you reject/), 'Use a clearer name.');
+    await userEvent.click(reject);
+    expect(await screen.findByText(/not answering/)).toBeTruthy();
+    await userEvent.type(screen.getByLabelText(/If you reject/), ' And add a test.');
+    await userEvent.click(screen.getByRole('button', { name: 'Reject' }));
+    expect(await screen.findByText(/This question changed or was already answered/)).toBeTruthy();
+    expect(screen.queryByText(/Request ID conflict/)).toBeNull();
+    const [first, second] = decisionPosts(svc);
+    expect(second.body.clientRequestId).not.toBe(first.body.clientRequestId);
+  });
+});

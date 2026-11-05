@@ -285,6 +285,67 @@ try {
     await ctx.close();
   });
 
+  await step('an approval whose reply is lost: retrying the same answer is confirmed from the receipt, and lands once', async () => {
+    const ctx = await browser.newContext({ storageState: await context.storageState() });
+    const p = await ctx.newPage();
+    await p.goto(`${app.origin}/`);
+    await p.getByLabel(/Describe the change/).fill('lost reply');
+    await p.getByRole('button', { name: 'Start' }).click();
+    await p.getByRole('heading', { name: 'Review the finished work' }).waitFor({ timeout: 15000 });
+    const runId = runIdFrom(p);
+    // Then the live view goes down too, so the question stays on screen after the answer is recorded.
+    await p.route('**/events?**', (route) => route.abort());
+    await p.reload();
+    await p.getByRole('heading', { name: 'Review the finished work' }).waitFor({ timeout: 15000 });
+    await p.getByText(/Connection lost — reconnecting/).waitFor();
+    const sent = [];
+    // The first answer reaches the real service and is recorded; only its reply is dropped.
+    await p.route('**/decisions/**', async (route) => { sent.push(route.request().postDataJSON()); await route.fetch(); await route.abort(); }, { times: 1 });
+    p.on('request', (r) => { if (r.url().includes('/decisions/') && sent.length) sent.push(r.postDataJSON()); });
+    await p.getByRole('button', { name: 'Approve: create a branch' }).click();
+    await p.getByText(/The Conductor service is not answering/).waitFor({ timeout: 15000 });
+    await p.getByRole('button', { name: 'Approve: create a branch' }).click();
+    // The retry is accepted (no error, no conflict). The first, recorded answer already let the run finish, so the page
+    // shows the outcome itself rather than a "waiting" note.
+    await p.getByText('Branch created', { exact: true }).waitFor({ timeout: 15000 });
+    assert.equal(await p.getByRole('alert').count(), 0, 'an error is still shown after the accepted retry');
+    assert.equal(await p.getByText(/This question changed or was already answered|Request ID conflict/).count(), 0);
+    assert.ok(sent.length >= 2 && sent.every((b) => b.clientRequestId === sent[0].clientRequestId), 'the retry reused the request id');
+    let run;
+    for (let i = 0; i < 60; i++) { run = (await apiGet(p, `/api/v1/runs/${runId}`)).body; if (run.status === 'completed') break; await p.waitForTimeout(250); }
+    assert.equal(run.status, 'completed');
+    await p.unroute('**/events?**'); // read the recorded events directly
+    const resolved = await p.evaluate(async (u) => {
+      const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 1000); let text = '';
+      try { const reader = (await fetch(u, { signal: ctl.signal })).body.getReader(); for (;;) { const { value, done } = await reader.read(); if (done) break; text += new TextDecoder().decode(value); } }
+      catch { /* aborted after the replay */ } finally { clearTimeout(timer); }
+      return text.split('\n').filter((l) => l.startsWith('data:') && l.includes('"decision-resolved"')).length;
+    }, `/api/v1/runs/${runId}/events?after=0`);
+    assert.equal(resolved, 1, `expected one recorded answer, found ${resolved}`);
+    await ctx.close();
+  });
+
+  await step('an approval whose reply is lost, then a different answer: told plainly that the first answer already counted', async () => {
+    const ctx = await browser.newContext({ storageState: await context.storageState() });
+    const p = await ctx.newPage();
+    await p.goto(`${app.origin}/`);
+    await p.getByLabel(/Describe the change/).fill('lost reply, changed mind');
+    await p.getByRole('button', { name: 'Start' }).click();
+    await p.getByRole('heading', { name: 'Review the finished work' }).waitFor({ timeout: 15000 });
+    await p.route('**/events?**', (route) => route.abort());
+    await p.reload();
+    await p.getByRole('heading', { name: 'Review the finished work' }).waitFor({ timeout: 15000 });
+    await p.route('**/decisions/**', async (route) => { await route.fetch(); await route.abort(); }, { times: 1 });
+    await p.getByRole('button', { name: 'Approve: create a branch' }).click();
+    await p.getByText(/The Conductor service is not answering/).waitFor({ timeout: 15000 });
+    await p.getByLabel(/If you reject/).fill('Changed my mind.');
+    await p.getByRole('button', { name: 'Reject' }).click();
+    await p.getByText(/This question changed or was already answered/).waitFor({ timeout: 15000 });
+    assert.equal(await p.getByText(/Request ID conflict/).count(), 0, 'the operator was shown a raw request-id conflict');
+    await p.getByText('Branch created', { exact: true }).waitFor({ timeout: 15000 }); // the first answer is what counted
+    await ctx.close();
+  });
+
   await step('abrupt service kill during a question, then restart: the question is withdrawn, never answered, and the UI says how to sign in again', async () => {
     const dataDir = path.join(root, 'data-kill');
     const serve = (port) => new Promise((resolve, reject) => {
