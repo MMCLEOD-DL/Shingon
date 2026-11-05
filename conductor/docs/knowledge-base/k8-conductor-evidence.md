@@ -1,6 +1,6 @@
 # K8 design: knowledge-base evidence in a Conductor run
 
-**Status:** proposal, 5 November 2026. Nothing here is built. It needs Codex's agreement on the shared seams (§6) and Malcolm's decision on the forwarding rule (§3) before any engine code. **Packet:** next-phase task K8 ([migration plan](migration-plan.md#implementation-tasks-each-one-separately-reviewable)); it implements D5, which Malcolm accepted ([recommendation](recommendation.md)). **Depends on:** K6 (HTTP API), which is merged.
+**Status:** proposal, 5 November 2026. Malcolm accepted the run-wide rule (§3) the same day. Slice 2 (§7), a module the engine does not yet import, is being built; engine wiring still needs Codex's agreement on the shared seams (§6). **Packet:** next-phase task K8 ([migration plan](migration-plan.md#implementation-tasks-each-one-separately-reviewable)); it implements D5, which Malcolm accepted ([recommendation](recommendation.md)). **Depends on:** K6 (HTTP API), which is merged.
 
 ## 1. What K8 must do (fixed by retrieval contract v1)
 
@@ -30,7 +30,7 @@ A local-only passage shown to the local model can therefore reach Claude or Code
 
 **Proposed rule (run-wide):** a collection's passages may be used in a run only if **every participant who can receive text in that run** is an allowed destination. That set is the author, reviewer and local seats from `buildTeam`. A chunk's fallback is always one of the first two (`chunkRoles`), and the council calls the reviewer seat. Anything else is withheld from the whole run. Each excluded participant is reported to the operator once per collection, with `withheld_report()`. Every participant that could have seen the evidence receives `PARTICIPANT_NOTICE`. The per-call check in §2 stays as a second layer, so a seat added later, for example a fallback the operator approves mid-run, cannot receive evidence it was not cleared for.
 
-**Consequence for Malcolm to accept.** A `local-model`-only collection is never usable in an ordinary run. Ordinary runs always include a subscription reviewer, so such a collection only helps a run whose every seat is local. For D5's first use (Foundation and Conductor docs, coding standards), the collections would allow all three destinations, so nothing changes. The alternative is per-call filtering only, which would leak through diffs and plans. I don't recommend it.
+**Accepted by Malcolm on 5 November 2026.** **Consequence:** A `local-model`-only collection is never usable in an ordinary run. Ordinary runs always include a subscription reviewer, so such a collection only helps a run whose every seat is local. For D5's first use (Foundation and Conductor docs, coding standards), the collections would allow all three destinations, so nothing changes. The alternative is per-call filtering only, which would leak through diffs and plans. I don't recommend it.
 
 ## 4. Policy freshness
 
