@@ -1,0 +1,6 @@
+# Codex claim — native Windows workspace identity
+
+- P08, owner Codex, independent reviewer Claude/Malcolm. Branch `codex/windows-workspace-identity` from main `f091777` (PR80); final submission `db62bbb` verified included. All four PR80 test/build suites pass; Malcolm merged protected service code himself.
+- Evidence: 5 November real retest profile-folder workspace refused as `gitdir-tampered` because packaged-app virtualization gives Node's logical realpath a different path from Git. Read-only native realpath agrees with Git. Ordinary C:\ trial worked; the guard was never bypassed.
+- Minimal shared seam claim: `conductor/src/workspace.js` Git-directory identity comparison, plus a focused workspace regression file and evidence. No engine, UI, adapter, credential, sandbox-policy or deployment change. Preserve the real-directory, planted redirect removal, sealed-config restoration and poison checks.
+- Next: reproduce with a fresh synthetic workspace under the native profile; compare both sides through the OS-native resolver; verify parent-link acceptance and linked `.git` refusal/poison controls. Run relevant workspace/service checks. No live model calls, worker operation or sign-in needed. Keep this as one focused PR, draft until required latest-head checks pass; Malcolm owns the protected-code approval label.
