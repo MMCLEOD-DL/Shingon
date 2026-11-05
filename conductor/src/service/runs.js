@@ -4,12 +4,51 @@ import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { git, Workspace } from '../workspace.js';
 import { redact } from '../secrets.js';
+import { MAX_RESULTS } from '../knowledge/client.js';
+import { withheldReport } from '../knowledge/evidence.js';
 import { appConfig } from './config.js';
 import { id, now, requireValue, opaqueId } from './state.js';
 
 const ACTIVE = new Set(['running', 'awaiting-decision', 'queued', 'cancelling']);
 const terminal = status => ({ landed: 'completed', stopped: 'paused', paused: 'paused', rejected: 'rejected', failed: 'failed' })[status] ?? 'failed';
 const scrub = v => redact(String(v ?? '')).replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').slice(0, 8000);
+
+// Keep KB activity within the existing progress event schema. Only this projection
+// is saved and sent to the operator, including when the service replays the run.
+function knowledgeEventData(event) {
+  const data = { engineType: event.type };
+  switch (event.type) {
+    case 'evidence-used':
+      if (Number.isSafeInteger(event.count) && event.count > 0 && event.count <= MAX_RESULTS) data.count = event.count;
+      if (['strong', 'weak'].includes(event.evidence)) data.evidence = event.evidence;
+      if (typeof event.viewRevision === 'string' && /^[a-f0-9]{64}$/.test(event.viewRevision)) data.viewRevision = scrub(event.viewRevision);
+      return data;
+    case 'evidence-withheld': {
+      const report = event.report;
+      if (report && typeof report.participant === 'string' && /^[a-z0-9][a-z0-9-]{0,63}$/.test(report.participant)
+        && typeof report.collectionId === 'string' && Array.isArray(report.documentIds) && Array.isArray(report.allowedDestinations)) {
+        const documentIds = report.documentIds.slice(0, MAX_RESULTS).filter(id => typeof id === 'string').map(scrub);
+        const destinations = report.allowedDestinations.filter(value => typeof value === 'string'
+          && /^(local-model|claude-subscription|codex-subscription|foundation-app:[a-z0-9][a-z0-9-]{0,63})$/.test(value));
+        const safeReport = withheldReport(report.participant, scrub(report.collectionId), documentIds, destinations);
+        data.report = redact({ ...safeReport, message: scrub(safeReport.message) });
+        data.participant = data.report.participant;
+      } else if (typeof event.collectionId === 'string' && Number.isSafeInteger(event.documents)
+        && event.documents > 0 && event.documents <= MAX_RESULTS) {
+        Object.assign(data, { collectionId: scrub(event.collectionId), documents: event.documents, allowedDestinations: [] });
+      }
+      return data;
+    }
+    case 'evidence-dropped':
+    case 'evidence-stopped':
+    case 'evidence-unavailable':
+      if (typeof event.reason === 'string') data.reason = scrub(event.reason);
+      return data;
+    default:
+      return null;
+  }
+}
+
 const choices = kind => kind === 'fallback'
   ? [{ id: 'pause', label: 'Pause', consequence: 'No subscription fallback.' }, { id: 'continue', label: 'Use subscriptions', consequence: 'Uses more subscription allowance.' }]
   : [{ id: 'reject', label: 'Reject', consequence: 'Do not proceed.' }, { id: 'approve', label: 'Approve', consequence: kind === 'result' ? 'Create a new branch; do not merge or deploy.' : 'Continue this step.' }];
@@ -83,6 +122,11 @@ export class Runs {
             run.workspaceDir = target; run.resumable = true;
           }
           const e = msg.event;
+          const knowledge = knowledgeEventData(e);
+          if (knowledge) {
+            this.event(run, 'progress', knowledge.engineType, knowledge);
+            return;
+          }
           if (e.type === 'result' && e.ok) {
             const who = e.servedBy ?? e.participant;
             const participant = appConfig(this.configFile).participants.find(p => p.name === who);
