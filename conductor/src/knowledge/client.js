@@ -34,7 +34,8 @@ export class KbError extends Error {
 
 const fail = (what) => { throw new KbError('bad-response', `The knowledge service sent an invalid response (${what}).`); };
 
-function privateHost(hostname) {
+/** True for loopback, RFC 1918 and IPv6 unique-local hosts (address syntax only: a private host can still forward elsewhere). */
+export function privateHost(hostname) {
   const h = hostname.replace(/^\[|\]$/g, '').toLowerCase();
   if (h === 'localhost') return true;
   if (h === '::1') return true;

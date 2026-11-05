@@ -26,7 +26,7 @@ export const destinationOf = (participant) => DESTINATION_OF_KIND[participant?.a
 export const recipientsOf = (seatOrParticipant) =>
   (Array.isArray(seatOrParticipant?.candidates) && seatOrParticipant.candidates.length ? seatOrParticipant.candidates : [seatOrParticipant]);
 
-const allowsAll = (destinations, recipients) => recipients.length > 0 && recipients.every((r) => destinations.includes(destinationOf(r)));
+const allowsAll = (destinations, recipients, dest = destinationOf) => recipients.length > 0 && recipients.every((r) => destinations.includes(dest(r)));
 
 /** contract.withheld_report(): the operator's report, with its fixed message. Never sent to a participant. */
 export function withheldReport(participant, collectionId, documentIds, allowed) {
@@ -68,14 +68,14 @@ function limit(name, value) {
  * answers and must share a viewRevision. Returns the usable passages (rank order, whole passages, the rendered block
  * within maxChars) and the operator's reports.
  */
-export function selectEvidence({ collections, search, seats, maxPassages = 8, maxChars = 12000 }) {
+export function selectEvidence({ collections, search, seats, maxPassages = 8, maxChars = 12000, destinationOf: dest = destinationOf }) {
   limit('maxPassages', maxPassages); limit('maxChars', maxChars);
   if (!collections || !search || collections.viewRevision !== search.viewRevision) {
     throw new Error('The knowledge policy and the search came from different moments; evidence was not used.');
   }
   const recipients = [...new Map(seats.flatMap(recipientsOf).map((r) => [r.name, r])).values()];
   const policy = new Map(collections.collections.map((c) => [c.collectionId, c]));
-  const usable = new Set([...policy.values()].filter((c) => c.kind === 'reference' && allowsAll(c.destinations, recipients)).map((c) => c.collectionId));
+  const usable = new Set([...policy.values()].filter((c) => c.kind === 'reference' && allowsAll(c.destinations, recipients, dest)).map((c) => c.collectionId));
   const passages = [];
   const withheldDocs = new Map(); // collectionId -> documentIds, first-seen order
   for (const r of search.results) {
@@ -97,7 +97,7 @@ export function selectEvidence({ collections, search, seats, maxPassages = 8, ma
     const allowed = policy.get(collectionId)?.destinations ?? [];
     if (!allowed.length) { unreported.push({ collectionId, documentIds }); continue; }
     for (const r of recipients) {
-      if (!allowed.includes(destinationOf(r)) && PARTICIPANT.test(r.name)) reports.push(withheldReport(r.name, collectionId, documentIds, allowed));
+      if (!allowed.includes(dest(r)) && PARTICIPANT.test(r.name)) reports.push(withheldReport(r.name, collectionId, documentIds, allowed));
     }
   }
   return {
@@ -109,6 +109,7 @@ export function selectEvidence({ collections, search, seats, maxPassages = 8, ma
     unreported,
     withheld: withheldDocs.size > 0,
     maxChars,
+    destinationOf: dest, // process-local, like the whole selection
   };
 }
 
@@ -125,7 +126,7 @@ export function evidenceForCall(selection, seatOrParticipant) {
 export function evidenceFor(selection, seatOrParticipant) {
   if (!selection) return { text: '', sent: false };
   const recipients = recipientsOf(seatOrParticipant);
-  const passages = selection.passages.filter((p) => allowsAll(selection.policy[p.collectionId] ?? [], recipients));
+  const passages = selection.passages.filter((p) => allowsAll(selection.policy[p.collectionId] ?? [], recipients, selection.destinationOf ?? destinationOf));
   const notice = selection.withheld || passages.length < selection.passages.length ? PARTICIPANT_NOTICE : '';
   if (selection.evidence === 'none') return { text: [NO_SUPPORT, ...(notice ? [notice] : [])].join('\n'), sent: false };
   if (!passages.length) return { text: notice, sent: false };

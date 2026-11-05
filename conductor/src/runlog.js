@@ -5,7 +5,7 @@ import { makeResult } from './result.js';
 import { clip } from './text.js';
 import { redact } from './secrets.js';
 import { vendorOf, isApiKind } from './vendors.js';
-import { knowledgeForCall } from './knowledge/run.js';
+import { knowledgeForCall, knowledgeGate } from './knowledge/run.js';
 
 // Two-vendor rule at run time (spec §7): a frontier model's work reviewed by the same
 // vendor is allowed, but the run is flagged so the summary can say so. Local work never counts.
@@ -103,12 +103,15 @@ export async function callAgent(ctx, participant, role, task, opts = {}) {
   // K8 (knowledge/run.js): evidence travels in callRole's context, checked before every call; once evidence has been
   // used, a call that cannot be confirmed safe is stopped as a resumable pause ('no-participant'), never sent.
   let context = '';
+  let callOpts = opts;
   if (ctx.options?.knowledge || ctx.state?.knowledge?.sent) {
     const k = await knowledgeForCall(ctx, participant);
     if (k.stop) return makeResult({ ok: false, failure: 'no-participant', error: k.stop });
     context = k.context;
+    // A Seat checks again immediately before each candidate it tries (router.js Seat.run).
+    callOpts = { ...opts, beforeDispatch: (candidate) => knowledgeGate(ctx, candidate) };
   }
-  let result = await callRole(ctx.log, participant, role, task, context, opts);
+  let result = await callRole(ctx.log, participant, role, task, context, callOpts);
   // Usage totals (spec §7 budget awareness): cost as the CLIs/APIs report it, and paid API calls.
   const servedKind = result.servedKind ?? participant.adapter?.kind;
   const usage = (ctx.state.usage ??= { costUsd: 0, apiCostUsd: 0, apiCalls: 0 });
