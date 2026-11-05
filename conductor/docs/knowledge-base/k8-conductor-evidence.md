@@ -1,6 +1,6 @@
 # K8 design: knowledge-base evidence in a Conductor run
 
-**Status:** proposal, 5 November 2026. Malcolm accepted the run-wide rule (§3) the same day. Slice 2 (§7), a module the engine does not yet import, is being built; engine wiring still needs Codex's agreement on the shared seams (§6). **Packet:** next-phase task K8 ([migration plan](migration-plan.md#implementation-tasks-each-one-separately-reviewable)); it implements D5, which Malcolm accepted ([recommendation](recommendation.md)). **Depends on:** K6 (HTTP API), which is merged.
+**Status:** slices 2 and 3 built. Slice 3 wires evidence into ordinary runs behind `options.knowledge`, per §9; Malcolm asked for it on 5 November 2026, ahead of Codex's re-review of the slice 2 fixes. Slice 4 (service forwarding by Codex, UI display by Claude) and slice 5 (acceptance against a real K6 service) remain. Malcolm accepted the run-wide rule (§3) on 5 November 2026.
 
 ## 1. What K8 must do (fixed by retrieval contract v1)
 
