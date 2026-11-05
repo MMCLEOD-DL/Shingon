@@ -250,6 +250,29 @@ try {
   const runIdFrom = (p) => new URL(p.url()).pathname.split('/').pop();
   const apiGet = async (p, pathname) => p.evaluate(async (u) => { const r = await fetch(u); return { status: r.status, body: await r.json() }; }, pathname);
 
+  await step('knowledge base: the service evidence events become one note naming the collection and where it may go, after a reload too', async () => {
+    const ctx = await browser.newContext({ storageState: await context.storageState() });
+    const p = await ctx.newPage();
+    p.on('pageerror', (e) => consoleErrors.push(e.message));
+    await p.goto(`${app.origin}/`);
+    await p.getByLabel(/Describe the change/).fill('synthetic knowledge events'); // the fixture worker's K8 events (PR110)
+    await p.getByRole('button', { name: 'Start' }).click();
+    await p.getByRole('heading', { name: 'Review the finished work' }).waitFor({ timeout: 15000 });
+    for (const pass of ['live', 'replayed']) {
+      if (pass === 'replayed') { await p.reload(); await p.getByRole('heading', { name: 'Review the finished work' }).waitFor(); }
+      const note = p.getByRole('region', { name: 'Knowledge base' });
+      await note.getByText(/2 passages from the knowledge base were given to the models\./).waitFor();
+      await note.getByText(/1 document from standards was kept from codex: that collection may go only to the local model\./).waitFor();
+      await note.getByText(/stopped so that nothing built from the evidence was passed on/).waitFor();
+      const text = await note.textContent();
+      assert.doesNotMatch(text, /private-|local-model/, `${pass}: a private field or a raw destination code reached the note`);
+    }
+    await p.getByLabel(/If you reject/).fill('Synthetic knowledge check only.');
+    await p.getByRole('button', { name: 'Reject' }).click();
+    await p.getByText('Rejected — no branch created').waitFor({ timeout: 15000 });
+    await ctx.close();
+  });
+
   await step('two tabs, one question: only the first answer counts; the stale tab is told and sends nothing that lands', async () => {
     const ctx = await browser.newContext({ storageState: await context.storageState() });
     const a = await ctx.newPage(), b = await ctx.newPage();

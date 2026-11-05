@@ -559,3 +559,64 @@ describe('an answer whose response was lost', () => {
     expect(second.body.clientRequestId).not.toBe(first.body.clientRequestId);
   });
 });
+
+// K8 slice 4: the run-page note built from the evidence events the service forwards (service PR110, interface.md).
+describe('knowledge base note', () => {
+  const kbEvent = (seq, data, participant = null) => ({ ...fixtures.events[0], seq, type: 'progress', participant, message: data.engineType, data });
+  const report = (participant, collectionId, documentIds, allowed) => ({ type: 'evidence-withheld', participant, collectionId, documentIds, allowedDestinations: allowed,
+    message: `${documentIds.length} documents from ${collectionId} kept from ${participant}: that collection may go only to ${allowed.join(', ')}.` });
+  const emitAll = async (list) => {
+    await screen.findByText('Working');
+    const es = FakeEventSource.all[0];
+    for (const e of list) es.emit(e);
+    return screen.findByRole('region', { name: 'Knowledge base' });
+  };
+
+  test('no knowledge events, no note', async () => {
+    showRun(fixtures.runningRun);
+    await screen.findByText('Working');
+    FakeEventSource.all[0].emit({ ...fixtures.events[0], seq: 1 });
+    await screen.findByText('Activity log (1)');
+    expect(screen.queryByRole('region', { name: 'Knowledge base' })).toBeNull();
+  });
+
+  test('names each withheld collection once, who it was kept from, and where it may go, in plain words', async () => {
+    showRun(fixtures.runningRun);
+    const note = await emitAll([
+      kbEvent(1, { engineType: 'evidence-used', count: 2, evidence: 'weak', viewRevision: 'a'.repeat(64) }),
+      kbEvent(2, { engineType: 'evidence-withheld', report: report('codex', 'client-contracts', ['a.pdf', 'b.pdf'], ['local-model']), participant: 'codex' }, 'codex'),
+      kbEvent(3, { engineType: 'evidence-withheld', report: report('claude', 'client-contracts', ['a.pdf', 'b.pdf'], ['local-model']), participant: 'claude' }, 'claude'),
+      kbEvent(4, { engineType: 'evidence-withheld', collectionId: 'hr-records', documents: 1, allowedDestinations: [] }),
+    ]);
+    const n = within(note);
+    expect(n.getByText(/2 passages from the knowledge base were given to the models\. The knowledge base rated this evidence as weak\./)).toBeTruthy();
+    const line = n.getByText(/were kept from codex and claude: that collection may go only to the local model\./);
+    expect(within(line).getByText('client-contracts')).toBeTruthy();
+    expect(n.getAllByText('client-contracts')).toHaveLength(1);
+    expect(n.getByText('a.pdf')).toBeTruthy();
+    expect(n.getByText(/1 document from/).textContent).toMatch(/hr-records was kept from every model: that collection allows no destination this run can use\./);
+    expect(note.textContent).not.toMatch(/local-model|codex-subscription/);
+  });
+
+  test('a stop says why and what to do; a drop and an unavailable service say the run carried on', async () => {
+    showRun(fixtures.runningRun);
+    const note = await emitAll([
+      kbEvent(1, { engineType: 'evidence-unavailable', reason: 'timeout' }),
+      kbEvent(2, { engineType: 'evidence-dropped', reason: 'the run record could not be saved before any evidence was used' }),
+      kbEvent(3, { engineType: 'evidence-stopped', reason: 'policy changed or could not be confirmed' }),
+    ]);
+    expect(note.textContent).toMatch(/not used: the knowledge service did not answer in time\. The run carried on without it\./);
+    expect(note.textContent).toMatch(/dropped before any was used, and the run carried on without it: the run record could not be saved/);
+    expect(note.textContent).toMatch(/stopped so that nothing built from the evidence was passed on \(policy changed or could not be confirmed\)\. Resume once/);
+  });
+
+  test('hostile collection names and document ids are shown as text, never as markup', async () => {
+    showRun(fixtures.runningRun);
+    const note = await emitAll([
+      kbEvent(1, { engineType: 'evidence-withheld', report: report('codex', '<img src=x onerror=alert(1)>', ['<script>x</script>'], ['local-model']) }, 'codex'),
+    ]);
+    expect(note.querySelector('img, script')).toBeNull();
+    expect(note.textContent).toContain('<img src=x onerror=alert(1)>');
+    expect(within(note).getByText('<script>x</script>')).toBeTruthy();
+  });
+});
