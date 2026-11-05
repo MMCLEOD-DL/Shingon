@@ -33,7 +33,8 @@ async function setup(t, options = {}) {
   const login = async () => { const r = await call('/session', { method: 'POST', body: { bootstrapToken: app.bootstrapToken } }); assert.equal(r.status, 200); cookie = r.headers.get('set-cookie').split(';')[0]; };
   t.after(async () => { await app.close(); rmSync(root, { recursive: true, force: true }); });
   const register = async () => { const r = await call('/repositories', { method: 'POST', body: { path: repo } }); assert.equal(r.status, 201); return r.json.id; };
-  const start = async repositoryId => call('/runs', { method: 'POST', body: { repositoryId, request: 'synthetic task', presetId: 'default', clientRequestId: 'request-1' } });
+  const start = async (repositoryId, request = 'synthetic task') =>
+    call('/runs', { method: 'POST', body: { repositoryId, request, presetId: 'default', clientRequestId: 'request-1' } });
   const wait = async (runId, status) => {
     for (let i = 0; i < 100; i++) { const r = await call('/runs/' + runId); if (r.json.status === status) return r.json; await new Promise(r => setTimeout(r, 20)); }
     throw new Error('run never reached ' + status);
@@ -175,6 +176,53 @@ test('event replay returns persisted ordered events and refuses future cursors',
   const event = JSON.parse(text.split('data: ')[1].split('\n')[0]);
   assert.equal(event.seq, 2); assert.equal(event.runId, run.id);
   await reader.cancel();
+});
+
+test('K8 evidence metadata is persisted and replayed only to an authenticated operator', async t => {
+  const s = await setup(t); await s.login();
+  const r = await s.start(await s.register(), 'synthetic knowledge events');
+  const run = await s.wait(r.json.id, 'awaiting-decision');
+  const endpoint = `/runs/${run.id}/events?after=1`;
+  const statePath = path.join(s.dataDir, 'service-state.json');
+  const saved = readFileSync(statePath, 'utf8');
+  assert.doesNotMatch(saved, /private-(excerpt|title|token|detail|message)/);
+  const events = JSON.parse(saved).runs[0].events.slice(1, 7);
+  assert.deepEqual(events.map(e => e.data.engineType), [
+    'evidence-used', 'evidence-withheld', 'evidence-withheld', 'evidence-dropped', 'evidence-stopped', 'evidence-unavailable',
+  ]);
+  for (const e of events) {
+    assert.equal(e.type, 'progress');
+    assert.equal(e.message, e.data.engineType);
+    assert.equal(e.phase, 'start');
+  }
+  assert.deepEqual(events[0].data, { engineType: 'evidence-used', count: 2, evidence: 'strong', viewRevision: 'a'.repeat(64) });
+  assert.equal(events[1].participant, 'codex');
+  assert.deepEqual(events[1].data.report, {
+    type: 'evidence-withheld', participant: 'codex', collectionId: 'standards', documentIds: ['logging.md'],
+    allowedDestinations: ['local-model'],
+    message: '1 document from standards kept from codex: that collection may go only to local-model. To use it, run this step with an allowed participant.',
+  });
+  assert.deepEqual(events[2].data, { engineType: 'evidence-withheld', collectionId: 'unknown', documents: 1, allowedDestinations: [] });
+  assert.deepEqual(events.slice(3).map(e => e.data.reason), [
+    'the run record could not be saved before any evidence was used', 'policy changed or could not be confirmed', 'unreachable',
+  ]);
+  assert.equal((await s.call(endpoint, { headers: { cookie: '' } })).status, 401);
+  await s.restart();
+  const response = await s.stream(endpoint);
+  assert.equal(response.status, 200);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let frames = '';
+  try {
+    while ((frames.match(/\n\n/g) ?? []).length < events.length) {
+      const { value, done } = await reader.read();
+      assert.equal(done, false);
+      frames += decoder.decode(value, { stream: true });
+    }
+    const replay = frames.split('\n\n').slice(0, events.length).map(frame =>
+      JSON.parse(frame.split('\n').find(line => line.startsWith('data: ')).slice(6)));
+    assert.deepEqual(replay, events);
+  } finally { await reader.cancel(); }
 });
 
 test('a storage failure blocks approval before it reaches the worker', async t => {
