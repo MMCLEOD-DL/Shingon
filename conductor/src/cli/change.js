@@ -6,6 +6,7 @@ import path from 'node:path';
 import { EXIT } from './main.js';
 import { prepareTeam } from './prepareRun.js';
 import { loadConfig } from '../config.js';
+import { refuseKnowledge } from '../knowledge/run.js';
 import { readProject } from '../factory/projects.js';
 import { lockProject } from '../factory/projectLock.js';
 import { briefAuthorSeat } from '../factory/briefTeam.js';
@@ -38,7 +39,9 @@ const plain = (e) => clean(String(e?.message ?? e)).trim();
 function readConfig(ctx) {
   if (ctx.config) return ctx.config;
   if (!ctx.configPath) throw new Error('no config file was found (give one with --config <file>).');
-  return loadConfig(ctx.configPath);
+  const config = loadConfig(ctx.configPath);
+  refuseKnowledge(config.options, 'conductor change');
+  return config;
 }
 
 function notesReadable(file) {

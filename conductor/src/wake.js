@@ -3,7 +3,7 @@
 
 import dgram from 'node:dgram';
 import { runCommand } from './exec.js';
-import { strictChildEnv, redact, secretValues } from './secrets.js';
+import { strictChildEnv, redact, secretValues, isReservedEnvName } from './secrets.js';
 import { summarizeFailure } from './health.js';
 
 export const WAKE_DEFAULTS = Object.freeze({ method: 'warn', waitMs: 180000, pollMs: 5000, broadcast: '255.255.255.255', port: 9, timeoutMs: 60000 });
@@ -104,7 +104,7 @@ export function sendMagicPacket({ mac, broadcast = WAKE_DEFAULTS.broadcast, port
 // output redacted, then summarized, then redacted again (Review Focus 4), killed after timeoutMs.
 export async function runWakeCommand(wake, { run = runCommand, env = process.env } = {}) {
   const picked = {};
-  for (const name of wake.env ?? []) if (typeof env[name] === 'string') picked[name] = env[name];
+  for (const name of wake.env ?? []) if (typeof env[name] === 'string' && !isReservedEnvName(name)) picked[name] = env[name];
   const childEnv = { ...strictChildEnv({ env }), ...picked };
   // Every named value is a secret, even when its name does not look like one.
   const named = Object.values(picked).filter((v) => v.length > 0);

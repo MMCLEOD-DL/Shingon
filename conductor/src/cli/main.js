@@ -7,6 +7,7 @@ import { findConfig } from './config.js';
 import { listRuns } from './runs.js';
 import { FACTORY_COMMANDS, runFactoryCommand } from './factory.js';
 import { loadConfig } from '../config.js';
+import { refuseKnowledge } from '../knowledge/run.js';
 import { runTask, resume } from '../conductor.js';
 import { createTerminal } from '../ui/terminal.js';
 import { prepareTeam } from './prepareRun.js';
@@ -76,6 +77,7 @@ export async function main(argv, {
   let config;
   try {
     config = loadConfig(findConfig({ flag: cli.flags.config, cwd, env }));
+    if (cli.flags.council) refuseKnowledge(config.options, 'the council (--council)');
   } catch (e) {
     print(`Conductor could not read its config: ${e.message}`);
     return EXIT.usage;

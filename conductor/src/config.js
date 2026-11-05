@@ -9,6 +9,7 @@ import { DEFAULT_OPTIONS } from './options.js';
 import { isApiKind } from './vendors.js';
 import { normalizeWake } from './wake.js';
 import { addScrubEnv } from './secrets.js';
+import { checkKnowledgeOptions } from './knowledge/run.js';
 
 export function buildAdapter(spec) {
   const opts = { bin: spec.bin, model: spec.model, timeoutMs: spec.timeoutMs };
@@ -42,6 +43,7 @@ export function loadConfig(filePath) {
   for (const k of Object.keys(options)) {
     if (!Object.hasOwn(DEFAULT_OPTIONS, k)) throw new Error(`Unknown option "${k}" in config (known: ${Object.keys(DEFAULT_OPTIONS).join(', ')})`);
   }
+  checkKnowledgeOptions(options); // K8: bounded values, a private origin, and not with the council
   const routing = parsed.routing ?? {};
   for (const k of ['allowApi', 'preferTwoVendors']) {
     if (Object.hasOwn(routing, k) && typeof routing[k] !== 'boolean') {
