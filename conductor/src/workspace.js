@@ -212,8 +212,14 @@ export class Workspace {
     }
     const config = this.restoreConfigIfTampered();
     const r = await git(this.dir, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
-    const real = (p) => { try { return realpathSync(p); } catch { return p; } };
-    if (r.code !== 0 || real(r.stdout.trim()) !== real(gitDir)) {
+    // Git reports the OS path. Packaged Windows apps can retain a different
+    // logical profile path in the JS resolver; compare both native identities.
+    // Resolution failures must not turn into equal unchecked input strings.
+    let sameDirectory = false;
+    if (r.code === 0) {
+      try { sameDirectory = realpathSync.native(r.stdout.trim()) === realpathSync.native(gitDir); } catch {}
+    }
+    if (!sameDirectory) {
       const why = `git-common-dir is ${r.code === 0 ? r.stdout.trim() : 'unreadable'}, not ${gitDir}`;
       POISONED.set(this.dir, why);
       throw new Error(`the workspace git directory was tampered with: ${why}`);
