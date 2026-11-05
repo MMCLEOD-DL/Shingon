@@ -6,7 +6,8 @@
 // What lives where:
 //   - passages and the client: process-local (a WeakMap keyed by the run's state object), never written to disk;
 //   - state.knowledge: only the provenance a later call (or a resumed run) needs to enforce the rule:
-//     { sent, scope (every candidate that may receive text), origin, viewRevision }.
+//     { sent, scope: { candidate name -> its destination when evidence was first used }, origin, viewRevision }.
+//     It is on disk before the first call that carries a passage; if it cannot be saved, nothing is sent.
 
 import { createKbClient, checkKbUrl, privateHost, KbError } from './client.js';
 import { selectEvidence, evidenceFor, recipientsOf, stillFresh, LIMITS } from './evidence.js';
@@ -19,14 +20,18 @@ const DESTINATIONS = new Set(['local-model', 'claude-subscription', 'codex-subsc
 const CLAUDE_ROUTE_ENV = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX'];
 const CODEX_ROUTE_ENV = ['OPENAI_BASE_URL'];
 const set = (env, names) => names.some((n) => typeof env[n] === 'string' && env[n].trim() !== '');
+// Operator `-c` settings that can send the Codex harness (frontier or local) to another provider or endpoint than the
+// one Conductor configured: a provider choice or definition, any base URL, or a profile (Codex review of PR104, P1-3).
+const rerouted = (extraConfig) => (extraConfig ?? []).some((kv) => /provider|base_url|profile/i.test(String(kv)));
 
 /**
  * The destination a candidate may be treated as, or null. A candidate counts only if the operator approved it by
  * name in options.knowledge.participants AND the engine can see nothing contradicting that route:
- *   local-model: a local-agent whose configured endpoint is on this machine or a private network (necessary, not
- *     sufficient: the operator's approval vouches for what is behind it);
+ *   local-model: a local-agent whose configured endpoint is on this machine or a private network, with no CLI
+ *     setting that reroutes it (necessary, not sufficient: the operator's approval vouches for what is behind it);
  *   claude-subscription: Claude Code with no API key, base URL, Bedrock or Vertex setting in its environment;
- *   codex-subscription: Codex in Conductor's frontier home, with no provider or base-URL override and no OPENAI_BASE_URL.
+ *   codex-subscription: Codex in Conductor's frontier home, with no provider, base-URL or profile override and no
+ *     OPENAI_BASE_URL.
  * Anything else (API kinds, unknown kinds, unapproved names) is no destination, so evidence is withheld from it.
  */
 export function trustedDestination(approved = {}, env = process.env) {
@@ -35,6 +40,7 @@ export function trustedDestination(approved = {}, env = process.env) {
     const a = candidate?.adapter;
     if (!claimed || !a) return null;
     if (claimed === 'local-model' && a.kind === 'local-agent') {
+      if (rerouted(a.extraConfig)) return null;
       let host;
       try { host = new URL(String(a.baseUrl)).hostname; } catch { return null; }
       return privateHost(host) ? claimed : null;
@@ -42,13 +48,36 @@ export function trustedDestination(approved = {}, env = process.env) {
     if (claimed === 'claude-subscription' && a.kind === 'claude-code') return set(env, CLAUDE_ROUTE_ENV) ? null : claimed;
     if (claimed === 'codex-subscription' && a.kind === 'codex') {
       const frontierHome = Array.isArray(a.homeIdentity) && a.homeIdentity[0] === 'frontier';
-      const overridden = (a.extraConfig ?? []).some((kv) => /provider|base_url/i.test(String(kv)));
-      return frontierHome && !overridden && !set(env, CODEX_ROUTE_ENV) ? claimed : null;
+      return frontierHome && !rerouted(a.extraConfig) && !set(env, CODEX_ROUTE_ENV) ? claimed : null;
     }
     return null;
   };
 }
-const live = new WeakMap(); // state object -> { off } | { client, selection, origin, scope }
+const live = new WeakMap(); // state object -> { off } | { client, selection, trust, origin, scope }
+
+/** Every candidate that may receive text in the run, with the destination it has now (null if untrusted or ambiguous). */
+function scopeOf(seats, trust) {
+  const scope = Object.create(null);
+  for (const r of seats.flatMap(recipientsOf)) {
+    const d = trust(r) ?? null;
+    scope[r.name] = r.name in scope && scope[r.name] !== d ? null : d; // one name, two routes: neither can be confirmed
+  }
+  return scope;
+}
+
+/**
+ * True only if `candidate` was in the run's recorded scope when evidence was first used, AND it still resolves to the
+ * same destination (Codex review of PR104, P1-2: a name rebound on Resume to another, also approved, destination must
+ * not receive text derived from evidence its collection did not allow there). Provenance saved before destinations
+ * were recorded (a list of names) cannot be confirmed, so it never matches.
+ */
+function sameDestination(prov, k, candidate) {
+  const scope = prov?.scope;
+  if (!scope || typeof scope !== 'object' || Array.isArray(scope)) return false;
+  const name = candidate?.name ?? '';
+  if (!Object.hasOwn(scope, name) || scope[name] === null) return false;
+  return k.trust?.(candidate) === scope[name];
+}
 
 /** Validates options.knowledge (null or absent = off). Throws a plain-English Error. */
 export function checkKnowledgeOptions(options) {
@@ -104,7 +133,7 @@ async function assemble(ctx) {
     const selection = selectEvidence({ collections, search, seats, maxPassages, maxChars: cfg.maxChars ?? 12000, destinationOf: trust });
     for (const report of selection.reports) ctx.log.event('evidence-withheld', { report });
     for (const u of selection.unreported) ctx.log.event('evidence-withheld', { collectionId: u.collectionId, documents: u.documentIds.length, allowedDestinations: [] });
-    k = { client, selection, trust, origin: client.origin, scope: [...new Set(seats.flatMap(recipientsOf).map((r) => r.name))] };
+    k = { client, selection, trust, origin: client.origin, scope: scopeOf(seats, trust) };
   } catch (e) {
     k = { off: true };
     ctx.log.event('evidence-unavailable', { reason: e instanceof KbError ? e.code : 'error' });
@@ -112,6 +141,8 @@ async function assemble(ctx) {
   live.set(ctx.state, k);
   return k;
 }
+
+const OUT_OF_SCOPE = 'a recipient outside the scope, or with another destination than when evidence was used';
 
 function stop(ctx, reason) {
   ctx.log.event('evidence-stopped', { reason });
@@ -141,15 +172,24 @@ export async function knowledgeForCall(ctx, participant) {
     return { context: '' };
   }
   if (prov?.sent) {
-    const outOfScope = recipientsOf(participant).some((r) => !prov.scope.includes(r.name) || !k.trust?.(r));
+    const outOfScope = recipientsOf(participant).some((r) => !sameDestination(prov, k, r));
     if (prov.viewRevision !== k.selection.viewRevision || prov.origin !== k.origin || outOfScope) {
-      return stop(ctx, outOfScope ? 'a recipient outside the approved scope' : 'policy revision or service changed since evidence was used');
+      return stop(ctx, outOfScope ? OUT_OF_SCOPE : 'policy revision or service changed since evidence was used');
     }
   }
   const { text, sent } = evidenceFor(k.selection, participant);
   if (sent && !prov?.sent) {
-    ctx.state.knowledge = { sent: true, scope: k.scope, origin: k.origin, viewRevision: k.selection.viewRevision };
-    try { ctx.log.saveState(ctx.state); } catch { /* the next checkpoint saves it */ }
+    ctx.state.knowledge = { sent: true, scope: { ...k.scope }, origin: k.origin, viewRevision: k.selection.viewRevision };
+    try {
+      ctx.log.saveState(ctx.state);
+    } catch {
+      // No exposure record on disk, no exposure (Codex review of PR104, P1-1). Nothing has been sent yet, so drop the
+      // evidence for the rest of the run rather than send it without a record a crash and Resume could rely on.
+      delete ctx.state.knowledge;
+      live.set(ctx.state, { off: true });
+      ctx.log.event('evidence-dropped', { reason: 'the run record could not be saved before any evidence was used' });
+      return { context: '' };
+    }
     ctx.log.event('evidence-used', { count: k.selection.passages.length, evidence: k.selection.evidence, viewRevision: k.selection.viewRevision });
   }
   return { context: text };
@@ -158,8 +198,8 @@ export async function knowledgeForCall(ctx, participant) {
 /**
  * The per-dispatch gate (Codex review of PR101): runlog.callAgent passes it to Seat.run as opts.beforeDispatch, which
  * calls it immediately before EACH candidate is tried, fallbacks and retries after a wait included. Once evidence has
- * been used, a candidate is sent nothing unless the pinned policy revision still holds, it is in the approved scope
- * and its route is still trusted; otherwise { stop } ends the call as a resumable pause (never a failover).
+ * been used, a candidate is sent nothing unless the pinned policy revision still holds, it is in the recorded scope
+ * and still has the destination recorded for it; otherwise { stop } ends the call as a resumable pause (never a failover).
  */
 export async function knowledgeGate(ctx, candidate) {
   const prov = ctx.state?.knowledge;
@@ -167,7 +207,7 @@ export async function knowledgeGate(ctx, candidate) {
   const k = live.get(ctx.state);
   if (!k || k.off) return stop(ctx, 'knowledge service unavailable');
   if (k.origin !== prov.origin || k.selection.viewRevision !== prov.viewRevision) return stop(ctx, 'policy revision or service changed since evidence was used');
-  if (!prov.scope.includes(candidate?.name) || !k.trust(candidate)) return stop(ctx, 'a recipient outside the approved scope');
+  if (!sameDestination(prov, k, candidate)) return stop(ctx, OUT_OF_SCOPE);
   if (!(await stillFresh(k.client, prov.viewRevision))) return stop(ctx, 'policy changed or could not be confirmed');
   return {};
 }

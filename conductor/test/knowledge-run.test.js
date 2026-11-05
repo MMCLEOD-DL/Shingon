@@ -89,7 +89,7 @@ test('on: evidence reaches the call in its context; only provenance is saved, ne
     await callAgent(ctx, ctx.team.author, 'author', 'plan it');
     assert.match(ctx.team.author.calls[0].context, /EXCERPT-Never log/);
     assert.ok(kb.requests.every((r) => r.auth === `Bearer ${TOKEN}`));
-    assert.deepEqual(ctx.state.knowledge, { sent: true, scope: ['claude', 'codex', 'local'], origin: kb.url, viewRevision: 'a'.repeat(64) });
+    assert.deepEqual(ctx.state.knowledge, { sent: true, scope: { claude: 'claude-subscription', codex: 'codex-subscription', local: 'local-model' }, origin: kb.url, viewRevision: 'a'.repeat(64) });
     assert.equal(events(ctx, 'evidence-used').length, 1);
     const saved = readFileSync(ctx.log.statePath, 'utf8');
     assert.doesNotMatch(saved, /EXCERPT|Never log/, 'a passage was written to state.json');

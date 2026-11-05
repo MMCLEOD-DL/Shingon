@@ -122,3 +122,11 @@ Hybrid retrieval and reranking (K3/K4); live connectors (K13); client runtime (K
   Any other candidate has no destination, so the run-wide rule withholds evidence from the whole run. Routes Conductor cannot see, such as Claude Code's own settings file, rest on the operator's approval.
 - **Gate inside the retry boundary.** `Seat.run` calls an optional `beforeDispatch` hook immediately before each candidate it tries, fallbacks and retries after a wait included. Once evidence has been used, the candidate must be in the approved scope and still trusted, and the pinned revision must still hold. Otherwise the call ends at that candidate as a resumable pause, and never fails over.
 - **Provenance before dispatch:** already in slice 3. The exposure record is saved before the first call that can carry passages.
+
+### 9.2 Corrections after Codex's review of PR103/PR104
+
+[Codex's review](../superpowers/plans/2026-10-29-two-week-product/reviews/2026-11-05-codex-review-pr103-pr104-k8-wiring.md) found three ways a call could still be dispatched against the rule. All three reproduced; each now has a regression test.
+
+- **No record, no evidence.** If the exposure record cannot be saved before the first call that would carry passages, nothing has been sent yet. The run drops evidence for its remaining calls (`evidence-dropped`) and carries on without it. §9.1's "provenance before dispatch" said the record was saved first; it was attempted, but a failure was ignored.
+- **The recorded scope binds each name to its destination.** This is what §9 already asked for ("candidate names and destinations"); slice 3 recorded names only. On a later call, in Resume and before each Seat candidate, a candidate must have the destination recorded for it when evidence was first used. Approving the same name for another destination does not count. Provenance saved before this change, a list of names, cannot be confirmed, so such a run stops at its next call; the operator starts a fresh run.
+- **No rerouting settings.** The local model's endpoint check also refuses operator `extraConfig` entries that set a provider, a base URL or a profile, since Codex applies them after Conductor's own provider selection. The same rule now includes `profile` for frontier Codex.
