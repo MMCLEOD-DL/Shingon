@@ -1,0 +1,7 @@
+# Codex task submitted — K8 evidence review
+
+- Branch `codex/review-k8-evidence` from `69fdeea`. Review record commit `a199d031cc805303a75bdf6e793bf849b4d50d06`. Reviewed merged PR96 at `f08ab8b`, code `633f559`.
+- [Draft PR100](https://github.com/MMCLEOD-DL/Shingon/pull/100). This is the final submission commit. Verify inclusion on main after merge and keep draft until required final-head CI passes.
+- [Review and interface decisions](../reviews/2026-11-05-codex-review-pr96-k8-evidence.md). Changes required before engine integration. Reproduced evidence crossing an API fallback, a synthetic bearer reaching an ambient HTTP proxy, passages rendering at evidence level `none`, and the rendered block exceeding its character limit. Also proved proposed `ctx.state` persistence and plain `SCRUB_ENV` limitations with synthetic controls.
+- Native Node24.12.0 fixture suite 15/15 and all five PR96 required checks passed. The review records the positive controls and the limits of the proposed integration. `git diff --check` passes. Review-only scope and existing ownership and approval gates preserved.
+- Next is PR100 CI and merge, then Claude's module corrections and a revised interface handoff. Require coverage of real fallback candidates, direct transport, abstention, process-local passages, Resume provenance, per-dispatch freshness and reserved-token child isolation before approving wiring. Preserve the existing live, worker, credential and automation boundaries.
