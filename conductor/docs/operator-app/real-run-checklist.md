@@ -10,6 +10,8 @@ Record each result in the [results table](#results-table) at the end as you go.
 
 **First run: 31 October 2026.** Every step passed after the set-up snags now written into the steps below (marked *Learned 31 Oct*). Results and findings: the work-log entry `2026-10-31-*-claude-task-36-first-live-run.md` in the two-week plan's `work-log/` folder.
 
+**Second round:** what is still open after the 31 October and 5 November sessions is in [windows-acceptance-round-2.md](windows-acceptance-round-2.md). It uses steps 0 to 7 below for set-up.
+
 **Use one PowerShell window from step 3 onwards and keep it open.** The local model's key (step 3) and the Codex search-tool path (step 6) live only in that window, and the app must be started from it.
 
 ## 0. Before you start
