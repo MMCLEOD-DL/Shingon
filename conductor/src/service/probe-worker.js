@@ -46,7 +46,7 @@ export async function performProbe({ participant, kind, command = runCommand }) 
     writeFileSync(path.join(dir, 'README.txt'), 'Disposable Conductor model connection check.\n');
     let answer;
     try {
-      answer = await participant.adapter.run('reviewer', prompt, '', { cwd: dir, write: kind === 'agentic', timeoutMs: 60000 });
+      answer = await participant.adapter.run(kind === 'agentic' ? 'grunt' : 'reviewer', prompt, '', { cwd: dir, write: kind === 'agentic', timeoutMs: 60000 });
     } catch (error) {
       answer = { ok: false, error: typeof error?.message === 'string' ? error.message : '' };
     }
