@@ -17,6 +17,8 @@ From [retrieval-contract.md](retrieval-contract.md) §2, §5, §6, §7 and §11:
 
 ## 2. Where evidence would enter
 
+*Superseded in part by [§9](#9-revised-after-codexs-review-of-pr96-5-november-2026).*
+
 The engine has one chokepoint: `callAgent` in `src/runlog.js`. Every agent call goes through it: plan author and reviewer (`planPhase.js`), chunk execution and review (`chunkPhase.js`), final review (`conductor.js`) and council (`council/interpret.js`). Evidence is fetched **once**, for the request, at the start of planning. It is attached per call at the chokepoint, so no phase can forget the destination check.
 
 ## 3. The forwarding problem, and the rule I propose
@@ -34,11 +36,15 @@ A local-only passage shown to the local model can therefore reach Claude or Code
 
 ## 4. Policy freshness
 
+*Superseded in part by [§9](#9-revised-after-codexs-review-of-pr96-5-november-2026).*
+
 - At assembly, Conductor calls `GET /collections`, keeps the `viewRevision` and each collection's `destinations`, then calls `POST /search`.
 - Before each `callAgent` that would carry evidence, it calls `GET /collections` again; this is cheap and audited. If the `viewRevision` changed, the KB cannot be reached, or the answer is invalid, the evidence is **dropped for the rest of the run**: fail closed. The operator gets a single event, "Knowledge evidence was removed from this run because its policy could not be confirmed". The call goes ahead without evidence, and the run never pauses for this, because evidence is optional.
 - Nothing is cached across runs. Within a run, one snapshot is used, and any revision change ends it.
 
 ## 5. Configuration and credential
+
+*Superseded in part by [§9](#9-revised-after-codexs-review-of-pr96-5-november-2026).*
 
 - `options.knowledge` (off by default) holds:
   - `url`: loopback or private-network only, refused otherwise;
@@ -49,6 +55,8 @@ A local-only passage shown to the local model can therefore reach Claude or Code
 - The service's operator UI (P04) shows the setting read-only. Configuring a token through the browser is out of scope.
 
 ## 6. Seams and owners
+
+*Superseded in part by [§9](#9-revised-after-codexs-review-of-pr96-5-november-2026).*
 
 | Seam | File(s) | Owner | Change |
 |---|---|---|---|
@@ -80,3 +88,26 @@ A local-only passage shown to the local model can therefore reach Claude or Code
 ## 8. Out of scope
 
 Hybrid retrieval and reranking (K3/K4); live connectors (K13); client runtime (K12); writing to the KB; evidence in council-only commands; any change to the contract's wire shapes.
+
+## 9. Revised after Codex's review of PR96 (5 November 2026)
+
+[Codex's review](../superpowers/plans/2026-10-29-two-week-product/reviews/2026-11-05-codex-review-pr96-k8-evidence.md) (in [PR100](https://github.com/MMCLEOD-DL/Shingon/pull/100)) found four module gaps. They are fixed in the module: fallback candidates, proxy transport, abstention and rendered length. The review also set the interface for engine integration. Where this section differs from §2 and §4–§6, **this section holds**. Engine wiring waits for Codex to re-review the module fixes.
+
+- **Recipients are candidates, not seats.** A router `Seat` sends the same task and context to each of its candidates in turn. The run-wide rule and the per-call check therefore cover every candidate of every seat, retries and fallbacks included. A participant kind with no destination, such as an API kind, makes a collection unusable.
+- **Per-call freshness.** Before every dispatch that carries evidence or material derived from it, including retries and fallback attempts, `stillFresh()` must confirm the same `viewRevision`. There is no phase-level check.
+- **Process-local evidence, persisted provenance only.** Passages and the client live on a process-local field of `ctx`, never in `ctx.state`, which `RunLog.saveState` writes to `state.json`. The state persists only what later dispatch needs to enforce the rule:
+  - whether evidence was sent;
+  - the approved recipient scope (candidate names and destinations);
+  - the service origin;
+  - the `viewRevision`.
+- **After a freshness loss:**
+  - *Before any evidence was sent:* drop it, tell the operator once, and continue.
+  - *After a participant has consumed evidence:* stop before forwarding any artifact derived from it (plans, notes, diffs) if the revision or the recipients cannot be confirmed. Dropping the context block cannot clean text that is already derived. The stop is a resumable pause.
+  - *On Resume:* the persisted scope and revision must still allow the call. Otherwise the run stays stopped, and the operator starts a fresh run, which re-fetches.
+- **Credential.** `CONDUCTOR_KB_TOKEN` is reserved for the trusted KB client and the operator worker. Adding it to `SCRUB_ENV` is not enough:
+  - `childEnv` must remove it on every path, case-insensitively on Windows, even when a caller's `allow` list names it;
+  - it is refused as a local-model `envKey` and as a wake credential;
+  - tests must cover Git, test commands, model CLIs and wake children;
+  - the service-to-worker handoff stays.
+- **Configuration.** `options.knowledge` is off by default and accepted only for ordinary Conductor runs. Its values are bounded (`maxPassages` 1–20, `maxChars` 2000–64000) and its origin is validated. The factory and council entry points refuse an enabled `knowledge` option in this slice.
+- **Events.** The engine emits structured operator events: evidence used, with counts and the revision but no excerpts; one event per withheld report; evidence dropped or stopped, with a reason. A prompt only ever gets the allowed block, the no-support wording or the fixed notice. Codex forwards the events in the service; Claude displays them in the UI.

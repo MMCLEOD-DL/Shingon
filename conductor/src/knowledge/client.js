@@ -4,6 +4,13 @@
 // It speaks only to a loopback or private-network service, with a project-scoped read token, and accepts only
 // responses in the contract's shapes. Anything else is an error: evidence is optional, so a caller drops it rather
 // than guessing. The token never appears in an error message or a returned value.
+//
+// The transport is node:http/https on a fresh agent per request, never global fetch or the global agent: with
+// NODE_USE_ENV_PROXY those route through HTTP(S)_PROXY, which would hand the bearer token to a proxy (Codex review
+// of PR96, P1). A redirect is never followed.
+
+import http from 'node:http';
+import https from 'node:https';
 
 export const KB_BASE_PATH = '/kb/v1';
 export const MAX_BODY_BYTES = 64 * 1024; // contract §3: a response body is at most 64 KB
@@ -112,53 +119,60 @@ export function parseSearch(body) {
   return { viewRevision: body.viewRevision, evidence: body.evidence, results };
 }
 
-async function readCapped(res) {
-  const declared = Number(res.headers?.get?.('content-length'));
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) throw new KbError('too-large', 'The knowledge service response is too large.');
-  const reader = res.body?.getReader?.();
-  if (!reader) return '';
-  const chunks = [];
-  let size = 0;
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > MAX_BODY_BYTES) { await reader.cancel().catch(() => {}); throw new KbError('too-large', 'The knowledge service response is too large.'); }
-    chunks.push(value);
-  }
-  return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks.map((c) => Buffer.from(c))));
+// One request, directly to the origin. Resolves { status, text } or rejects with a KbError.
+function send({ url, method, headers, body, timeoutMs }) {
+  const mod = url.protocol === 'https:' ? https : http;
+  const agent = new mod.Agent({ keepAlive: false }); // never the (possibly proxy-aware) global agent
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const done = (fn, value) => { if (!settled) { settled = true; clearTimeout(timer); agent.destroy(); fn(value); } };
+    const tooLarge = () => new KbError('too-large', 'The knowledge service response is too large.');
+    const req = mod.request(url, { method, headers, agent }, (res) => {
+      if (Number(res.headers['content-length']) > MAX_BODY_BYTES) { req.destroy(); done(reject, tooLarge()); return; }
+      const chunks = [];
+      let size = 0;
+      res.on('data', (c) => {
+        size += c.length;
+        if (size > MAX_BODY_BYTES) { req.destroy(); done(reject, tooLarge()); } else chunks.push(c);
+      });
+      res.on('end', () => {
+        let text;
+        try { text = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)); }
+        catch { done(reject, new KbError('bad-response', 'The knowledge service sent an invalid response (not UTF-8).')); return; }
+        done(resolve, { status: res.statusCode, text });
+      });
+      res.on('error', () => done(reject, new KbError('unreachable', 'The knowledge service could not be reached.', { retryable: true })));
+    });
+    const timer = setTimeout(() => { req.destroy(); done(reject, new KbError('timeout', 'The knowledge service did not answer in time.', { retryable: true })); }, timeoutMs);
+    req.on('error', () => done(reject, new KbError('unreachable', 'The knowledge service could not be reached.', { retryable: true })));
+    if (body !== undefined) req.write(body);
+    req.end();
+  });
 }
 
 /**
  * A client for one service and one project token. `token` is the value itself (the caller reads it from the
  * environment variable the config names); it is used only in the Authorization header.
  */
-export function createKbClient({ url, token, fetchImpl = globalThis.fetch, timeoutMs = 5000 } = {}) {
+export function createKbClient({ url, token, timeoutMs = 5000 } = {}) {
   const origin = checkKbUrl(url);
   if (typeof token !== 'string' || !TOKEN.test(token)) throw new KbError('config', 'The knowledge service token is missing or not in the expected format.');
 
   async function call(method, path, body) {
-    const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), timeoutMs);
-    let res, raw;
-    try {
-      res = await fetchImpl(`${origin}${KB_BASE_PATH}${path}`, {
-        method, redirect: 'error', signal: ctl.signal,
-        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
-        body: body ? JSON.stringify(body) : undefined,
-      });
-      raw = await readCapped(res);
-    } catch (e) {
-      if (e instanceof KbError) throw e;
-      throw new KbError(ctl.signal.aborted ? 'timeout' : 'unreachable', ctl.signal.aborted ? 'The knowledge service did not answer in time.' : 'The knowledge service could not be reached.', { retryable: true });
-    } finally { clearTimeout(timer); }
+    const payload = body ? JSON.stringify(body) : undefined;
+    const { status, text } = await send({
+      url: new URL(`${origin}${KB_BASE_PATH}${path}`), method, timeoutMs, body: payload,
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json',
+        ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {}) },
+    });
+    if (status >= 300 && status < 400) throw new KbError('redirect', 'The knowledge service answered with a redirect, which is never followed.', { status });
     let data;
-    try { data = JSON.parse(raw); } catch { fail('not JSON'); }
-    if (!res.ok) {
+    try { data = JSON.parse(text); } catch { fail('not JSON'); }
+    if (status < 200 || status >= 300) {
       const e = data?.error;
       const code = typeof e?.code === 'string' && /^[a-z-]{1,40}$/.test(e.code) ? e.code : 'unknown';
       // The service's fixed wording for its own code; never echo arbitrary text back as a message.
-      throw new KbError(code, `The knowledge service refused the request (${code}).`, { status: res.status, retryable: e?.retryable === true });
+      throw new KbError(code, `The knowledge service refused the request (${code}).`, { status, retryable: e?.retryable === true });
     }
     return data;
   }
