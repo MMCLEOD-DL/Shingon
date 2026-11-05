@@ -89,7 +89,7 @@ test('on: evidence reaches the call in its context; only provenance is saved, ne
     await callAgent(ctx, ctx.team.author, 'author', 'plan it');
     assert.match(ctx.team.author.calls[0].context, /EXCERPT-Never log/);
     assert.ok(kb.requests.every((r) => r.auth === `Bearer ${TOKEN}`));
-    assert.deepEqual(ctx.state.knowledge, { sent: true, scope: ['claude', 'codex', 'local'], origin: kb.url, viewRevision: 'a'.repeat(64) });
+    assert.deepEqual(ctx.state.knowledge, { sent: true, scope: { claude: 'claude-subscription', codex: 'codex-subscription', local: 'local-model' }, origin: kb.url, viewRevision: 'a'.repeat(64) });
     assert.equal(events(ctx, 'evidence-used').length, 1);
     const saved = readFileSync(ctx.log.statePath, 'utf8');
     assert.doesNotMatch(saved, /EXCERPT|Never log/, 'a passage was written to state.json');
@@ -378,4 +378,60 @@ test('a candidate added to a seat after evidence was used is outside the approve
     assert.equal(r.failure, 'no-participant');
     assert.equal(late.calls.length, 0);
   } finally { await kb.close(); }
+});
+
+// ---- Codex review of PR103/PR104 (reviews/2026-11-05-codex-review-pr103-pr104-k8-wiring.md) ----
+
+test('P1-1: provenance that cannot be saved means no evidence is sent; the run carries on without it', async () => {
+  const kb = await kbStub();
+  try {
+    const ctx = await ctxWith(kb);
+    ctx.log.saveState = () => { throw Object.assign(new Error('no space left on device'), { code: 'ENOSPC' }); };
+    const r = await callAgent(ctx, ctx.team.author, 'author', 'plan it');
+    assert.equal(r.ok, true, 'nothing was sent, so the run is not stopped');
+    assert.doesNotMatch(ctx.team.author.calls[0].context, /EXCERPT/, 'a passage was dispatched without its exposure record on disk');
+    assert.equal(ctx.state.knowledge, undefined, 'no unsaved provenance is left in memory');
+    assert.equal(events(ctx, 'evidence-dropped').length, 1);
+    await callAgent(ctx, ctx.team.reviewer, 'reviewer', 'review it');
+    assert.doesNotMatch(ctx.team.reviewer.calls[0].context, /EXCERPT/, 'evidence stays off for the rest of the run');
+  } finally { await kb.close(); }
+});
+
+test('P1-2: on Resume, a participant name rebound to another destination is stopped, even though that destination is now approved', async () => {
+  const kb = await kbStub({ destinations: ['local-model'] });
+  try {
+    const localTeam = () => ({
+      author: routed(fakeParticipant({ name: 'local', kind: 'local-agent', script: ok })),
+      reviewer: routed(fakeParticipant({ name: 'rev', kind: 'local-agent', script: ok })),
+      local: routed(fakeParticipant({ name: 'local', kind: 'local-agent', script: ok })),
+    });
+    const first = await ctxWith(kb, { team: localTeam(), participants: { local: 'local-model', rev: 'local-model' } });
+    await callAgent(first, first.team.author, 'author', 'plan it');
+    assert.match(first.team.author.calls[0].context, /EXCERPT/, 'a local-only collection reaches an all-local run');
+    const saved = JSON.parse(readFileSync(first.log.statePath, 'utf8'));
+    // A fresh process; the same name now points at Codex, and the operator's approval was updated to match.
+    const team = { ...localTeam(), reviewer: routed(fakeParticipant({ name: 'rev', kind: 'codex', script: ok })) };
+    const resumed = await ctxWith(kb, { team, participants: { local: 'local-model', rev: 'codex-subscription' } });
+    resumed.state.knowledge = saved.knowledge;
+    const r = await callAgent(resumed, team.reviewer, 'reviewer', 'review the plan (derived from local-only evidence)');
+    assert.equal(team.reviewer.calls.length, 0, 'derived text went to a destination the collection does not allow');
+    assert.equal(r.failure, 'no-participant');
+    // Provenance saved before destinations were recorded (a name list) cannot be confirmed: stop, never guess.
+    const legacy = await ctxWith(kb, { team: localTeam(), participants: { local: 'local-model', rev: 'local-model' } });
+    legacy.state.knowledge = { ...saved.knowledge, scope: ['local', 'rev'] };
+    assert.equal((await callAgent(legacy, legacy.team.reviewer, 'reviewer', 'continue')).failure, 'no-participant');
+    assert.equal(legacy.team.reviewer.calls.length, 0);
+  } finally { await kb.close(); }
+});
+
+test('P1-3: a local model whose CLI overrides route it elsewhere is not the local model', () => {
+  const approved = { local: 'local-model', codex: 'codex-subscription' };
+  const trust = trustedDestination(approved, {});
+  const local = (extraConfig) => ({ name: 'local', adapter: new LocalAgentAdapter({ model: 'm', baseUrl: 'http://127.0.0.1:8080/v1', extraConfig }) });
+  assert.equal(trust(local([])), 'local-model');
+  assert.equal(trust(local(['model_providers.localai.base_url="https://example.invalid/v1"'])), null, 'base_url override');
+  assert.equal(trust(local(['model_provider=openai'])), null, 'provider override');
+  assert.equal(trust(local(['profile=elsewhere'])), null, 'profile override');
+  const codex = (extraConfig) => ({ name: 'codex', adapter: { kind: 'codex', homeIdentity: ['frontier', 'codex'], extraConfig } });
+  assert.equal(trust(codex(['profile=elsewhere'])), null, 'a profile can switch the frontier provider too');
 });

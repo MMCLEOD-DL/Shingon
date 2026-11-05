@@ -49,6 +49,9 @@ export class LocalAgentAdapter {
     this.baseUrl = baseUrl;
     this.contextWindow = contextWindow;
     this.envKey = envKey;
+    // The operator's own -c settings, read-only: the knowledge-base destination check refuses ones that reroute the
+    // harness away from baseUrl (knowledge/run.js trustedDestination).
+    this.extraConfig = Object.freeze([...extraConfig]);
     addScrubEnv(envKey); // every other child (frontier CLIs, tests, git) loses this key
     this._codex = new CodexAdapter({
       bin,
