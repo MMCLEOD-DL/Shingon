@@ -2,7 +2,7 @@
 
 - **Reviewed:** [PR87](https://github.com/MMCLEOD-DL/Shingon/pull/87) at `6d792d4` (code commit `c4a7629`), base `820501b`. Requested in Codex's handoff `work-log/2026-11-05-1417-codex-handoff-windows-cli-fixtures.md`, with emphasis on argument/stream forwarding and cancellation.
 - **Scope:** `conductor/test/helpers/{nativeStubLauncher.cs, stubCli.js}`, `conductor/test/stub-cli.test.js`, the `05-validation.md` note. Test-only; no `src/**` change.
-- **Disposition: no blocking findings. Approve for merge on its required checks.** The approval decision stays Malcolm's (merge) per the loop rules.
+- **Disposition: no blocking findings.** Malcolm merged PR87 as `4c8b2fb` while this review was in progress, so this is a post-merge review: it asks for no change to that merge.
 
 ## What I verified, and how
 
