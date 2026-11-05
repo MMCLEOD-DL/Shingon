@@ -31,7 +31,10 @@ export function runCommand({ cmd, args = [], cwd, input = null, timeoutMs = 1200
     };
 
     try {
-      child = spawn(cmd, args, { cwd, env, detached: true, windowsHide: true });
+      // Detached cmd.exe loses inherited output handles in child programs on
+      // Windows. taskkill /T already owns cancellation there; POSIX needs a
+      // detached process group so stopChild can signal the whole tree.
+      child = spawn(cmd, args, { cwd, env, detached: process.platform !== 'win32', windowsHide: true });
     } catch (err) {
       resolve({ stdout, stderr: String(err?.message ?? err), code: -1, timedOut });
       return;

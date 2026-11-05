@@ -25,11 +25,11 @@ async function captureLaunch(fn) {
   finally { childProcess.spawn = original; syncBuiltinESMExports(); }
 }
 
-test('runCommand hides native child consoles while preserving arguments, env and detached tracking', async () => {
+test('runCommand hides native child consoles while preserving arguments, env and platform process tracking', async () => {
   const env = { SYNTHETIC_LAUNCH: 'fixture' };
   const seen = await captureLaunch(() => runCommand({ cmd: 'synthetic.exe', args: ['argument with spaces'], cwd: 'fixture', env }));
   assert.equal(seen.options.windowsHide, true);
-  assert.equal(seen.options.detached, true);
+  assert.equal(seen.options.detached, process.platform !== 'win32');
   assert.equal(seen.options.env, env);
   assert.equal(seen.options.cwd, 'fixture');
   assert.equal(seen.cmd, 'synthetic.exe');
