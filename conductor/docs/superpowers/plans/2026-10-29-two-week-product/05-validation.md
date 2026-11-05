@@ -54,6 +54,24 @@ python3 /workspace/shingon-dev/reap.py node --test --test-concurrency=4
 
 Set `XDG_CACHE_HOME` to a writable task-appropriate path if the default home cache is unavailable. Do not interpret a failed local CODEX_HOME creation as a model outage. On a normal host with a working cache and process reaping, the plain command should be sufficient; verify rather than copying cloud workarounds blindly.
 
+Native Windows CLI fixtures use the installed .NET Framework 4 C# compiler
+(`Framework64/v4.0.30319/csc.exe`, or `Framework/...`) to build a test-only launcher
+once per test process. Nothing is downloaded or installed. The launcher executes
+the adjacent synthetic CommonJS script with the current Node executable, forwards
+literal arguments/streams and exit status, and uses no shell or real model CLI.
+POSIX hosts retain the executable shebang fixture. Run the native protocol and
+real-engine regression with:
+
+```
+node --test test/stub-cli.test.js test/service/engine.test.js
+```
+
+These fixtures do not establish live-model or browser acceptance. Other tests may
+still carry platform-specific assumptions: the unchanged `localAgent.test.js`
+Unix-mode assertion reports `0666` rather than `0700` on the native acceptance
+host. That observation is not a Windows ACL assessment. Keep such failures
+explicit; do not describe the entire Windows suite as green from a focused run.
+
 Focused release-path regression checks:
 
 ```
