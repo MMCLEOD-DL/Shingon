@@ -111,3 +111,14 @@ Hybrid retrieval and reranking (K3/K4); live connectors (K13); client runtime (K
   - the service-to-worker handoff stays.
 - **Configuration.** `options.knowledge` is off by default and accepted only for ordinary Conductor runs. Its values are bounded (`maxPassages` 1–20, `maxChars` 2000–64000) and its origin is validated. The factory and council entry points refuse an enabled `knowledge` option in this slice.
 - **Events.** The engine emits structured operator events: evidence used, with counts and the revision but no excerpts; one event per withheld report; evidence dropped or stopped, with a reason. A prompt only ever gets the allowed block, the no-support wording or the fixed notice. Codex forwards the events in the service; Claude displays them in the UI.
+
+### 9.1 Codex's integration conditions (review of PR101), as built
+
+- **Approved, verifiable destinations.** `options.knowledge.participants` is required. It approves each participant by name with its destination, for example `{ "local": "local-model", "claude": "claude-subscription", "codex": "codex-subscription" }`. The engine refuses an approved route it can see is different:
+  - **local model:** the local agent's endpoint must be loopback or private. That is necessary but not sufficient, so the operator's approval vouches for what is behind it;
+  - **Claude Code:** no `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK` or `CLAUDE_CODE_USE_VERTEX`;
+  - **Codex:** Conductor's frontier home, with no provider or base-URL override in `extraConfig` and no `OPENAI_BASE_URL`.
+
+  Any other candidate has no destination, so the run-wide rule withholds evidence from the whole run. Routes Conductor cannot see, such as Claude Code's own settings file, rest on the operator's approval.
+- **Gate inside the retry boundary.** `Seat.run` calls an optional `beforeDispatch` hook immediately before each candidate it tries, fallbacks and retries after a wait included. Once evidence has been used, the candidate must be in the approved scope and still trusted, and the pinned revision must still hold. Otherwise the call ends at that candidate as a resumable pause, and never fails over.
+- **Provenance before dispatch:** already in slice 3. The exposure record is saved before the first call that can carry passages.
