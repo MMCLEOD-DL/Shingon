@@ -95,7 +95,7 @@ test('a redirect is never followed, even to a service that would answer', async 
   const elsewhere = await stub(() => from('collections-conductor'));
   const kb = await stub(() => ({ status: 302, raw: '', headers: { location: `${elsewhere.url}/kb/v1/collections` } }));
   try {
-    await assert.rejects(createKbClient({ url: kb.url, token: TOKEN }).collections(), (e) => e instanceof KbError);
+    await assert.rejects(createKbClient({ url: kb.url, token: TOKEN }).collections(), (e) => e instanceof KbError && e.code === 'redirect' && e.status === 302);
     assert.equal(elsewhere.seen.length, 0, 'the redirect target was contacted (and would have received the token)');
   } finally { await kb.close(); await elsewhere.close(); }
 });
@@ -181,7 +181,9 @@ test('evidence is quoted data: instruction-like text is flagged, and it cannot c
 test('the budget caps passages and characters; "none" evidence says so instead of inventing support', () => {
   const many = results(...Array.from({ length: 12 }, (_, i) => hit('standards', `standards/d${i}.md`, i + 1, 'x'.repeat(1000))));
   assert.equal(selectEvidence({ collections: policy(), seats: [local], search: many }).passages.length, 8);
-  assert.equal(selectEvidence({ collections: policy(), seats: [local], search: many, maxPassages: 20, maxChars: 3500 }).passages.length, 3);
+  const tight = selectEvidence({ collections: policy(), seats: [local], search: many, maxPassages: 20, maxChars: 3500 });
+  assert.ok(tight.passages.length >= 1 && tight.passages.length < 4, `${tight.passages.length} passages`);
+  assert.ok(evidenceForCall(tight, local).length <= 3500, 'the whole rendered block, not only the excerpts, is within the limit');
   const none = selectEvidence({ collections: policy(), seats: [claude, codex, local], search: { viewRevision: 'f'.repeat(64), evidence: 'none', results: [] } });
   assert.match(evidenceForCall(none, claude), /no support for this request/);
 });
@@ -193,4 +195,79 @@ test('every generated fixture search body parses, and a tampered rank or chunk i
   const body = fixture('hit-markdown').response.body;
   assert.throws(() => parseSearch({ ...body, results: [{ ...body.results[0], scores: { ...body.results[0].scores, rank: 2 } }] }));
   assert.throws(() => parseSearch({ ...body, results: [{ ...body.results[0], chunkId: '../../etc' }] }));
+});
+
+// ---- Codex review of PR96 (reviews/2026-11-05-codex-review-pr96-k8-evidence.md) ----
+import { spawn } from 'node:child_process';
+import { Seat } from '../src/router.js';
+import { fakeParticipant } from './helpers/fakes.js';
+
+const allDestinations = () => ({ viewRevision: 'f'.repeat(64), collections: [
+  { collectionId: 'subs-only', kind: 'reference', destinations: ['local-model', 'claude-subscription', 'codex-subscription'] }] });
+
+test('P1: a seat whose fallback candidate is not an allowed destination keeps the evidence from the whole run', async () => {
+  // A Claude Code seat that falls back to the Anthropic API when Claude Code has an infrastructure failure.
+  const cli = fakeParticipant({ name: 'claude', kind: 'claude-code', script: () => ({ ok: false, failure: 'infrastructure', error: 'connection reset' }) });
+  const api = fakeParticipant({ name: 'claude-api', kind: 'anthropic-api', script: () => ({ text: 'ok' }) });
+  const author = new Seat({ name: 'claude', candidates: [cli, api] });
+  const sel = selectEvidence({ collections: allDestinations(), seats: [author, codex, local],
+    search: results(hit('subs-only', 'standards/secret-ish.md', 1, 'EXCERPT-ONLY-FOR-SUBSCRIPTIONS')) });
+  assert.equal(sel.passages.length, 0, 'the run includes an API candidate, so the collection is unusable');
+  assert.deepEqual(sel.reports.map((r) => r.participant), ['claude-api']);
+  const context = evidenceForCall(sel, author);
+  await author.run('author', 'task', context);
+  assert.equal(api.calls.length, 1, 'the fallback candidate was really called');
+  assert.doesNotMatch(api.calls[0].context, /EXCERPT-ONLY-FOR-SUBSCRIPTIONS/);
+});
+
+test('P1: the per-call layer checks every candidate of a seat, not only its preferred one', () => {
+  const sel = selectEvidence({ collections: allDestinations(), seats: [claude, codex, local], search: results(hit('subs-only', 'a.md', 1, 'EXCERPT-X')) });
+  assert.equal(sel.passages.length, 1);
+  const lateSeat = { name: 'claude', adapter: { kind: 'claude-code' }, candidates: [claude, seat('claude-api', 'anthropic-api')] };
+  assert.doesNotMatch(evidenceForCall(sel, lateSeat), /EXCERPT-X/);
+});
+
+test('P1: abstention: hits returned with evidence "none" are never sent; the no-support wording is', () => {
+  const sel = selectEvidence({ collections: allDestinations(), seats: [claude, codex, local],
+    search: { ...results(hit('subs-only', 'a.md', 1, 'LOW-SCORE-EXCERPT')), evidence: 'none' } });
+  const text = evidenceForCall(sel, claude);
+  assert.doesNotMatch(text, /LOW-SCORE-EXCERPT|a\.md/);
+  assert.match(text, /no support for this request/);
+});
+
+test('P2: the whole rendered block stays within the character limit, dropping whole passages', () => {
+  const huge = { ...hit('subs-only', `docs/${'x'.repeat(13000)}.md`, 1, 'short excerpt'), chunkId: 'c'.repeat(64) };
+  const sel = selectEvidence({ collections: allDestinations(), seats: [claude, codex, local], search: results(huge, hit('subs-only', 'b.md', 2, 'kept')) });
+  const text = evidenceForCall(sel, claude);
+  assert.ok(text.length <= 12000, `rendered ${text.length} characters`);
+  assert.doesNotMatch(text, /x{100}/, 'the oversized citation was dropped whole');
+  assert.match(text, /subs-only\/b\.md@1/);
+  for (const bad of [{ maxChars: 0 }, { maxChars: 1e9 }, { maxChars: 12.5 }, { maxPassages: 0 }, { maxPassages: 21 }]) {
+    assert.throws(() => selectEvidence({ collections: allDestinations(), seats: [local], search: results(), ...bad }), /limit/i, JSON.stringify(bad));
+  }
+});
+
+test('P1: an environment proxy never sees the request or the token; the service is called directly', async () => {
+  const seen = { proxyBytes: 0, target: 0 };
+  const proxy = http.createServer((req, res) => { seen.proxyBytes += 1; res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(from('collections-conductor').body)); });
+  proxy.on('connect', (req, socket) => { seen.proxyBytes += 1; socket.end('HTTP/1.1 502 Bad Gateway\r\n\r\n'); });
+  proxy.on('connection', (s) => s.on('data', (d) => { seen.proxyBytes += d.length; }));
+  const target = http.createServer((req, res) => { seen.target += 1; req.resume(); res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(from('collections-conductor').body)); });
+  await Promise.all([proxy, target].map((s) => new Promise((r) => s.listen(0, '127.0.0.1', r))));
+  try {
+    const script = `import { createKbClient } from ${JSON.stringify(new URL('../src/knowledge/client.js', import.meta.url).href)};
+      const c = createKbClient({ url: 'http://127.0.0.1:${target.address().port}', token: ${JSON.stringify(TOKEN)}, timeoutMs: 3000 });
+      try { const r = await c.collections(); console.log('ok', r.collections.length); } catch (e) { console.log('error', e.code); }`;
+    const proxyUrl = `http://127.0.0.1:${proxy.address().port}`;
+    const out = await new Promise((resolve) => {
+      const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
+        env: { ...process.env, NODE_USE_ENV_PROXY: '1', HTTP_PROXY: proxyUrl, HTTPS_PROXY: proxyUrl, http_proxy: proxyUrl, https_proxy: proxyUrl, NO_PROXY: '', no_proxy: '' } });
+      let s = ''; child.stdout.on('data', (d) => { s += d; });
+      const timer = setTimeout(() => { child.kill('SIGKILL'); resolve(`${s.trim()} [killed after 10 s]`); }, 10000);
+      child.on('exit', () => { clearTimeout(timer); resolve(s.trim()); });
+    });
+    assert.equal(seen.proxyBytes, 0, `the proxy received ${seen.proxyBytes} bytes (and so the bearer token)`);
+    assert.equal(seen.target, 1, 'the knowledge service was called directly');
+    assert.equal(out, 'ok 1');
+  } finally { await Promise.all([proxy, target].map((s) => new Promise((r) => { s.closeAllConnections?.(); s.close(r); }))); }
 });
