@@ -13,7 +13,7 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude acknow
 | P06 | Claude | DONE | Research/corrections reviewed through PR55 `f550b67`, integrated `7f78297` | Research/contract deliverables complete: P06-R1–R4 and KB-R1–R7 closed; retrieval v1 accepted in PR54. Strengthened stored-evidence audit passes; pre-fix breakdown fails as expected, saved measurements unchanged. K3–K13 implementation/admission and migration remain separate. D1/D2/D5 accepted; D3/D4 open. |
 | P07 | Codex + Claude review | IN_PROGRESS | codex/operator-app-v1 | Backend boundary tests pass; UI integration and peer review pending |
 
-| P08 | Codex + Claude review | IN_PROGRESS | `codex/windows-live-retest` from `07fc9d5` | PR79 merge verified. Malcolm authorized corrected-build live retest on 5 Nov; UI build/native installation and both subscription challenges/file writes pass so far. Local-model, repeated-write and coding/recovery checks in progress; browser presentation remains unverified. |
+| P08 | Codex + Claude review | IN_PROGRESS | `codex/windows-live-retest` from `07fc9d5`; probe correction `9b284fd` | 5 Nov real service checks, approve/reject/Stop/orderly restart-resume pass in ordinary Windows trial layout. Probe-role mismatch reproduced/corrected; 70 native checks pass. Repeated UAC (3 reported), packaged profile-path identity refusal and browser/abrupt recovery acceptance remain open; see current report. |
 | P09 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 29 Oct P09 entry; awaiting Codex review and Malcolm's prioritisation |
 
 ## Decisions to settle in P00

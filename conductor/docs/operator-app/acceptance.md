@@ -1,5 +1,15 @@
 # Backend candidate validation — 29 October 2026
 
+## Native Windows live retest — 5 November 2026
+
+See the [current retest report](windows-retest-2026-11-05.md). Real Claude/Codex/local
+checks and approve/reject/Stop/orderly restart-resume pass in a fresh ordinary
+Windows trial layout, after supported dedicated sign-in, authorized worker startup
+and a candidate probe-role correction. Repeated UAC and packaged-app profile-path
+identity handling remain open. Browser presentation and abrupt/power-loss recovery
+are not certified. This supersedes neither the named historical evidence nor the
+need for independent review.
+
 ## Current P08 handoff — 1 November 2026
 
 The historical engineering results below remain tied to their named commits.

@@ -5,6 +5,8 @@ This is a backend candidate for Claude's operator UI, not the finished graphical
 After the first live run, use the [corrected-build Windows retest](windows-retest.md)
 for the current setup sequence and a fresh evidence table. It supersedes the old
 checklist's personal Codex login and manual search-path/diagnostic workarounds.
+The [5 November native retest report](windows-retest-2026-11-05.md) records actual
+service results and remaining UAC/profile-path limitations; those are still open.
 
 ## Requirements
 
