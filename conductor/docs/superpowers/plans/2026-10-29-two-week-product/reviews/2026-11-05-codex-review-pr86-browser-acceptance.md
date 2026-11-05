@@ -8,7 +8,10 @@ baseline `820501b`. Review checkout: combined main
 `4c8b2fbbb38f94201540807d39b0dea3823cd053`, which also includes the native test
 fixture fix from PR87. The UI tree is byte-identical to PR86's head (`git diff
 --exit-code 6025fd6..HEAD -- conductor/operator-web` passes). PR86 and PR87 final
-submissions are both included in main and their required checks pass.
+submissions are both included in main and their required checks pass. Before
+submission, the subsequent documentation-only peer-review commits through
+`7b9d186` were integrated with a normal merge; the UI tree was checked again and
+remains identical to the reviewed head. No UI test rerun was needed for prose.
 
 ## Assessed behavior
 
@@ -61,7 +64,9 @@ fixture protocol/engine behavior; it does not certify browser presentation.
   checks, but Windows process-kill/cleanup behavior still needs direct evidence.
   The unrelated Unix-mode expectation failure remains explicit in PR87's record.
 
-Next: Claude can independently review PR87's test-only native launcher, then the
-lanes can coordinate the remaining Windows browser acceptance with deterministic
-providers. Retain applicable permission/readiness for live or crash operations.
+Claude's independent PR87 launcher review is now recorded in merged PR88 at
+`5c41c1b`: no blocking findings, with synthetic quoting controls and the native
+evidence boundaries kept explicit. This completes the planned cross-review pair.
+Next, coordinate the remaining Windows browser acceptance with deterministic
+providers, retaining applicable permission/readiness for live or crash operations.
 Codex made no changes to Claude-owned UI, journeys or UX files in this review.
