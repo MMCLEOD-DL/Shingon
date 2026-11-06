@@ -16,6 +16,8 @@ The master plan suggests: package the app → expenses → research sessions →
 
 The reasons are under each item. If Malcolm's priority is personal productivity rather than client delivery, swap 1 and 5.
 
+**Added 6 November 2026:** item 6, the step gate and local simplifier, from Malcolm's proposal of the same date. Its first task, **G1 (per-step numbers from the run logs)**, goes **before** item 1, so the expenses build is the first real workload to produce those numbers. G2–G4 follow once the numbers have been read. G5 depends on those numbers and may never be needed.
+
 ## 1. Client expenses workflow
 
 **Already in the repo (implemented and tested, Foundation v0.2.0):**
@@ -179,6 +181,95 @@ It must keep the one-active-operation rule until process cleanup is run-scoped (
 - After a service restart, the session resumes without repeating finished rounds.
 - Given an objection still unresolved after the round limit, when the session ends, then Malcolm sees it as an escalation with both positions and their evidence, never as an agreed conclusion.
 - Given each new round, when it would use subscription allowance, then the estimated cost is shown and the round waits for consent.
+
+## 6. Step gate and local simplifier (from the proposal of 6 November 2026)
+
+**Source:** "Shingon: Verifier and Simplifier/Reviewer agents (proposal, 6 Nov 2026)", Library of Babel `shingon` project (`41417a83-3ae0-417a-a8bc-53d4e6936ced`). It proposes cheap, mostly deterministic gates between the local worker and the paid frontier layer, so local failures are caught before frontier models spend allowance on them. It has two parts:
+- a **Verifier**: staged checks on each finished step (scope, lint, types, build, tests), a retry budget, and escalation carrying the failure history;
+- a **Simplifier/Reviewer**: a local-model review that runs after the Verifier passes, with one revision round.
+
+Its build order is: Verifier, then metrics, then a week of runs, then the reviewer. Paths below were checked at `7b06f41`.
+
+**Already in the repo** (much of the Verifier exists):
+- **Failing tests never reach a frontier reviewer.** `src/chunkPhase.js` `review()` runs the configured `testCommand` after each attempt. A failure becomes a BLOCK with the test output and makes no review call (PR #71, `c105e04`).
+- **Retry and escalation budget.** `localRounds: 3` local attempts per step, then `frontierRounds: 2` frontier attempts, then deadlock settlement (`src/options.js`, `src/deadlock.js`).
+- **Lean retries.** The local worker keeps its workspace between attempts and gets only the step, the plan and the last feedback, clipped to 8,000 characters (`src/prompts.js` `chunkExec`). It does not get the whole history, which the proposal also asks for.
+- **Data the numbers need is already logged.** The run log records every agent `call` and `result` with timestamps, participant, role and verdict (`src/runlog.js` `callRole`), plus `chunk`, `chunk-tests-failed`, `chunk-fallback`, `chunk-done` (with who produced it) and `deadlock` events.
+- **Staged whole-app checks** (install, lint, types, tests, build, browser) run once, at the council stage on the finished branch (`src/factory/checks.js`). They do not run per step.
+- **Protected paths** that the council refuses to let a change touch (`src/council/foundationRules.js`).
+
+**Missing:**
+- **No pass condition per step.** A plan step has only `title` and `instructions` (`src/plan.js`). Every step runs the same run-wide `testCommand`, or no tests at all when none is configured.
+- **No scope check.** Nothing compares the files a step touched with the files it was expected to touch.
+- **No stages per step.** Lint, types and build are not separate steps before the tests, and no structured result records which stage failed.
+- **The frontier fallback starts blind.** When the local budget is spent, `runChunkFrom` resets the workspace and the frontier's first attempt gets no feedback, so the local attempts' failures are thrown away.
+- **No re-chunking.** A step that fails everywhere ends in deadlock or the user's decision. It is never split into smaller steps.
+- **No per-step report.** Nothing turns the run log into the per-step numbers the proposal wants.
+
+**Where I disagree with the proposal:**
+1. **The Simplifier must not replace the frontier step review by default.** In the proposal, the local model reviews by default, and frontier review happens only on high-risk steps. That drops the rival-vendor review on most steps, and rival-vendor review is the core safety premise of Conductor: the two-vendor rule in `src/conductor.js` and the reviewer rotation in `chunkRoles`. A 27B model reviewing work written by the same 27B model is the correlated failure the proposal itself warns about under "tests written by the same model". The safe version is a local simplifier that runs *before* the frontier review. It filters out bloat cheaply, and the frontier still decides. Dropping frontier review on low-risk steps is a separate decision (GD1 below), and it should be made only once G1's numbers show that review is where the allowance goes.
+2. **Measure first.** The proposal puts metrics second. The data is already in every run log, so a read-only report (G1) costs no engine change and tells us whether the Verifier stages matter at all. Since #71, a failing step already costs no frontier call. The remaining frontier spend per step is review of attempts that pass the tests, plus the fallback.
+3. **The cost is subscription allowance, not tokens.** Paid API fallback is off by default. The Claude Code CLI reports a notional cost, while the Codex CLI and the local adapter report no usage at all (`src/adapters/codex.js`, `localAgent.js`). "Tokens, local and paid, separately" therefore cannot be logged today. G1 counts calls and wall-clock time per participant, and counts allowance-limit failures. It reports cost only where an adapter gives one, and it never estimates a missing figure.
+4. **Scope checks should flag, not fail.** A planner that only reads the code cannot always name every file a step will need, such as a test helper or an index export. A hard failure on any file not listed would bounce correct work. The proposed rule:
+   - a file not listed is flagged to the reviewer;
+   - a protected path is a hard failure.
+5. **Who writes the acceptance tests.** The proposal says the planner should write them. Planning in this engine is read-only (`prompts.planAuthor`: "do not edit files"), so the tests would in practice be written by the local worker, which is the correlated risk again. The proposed answer is an optional test-first step written by the frontier author. It is a variation on the existing `firstChunk` mechanism, and it spends allowance, so it is GD2.
+6. **The languages are wrong for this repo.** The proposal's examples are Python tools (Ruff, mypy, pyright). Shingon is JavaScript and TypeScript, and the client apps are Foundation. The stages must be commands configured per repository, like `testCommand`, not tools hardcoded for one language.
+7. **Naming.** In this repo, "verify" already means Foundation's `npm run verify` and the factory's `VERIFY_COMMAND`. Call the new part the **step gate** (`gate` events) to avoid a third meaning. The proposal's own naming note was about the old Windows project's `desktop_worker` verifier, which is not in this code base.
+8. **Timing.** The feature freeze is at the end of Monday 9 November (day 7). None of this enters the fortnight. G1 also needs real live runs, which P08 has not yet produced in quantity.
+
+**Tasks** (each one separately reviewable; G1 first):
+- **G1 — Per-step report from run logs.** A read-only command reads a run's transcript and prints, for each step:
+  - who produced it;
+  - local attempts used;
+  - attempts blocked by tests, and attempts blocked by a reviewer;
+  - whether the frontier took over, and the reason;
+  - frontier calls made;
+  - wall-clock time for each call;
+  - cost, only where an adapter reported one.
+
+  It also prints a total across several runs. No engine change. This is the proposal's "metrics" step, moved to the front.
+- **G2 — The fallback inherits the failure history.** The frontier's first fallback attempt gets the local attempts' last reasons and clipped test excerpts. This needs a small change in `chunkPhase.js`/`reviewLoop`, which are shared engine seams.
+- **G3 — A pass condition for each step.** The plan schema gains two optional fields:
+  - `check`: a command, or the test names, the step must pass;
+  - `files`: the paths the step is expected to touch.
+
+  The plan reviewer blocks a plan whose code steps have no pass condition, but "the existing suite passes" is an explicit, allowed condition. The step gate runs `check` first, then `testCommand`. The changes are in `plan.js`, `prompts.js` and `chunkPhase.js` (shared seams), and existing plans without the fields must stay valid.
+- **G4 — Staged step gate.** Optional `gateCommands` (`[{ name, command }]`, cheapest first, stopping at the first failure) run before the tests. Each attempt logs a `gate` event: `{ result, failedStage, excerpt, attempt: n/N }`. The excerpt is trimmed by a fixed rule (the first failing block, at most a few kB), with no model. The G3 scope flag goes to the reviewer.
+- **G5 — Local simplifier pre-review.** This task depends on G1's numbers showing that frontier blocks are mostly about bloat, duplication or drift from the spec. It works as follows:
+  - It runs only after the gate passes and before the frontier review.
+  - It uses a fresh context, and gives either APPROVE or at most 5 concrete changes.
+  - It gets one revision round. The revision must pass the gate again.
+  - It may not expand scope: new ideas go to a backlog note, and spec problems go to the escalation path.
+
+  On the shared GPU it runs strictly after the worker, never alongside it. The frontier step review is unchanged.
+- **Deferred: re-chunking a failed step.** Splitting a step in the middle of a run changes plan state, resume and the operator's view of progress. It needs its own short spec and is not in scope here.
+
+**Decisions for Malcolm:**
+- **GD1:** keep frontier review on every step (my recommendation), or allow local-only review on steps the planner marks as low-risk, once G1's evidence is in.
+- **GD2:** for steps that need new tests, choose who writes them:
+  - a test-first step by the frontier author, which costs allowance but is not correlated with the worker;
+  - the local worker, which is cheaper but correlated with its own code.
+
+  My recommendation is an opt-in `testFirst` option, off by default.
+- **GD3:** confirm that G1 goes before the expenses build.
+
+**Dependencies:**
+- G1: none.
+- G2–G4: the feature freeze lifting, and a named seam change recorded in the work log. `conductor.js` is a high-risk path; touching it needs Malcolm's merge. The planned changes avoid it.
+- G5: G1's numbers, and GD1.
+
+**Owner:** Claude for G1. G2–G5 are shared engine seams, one writer at a time. I suggest Claude writes them with Codex reviewing, because Codex owns the service that will show the gate results.
+
+**Acceptance examples:**
+- **G1, a logged run:** given a run log where step 2 failed its tests twice locally, then passed and was approved, when the report is run, then step 2 shows "local, 3 attempts, 2 blocked by tests, 0 frontier fallbacks, 1 frontier review call".
+- **G1, missing cost:** given a Codex call with no reported cost, then its cost column says "not reported", never 0.
+- **G2:** given three failed local attempts on step 4, when the frontier fallback starts, then its first prompt contains the last local failure reason and a clipped test excerpt, and the transcript shows it.
+- **G3, plan check:** given a plan step that adds code with no `check` and no "existing suite" condition, when the plan is reviewed, then the plan is blocked with the reason "step 3 has no pass condition".
+- **G3, old plans:** given an existing plan with neither field, then it parses and runs exactly as today.
+- **G4, stage order:** given `gateCommands` lint, then types, and a type error in the attempt, then the `gate` event says `failedStage: "types"`, the tests do not run, no frontier call is made, and the retry prompt holds only the trimmed excerpt.
+- **G4, scope:** given a step whose `files` lists `src/a.js` and an attempt that also edits `src/b.js`, then the reviewer's prompt flags `src/b.js` as outside the expected files, and the step does not fail for that alone. An edit to a protected path does fail.
+- **G5:** given the simplifier asks for 3 changes and the revision passes the gate, then the step goes to frontier review with no second simplifier round. Given the simplifier reports that the spec is wrong, then the worker is not asked to change anything and the run escalates with that reason.
 
 ## Housekeeping found while writing this (small, separate changes)
 
