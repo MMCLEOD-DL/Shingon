@@ -120,7 +120,7 @@ test('landing picks a free name when the branch already exists', async () => {
 test('resume after a crash discards the half-done chunk and continues', async () => {
   const repo = await makeRepo();
   const first = makeTeam();
-  const stopped = await runTask({ repoDir: repo, request: 'x', team: first, hooks: hooks({ approveChunk: async () => false }), baseDir: base(), options: { approveEachChunk: true, testCommand: 'true' } });
+  const stopped = await runTask({ repoDir: repo, request: 'x', team: first, hooks: hooks({ approveChunk: async () => false }), baseDir: base(), options: { approveEachChunk: true, testCommand: 'node --version' } });
   assert.equal(stopped.status, 'stopped');
   // Simulate a crash mid-step-2: state still "running", half-written file in the workspace.
   const statePath = path.join(`${stopped.workspaceDir}.conductor`, 'state.json');
@@ -136,7 +136,7 @@ test('resume after a crash discards the half-done chunk and continues', async ()
   assert.equal(second.author.calls.filter((c) => c.role === 'author').length, 0);
   assert.deepEqual((await git(repo, ['show', '--name-only', '--format=', out.branch])).stdout.trim().split('\n'), ['step2.txt']);
   assert.ok(!existsSync(path.join(stopped.workspaceDir, 'half.txt')));
-  assert.equal(JSON.parse(readFileSync(statePath, 'utf8')).options.testCommand, 'true');
+  assert.equal(JSON.parse(readFileSync(statePath, 'utf8')).options.testCommand, 'node --version');
 });
 
 test('resume of a finished run returns its outcome without calling agents', async () => {
@@ -283,17 +283,27 @@ test('a detached workspace HEAD is put back on the run branch; the detached atte
 // ---- Final-review fixes: I1 (approved == landed) and I2 (agent-writable .git) ----
 
 test('a test command that commits during the final phase cannot ship unseen work (I1)', async () => {
-  const repo = await makeRepo();
   const counter = path.join(base(), 'runs');
-  // Runs 1 and 2 are the chunk tests; run 3 is the final-phase test run, after the diff was taken.
-  const testCommand = `n=$(cat '${counter}' 2>/dev/null || echo 0); n=$((n+1)); echo $n > '${counter}'; ` +
-    'if [ $n -ge 3 ]; then echo sneaky > extra.txt; git add extra.txt; git -c user.name=t -c user.email=t@t -c core.hooksPath=/dev/null commit -qm sneaky; fi; true';
+  // Baseline, two chunks, then the final-phase test run after the diff was taken.
+  const repo = await makeRepo({ 'checks.cjs': `
+    const fs = require('node:fs');
+    const { execFileSync } = require('node:child_process');
+    const counter = ${JSON.stringify(counter)};
+    const runs = fs.existsSync(counter) ? Number(fs.readFileSync(counter, 'utf8')) + 1 : 1;
+    fs.writeFileSync(counter, String(runs));
+    if (runs === 4) {
+      fs.writeFileSync('extra.txt', 'sneaky');
+      execFileSync('git', ['add', 'extra.txt']);
+      execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'core.hooksPath=.no-hooks', 'commit', '-qm', 'sneaky']);
+    }
+  ` });
+  const testCommand = 'node checks.cjs';
   const h = hooks();
   const events = [];
   h.onEvent = (e) => events.push(e);
   const out = await runTask({ repoDir: repo, request: 'x', team: makeTeam(), hooks: h, baseDir: base(), options: { testCommand } });
   assert.equal(out.status, 'landed');
-  assert.equal(readFileSync(counter, 'utf8').trim(), '3');
+  assert.equal(readFileSync(counter, 'utf8').trim(), '4');
   const gate = h.calls.find((c) => c.name === 'approveResult').arg;
   assert.deepEqual(gate.files.sort(), ['step1.txt', 'step2.txt']);
   const landed = (await git(repo, ['diff', '--name-only', 'main', out.branch])).stdout.trim().split('\n').sort();
@@ -438,7 +448,7 @@ test('approveChunk gets files, a plain note and the tests (m1)', async () => {
       return { text: 'ok' };
     },
   });
-  const out = await runTask({ repoDir: await makeRepo(), request: 'x', team, hooks: h, baseDir: base(), options: { approveEachChunk: true, testCommand: 'true', localRounds: 1, frontierRounds: 1 } });
+  const out = await runTask({ repoDir: await makeRepo(), request: 'x', team, hooks: h, baseDir: base(), options: { approveEachChunk: true, testCommand: 'node --version', localRounds: 1, frontierRounds: 1 } });
   assert.equal(out.status, 'landed');
   assert.equal(seen.length, 1);
   assert.equal(seen[0].index, 0);
@@ -705,7 +715,7 @@ test('consent to a local fallback does not survive resume: asked again', async (
   };
   let asked = 0;
   const yes = async () => { asked++; return true; };
-  const first = await runTask({ repoDir: repo, request: 'x', team: mk(), hooks: hooks({ confirmLocalFallback: yes, approveChunk: async () => false }), baseDir: base(), options: { approveEachChunk: true, confirmLocalFallback: true, testCommand: 'true' } });
+  const first = await runTask({ repoDir: repo, request: 'x', team: mk(), hooks: hooks({ confirmLocalFallback: yes, approveChunk: async () => false }), baseDir: base(), options: { approveEachChunk: true, confirmLocalFallback: true, testCommand: 'node --version' } });
   assert.equal(first.status, 'stopped');
   assert.equal(asked, 1);
   // Make it resumable as after a crash after step 1 (a stopped run is final).

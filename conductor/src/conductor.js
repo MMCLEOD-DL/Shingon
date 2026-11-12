@@ -84,10 +84,12 @@ async function safeHook(log, name, fn, arg) {
 
 const message = (e) => String(e?.message ?? e);
 
-export async function runTask({ repoDir, request, team, hooks, options = {}, baseDir, warnings = [] }) {
+export async function runTask({ repoDir, request, team, hooks, options = {}, baseDir, warnings = [], prepare }) {
   const opts = { ...DEFAULT_OPTIONS, ...options };
-  validateTeam(team, opts);
-  validateHooks(hooks, opts);
+  if (!prepare) {
+    validateTeam(team, opts);
+    validateHooks(hooks, opts);
+  }
   validateCouncilOptions(opts);
   validateFirstChunk(opts);
   if (typeof request !== 'string' || !request.trim()) throw new Error('request must be a non-empty string');
@@ -102,10 +104,11 @@ export async function runTask({ repoDir, request, team, hooks, options = {}, bas
   let log;
   let state;
   try {
-    log = new RunLog(ws.metaDir, { onEvent: hooks.onEvent });
+    log = new RunLog(ws.metaDir, { onEvent: hooks?.onEvent });
     state = {
       version: 1, taskId: ws.branch, request, repoDir: path.resolve(repoDir), options: opts, source: ws.source,
       phase: 'plan', plan: null, chunkIndex: 0, chunkShas: [], notes: [], warnings: [], status: 'running',
+      ...(opts.testCommand ? { baselinePending: true } : {}),
     };
     if (isUnderTmp(path.dirname(ws.dir))) state.warnings.push(TMP_BASEDIR_WARNING); // N4
     for (const w of warnings) if (!state.warnings.includes(w)) state.warnings.push(w);
@@ -120,7 +123,7 @@ export async function runTask({ repoDir, request, team, hooks, options = {}, bas
   if (ws.source?.dirty) {
     log.event('warning', { kind: 'uncommitted-changes', detail: 'the repository has uncommitted or untracked changes; the run starts from the last commit without them' });
   }
-  return drive({ request, team, hooks, options: opts, ws, log, state });
+  return drive({ request, team, hooks, options: opts, ws, log, state, prepare });
 }
 
 // A run state resume can safely continue (T9-M3). Returns a problem or null.
@@ -144,8 +147,8 @@ async function stateProblem(state, ws) {
 // repoDir: the repository the caller expects this run to land in. It must match
 // the one recorded when the workspace was created (Ruling 11 / I2).
 // Always resolves: anything that stops a resume is a 'failed' outcome with a plain reason.
-export async function resume({ workspaceDir, repoDir, team, hooks, options = {}, warnings = [] }) {
-  validateTeam(team, options);
+export async function resume({ workspaceDir, repoDir, team, hooks, options = {}, warnings = [], prepare }) {
+  if (!prepare) validateTeam(team, options);
   if (typeof repoDir !== 'string' || !repoDir) throw new Error('resume needs the repoDir the run belongs to');
   const refuse = (detail, log, dir = workspaceDir) => {
     try { log?.event('resume-refused', { detail }); } catch {}
@@ -170,7 +173,7 @@ export async function resume({ workspaceDir, repoDir, team, hooks, options = {},
   const repoProblem = (await ws.checkRepo(repoDir)) ?? (path.resolve(repoDir) === state.repoDir ? null : 'the run state names a different repository');
   if (repoProblem) return refuse(repoProblem, log, ws.dir);
   const opts = { ...DEFAULT_OPTIONS, ...state.options, ...options };
-  validateHooks(hooks, opts);
+  if (!prepare) validateHooks(hooks, opts);
   validateCouncilOptions(opts);
   validateFirstChunk(opts);
 
@@ -197,7 +200,7 @@ export async function resume({ workspaceDir, repoDir, team, hooks, options = {},
   state.options = opts;
   state.status = 'running';
   log.event('resume', { phase: state.phase, chunkIndex: state.chunkIndex });
-  return drive({ request: state.request, team, hooks, options: opts, ws, log, state });
+  return drive({ request: state.request, team, hooks, options: opts, ws, log, state, prepare });
 }
 
 // After a landed or rejected run nothing is left to resume: keep the transcript
@@ -222,7 +225,7 @@ function archive(ws, log, state) {
 }
 
 async function drive(ctx) {
-  const { team, hooks, options, ws, log, state } = ctx;
+  const { options, ws, log, state } = ctx;
   const finish = (status, extra = {}) => {
     Object.assign(state, { status }, extra);
     if (FINISHED.has(status)) state.phase = 'done';
@@ -241,9 +244,44 @@ async function drive(ctx) {
     return redact(out);
   };
 
-  for (const member of new Set([team.author, team.reviewer, team.local])) member.bind?.((type, data) => log.event(type, data));
-
   try {
+    if (state.baselinePending && options.testCommand) {
+      const keepIgnored = new Set(await ws.ignoredPaths());
+      const tests = await ws.runTests(options.testCommand, { timeoutMs: options.testTimeoutMs });
+      log.event('baseline-tests', { commit: ws.baseSha, ...tests, detail: tests.passed ? 'Baseline tests passed.' : 'Baseline tests failed before model calls.' });
+      const { gitdir, config } = await ws.guardGitDir();
+      if (gitdir) log.event('gitdir-tampered', { participant: null, role: null, ...gitdir });
+      if (config) log.event('config-tampered', { participant: null, role: null, ...config });
+      await ws.assertOnBranch();
+      await ws.resetHard(ws.baseSha, { keepIgnored });
+      if (!tests.passed) return finish('stopped', {
+        reasonCode: 'baseline-tests-failed',
+        reason: 'The configured tests already fail or could not run before any changes. Fix the tests or test command, then start a new run. See the run transcript for the test output.',
+      });
+      delete state.baselinePending;
+      log.saveState(state);
+    }
+
+    if (ctx.prepare) {
+      const prepared = await ctx.prepare(ws.dir);
+      if (prepared.outcome) {
+        const { status, ...details } = prepared.outcome;
+        return finish(status, details);
+      }
+      ctx.team = prepared.team;
+      ctx.hooks = prepared.hooks ?? ctx.hooks;
+      log.onEvent = ctx.hooks?.onEvent;
+      Object.assign(options, prepared.options);
+      for (const warning of prepared.warnings ?? []) {
+        if (!state.warnings.includes(warning)) state.warnings.push(warning);
+      }
+      validateTeam(ctx.team, options);
+      validateHooks(ctx.hooks, options);
+      log.saveState(state);
+    }
+    const { team, hooks } = ctx;
+    for (const member of new Set([team.author, team.reviewer, team.local])) member.bind?.((type, data) => log.event(type, data));
+
     if (state.phase === 'plan') {
       const p = await runPlanPhase(ctx);
       if (p.status === 'failed') {

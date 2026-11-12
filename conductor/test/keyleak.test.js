@@ -52,10 +52,11 @@ test('a key leaking through test output is redacted from prompts, transcript, st
     repoDir: await makeRepo({
       'README.md': 'synthetic redaction fixture\n',
       'leak-check.cjs': `const fs = require('node:fs');
+        if (!fs.existsSync('one.txt')) process.exit(0);
         console.log(fs.readFileSync('one.txt', 'utf8'));
         console.log('env=[' + (process.env.X_API_KEY || '') + '] local=[' + (process.env.LOCALAI_API_KEY || '') + ']');
         process.exit(1);\n`,
-      'leak-check.cmd': '@echo off\r\ntype one.txt\r\nif defined X_API_KEY (echo env=[%X_API_KEY%]) else (echo env=[])\r\nif defined LOCALAI_API_KEY (echo local=[%LOCALAI_API_KEY%]) else (echo local=[])\r\nexit /b 1\r\n',
+      'leak-check.cmd': '@echo off\r\nif not exist one.txt exit /b 0\r\ntype one.txt\r\nif defined X_API_KEY (echo env=[%X_API_KEY%]) else (echo env=[])\r\nif defined LOCALAI_API_KEY (echo local=[%LOCALAI_API_KEY%]) else (echo local=[])\r\nexit /b 1\r\n',
     }), request: 'x', team, hooks,
     baseDir: mkdtempSync(path.join(tmpdir(), 'leak-')),
     options: { localRounds: 2, frontierRounds: 1, testCommand: process.platform === 'win32' ? 'leak-check.cmd' : 'node leak-check.cjs', keepWorkspace: true },
