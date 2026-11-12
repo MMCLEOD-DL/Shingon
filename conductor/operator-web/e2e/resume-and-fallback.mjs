@@ -80,11 +80,14 @@ const step = async (name, fn) => {
   try { await fn(); results.push(['pass', name]); console.log(`pass  ${name}`); }
   catch (e) { results.push(['FAIL', name, e.message]); console.log(`FAIL  ${name}\n      ${e.message.split('\n').slice(0, 4).join(' | ')}`); }
 };
+// Each error records whether it happened while the service was deliberately down (from the kill until the
+// restarted service has shown the run again), so a cut connection is excused only then.
 const consoleErrors = [];
+let serviceDown = false;
 const newPage = async () => {
   const p = await (await browser.newContext()).newPage();
-  p.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
-  p.on('pageerror', (e) => consoleErrors.push(e.message));
+  p.on('console', (m) => { if (m.type() === 'error') consoleErrors.push({ text: m.text(), serviceDown }); });
+  p.on('pageerror', (e) => consoleErrors.push({ text: e.message, serviceDown }));
   return p;
 };
 const signInAndRegister = async (p, s) => {
@@ -119,6 +122,7 @@ try {
     const asked = (await readRun(p, runId)).decision;
     assert.match(asked.evidence.commit, /^[0-9a-f]{40}$/);
 
+    serviceDown = true;
     await stop(first, 'SIGKILL');
     await p.getByText(/Connection lost — reconnecting/).waitFor({ timeout: 15000 });
     const second = await serve(dataDir, configFile, port); services.push(second);
@@ -127,6 +131,7 @@ try {
     await p.goto(`${second.origin}/runs/${runId}`);
     await p.getByText('Interrupted', { exact: true }).waitFor({ timeout: 15000 });
     await p.getByText(/Any question it was asking has been withdrawn\. Resume to continue from its saved work\./).waitFor();
+    serviceDown = false;
     assert.equal(await p.getByRole('button', { name: 'Approve: create a branch' }).count(), 0, 'the withdrawn question is not offered');
     assert.deepEqual(conductorBranches(), [], 'nothing landed before Resume');
 
@@ -202,8 +207,12 @@ try {
 
   await step('no browser errors', async () => {
     // The deliberate kill cuts the live stream and refuses its reconnection attempts; nothing else may fail.
-    const unexpected = consoleErrors.filter((t) => !/status of (401|409)|net::ERR_INCOMPLETE_CHUNKED_ENCODING|net::ERR_CONNECTION_REFUSED/.test(t));
-    assert.equal(unexpected.length, 0, unexpected.join(' || '));
+    // Windows reports a connection cut by the kill as ERR_CONNECTION_RESET, which is excused only while the
+    // service is down: a reset at any other time is a fault.
+    const unexpected = consoleErrors.filter(({ text, serviceDown: down }) =>
+      !/status of (401|409)|net::ERR_INCOMPLETE_CHUNKED_ENCODING|net::ERR_CONNECTION_REFUSED/.test(text)
+      && !(down && /net::ERR_CONNECTION_RESET/.test(text)));
+    assert.equal(unexpected.length, 0, unexpected.map(({ text, serviceDown: down }) => `${text}${down ? ' (service down)' : ''}`).join(' || '));
   });
 } finally {
   await browser.close();
