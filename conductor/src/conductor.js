@@ -104,7 +104,7 @@ export async function runTask({ repoDir, request, team, hooks, options = {}, bas
   let log;
   let state;
   try {
-    log = new RunLog(ws.metaDir, { onEvent: hooks.onEvent });
+    log = new RunLog(ws.metaDir, { onEvent: hooks?.onEvent });
     state = {
       version: 1, taskId: ws.branch, request, repoDir: path.resolve(repoDir), options: opts, source: ws.source,
       phase: 'plan', plan: null, chunkIndex: 0, chunkShas: [], notes: [], warnings: [], status: 'running',
@@ -270,6 +270,7 @@ async function drive(ctx) {
       }
       ctx.team = prepared.team;
       ctx.hooks = prepared.hooks ?? ctx.hooks;
+      log.onEvent = ctx.hooks?.onEvent;
       Object.assign(options, prepared.options);
       for (const warning of prepared.warnings ?? []) {
         if (!state.warnings.includes(warning)) state.warnings.push(warning);

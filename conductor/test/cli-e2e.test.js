@@ -95,12 +95,24 @@ test('no terminal: the whole run happens, the gate fails closed, the repo is unt
 test('a failing --test baseline stops before checking workers', async t => {
   const s = await setup();
   t.after(s.close);
+  writeFileSync(path.join(s.repo, 'checks.cjs'), 'process.exit(1);\n');
+  await git(s.repo, ['add', 'checks.cjs']);
+  await git(s.repo, ['commit', '-qm', 'existing test failure']);
   const before = await refsOf(s.repo);
-  const result = await spawnBin(['add multiply', '--config', s.cfg, '--test', 'node -e "process.exit(1)"'], { cwd: s.repo, env: s.env });
+  const result = await spawnBin(['add multiply', '--config', s.cfg, '--test', 'node checks.cjs'], { cwd: s.repo, env: s.env });
   assert.equal(result.code, 1, result.out);
   assert.match(result.out, /tests already fail/i);
   assert.doesNotMatch(result.out, /Checking which AI models|Plan agreed/i);
   assert.equal(await refsOf(s.repo), before);
+});
+
+test('a passing --test baseline reaches the ordinary CLI review flow', async t => {
+  const s = await setup();
+  t.after(s.close);
+  const result = await spawnBin(['add multiply', '--config', s.cfg, '--test', 'node --version'], { cwd: s.repo, env: s.env });
+  assert.equal(result.code, 1, result.out);
+  assert.match(result.out, /Plan agreed/);
+  assert.match(result.out, /Not approved\. Your repository is unchanged\./);
 });
 
 test('Ctrl-C mid-step: exit 130, resumable, listed by runs, picked up by resume (Review Focus 1)', async () => {
