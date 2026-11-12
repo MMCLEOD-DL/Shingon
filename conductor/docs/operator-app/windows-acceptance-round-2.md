@@ -65,15 +65,15 @@ $env:NODE_PATH = (npm root -g)
 node e2e\journey.mjs
 ```
 
-- [ ] `npm test`: note the count (74 on Linux at `6f636ac`) and whether there were any failures.
+- [ ] `npm test`: note the count (78 on Linux at `038289d`) and whether there were any failures.
 - [ ] `npm run build` ends without errors.
 - [ ] `node e2e\journey.mjs` runs three groups:
   - the fixture worker;
   - the real engine with stand-in model programs;
   - resume-and-fallback, which **kills the service abruptly** and restarts it.
 
-  On Linux they give 21, 6 and 4 passed, with exit code 0. Note each group's count, any failures with their step
-  names, and the exit code (`$LASTEXITCODE`).
+  On Linux at `038289d` they give 22, 6 and 4 passed, with exit code 0. Note each group's count, any failures with
+  their step names, and the exit code (`$LASTEXITCODE`).
 - [ ] While the kill-and-restart group runs, watch Task Manager: note any `node` processes left behind after the
   script ends.
 
@@ -84,7 +84,9 @@ cd ..
 node --test test/stub-cli.test.js test/service/engine.test.js
 ```
 
-- [ ] Note the pass, fail and skip counts.
+- [ ] Note the pass, fail and skip counts. On Linux at `038289d`: 9 tests, 8 passed, 1 skipped. The skipped one is
+  "native Windows fixture timeout ends the launcher and its Node child", which runs only on Windows, so on Windows
+  expect all 9 to run.
 
 This is synthetic evidence: it proves the UI and the service on Windows, not the models.
 
@@ -94,6 +96,8 @@ Follow the [first-run checklist](real-run-checklist.md), steps 0 to 7, with thes
 
 - Use `C:\conductor-trial-2` everywhere in place of `C:\conductor-trial`. That covers the repository, `config.json`,
   the data folder and `ask.json`.
+- **Before step 3,** create the folder: `mkdir C:\conductor-trial-2`. Step 3 writes `ask.json` into it, and the
+  folder is otherwise made only in step 4.
 - **Step 2, Codex path:** find `codex.exe` again, even if nothing seems to have changed. If its folder moved since the
   last session, note it. A moved `codex.exe` gets a new private Codex home, so Conductor will appear signed out (PR76
   R1). Note whether **Check sign-in** says so clearly.
