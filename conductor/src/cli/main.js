@@ -12,7 +12,7 @@ import { runTask, resume } from '../conductor.js';
 import { createTerminal } from '../ui/terminal.js';
 import { prepareTeam } from './prepareRun.js';
 import { metaDirOf, defaultBaseDir } from '../workspace.js';
-import { runCommand } from '../exec.js';
+import { killAllChildren, runCommand } from '../exec.js';
 import { redact } from '../secrets.js';
 
 export const EXIT = Object.freeze({ landed: 0, rejected: 1, stopped: 1, failed: 2, paused: 3, usage: 64, interrupted: 130 });
@@ -85,11 +85,13 @@ export async function main(argv, {
 
   let workspaceDir = null;
   let seed = null;
+  let baselinePending = false;
   if (cli.command === 'resume') {
     workspaceDir = cli.workspaceDir ? path.resolve(cwd, cli.workspaceDir) : listRuns({ baseDir, repoDir })[0]?.workspaceDir ?? null;
     if (!workspaceDir) { print('There is no unfinished Conductor run for this repository.'); return 1; }
     try {
       const s = JSON.parse(readFileSync(path.join(metaDirOf(workspaceDir), 'state.json'), 'utf8'));
+      baselinePending = s.baselinePending === true;
       if (s.plan?.chunks) seed = { chunks: s.plan.chunks.map((c) => c.title), done: s.chunkShas?.length ?? 0 };
     } catch {
       // resume() itself explains an unusable state
@@ -98,21 +100,50 @@ export async function main(argv, {
 
   const term = createTerminal({ input: stdin, output: stdout, isTTY, bell: cli.flags.bell });
   if (seed) term.model.seed(seed);
-  const p = await prepareTeam({ cli, config, term, env, baseDir, workspaceDir, wakeDeps, onSignal, exit });
-  if ('code' in p) return p.code;
-  const { built, hooks, overrides, remember } = p;
+  const testCommand = cli.flags.testCommand ?? config.options.testCommand;
+  const resuming = cli.command === 'resume';
+  const checkBaselineFirst = resuming ? baselinePending : cli.command !== 'doctor' && Boolean(testCommand);
+  let prepared;
   let out;
   try {
-    out = cli.command === 'resume'
-      ? await resume({ workspaceDir, repoDir, team: built.team, hooks, options: overrides, warnings: built.warnings })
-      : await runTask({ repoDir, request: cli.request, team: built.team, hooks, options: { ...config.options, ...overrides }, baseDir, warnings: built.warnings });
+    const prepareFor = (dir, registerSignal) => prepareTeam({
+      cli, config, term, env, baseDir, workspaceDir: dir, wakeDeps, onSignal: registerSignal, exit,
+    });
+    let args;
+    if (checkBaselineFirst) {
+      let interrupt = () => {
+        killAllChildren();
+        term.say('\nStopped. Your repository is unchanged.');
+        term.close();
+        exit(EXIT.interrupted);
+      };
+      onSignal(() => interrupt());
+      args = {
+        options: resuming ? (cli.flags.testCommand ? { testCommand } : {}) : { ...config.options, testCommand },
+        prepare: async (dir) => {
+          prepared = await prepareFor(dir, handler => { interrupt = handler; });
+          if ('code' in prepared) return { outcome: { status: prepared.code === EXIT.stopped ? 'stopped' : 'failed' } };
+          const { built, hooks, overrides } = prepared;
+          return { team: built.team, hooks, options: overrides, warnings: built.warnings };
+        },
+      };
+    } else {
+      prepared = await prepareFor(workspaceDir, onSignal);
+      if ('code' in prepared) return prepared.code;
+      const { built, hooks, overrides } = prepared;
+      args = { team: built.team, hooks, options: resuming ? overrides : { ...config.options, ...overrides }, warnings: built.warnings };
+    }
+    out = resuming
+      ? await resume({ ...args, workspaceDir, repoDir })
+      : await runTask({ ...args, repoDir, request: cli.request, baseDir });
   } catch (e) {
-    remember();
+    prepared?.remember?.();
     term.say(`Conductor could not start: ${redact(String(e?.message ?? e))}`);
     term.close();
     return EXIT.usage;
   }
-  remember();
+  if (prepared && 'code' in prepared) return prepared.code;
+  prepared?.remember();
   term.say(`\n${outcomeText(out)}`);
   term.close();
   return EXIT[out.status] ?? EXIT.failed;

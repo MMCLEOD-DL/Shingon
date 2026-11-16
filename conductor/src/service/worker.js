@@ -54,22 +54,35 @@ process.on('message', async msg => {
   workspaceDir = msg.workspaceDir ?? null;
   try {
     const config = appConfig(msg.configFile);
-    const built = await buildTeam(config.participants, { routing: config.routing });
-    if (!built.ok) throw new Error(built.error);
-    if (built.localDown) {
-      const answer = await ask('fallback', { summary: 'The local model is unavailable. Subscription fallback uses your allowance. Pause, or explicitly continue with subscription models.', reason: built.localDown.reason });
-      if (answer !== true) { send({ type: 'finished', outcome: { status: 'paused', reason: 'Local model unavailable; subscription fallback was not approved.' } }); process.disconnect(); return; }
-      built.warnings.push(LOCAL_DOWN_WARNING);
-    }
+    const prepare = async () => {
+      const built = await buildTeam(config.participants, { routing: config.routing });
+      if (!built.ok) return { outcome: { status: 'failed', reason: built.error } };
+      if (built.localDown) {
+        const answer = await ask('fallback', { summary: 'The local model is unavailable. Subscription fallback uses your allowance. Pause, or explicitly continue with subscription models.', reason: built.localDown.reason });
+        if (answer !== true) return { outcome: {
+          status: 'paused', reasonCode: msg.workspaceDir ? undefined : 'paused-before-work',
+          reason: 'Local model unavailable; subscription fallback was not approved.',
+        } };
+        built.warnings.push(LOCAL_DOWN_WARNING);
+      }
+      return { team: built.team, warnings: built.warnings, options: { allowSameVendor: built.allowSameVendor } };
+    };
     const hooks = {
       onEvent: e => { if (e.type === 'start' && e.workspace) workspaceDir = e.workspace; send({ type: 'event', event: e, workspaceDir }); },
       approveResult: p => ask('result', p), escalate: p => ask('escalation', p),
       approvePlan: p => ask('plan', p), approveChunk: p => ask('chunk', p), confirmLocalFallback: p => ask('fallback', p),
     };
-    const options = { ...config.options, allowSameVendor: built.allowSameVendor, confirmLocalFallback: true };
+    const options = { ...config.options, confirmLocalFallback: true };
+    // Runs without a baseline retain the existing pre-work readiness flow.
+    let args = { repoDir: msg.repoDir, hooks, options, prepare };
+    if (!msg.workspaceDir && !options.testCommand) {
+      const prepared = await prepare();
+      if (prepared.outcome) { send({ type: 'finished', outcome: prepared.outcome }); return; }
+      args = { ...args, ...prepared, prepare: undefined, options: { ...options, ...prepared.options } };
+    }
     const outcome = msg.workspaceDir
-      ? await resume({ workspaceDir: msg.workspaceDir, repoDir: msg.repoDir, team: built.team, hooks, options, warnings: built.warnings })
-      : await runTask({ repoDir: msg.repoDir, request: msg.request, team: built.team, hooks, options, baseDir: msg.baseDir, warnings: built.warnings });
+      ? await resume({ ...args, workspaceDir: msg.workspaceDir })
+      : await runTask({ ...args, request: msg.request, baseDir: msg.baseDir });
     send({ type: 'finished', outcome });
   } catch (e) { send({ type: 'finished', outcome: { status: 'failed', reason: String(e?.message ?? e), workspaceDir } }); }
   finally { killAllChildren(); if (process.connected) process.disconnect(); }

@@ -162,7 +162,8 @@ export class Runs {
           const reviewRefused = outcome.status === 'failed' && outcome.reasonCode === 'review-changed' && outcome.landingState === 'not-started';
           run.recoveryRequired = Boolean(run.landingPending && !reviewRefused && !['landed', 'rejected'].includes(outcome.status));
           run.landingPending = false;
-          run.resumable = !run.recoveryRequired && ['paused', 'failed', 'interrupted'].includes(run.status) && Boolean(run.workspaceDir);
+          const stoppedBeforeWork = ['baseline-tests-failed', 'paused-before-work'].includes(outcome.reasonCode);
+          run.resumable = !stoppedBeforeWork && !run.recoveryRequired && ['paused', 'failed', 'interrupted'].includes(run.status) && Boolean(run.workspaceDir);
           run.activeDecisionId = null;
           if (run.coverage.local === 'unknown') run.coverage.local = 'not-used';
           if (run.coverage.vendors.length < 2) { run.coverage.weakened = true; run.coverage.reasons.push(run.coverage.vendors.length ? `Only ${run.coverage.vendors[0]} completed calls in this run.` : 'No subscription vendor completed a call in this run.'); }

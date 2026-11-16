@@ -9,13 +9,15 @@ import { createAppServer } from '../../src/service/server.js';
 import { writeStubCli } from '../helpers/stubCli.js';
 import { git } from '../../src/workspace.js';
 
-async function fixture(t, { workerFile, request = 'add multiply' } = {}) {
+async function fixture(t, { workerFile, request = 'add multiply', baselineFails = false, testCommand = 'node checks.cjs' } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'service-engine-')); const repo = path.join(root, 'repo'); mkdirSync(repo);
   await git(repo, ['init', '-q', '-b', 'main']); writeFileSync(path.join(repo, 'README.md'), 'original\n');
-  writeFileSync(path.join(repo, 'checks.cjs'), "require('node:assert/strict').equal(require('node:fs').readFileSync('multiply.txt','utf8'), 'local did it\\n');\n");
+  writeFileSync(path.join(repo, 'checks.cjs'), baselineFails ? "throw new Error('existing test failure');\n"
+    : "const fs = require('node:fs'); if (fs.existsSync('multiply.txt')) require('node:assert/strict').equal(fs.readFileSync('multiply.txt','utf8'), 'local did it\\n');\n");
   await git(repo, ['add', '.']); await git(repo, ['commit', '-qm', 'initial']);
   const originalHead = (await git(repo, ['rev-parse', 'HEAD'])).stdout;
-  const local = http.createServer((req, res) => { req.resume(); req.on('end', () => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"choices":[]}'); }); });
+  let localRequests = 0;
+  const local = http.createServer((req, res) => { localRequests++; req.resume(); req.on('end', () => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"choices":[]}'); }); });
   await new Promise(r => local.listen(0, '127.0.0.1', r));
   const bin = path.join(root, 'bin');
   const claude = writeStubCli(bin, 'claude', `
@@ -34,7 +36,7 @@ async function fixture(t, { workerFile, request = 'add multiply' } = {}) {
     { name: 'claude', adapter: 'claude-code', bin: claude, roles: ['author','reviewer'], capabilities: { can_edit_files:true } },
     { name: 'codex', adapter: 'codex', bin: codex, roles: ['author','reviewer'], capabilities: { can_edit_files:true } },
     { name: 'local', adapter: 'local-agent', bin: codex, model:'synthetic', baseUrl:`http://127.0.0.1:${local.address().port}/v1`,roles:['grunt'],capabilities:{can_edit_files:true} },
-  ], options: { testCommand: 'node checks.cjs' }, routing: { allowApi: false } }));
+  ], options: { testCommand }, routing: { allowApi: false } }));
   let app = await createAppServer({ dataDir, configFile, port:0, workerFile });
   let cookie;
   async function api(p, method='GET', body) {
@@ -47,7 +49,22 @@ async function fixture(t, { workerFile, request = 'add multiply' } = {}) {
   const runId=(await api('/runs','POST',{repositoryId,request,presetId:'default',clientRequestId:'start-1'})).body.id;
   const wait=async status=>{for(let i=0;i<400;i++){const r=await api('/runs/'+runId);if(r.body.status===status)return r.body;if(['failed','rejected'].includes(r.body.status)&&status!=='rejected')throw new Error(JSON.stringify(r.body));await new Promise(r=>setTimeout(r,25));}throw new Error('timed out');};
   t.after(async()=>{await app.close();await new Promise(r=>local.close(r));rmSync(root,{recursive:true,force:true});});
-  return {get app(){return app;}, api,repo,runId,wait,originalHead, restart: async()=>{await app.close();app=await createAppServer({dataDir,configFile,port:0});cookie=null;await api('/session','POST',{bootstrapToken:app.bootstrapToken});}};
+  return {get app(){return app;}, get localRequests(){return localRequests;}, api,repo,runId,wait,originalHead, restart: async()=>{await app.close();app=await createAppServer({dataDir,configFile,port:0});cookie=null;await api('/session','POST',{bootstrapToken:app.bootstrapToken});}};
+}
+for (const [name, options] of [
+  ['a failing baseline', { baselineFails: true }],
+  ['a missing test executable', { testCommand: 'conductor-fixture-test-executable-does-not-exist' }],
+]) {
+  test(`${name} stops before model readiness or a decision`, async t => {
+    const s = await fixture(t, options);
+    const run = await s.wait('paused');
+    assert.equal(s.localRequests, 0);
+    assert.equal(run.resumable, false);
+    assert.equal(run.decision, null);
+    assert.deepEqual(run.coverage.vendors, []);
+    assert.match(s.app.runs.get(s.runId).events.at(-1).message, /tests already fail/i);
+    assert.doesNotMatch((await git(s.repo, ['branch'])).stdout, /conductor\//);
+  });
 }
 test('HTTP service drives the real engine with deterministic model CLIs, tests and approval branch', async t=>{
   const s=await fixture(t);const run=await s.wait('awaiting-decision');
