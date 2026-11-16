@@ -47,7 +47,7 @@ const repo = path.join(root, 'repo'); mkdirSync(repo);
 git(repo, 'init', '-q', '-b', 'main');
 git(repo, 'config', 'user.name', 'Engine journey'); git(repo, 'config', 'user.email', 'engine-journey@example.invalid');
 writeFileSync(path.join(repo, 'README.md'), 'original\n');
-writeFileSync(path.join(repo, 'checks.cjs'), "require('node:assert/strict').equal(require('node:fs').readFileSync('multiply.txt', 'utf8'), 'local did it\\n');\n");
+writeFileSync(path.join(repo, 'checks.cjs'), "const fs = require('node:fs'); if (fs.existsSync('multiply.txt')) require('node:assert/strict').equal(fs.readFileSync('multiply.txt', 'utf8'), 'local did it\\n');\n");
 git(repo, 'add', '.'); git(repo, 'commit', '-qm', 'initial');
 const originalHead = git(repo, 'rev-parse', 'HEAD').trim();
 
@@ -115,7 +115,7 @@ try {
   await step('a task started in the browser is planned, edited and tested by the real engine', async () => {
     firstRun = await startRun('Add a multiply helper');
     await page.getByText(/local did it/).first().waitFor();
-    await page.getByText('Tests passed').waitFor();
+    await page.getByRole('heading', { name: 'Tests passed' }).waitFor();
     const { body } = await apiGet(`/api/v1/runs/${firstRun}`);
     assert.equal(body.decision.kind, 'result');
     assert.equal(body.coverage.local, 'used', 'the local model did the edit');

@@ -142,7 +142,7 @@ try {
     assert.notEqual(again.id, asked.id, 'a new question, not the withdrawn one');
     assert.equal(again.evidence.commit, asked.evidence.commit, 'the saved work was kept, not redone');
     await p.getByText('+local did it').waitFor(); // the exact change is on screen
-    await p.getByText('Tests passed').waitFor();
+    await p.getByRole('heading', { name: 'Tests passed' }).waitFor();
     await p.getByRole('button', { name: 'Approve: create a branch' }).click();
     await p.getByText('Branch created', { exact: true }).waitFor({ timeout: 60000 });
 
