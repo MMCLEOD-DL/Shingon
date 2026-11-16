@@ -3,6 +3,7 @@ import { ErrorNote } from '../components/ErrorNote.jsx';
 import { plain, when } from '../text.js';
 
 const ADAPTER = { 'claude-code': 'Claude Code (subscription)', codex: 'Codex (subscription)', 'local-agent': 'Local model' };
+const LOCAL_SIGN_IN = 'Check connection and key';
 const PROBES = [
   { kind: 'installation', label: 'Check installation', note: 'Runs only the version command. No model is contacted.' },
   { kind: 'authenticated', label: 'Check sign-in', note: 'Sends one tiny synthetic request. This uses a little of your subscription allowance (or local model time).' },
@@ -80,14 +81,14 @@ export function Setup({ api }) {
               {PROBES.map((k) => (
                 <button key={k.kind} type="button" disabled={busy !== null} aria-describedby={`probe-${k.kind}`}
                   onClick={() => probe(p.participantId, k.kind)}>
-                  {busy === `${p.participantId}:${k.kind}` ? 'Checking…' : k.label}
+                  {busy === `${p.participantId}:${k.kind}` ? 'Checking…' : k.kind === 'authenticated' && p.adapter === 'local-agent' ? LOCAL_SIGN_IN : k.label}
                 </button>
               ))}
             </div>
           </li>
         ))}
       </ul>
-      <ul className="muted small">{PROBES.map((k) => <li key={k.kind} id={`probe-${k.kind}`}><strong>{k.label}:</strong> {k.note}</li>)}</ul>
+      <ul className="muted small">{PROBES.map((k) => <li key={k.kind} id={`probe-${k.kind}`}><strong>{k.kind === 'authenticated' ? `${k.label} (for a local model: ${LOCAL_SIGN_IN})` : k.label}:</strong> {k.note}</li>)}</ul>
 
       <h2>Local model</h2>
       <form onSubmit={save} className="form">

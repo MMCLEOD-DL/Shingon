@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { eventText, phaseText } from '../src/text.js';
+import { eventText, phaseText, finishReason } from '../src/text.js';
 
 // First live run, 31 October 2026: the activity log and status line showed the engine's internal names.
 describe('plain words for engine steps', () => {
@@ -44,5 +44,20 @@ describe('plain words for engine steps', () => {
     expect(phaseText('chunk')).toBe('coding');
     expect(phaseText('landing')).toBe('creating the branch');
     expect(phaseText('something-new')).toBeNull();
+  });
+});
+
+describe('the engine reason for a finished run', () => {
+  const BASELINE = 'The configured tests already fail or could not run before any changes. Fix the tests or test command, then start a new run. See the run transcript for the test output.';
+  const finished = (message) => ({ type: 'finished', message });
+  test('a bare status word is not a reason', () => {
+    expect(finishReason([finished('stopped')])).toBeNull();
+  });
+  test('a sentence from the last finished event is the reason', () => {
+    expect(finishReason([{ type: 'progress', message: 'start' }, finished(BASELINE)])).toBe(BASELINE);
+  });
+  test('no finished event gives no reason', () => {
+    expect(finishReason([{ type: 'progress', message: 'start' }])).toBeNull();
+    expect(finishReason([])).toBeNull();
   });
 });

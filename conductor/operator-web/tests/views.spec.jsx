@@ -1,4 +1,4 @@
-import { describe, test, expect } from 'vitest';
+import { describe, test, expect, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from '../src/App.jsx';
@@ -209,6 +209,18 @@ describe('setup', () => {
     expect(Object.keys(writes[1].body)).toEqual(['local']);
     expect(await screen.findByText('Saved.')).toBeTruthy();
   });
+  test('a local model is checked for connection and key; subscriptions for sign-in', async () => {
+    const svc = fakeService();
+    render(<Setup api={createApi({ fetchImpl: svc.fetchImpl })} />);
+    const card = (await screen.findByRole('heading', { level: 3, name: /Local model/ })).closest('li');
+    await userEvent.click(within(card).getByRole('button', { name: 'Check connection and key' }));
+    const call = svc.state.calls.find((c) => c.path.endsWith('/probe'));
+    expect(call.path).toBe('/participants/local-agent/probe');
+    expect(call.body).toEqual({ kind: 'authenticated' });
+    const sub = screen.getByRole('heading', { name: /Codex \(subscription\)/ }).closest('li');
+    expect(within(sub).queryByRole('button', { name: 'Check connection and key' })).toBeNull();
+    expect(screen.getByText(/for a local model: Check connection and key/)).toBeTruthy();
+  });
   test('a probe calls the explicit probe endpoint with its kind', async () => {
     const svc = fakeService();
     render(<Setup api={createApi({ fetchImpl: svc.fetchImpl })} />);
@@ -246,6 +258,17 @@ test('history lists runs and offers resume only where the service says resumable
   render(<History api={createApi({ fetchImpl: svc.fetchImpl })} go={() => {}} />);
   expect(await screen.findByText('Branch created')).toBeTruthy();
   expect(screen.getAllByRole('button', { name: 'Resume' })).toHaveLength(svc.state.runs.filter((r) => r.resumable && ['interrupted', 'paused', 'failed'].includes(r.status)).length);
+});
+
+test('history rows have distinct ids, so React has no duplicate keys to warn about', async () => {
+  const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const svc = fakeService();
+  render(<History api={createApi({ fetchImpl: svc.fetchImpl })} go={() => {}} />);
+  await screen.findByText('Branch created');
+  const warned = spy.mock.calls.flat().some((m) => /same key/.test(String(m)));
+  spy.mockRestore();
+  expect(new Set(svc.state.runs.map((r) => r.id)).size).toBe(svc.state.runs.length);
+  expect(warned).toBe(false);
 });
 
 test('without a session the app explains how to sign in instead of simulating anything', async () => {
@@ -502,10 +525,36 @@ describe('after an accepted answer, the page says what happened next', () => {
   });
 });
 
+test('a run whose local model has no completed call yet says so', async () => {
+  showRun({ ...fixtures.interruptedRun, coverage: { local: 'unknown', vendors: [], weakened: false } });
+  expect(await screen.findByText('no completed call yet')).toBeTruthy();
+  expect(screen.getByText(/Local model:/).textContent).toContain('Local model: no completed call yet.');
+});
+
 test('a paused run with no saved work says it cannot be resumed, and offers no Resume', async () => {
   showRun({ ...fixtures.pausedRun, resumable: false });
   expect(await screen.findByText(/It has no saved work to resume: start the task again/)).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Resume' })).toBeNull();
+});
+
+describe('a paused run that cannot be resumed', () => {
+  const BASELINE = 'The configured tests already fail or could not run before any changes. Fix the tests or test command, then start a new run. See the run transcript for the test output.';
+  const finish = (message) => FakeEventSource.all.at(-1).emit({ seq: 1, type: 'finished', message, at: new Date().toISOString() });
+  test('shows the engine reason before the generic line, and offers no Resume', async () => {
+    showRun({ ...fixtures.pausedRun, resumable: false });
+    await screen.findByText(/It has no saved work to resume/);
+    finish(BASELINE);
+    const reason = await screen.findAllByText(BASELINE);
+    expect(reason.some((el) => el.closest('.outcome'))).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Resume' })).toBeNull();
+  });
+  test('a bare status word adds no extra paragraph', async () => {
+    showRun({ ...fixtures.pausedRun, resumable: false });
+    await screen.findByText(/It has no saved work to resume/);
+    finish('paused');
+    await screen.findByText('Activity log (1)');
+    expect(document.querySelector('.outcome').querySelectorAll('p')).toHaveLength(1);
+  });
 });
 
 describe('an answer whose response was lost', () => {
