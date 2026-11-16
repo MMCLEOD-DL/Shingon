@@ -164,3 +164,25 @@ test('a reviewer with nothing left pauses the loop instead of blocking', async (
   assert.equal(produced, 1);
   assert.match(r.lastReason, /no AI model is available for codex/);
 });
+
+test('start seeds round 1 feedback; round 2 uses the loop\'s own feedback', async () => {
+  const seen = [];
+  const reviews = [block('own reason'), approve()];
+  await reviewLoop({
+    produce: async (round, feedback, kind) => { seen.push([round, feedback, kind]); return { round }; },
+    review: async () => reviews.shift(),
+    maxRounds: 3,
+    start: { feedback: 'inherited text', feedbackKind: 'inherited' },
+  });
+  assert.deepEqual(seen, [[1, 'inherited text', 'inherited'], [2, 'own reason', 'blocked']]);
+});
+
+test('without start, round 1 gets null feedback and kind', async () => {
+  const seen = [];
+  await reviewLoop({
+    produce: async (round, feedback, kind) => { seen.push([round, feedback, kind]); return {}; },
+    review: async () => approve(),
+    maxRounds: 1,
+  });
+  assert.deepEqual(seen, [[1, null, null]]);
+});

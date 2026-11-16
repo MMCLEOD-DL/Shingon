@@ -161,3 +161,11 @@ test('Correctness on a project round omits the Tests: not configured line (R14)'
   const p = councilMember({ member: 'correctness', label: 'C', request: 'r', plan: null, diff: '', base: 'a', tests: null, items: [], notes: [], briefText: 'b' });
   assert.doesNotMatch(p, /Tests:/);
 });
+
+test('chunkExec inherited feedback says a local model tried and the workspace was reset', () => {
+  const e = P.chunkExec({ request: 'r', plan, chunk: plan.chunks[0], index: 0, total: 2, feedback: 'HANDOVER_X', feedbackKind: 'inherited' });
+  assert.match(e, /local model tried this step and could not get it approved/);
+  assert.match(e, /HANDOVER_X/);
+  assert.match(e, /reset to the step's base/);
+  assert.doesNotMatch(e, /earlier edits are still in place/);
+});

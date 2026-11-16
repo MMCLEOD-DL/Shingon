@@ -20,6 +20,23 @@ export const LOCAL_DECLINED_REASON = 'the local model stopped answering, and you
 export const LOCAL_PAUSE_SETTING_REASON = 'the local model stopped answering, and your settings say to pause instead of using your subscription';
 const LOCAL_RECHECK_TIMEOUT_MS = 60000; // the same budget as the pre-run local probe
 
+const HANDOVER_REASON_MAX = 300;
+const HANDOVER_TEST_MAX = 2000;
+
+// What the frontier fallback is told about the local attempts: their reasons (newest last) and the
+// last inspected attempt's test output when those tests failed. A passing run is not failure history.
+function localHandover(loop) {
+  const reasons = loop.history.map((h) => clip(String(h.reason ?? ''), HANDOVER_REASON_MAX));
+  const tests = loop.artifact?.tests ?? loop.lastGood?.tests;
+  const failedOutput = tests?.ran && tests.passed === false && typeof tests.output === 'string' && tests.output ? tests.output : '';
+  const testExcerpt = failedOutput ? clip(failedOutput, HANDOVER_TEST_MAX) : null;
+  const last = reasons.at(-1) ?? '';
+  const parts = [`Last reason: ${last}`];
+  if (testExcerpt) parts.push(`Test output from its last attempt:\n${testExcerpt}`);
+  if (reasons.length > 1) parts.push(`Earlier reasons, oldest first:\n${reasons.slice(0, -1).map((r, i) => `${i + 1}. ${r}`).join('\n')}`);
+  return { text: parts.join('\n\n'), summary: { attempts: loop.rounds, reasons, testExcerpt } };
+}
+
 // A Seat's real adapter sits on its first candidate; a plain Participant carries it directly.
 const localAdapterOf = (local) => (local.candidates?.[0] ?? local).adapter;
 
@@ -171,9 +188,13 @@ async function runChunkFrom(ctx, chunk, index, base, reset) {
   }
 
   if (loop.status !== 'approved') {
-    log.event('chunk-fallback', { index, to: fallback.name, reason: loop.lastReason });
+    const handover = localHandover(loop);
+    log.event('chunk-fallback', { index, to: fallback.name, reason: loop.lastReason, handover: handover.summary });
     await reset();
-    loop = await reviewLoop({ maxRounds: options.frontierRounds, produce: attempt(fallback, 'author'), review });
+    loop = await reviewLoop({
+      maxRounds: options.frontierRounds, produce: attempt(fallback, 'author'), review,
+      start: { feedback: handover.text, feedbackKind: 'inherited' },
+    });
     if (loop.status === 'paused') {
       await reset();
       return { status: 'paused', reason: loop.lastReason };
