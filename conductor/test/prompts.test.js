@@ -169,3 +169,31 @@ test('chunkExec inherited feedback says a local model tried and the workspace wa
   assert.match(e, /reset to the step's base/);
   assert.doesNotMatch(e, /earlier edits are still in place/);
 });
+
+test('G3: planAuthor asks for a check and files per chunk, with the keywords', () => {
+  const a = P.planAuthor({ request: 'r', maxChunks: 5 });
+  assert.match(a, /"check"/);
+  assert.match(a, /"files"/);
+  assert.match(a, /existing-suite/);
+  assert.match(a, /\bnone\b/);
+});
+
+test('G3: planReview checks for code steps with no pass condition', () => {
+  assert.match(P.planReview({ request: 'r', planText: 'p' }), /marked none or given no check when the project has no tests/);
+});
+
+test('G3: chunkExec and chunkReview show the check and files only when present', () => {
+  const c = { title: 'T', instructions: 'i', check: 'node ok.cjs', files: ['src/a.js', 'test/a.test.js'] };
+  const e = P.chunkExec({ request: 'r', plan, chunk: c, index: 0, total: 1 });
+  assert.match(e, /This chunk must pass: `node ok\.cjs`/);
+  assert.match(e, /Files you are expected to touch: src\/a\.js, test\/a\.test\.js/);
+  const rv = P.chunkReview({ request: 'r', plan, chunk: c, index: 0, total: 1, diff: 'd', tests: { ran: false } });
+  assert.match(rv, /This chunk must pass: `node ok\.cjs`/);
+  assert.match(rv, /Files you are expected to touch: src\/a\.js/);
+  for (const k of ['existing-suite', 'none']) {
+    assert.doesNotMatch(P.chunkExec({ request: 'r', plan, chunk: { ...c, check: k }, index: 0, total: 1 }), /must pass/);
+  }
+  const bare = plan.chunks[0];
+  assert.doesNotMatch(P.chunkExec({ request: 'r', plan, chunk: bare, index: 0, total: 2 }), /must pass|expected to touch/);
+  assert.doesNotMatch(P.chunkReview({ request: 'r', plan, chunk: bare, index: 0, total: 2, diff: 'd', tests: { ran: false } }), /must pass|expected to touch/);
+});

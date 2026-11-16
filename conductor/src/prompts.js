@@ -63,7 +63,10 @@ export function planAuthor({ request, maxChunks, feedback, feedbackKind = 'block
       'for a modest local coding model to finish in one run: one focused change plus its tests. ' +
       `At most ${maxChunks} chunks.`,
     'End your reply with one ```json block of exactly this shape:\n' +
-      '{"summary": "...", "chunks": [{"title": "...", "instructions": "..."}]}',
+      '{"summary": "...", "chunks": [{"title": "...", "instructions": "...", "check": "<command | existing-suite | none>", "files": ["path", "..."]}]}',
+    '"check" is the pass condition for the chunk: a shell command that must exit 0 when the chunk is done, ' +
+      'or existing-suite when the project\'s own tests cover it, or none for a chunk that changes no code (documentation only). ' +
+      '"files" lists the paths you expect the chunk to touch.',
     feedbackText(feedback, feedbackKind, {
       blocked: (f) => `A reviewer blocked your previous plan:\n${f}\nRevise the plan to address it.`,
       failed: (f) => `Your previous reply could not be used as a plan: ${f}\nReply again, ending with the \`\`\`json block described above.`,
@@ -76,9 +79,18 @@ export function planReview({ request, planText, firstChunk = null }) {
     `User request:\n${show(request, TEXT_MAX)}`,
     firstChunk && `Step 1, fixed in advance: ${firstChunk.title}\n${show(firstChunk.instructions, 3000)}`,
     `Proposed plan:\n${show(planText, 20000)}`,
-    'Review this plan. Check: wrong approach, missing requirements, chunks too large or in the wrong order, unsafe changes.',
+    'Review this plan. Check: wrong approach, missing requirements, chunks too large or in the wrong order, unsafe changes, ' +
+      'a code chunk marked none or given no check when the project has no tests.',
     BLOCK_RULES,
   ].filter(Boolean).join('\n\n');
+}
+
+function stepCondition(chunk) {
+  const cmd = chunk.check && chunk.check !== 'existing-suite' && chunk.check !== 'none' ? chunk.check : null;
+  return [
+    cmd && `This chunk must pass: \`${cmd}\``,
+    chunk.files?.length && `Files you are expected to touch: ${chunk.files.join(', ')}`,
+  ].filter(Boolean).join('\n');
 }
 
 export function chunkExec({ request, plan, chunk, index, total, feedback, feedbackKind = 'blocked' }) {
@@ -86,6 +98,7 @@ export function chunkExec({ request, plan, chunk, index, total, feedback, feedba
     `Overall request:\n${show(request, TEXT_MAX)}`,
     planBlock(plan),
     `You are doing chunk ${index + 1} of ${total}: ${chunk.title}\n${show(chunk.instructions, TEXT_MAX)}`,
+    stepCondition(chunk),
     'Work only inside the current directory. Make the edits, run the tests if there are any, then stop. ' +
       'Do not start other chunks. Do not commit; Conductor commits for you.',
     feedbackText(feedback, feedbackKind, {
@@ -102,6 +115,7 @@ export function chunkReview({ request, plan, chunk, index, total, diff, tests, b
     `Overall request:\n${show(request, TEXT_MAX)}`,
     planBlock(plan),
     `Review chunk ${index + 1} of ${total}: ${chunk.title}\nInstructions given:\n${show(chunk.instructions, TEXT_MAX)}`,
+    stepCondition(chunk),
     diffBlock('Diff for this chunk:', diff, 30000, base),
     formatTests(tests),
     'Check: does the diff complete this chunk, is it correct, are tests present and passing, is anything out of scope or unsafe?',

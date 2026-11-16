@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { runPlanPhase } from '../src/planPhase.js';
 import { fakeParticipant, approve, block, makeCtx } from './helpers/fakes.js';
 
-const PLAN = { summary: 'S', chunks: [{ title: 'A', instructions: 'do a' }] };
+const PLAN = { summary: 'S', chunks: [{ title: 'A', instructions: 'do a', check: 'none' }] };
 const planReply = () => ({ text: 'Plan:\n```json\n' + JSON.stringify(PLAN) + '\n```' });
 
 function team({ author, reviewer }) {
@@ -173,4 +173,58 @@ test('validateFirstChunk refuses a malformed fixed step', async () => {
   const { validateFirstChunk } = await import('../src/planPhase.js');
   assert.doesNotThrow(() => validateFirstChunk({ firstChunk: null }));
   assert.throws(() => validateFirstChunk({ firstChunk: { title: '' } }), /firstChunk needs a title and instructions/);
+});
+
+const three = (third) => ({ summary: 'S', chunks: [
+  { title: 'A', instructions: 'a', check: 'node a.cjs' },
+  { title: 'B', instructions: 'b', check: 'none' },
+  { title: 'C', instructions: 'c', ...third },
+] });
+const replyOf = (p) => () => ({ text: '```json\n' + JSON.stringify(p) + '\n```' });
+
+test('G3: a code step with no check and no test command is fed back to the author, never reviewed', async () => {
+  const t = team({ author: replyOf(three({})), reviewer: approve });
+  const r = await runPlanPhase(await makeCtx({ team: t, options: { planRounds: 2 } }));
+  assert.equal(r.status, 'failed');
+  assert.equal(t.reviewer.calls.length, 0);
+  assert.equal(t.author.calls.length, 2);
+  assert.match(t.author.calls[1].task, /Your previous reply could not be used as a plan: .*step 3 has no pass condition/);
+});
+
+test('G3: the same plan is accepted when the run has a test command', async () => {
+  const t = team({ author: replyOf(three({})), reviewer: approve });
+  const r = await runPlanPhase(await makeCtx({ team: t, options: { testCommand: 'x' } }));
+  assert.equal(r.status, 'ok');
+  assert.equal(t.reviewer.calls.length, 1);
+});
+
+test('G3: check none is accepted without a test command', async () => {
+  const t = team({ author: replyOf(three({ check: 'none' })), reviewer: approve });
+  const r = await runPlanPhase(await makeCtx({ team: t }));
+  assert.equal(r.status, 'ok');
+});
+
+test('G3: a command check is accepted without a test command', async () => {
+  const t = team({ author: replyOf(three({ check: 'node c.cjs' })), reviewer: approve });
+  assert.equal((await runPlanPhase(await makeCtx({ team: t }))).status, 'ok');
+});
+
+test('G3: existing-suite with no test command is refused with its own wording', async () => {
+  const t = team({ author: replyOf(three({ check: 'existing-suite' })), reviewer: approve });
+  const r = await runPlanPhase(await makeCtx({ team: t, options: { planRounds: 2 } }));
+  assert.equal(r.status, 'failed');
+  assert.match(t.author.calls[1].task, /step 3 says existing-suite but this run has no test command/);
+  assert.equal(t.reviewer.calls.length, 0);
+});
+
+test('G3: the injected first chunk is exempt and the authored steps are numbered as the author wrote them', async () => {
+  const p = { summary: 'S', chunks: [{ title: 'A', instructions: 'a', check: 'none' }, { title: 'B', instructions: 'b' }] };
+  const t = team({ author: replyOf(p), reviewer: approve });
+  const r = await runPlanPhase(await makeCtx({ team: t, options: { firstChunk: FIRST, planRounds: 2 } }));
+  assert.equal(r.status, 'failed');
+  assert.match(t.author.calls[1].task, /step 2 has no pass condition/);
+  const ok = team({ author: replyOf({ summary: 'S', chunks: [{ title: 'A', instructions: 'a', check: 'none' }] }), reviewer: approve });
+  const r2 = await runPlanPhase(await makeCtx({ team: ok, options: { firstChunk: FIRST } }));
+  assert.equal(r2.status, 'ok');
+  assert.equal(r2.plan.chunks[0].check, undefined);
 });
