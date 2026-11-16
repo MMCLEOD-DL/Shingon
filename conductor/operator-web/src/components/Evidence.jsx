@@ -52,7 +52,7 @@ export function Checks({ tests }) {
 
 export function Coverage({ coverage }) {
   if (!coverage) return null;
-  const local = { used: 'used', 'not-used': 'not used', unknown: 'not known yet' }[coverage.local] ?? 'unknown';
+  const local = { used: 'used', 'not-used': 'not used', unknown: 'no completed call yet' }[coverage.local] ?? 'unknown';
   const vendors = coverage.vendors?.length ? coverage.vendors.map((v) => ({ anthropic: 'Claude (subscription)', openai: 'Codex (subscription)' })[v] ?? plain(v, 40)).join(', ') : 'none yet';
   return (
     <section className="coverage" aria-label="Who did the work">

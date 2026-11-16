@@ -88,6 +88,12 @@ const FINISH_TEXT = {
   paused: 'Paused.',
   failed: 'Failed.',
 };
+/** The engine's reason sentence from the last `finished` event, or null when it was only a status word. */
+export function finishReason(events) {
+  const e = [...(events ?? [])].reverse().find((x) => x?.type === 'finished');
+  const message = e ? plain(e.message, 1000).trim() : '';
+  return message && !FINISH_TEXT[message] ? message : null;
+}
 const INTERNAL_NAME = /^[a-z]+(?:-[a-z]+)*$/; // a sentence always has a space or a full stop
 const humanise = (name) => { const s = name.replace(/[-_]+/g, ' '); return `${s.charAt(0).toUpperCase()}${s.slice(1)}.`; };
 
