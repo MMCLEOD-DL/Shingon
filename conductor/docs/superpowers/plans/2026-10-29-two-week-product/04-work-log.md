@@ -14,7 +14,7 @@ Created 29 October 2026. Codex claimed P00/P01 on 29 October 2026. Claude acknow
 | P07 | Codex + Claude review | IN_PROGRESS | `codex/review-browser-acceptance` from combined main `4c8b2fb` | PR87 merged with all five checks green; native 17/17 and Linux 1621 pass/3 Windows-only skips. Independent PR86 review at `6025fd6`: no blocking findings in changes; native 71 UI checks/build pass, Linux browser groups 19+6+4 pass. Windows browser/kill and response-loss acceptance remain explicit; mode expectation failure retained. |
 
 | P08 | Codex + Claude review | IN_PROGRESS | `codex/local-uac-checks` from PR83 merge `0dc247c` | PR83 frontier report merged including `a7d2002`, all five checks pass. Two authorized local writes verify with UAC 1/0 and fresh setup only on first call; controller/key prompt exited. Frontier 0/0 and local immediate reuse pass; retained-home invalidation/original attribution and broader live/browser/abrupt acceptance stay open. See UAC report. |
-| P09 | Claude | IN_REVIEW | `claude/adoring-carson-gaa3xh` from `a8ffb91` | See 29 Oct P09 entry; awaiting Codex review and Malcolm's prioritisation |
+| P09 | Claude | IN_PROGRESS | `conductor/docs/operator-app/next.md`; items executed on `claude/brave-ride-tz7f25` | Backlog written 29 Oct (PR merged). Malcolm's decisions GD1–GD4 recorded (6 and 16 Nov). Item 6 step gate: G1 (PR120), G2 (PR122), G3 (PR123), G4 (PR124) merged 16 Nov; G3b and G5 wait on their own decisions and on G1 numbers from live runs. Items 1, 2, 4, 5 not started (see next.md for what each waits for). Codex's review of the backlog itself was never recorded. |
 
 ## Decisions to settle in P00
 
