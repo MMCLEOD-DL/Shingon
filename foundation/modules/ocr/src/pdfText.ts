@@ -7,6 +7,8 @@ import { UnreadableError } from './types.js';
 
 export const SCANNED_PDF = "This PDF is a scanned picture, so it can't be read automatically. Please type the details.";
 export const UNOPENABLE_PDF = "This PDF couldn't be opened. Please type the details.";
+/** Shown when the reader was stopped by a time limit (start-up or the read itself): the PDF may be fine, so it is not called unopenable. */
+export const SLOW_PDF = 'This PDF took too long to read. Please type the details.';
 export const TOO_MANY_PAGES_PDF = "This PDF has more than 3 pages, so it can't be read automatically. Please type the details.";
 /** Shown when the PDF holds a picture: its text is read, but the picture is not, so every field asks to be checked. */
 export const PDF_PICTURE_WARNING = 'This PDF also contains a picture, which was not read: check every field against the receipt.';
@@ -18,8 +20,13 @@ export const PDF_PICTURE_WARNING = 'This PDF also contains a picture, which was 
 export const PDF_PICTURE_CONFIDENCE = 0.6;
 export const PARTLY_SCANNED_PDF = "Part of this PDF is a scanned picture or a blank page, so it can't be read automatically. Please type the details.";
 
-/** The longest a PDF may take, whatever the engine's own timeout. */
+/** The longest the read of a PDF may take, whatever the engine's own timeout. The clock starts when the reader process says it is ready, not when it is spawned. */
 const PDF_MAX_MS = 3_000;
+/**
+ * The longest the reader process may take to start (Node start-up plus loading pdfjs) before it says it is ready. This
+ * is generous because it varies with machine load, not with the PDF; it is separate from, and not part of, PDF_MAX_MS.
+ */
+export const PDF_STARTUP_MS = 15_000;
 /** The most resident memory the PDF reader process may use, and how often that is checked (here and in the process). */
 export const PDF_MEMORY_CEILING = 320 * 1024 * 1024;
 const WATCHDOG_MS = 20;
@@ -44,6 +51,10 @@ export interface PdfReadOptions {
   ceilingBytes?: number;
   childCeilingBytes?: number;
   onChild?: (child: ChildProcess) => void;
+  /** An alternative reader process file (it must follow pdfChild.ts's protocol), e.g. one that starts slowly. */
+  childFile?: string;
+  /** Replaces PDF_STARTUP_MS. */
+  startupMs?: number;
 }
 
 // One PDF process at a time: the others wait their turn (each one's time limit starts when it runs).
@@ -60,7 +71,10 @@ let queue: Promise<unknown> = Promise.resolve();
  * system when the process ends. Inside, a pre-scan (pdfWorker.ts) refuses compression bombs before pdfjs runs; it is
  * a first line only. Two watchdogs hold the process to PDF_MEMORY_CEILING of resident memory, each on its own: the
  * process checks itself from a thread pdfjs never blocks, and this side checks it from /proc and kills it. A read
- * longer than min(timeoutMs, 3 s) is killed too. Files over 20 MB are refused outright.
+ * longer than min(timeoutMs, 3 s) is killed too. That limit is on the read itself: the process first loads pdfjs and
+ * writes a ready line, and the clock starts when the app sees it; start-up has its own allowance, PDF_STARTUP_MS,
+ * since it depends on how busy the machine is, not on the PDF. A read stopped by either limit says SLOW_PDF, not
+ * that the PDF could not be opened. Files over 20 MB are refused outright.
  */
 export async function readPdfText(bytes: Buffer, timeoutMs: number, opts: PdfReadOptions = {}): Promise<OcrLine[]> {
   return (await readPdf(bytes, timeoutMs, opts)).lines;
@@ -79,6 +93,7 @@ export function readPdf(bytes: Buffer, timeoutMs: number, opts: PdfReadOptions =
 
 async function readInProcess(bytes: Buffer, ms: number, opts: PdfReadOptions): Promise<{ lines: OcrLine[]; warnings: string[] }> {
   const reply = await runReader(bytes, ms, opts);
+  if (reply === 'slow') throw new UnreadableError(SLOW_PDF);
   if (reply?.ok === false && reply.problem === 'too-many-pages') throw new UnreadableError(TOO_MANY_PAGES_PDF);
   if (reply?.ok === false && reply.problem === 'partly-scanned') throw new UnreadableError(PARTLY_SCANNED_PDF);
   if (reply === null || !reply.ok) throw new UnreadableError(UNOPENABLE_PDF);
@@ -104,13 +119,16 @@ function isReply(v: unknown): v is PdfWorkerReply {
 }
 
 /**
- * Runs one reader process to its end: its reply, or null for any other ending. Settles only once the process has
+ * Runs one reader process to its end: its reply, 'slow' when our own timer stopped it (start-up allowance or read
+ * clock), or null for any other ending. The process writes one line, "ready", once it has loaded pdfjs and before it
+ * reads its input; the read clock (ms) starts then. Everything after that line is the reply. Settles only once the process has
  * exited and been reaped ('close'), so the next one starts after its memory is back with the system; the timeout and
  * the watchdog are cleared then. The error listeners stay: a late error has somewhere harmless to go.
  */
-function runReader(bytes: Buffer, ms: number, opts: PdfReadOptions): Promise<PdfWorkerReply | null> {
+function runReader(bytes: Buffer, ms: number, opts: PdfReadOptions): Promise<PdfWorkerReply | 'slow' | null> {
+  const startupMs = opts.startupMs ?? PDF_STARTUP_MS;
   const ceiling = opts.ceilingBytes ?? PDF_MEMORY_CEILING;
-  const args = [...NODE_FLAGS, CHILD_FILE, String(opts.childCeilingBytes ?? PDF_MEMORY_CEILING), opts.preScan === false ? 'no-pre-scan' : 'pre-scan', String(ms + CHILD_DEADLINE_MARGIN_MS)];
+  const args = [...NODE_FLAGS, opts.childFile ?? CHILD_FILE, String(opts.childCeilingBytes ?? PDF_MEMORY_CEILING), opts.preScan === false ? 'no-pre-scan' : 'pre-scan', String(ms + CHILD_DEADLINE_MARGIN_MS), String(startupMs + CHILD_DEADLINE_MARGIN_MS)];
   return new Promise((resolve) => {
     let child: ChildProcess;
     try {
@@ -122,13 +140,19 @@ function runReader(bytes: Buffer, ms: number, opts: PdfReadOptions): Promise<Pdf
     }
     const out: Buffer[] = [];
     let outBytes = 0;
-    let stopped = false; // killed here: by the watchdog, the timeout or an oversized reply
+    let stopped = false; // killed here: by the watchdog, a timer or an oversized reply
+    let slow = false; // ... and by a timer
     let settled = false;
+    let ready = false; // the ready line has come
     const stop = (): void => {
       stopped = true;
       child.kill('SIGKILL');
     };
-    const timer = setTimeout(stop, ms);
+    const stopSlow = (): void => {
+      slow = true;
+      stop();
+    };
+    let timer = setTimeout(stopSlow, startupMs); // start-up allowance, until the ready line
     const watchdog = setInterval(() => {
       try {
         const rss = child.pid === undefined ? null : residentBytes(child.pid);
@@ -137,7 +161,7 @@ function runReader(bytes: Buffer, ms: number, opts: PdfReadOptions): Promise<Pdf
         // Already gone (or /proc unreadable): its exit is handled below, and the process watches itself too.
       }
     }, WATCHDOG_MS);
-    const settle = (value: PdfWorkerReply | null): void => {
+    const settle = (value: PdfWorkerReply | 'slow' | null): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -155,15 +179,26 @@ function runReader(bytes: Buffer, ms: number, opts: PdfReadOptions): Promise<Pdf
     child.stdout?.on('error', () => undefined);
     child.stdout?.on('data', (c: Buffer) => {
       outBytes += c.length;
-      if (outBytes > MAX_REPLY_BYTES) stop();
-      else out.push(c);
+      if (outBytes > MAX_REPLY_BYTES) {
+        stop();
+        return;
+      }
+      if (!ready) {
+        const nl = c.indexOf(0x0a);
+        if (nl === -1) return; // the marker is not complete: its bytes are not part of the reply
+        ready = true;
+        clearTimeout(timer);
+        timer = setTimeout(stopSlow, ms); // the read clock starts now
+        c = c.subarray(nl + 1);
+      }
+      out.push(c);
     });
     // 'close' comes once the process has exited (and been reaped) and its output is complete.
     child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
       if (stopped || code !== 0) {
         // Its own watchdog ends it with SIGKILL (a refused PDF is not a fault, so not logged); anything else is.
         if (!stopped && signal !== 'SIGKILL') process.stderr.write(`The PDF reader process stopped: ${signal ?? `exit code ${String(code)}`}\n`);
-        settle(null);
+        settle(slow ? 'slow' : null);
         return;
       }
       let reply: unknown = null;
