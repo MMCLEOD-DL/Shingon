@@ -229,6 +229,11 @@ Its build order is: Verifier, then metrics, then a week of runs, then the review
   - cost, only where an adapter reported one.
 
   It also prints a total across several runs. No engine change. This is the proposal's "metrics" step, moved to the front.
+
+  **Done, 16 November 2026:** `conductor report [<path>...] [--json]` (`src/cli/report.js`). It reads live transcripts under
+  the base directory and archived `logs/*.jsonl`, computes wall-clock from `call`/`result` timestamps (the log has no
+  duration field), prints cost only where an adapter reported one (today only Claude Code does) and "not reported"
+  otherwise, and counts allowance-limit failures from `route-failover` events and failed results.
 - **G2 — The fallback inherits the failure history.** The frontier's first fallback attempt gets the local attempts' last reasons and clipped test excerpts. This needs a small change in `chunkPhase.js`/`reviewLoop`, which are shared engine seams.
 - **G3 — A pass condition for each step.** The plan schema gains two optional fields:
   - `check`: a command, or the test names, the step must pass;

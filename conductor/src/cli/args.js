@@ -6,6 +6,7 @@ export const USAGE = `Usage:
   conductor "<what you want done>"   start a new task in this repository
   conductor resume [<workspace>]     continue the latest unfinished run here (or the one given)
   conductor runs                     list unfinished runs for this repository
+  conductor report [<path>...]       per-step numbers from run logs: who produced each step, blocks, fallbacks, time, cost (--json for machines)
   conductor doctor                   check which AI models are available
   conductor project new "<client>"   make a folder for a new client app (--slug <name> picks its folder name)
   conductor project list             list your client projects
@@ -41,6 +42,7 @@ Options:
   --resume               with change or foundation-upgrade: continue the unfinished one
   --abandon              with change or foundation-upgrade: drop the unfinished one
   --check                with foundation-upgrade: list what is behind on security fixes
+  --json                 with report: print the figures as JSON
   --no-bell              do not ring the terminal bell when Conductor needs you
   -h, --help             show this help
   --version              show the version`;
@@ -66,8 +68,9 @@ const OPTIONS = {
   resume: { type: 'boolean' },
   abandon: { type: 'boolean' },
   check: { type: 'boolean' },
+  json: { type: 'boolean' },
 };
-const SUBCOMMANDS = new Set(['resume', 'runs', 'doctor']);
+const SUBCOMMANDS = new Set(['resume', 'runs', 'doctor', 'report']);
 const CHANGE_USAGE = 'change needs a project name and one of --notes <file>, --resume or --abandon';
 const UPGRADE_USAGE = 'foundation-upgrade needs a project name and one of --to <tag>, --resume or --abandon, or --check on its own';
 
@@ -130,6 +133,7 @@ export function parseCli(argv) {
     if (v.new) return { error: '--new only goes with conductor build' };
     return change;
   }
+  if (v.json && first !== 'report') return { error: '--json only goes with conductor report' };
   if (v.resume || v.abandon || v.check) return { error: '--resume, --abandon and --check only go with conductor change or conductor foundation-upgrade' };
   if ((v.notes !== undefined || v.revise || v['discard-draft']) && !isBrief) {
     return { error: '--notes, --revise and --discard-draft only go with conductor brief' };
@@ -190,6 +194,7 @@ export function parseCli(argv) {
       if (rest.length > 1) return { error: 'resume takes at most one workspace path' };
       return { command: 'resume', workspaceDir: rest[0] ?? null, flags };
     }
+    if (first === 'report') return { command: 'report', paths: rest, json: v.json === true, flags };
     if (rest.length) return { error: `${first} takes no arguments` };
     return { command: first, flags };
   }
