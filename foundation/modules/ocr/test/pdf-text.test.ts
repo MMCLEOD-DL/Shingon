@@ -4,7 +4,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { Worker } from 'node:worker_threads';
 import { createLocalEngine, readReceipt, UnreadableError, type OcrEngine } from '../src/index.js';
 import { CONFIDENT } from '@hf/shared';
-import { readPdfText, PARTLY_SCANNED_PDF, PDF_MEMORY_CEILING, PDF_PICTURE_WARNING, TOO_MANY_PAGES_PDF, type PdfReadOptions } from '../src/pdfText.js';
+import { fileURLToPath } from 'node:url';
+import { readPdfText, SLOW_PDF, PARTLY_SCANNED_PDF, PDF_MEMORY_CEILING, PDF_PICTURE_WARNING, TOO_MANY_PAGES_PDF, type PdfReadOptions } from '../src/pdfText.js';
 import {
   blankPagePdf, bookmarkedPdf, bypassBombs, scannerFooterPdf, textWithPicturePdf, formFeedPdf, mixedPdf, modernPdf, n4Bomb, pdfBomb, pdfWithContent, predictorBomb, textPdf, treePdf, trickyBombs, untypedHiddenPagePdf, paddedInlinePicturePdf,
 } from './helpers.js';
@@ -397,4 +398,32 @@ describe('the reader process is held to its memory ceiling, whatever the pre-sca
     const r = await engine.read({ bytes: fx('pdf/e-ticket.pdf'), type: 'application/pdf' });
     expect(r.lines.some((l) => /Total £3\.20/.test(l.text))).toBe(true);
   }, 120_000);
+});
+
+describe('start-up and the read are timed apart', () => {
+  const SLOW_START = fileURLToPath(new URL('./slowStartChild.ts', import.meta.url));
+  const eTicket = () => fx('pdf/e-ticket.pdf');
+
+  test('a reader process that starts slowly (longer than the 3 s read limit) still reads a PDF that reads quickly', async () => {
+    const lines = await readPdfText(eTicket(), 60_000, { childFile: SLOW_START });
+    expect(lines.some((l) => /Total £3\.20/.test(l.text))).toBe(true);
+  }, 30_000);
+
+  test('a read that outlasts the read clock says it took too long, not that the PDF could not be opened', async () => {
+    const read = readPdfText(eTicket(), 1);
+    await expect(read).rejects.toThrow(UnreadableError);
+    await expect(read).rejects.toMatchObject({ userMessage: SLOW_PDF });
+  });
+
+  test('a reader process that never gets ready within the start-up allowance is stopped and says it took too long', async () => {
+    let pid = 0;
+    const read = readPdfText(eTicket(), 60_000, { childFile: SLOW_START, startupMs: 500, onChild: (c) => { pid = c.pid ?? 0; } });
+    await expect(read).rejects.toMatchObject({ userMessage: SLOW_PDF });
+    expect(pid).toBeGreaterThan(0);
+    expect(existsSync(`/proc/${String(pid)}`)).toBe(false);
+  });
+
+  test('a PDF that is not a PDF is still unopenable, not slow', async () => {
+    await expect(readPdfText(Buffer.from('%PDF-1.7 junk'), 60_000)).rejects.toMatchObject({ userMessage: UNOPENABLE });
+  });
 });
