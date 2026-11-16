@@ -17,11 +17,12 @@ export function verdictOf(result) {
   return { decision: 'APPROVE', reason, detail };
 }
 
-export async function reviewLoop({ produce, review, maxRounds }) {
+// start: optional { feedback, feedbackKind } that seeds round 1 (a hand-over from an earlier loop).
+export async function reviewLoop({ produce, review, maxRounds, start = null }) {
   if (!Number.isInteger(maxRounds) || maxRounds < 1) throw new Error(`maxRounds must be an integer >= 1 (got ${maxRounds})`);
   const history = [];
-  let feedback = null;
-  let feedbackKind = null; // 'blocked' | 'failed' | 'tests-failed'
+  let feedback = start?.feedback ?? null;
+  let feedbackKind = start?.feedbackKind ?? null; // 'blocked' | 'failed' | 'tests-failed' | 'inherited'
   let artifact = null;
   let lastGood = null;
   let lastReason = '';

@@ -26,12 +26,14 @@ export function formatTests(tests) {
 
 const PRODUCE_FAILED = /^could not produce a result: /;
 
-// feedbackKind: 'blocked', 'failed', or 'tests-failed' (the runner blocked the round).
+// feedbackKind: 'blocked', 'failed', 'tests-failed' (the runner blocked the round), or
+// 'inherited' (the fallback's first attempt, given the local attempts' history).
 function feedbackText(feedback, feedbackKind, say) {
   if (!feedback) return '';
   // Clip the combined feedback (reason + reviewer's full notes).
   const raw = feedbackKind === 'failed' ? String(feedback).replace(PRODUCE_FAILED, '') : String(feedback);
   const f = show(raw, feedbackKind === 'failed' ? FAILURE_MAX : TEXT_MAX);
+  if (feedbackKind === 'inherited' && say.inherited) return say.inherited(f);
   if (feedbackKind === 'tests-failed' && say.testsFailed) return say.testsFailed(f);
   return feedbackKind === 'failed' ? say.failed(f) : say.blocked(f);
 }
@@ -90,6 +92,7 @@ export function chunkExec({ request, plan, chunk, index, total, feedback, feedba
       blocked: (f) => `Your previous attempt was blocked by the reviewer:\n${f}\nFix it. Your earlier edits are still in place.`,
       testsFailed: (f) => `Your previous attempt's tests failed before review:\n${f}\nFix the failing tests. Your earlier edits are still in place.`,
       failed: (f) => `Your previous attempt did not finish (${f}).\nSome earlier edits may still be in place: check the files, then complete the chunk.`,
+      inherited: (f) => `A local model tried this step and could not get it approved. What it ran into:\n${f}\nThe workspace has been reset to the step's base, so start fresh and do not assume any of its edits exist.`,
     }),
   ].filter(Boolean).join('\n\n');
 }
