@@ -4,7 +4,7 @@ import { applyEvents, followRun, STREAM } from '../events.js';
 import { ErrorNote } from '../components/ErrorNote.jsx';
 import { Coverage, ReviewDetails, diffShownInFull } from '../components/Evidence.jsx';
 import { KnowledgeNote } from '../components/Knowledge.jsx';
-import { eventText, phaseText, plain, shortSha, statusText, when } from '../text.js';
+import { eventText, finishReason, phaseText, plain, shortSha, statusText, when } from '../text.js';
 
 const ACTIVE = new Set(['queued', 'running', 'awaiting-decision', 'cancelling']);
 const KIND_TITLE = {
@@ -290,7 +290,7 @@ export function RunView({ api, runId, go }) {
         <Recovery api={api} run={run} repositoryPath={repositoryPath} onRefused={(e) => { setError(e); refresh(); }}
           onRecorded={() => { setError(null); setNotice('Inspection recorded. Nothing has started and no branch was changed. Resume when you are ready.'); refresh(); }} />
       )}
-      {run.status === 'paused' && <div className="outcome"><p>Paused. {run.resumable ? 'Resume when ready.' : 'It has no saved work to resume: start the task again when you are ready.'}</p></div>}
+      {run.status === 'paused' && <div className="outcome">{!run.resumable && finishReason(events) && <p>{plain(finishReason(events), 600)}</p>}<p>Paused. {run.resumable ? 'Resume when ready.' : 'It has no saved work to resume: start the task again when you are ready.'}</p></div>}
 
       {pending && !answered && <Decision api={api} run={run} review={review} onStale={(e) => { setError(e); refresh(); }}
         onAnswered={() => { answeredAt.current = run.lastEventSeq; setAnswered(true); setNotice(ANSWER_SAVED); refresh(); }} />}

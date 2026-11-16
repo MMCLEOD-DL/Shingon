@@ -49,3 +49,33 @@ test('the default cap is 12 chunks (T3)', () => {
   assert.equal(parsePlan(many(12)).ok, true);
   assert.match(parsePlan(many(13)).error, /13 chunks \(max 12\)/);
 });
+
+test('G3: a chunk with check and files parses with both, trimmed; absent fields stay absent', () => {
+  const r = parsePlan(fenced({ chunks: [
+    { title: 'A', instructions: 'a', check: '  node ok.cjs ', files: [' src/a.js ', 'test/a.test.js'] },
+    { title: 'B', instructions: 'b', check: 'none' },
+    { title: 'C', instructions: 'c' },
+  ] }));
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.plan.chunks[0], { title: 'A', instructions: 'a', check: 'node ok.cjs', files: ['src/a.js', 'test/a.test.js'] });
+  assert.deepEqual(r.plan.chunks[1], { title: 'B', instructions: 'b', check: 'none' });
+  assert.deepEqual(r.plan.chunks[2], { title: 'C', instructions: 'c' });
+});
+
+test('G3: an invalid check is a parse error', () => {
+  for (const check of ['', '   ', 5, 'x'.repeat(600)]) {
+    const r = parsePlan(fenced({ chunks: [{ title: 'A', instructions: 'a' }, { title: 'B', instructions: 'b', check }] }));
+    assert.equal(r.ok, false);
+    assert.match(r.error, /^chunk 2 has an invalid check/);
+  }
+});
+
+test('G3: invalid files are a parse error', () => {
+  const bad = ['src/a.js', [], ['  '], [''], ['../x'], ['a/../b'], ['/abs'], [5], ['x'.repeat(301)], Array.from({ length: 51 }, (_, i) => `f${i}`)];
+  for (const files of bad) {
+    const r = parsePlan(fenced({ chunks: [{ title: 'A', instructions: 'a', files }] }));
+    assert.equal(r.ok, false, JSON.stringify(files).slice(0, 40));
+    assert.match(r.error, /^chunk 1 has invalid files/);
+  }
+  assert.equal(parsePlan(fenced({ chunks: [{ title: 'A', instructions: 'a', files: ['a..b/c.js'] }] })).ok, true);
+});

@@ -9,7 +9,7 @@ import { makeRepo, refsOf } from './helpers/gitRepo.js';
 import { councilStubs, SEMGREP_EVAL, GITLEAKS_AKIA } from './helpers/councilStubs.js';
 import { git } from '../src/workspace.js';
 
-const PLAN = { summary: 'S', chunks: [{ title: 'Add parser', instructions: 'write app.js' }] };
+const PLAN = { summary: 'S', chunks: [{ title: 'Add parser', instructions: 'write app.js', check: 'none' }] };
 const planReply = { text: '```json\n' + JSON.stringify(PLAN) + '\n```' };
 const isCouncil = (task) => /member of a review council/.test(task);
 const keepAll = () => ({ text: '```json\n{"findings":[]}\n```' });

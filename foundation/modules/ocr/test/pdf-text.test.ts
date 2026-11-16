@@ -4,7 +4,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { Worker } from 'node:worker_threads';
 import { createLocalEngine, readReceipt, UnreadableError, type OcrEngine } from '../src/index.js';
 import { CONFIDENT } from '@hf/shared';
-import { readPdfText, PARTLY_SCANNED_PDF, PDF_MEMORY_CEILING, PDF_PICTURE_WARNING, TOO_MANY_PAGES_PDF, type PdfReadOptions } from '../src/pdfText.js';
+import { fileURLToPath } from 'node:url';
+import { readPdfText, SLOW_PDF, PARTLY_SCANNED_PDF, PDF_MEMORY_CEILING, PDF_PICTURE_WARNING, TOO_MANY_PAGES_PDF, type PdfReadOptions } from '../src/pdfText.js';
 import {
   blankPagePdf, bookmarkedPdf, bypassBombs, scannerFooterPdf, textWithPicturePdf, formFeedPdf, mixedPdf, modernPdf, n4Bomb, pdfBomb, pdfWithContent, predictorBomb, textPdf, treePdf, trickyBombs, untypedHiddenPagePdf, paddedInlinePicturePdf,
 } from './helpers.js';
@@ -14,12 +15,14 @@ const fx = (p: string) => readFileSync(new URL(`./fixtures/receipts/${p}`, impor
 beforeAll(async () => { engine = await createLocalEngine(); }, 120_000);    // default settings
 afterAll(async () => { await engine.close(); });
 
+// 30 s like the rest of this file: the first read pays the reader process's cold start, which on a loaded CI runner
+// exceeded vitest's 5 s default (16 Nov 2026). The reader's own limits (PDF_STARTUP_MS, then 3 s) still apply inside.
 test('a text PDF gives its lines with confidence 1', async () => {
   const r = await engine.read({ bytes: fx('pdf/e-ticket.pdf'), type: 'application/pdf' });
   expect(r.engine).toBe('local-tesseract');
   expect(r.lines.some((l) => /Total £3\.20/.test(l.text))).toBe(true);
   expect(r.lines.every((l) => l.confidence === 1)).toBe(true);
-});
+}, 30_000);
 
 test('a scanned PDF is refused', async () => {
   const read = engine.read({ bytes: fx('pdf/scanned.pdf'), type: 'application/pdf' });
@@ -27,13 +30,13 @@ test('a scanned PDF is refused', async () => {
   await expect(read).rejects.toMatchObject({
     userMessage: "This PDF is a scanned picture, so it can't be read automatically. Please type the details.",
   });
-});
+}, 30_000);
 
 test('a PDF that is not a PDF inside is refused, not a crash', async () => {
   const read = engine.read({ bytes: Buffer.from('%PDF-1.7 junk'), type: 'application/pdf' });
   await expect(read).rejects.toThrow(UnreadableError);
   await expect(read).rejects.toMatchObject({ userMessage: "This PDF couldn't be opened. Please type the details." });
-});
+}, 30_000);
 
 describe('a PDF is read whole or not at all', () => {
   const read = (pages: string[][]) => engine.read({ bytes: textPdf(pages), type: 'application/pdf' });
@@ -397,4 +400,32 @@ describe('the reader process is held to its memory ceiling, whatever the pre-sca
     const r = await engine.read({ bytes: fx('pdf/e-ticket.pdf'), type: 'application/pdf' });
     expect(r.lines.some((l) => /Total £3\.20/.test(l.text))).toBe(true);
   }, 120_000);
+});
+
+describe('start-up and the read are timed apart', () => {
+  const SLOW_START = fileURLToPath(new URL('./slowStartChild.ts', import.meta.url));
+  const eTicket = () => fx('pdf/e-ticket.pdf');
+
+  test('a reader process that starts slowly (longer than the 3 s read limit) still reads a PDF that reads quickly', async () => {
+    const lines = await readPdfText(eTicket(), 60_000, { childFile: SLOW_START });
+    expect(lines.some((l) => /Total £3\.20/.test(l.text))).toBe(true);
+  }, 30_000);
+
+  test('a read that outlasts the read clock says it took too long, not that the PDF could not be opened', async () => {
+    const read = readPdfText(eTicket(), 1);
+    await expect(read).rejects.toThrow(UnreadableError);
+    await expect(read).rejects.toMatchObject({ userMessage: SLOW_PDF });
+  });
+
+  test('a reader process that never gets ready within the start-up allowance is stopped and says it took too long', async () => {
+    let pid = 0;
+    const read = readPdfText(eTicket(), 60_000, { childFile: SLOW_START, startupMs: 500, onChild: (c) => { pid = c.pid ?? 0; } });
+    await expect(read).rejects.toMatchObject({ userMessage: SLOW_PDF });
+    expect(pid).toBeGreaterThan(0);
+    expect(existsSync(`/proc/${String(pid)}`)).toBe(false);
+  });
+
+  test('a PDF that is not a PDF is still unopenable, not slow', async () => {
+    await expect(readPdfText(Buffer.from('%PDF-1.7 junk'), 60_000)).rejects.toMatchObject({ userMessage: UNOPENABLE });
+  });
 });

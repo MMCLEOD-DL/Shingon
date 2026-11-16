@@ -1,6 +1,6 @@
 # Next-phase backlog (after the two-week operator-app milestone)
 
-**Packet:** P09. **Status:** proposal for review by Codex and prioritisation by Malcolm. Written 29 October 2026 at baseline `3e696db`. Nothing in this file is started, approved or in scope for the fortnight ([00-index §1](../superpowers/plans/2026-10-29-two-week-product/00-index.md#explicitly-outside-the-fortnight)). Each item states what the repo already has, with paths verified at that commit, what is missing, dependencies, and acceptance examples in the factory's given/when/then style.
+**Packet:** P09. **Status:** proposal (29 October 2026, baseline `3e696db`), now partly in execution: item 6's G1–G4 were decided by Malcolm (GD1–GD4) and merged on 16 November 2026; each task carries a "Done" note where it is described. Everything else in this file is still a proposal, not started, and was never in scope for the fortnight ([00-index §1](../superpowers/plans/2026-10-29-two-week-product/00-index.md#explicitly-outside-the-fortnight)). Each item states what the repo already has, with paths verified at that commit, what is missing, dependencies, and acceptance examples in the factory's given/when/then style.
 
 **Sources:** the five items named in [P09](../superpowers/plans/2026-10-29-two-week-product/01-task-packets.md#p09--bring-earlier-notes-into-an-actionable-next-backlog), the repository, `2026-10-27-factory-acceptance/FOLLOW-UPS.md` and the [knowledge-base research](../knowledge-base/README.md). The older Windows project's records are in the Library of Babel `shingon` project. They describe a different code base and were treated as history only; no claim below relies on them.
 
@@ -229,13 +229,34 @@ Its build order is: Verifier, then metrics, then a week of runs, then the review
   - cost, only where an adapter reported one.
 
   It also prints a total across several runs. No engine change. This is the proposal's "metrics" step, moved to the front.
+
+  **Done, 16 November 2026:** `conductor report [<path>...] [--json]` (`src/cli/report.js`). It reads live transcripts under
+  the base directory and archived `logs/*.jsonl`, computes wall-clock from `call`/`result` timestamps (the log has no
+  duration field), prints cost only where an adapter reported one (today only Claude Code does) and "not reported"
+  otherwise, and counts allowance-limit failures from `route-failover` events and failed results.
 - **G2 — The fallback inherits the failure history.** The frontier's first fallback attempt gets the local attempts' last reasons and clipped test excerpts. This needs a small change in `chunkPhase.js`/`reviewLoop`, which are shared engine seams.
+
+  **Done, 16 November 2026 (GD4):** `reviewLoop` takes an optional first-round seed; `runChunkFrom` seeds the frontier loop
+  with the local attempts' reasons and the last failed test output (clipped to 300 and 2,000 characters), under a new
+  `inherited` feedback kind worded for a reset workspace; the `chunk-fallback` event carries the same summary as `handover`.
 - **G3 — A pass condition for each step.** The plan schema gains two optional fields:
   - `check`: a command, or the test names, the step must pass;
   - `files`: the paths the step is expected to touch.
 
   The plan reviewer blocks a plan whose code steps have no pass condition, but "the existing suite passes" is an explicit, allowed condition. The step gate runs `check` first, then `testCommand`. The changes are in `plan.js`, `prompts.js` and `chunkPhase.js` (shared seams), and existing plans without the fields must stay valid.
+
+  **Done, 16 November 2026 (GD4):** `check` is a shell command, or `existing-suite`, or `none` (a step that changes no code);
+  `files` is a list of expected paths. The rule runs in the plan phase before the reviewer, with no model call. Deviation
+  from the wording above, recorded in the work log: a configured run-wide `testCommand` counts as the explicit existing-suite
+  condition for steps that give no `check`; the block fires only when a step has no `check` and the run has no test command.
+  A failing `check` blocks before `testCommand` runs; a passing `check` is the step's evidence when there is no test command.
 - **G4 — Staged step gate.** Optional `gateCommands` (`[{ name, command }]`, cheapest first, stopping at the first failure) run before the tests. Each attempt logs a `gate` event: `{ result, failedStage, excerpt, attempt: n/N }`. The excerpt is trimmed by a fixed rule (the first failing block, at most a few kB), with no model. The G3 scope flag goes to the reviewer.
+
+  **Done, 16 November 2026 (GD4):** `gateCommands` run before the step's `check` and the suite; the first failure blocks the
+  attempt with a fixed-rule excerpt (at most 3,000 characters) and no reviewer call; one `gate` event per attempt. Files outside
+  the step's `files` are flagged to the reviewer and logged (`scope-flag`), never a failure on their own. A touched protected
+  path blocks the attempt before review (`protected-path`), on factory builds only, the same gate as the council's rule. The
+  operator service does not yet show `gate` events: a Codex handoff.
 - **G3b — `testFirst` option (GD2).** This option is off by default. When it is on, each code step that has no existing check gets a test-first step written by the frontier author. That step must add tests that fail at the step's base. The local worker then codes against them. It builds on G3 and on the `firstChunk` mechanism.
 - **G5 — Local simplifier pre-review.** This task depends on G1's numbers showing that frontier blocks are mostly about bloat, duplication or drift from the spec. It works as follows:
   - It runs only after the gate passes and before the frontier review.

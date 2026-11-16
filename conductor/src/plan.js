@@ -9,6 +9,21 @@ export function extractJson(text) {
   return t.startsWith('{') || t.startsWith('[') ? t : null;
 }
 
+const MAX_CHECK = 500;
+const MAX_FILES = 50;
+const MAX_PATH = 300;
+
+function validFiles(v) {
+  if (!Array.isArray(v) || v.length < 1 || v.length > MAX_FILES) return null;
+  const out = [];
+  for (const f of v) {
+    const p = typeof f === 'string' ? f.trim() : '';
+    if (!p || p.length > MAX_PATH || p.startsWith('/') || p.split(/[\\/]/).includes('..')) return null;
+    out.push(p);
+  }
+  return out;
+}
+
 export function parsePlan(text, { maxChunks = 12 } = {}) {
   const raw = extractJson(typeof text === 'string' ? text : '');
   if (raw == null) return { ok: false, error: 'no ```json plan block found in the reply' };
@@ -30,7 +45,18 @@ export function parsePlan(text, { maxChunks = 12 } = {}) {
     const title = typeof c?.title === 'string' ? c.title.trim() : '';
     const instructions = typeof c?.instructions === 'string' ? c.instructions.trim() : '';
     if (!title || !instructions) return { ok: false, error: `chunk ${i + 1} is missing a title or instructions` };
-    out.push({ title, instructions });
+    const chunk = { title, instructions };
+    if (c.check !== undefined) {
+      const check = typeof c.check === 'string' ? c.check.trim() : '';
+      if (!check || check.length > MAX_CHECK) return { ok: false, error: `chunk ${i + 1} has an invalid check (a non-empty string of at most ${MAX_CHECK} characters)` };
+      chunk.check = check;
+    }
+    if (c.files !== undefined) {
+      const files = validFiles(c.files);
+      if (!files) return { ok: false, error: `chunk ${i + 1} has invalid files (1 to ${MAX_FILES} relative paths, no leading / and no .. segment)` };
+      chunk.files = files;
+    }
+    out.push(chunk);
   }
   return { ok: true, plan: { summary: typeof obj.summary === 'string' ? obj.summary.trim() : '', chunks: out } };
 }

@@ -16,6 +16,17 @@ export function validateFirstChunk(o) {
   if (!f || typeof f !== 'object' || !ok(f.title) || !ok(f.instructions)) throw new Error('options.firstChunk needs a title and instructions');
 }
 
+// Every authored step needs a pass condition: its own check, `none` for a step that changes no code,
+// or the run's test command (a missing check, or `existing-suite`, means that command). No model call.
+export function passConditionError(chunks, testCommand) {
+  const hasTests = typeof testCommand === 'string' && testCommand.trim() !== '';
+  for (const [i, c] of chunks.entries()) {
+    if (c.check === undefined && !hasTests) return `step ${i + 1} has no pass condition: give it a check command, or mark it none if it changes no code`;
+    if (c.check === 'existing-suite' && !hasTests) return `step ${i + 1} says existing-suite but this run has no test command`;
+  }
+  return null;
+}
+
 export async function runPlanPhase(ctx) {
   const { request, team, options, ws, log } = ctx;
   const opts = { cwd: ws.dir, write: false, timeoutMs: options.agentTimeoutMs };
@@ -33,6 +44,10 @@ export async function runPlanPhase(ctx) {
       if (!r.ok) return r.failure === 'no-participant' ? { error: r.error, pause: r.error } : { error: `author failed: ${r.error}` };
       const parsed = parsePlan(r.text, { maxChunks: limit });
       const who = { producedBy: r.servedBy ?? team.author.name, vendor: vendorOf(r.servedKind ?? team.author.adapter.kind) };
+      if (parsed.ok) {
+        const missing = passConditionError(parsed.plan.chunks, options.testCommand);
+        if (missing) return { error: missing };
+      }
       return parsed.ok ? { plan: parsed.plan, text: r.text, ...who } : { error: parsed.error };
     },
     review: async (a) => {

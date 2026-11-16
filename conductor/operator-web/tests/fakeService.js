@@ -11,7 +11,7 @@ export function fakeService({ run = fixtures.awaitingResult, review = fixtures.r
   const state = {
     run: clone(run), review: clone(review), calls: [], repositories: clone(fixtures.repositories.repositories),
     setup: setup ?? { configured: true, participants: clone(fixtures.connectionStates).map((p) => ({ ...p, model: null })), local: { model: 'qwen', baseUrl: 'http://127.0.0.1:8080/v1' }, presets: [{ id: 'default', label: 'Configured repository checks', testCommand: 'npm test' }], routing: {}, apiDisabled: true },
-    runs: [clone(fixtures.completedRun), clone(fixtures.interruptedRun), clone(fixtures.rejectedRun)],
+    runs: [['completed', fixtures.completedRun], ['interrupted', fixtures.interruptedRun], ['rejected', fixtures.rejectedRun]].map(([k, r]) => ({ ...clone(r), id: `${r.id}-${k}` })),
     recoveryReceipts: new Map(),
   };
   const fetchImpl = async (url, init = {}) => {

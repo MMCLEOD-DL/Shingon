@@ -24,7 +24,7 @@ const CLAUDE = `
   let result;
   if (sys.includes('REVIEWER')) result = 'Fine.\\nVERDICT: APPROVE';
   else if (args.includes('acceptEdits')) { require('fs').writeFileSync('claude-step.txt', 'x\\n'); result = 'done'; }
-  else result = 'Plan.\\n\`\`\`json\\n' + JSON.stringify({ summary: 's', chunks: [{ title: 'Add multiply', instructions: 'add it' }] }) + '\\n\`\`\`';
+  else result = 'Plan.\\n\`\`\`json\\n' + JSON.stringify({ summary: 's', chunks: [{ title: 'Add multiply', instructions: 'add it', check: 'none' }] }) + '\\n\`\`\`';
   process.stdout.write(JSON.stringify({ result, is_error: false, total_cost_usd: 0.01 }));
 `;
 // codex: frontier reviewer → APPROVE; local (model_provider=localai) → edits a file, or hangs.

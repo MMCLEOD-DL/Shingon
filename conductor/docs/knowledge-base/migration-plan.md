@@ -1,6 +1,6 @@
 # Library of Babel: staged migration plan and implementation backlog
 
-**Packet:** P06, required output 6. **Status:** proposal. Nothing here has been started, and nothing in it authorises changes to Babel or the import of any personal or company data. Each stage needs the operator's go-ahead. Architecture: [`recommendation.md`](recommendation.md). Evidence about Babel: [`inventory.md`](inventory.md).
+**Packet:** P06, required output 6. **Status:** proposal, partly built. As of 16 November 2026: K2 (service skeleton), K6 (HTTP API), K7 (MCP adapter) and K9 (backups) are built under `knowledge/`, and K8 (Conductor evidence step) has four of five slices merged; see the work log for each. K1, K3–K5 and K10–K13 are not started. Nothing in this plan authorises changes to Babel or the import of any personal or company data. Each stage needs the operator's go-ahead. Architecture: [`recommendation.md`](recommendation.md). Evidence about Babel: [`inventory.md`](inventory.md).
 
 ## The decision this plan rests on
 

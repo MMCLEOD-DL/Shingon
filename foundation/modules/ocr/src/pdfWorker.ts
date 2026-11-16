@@ -4,7 +4,7 @@
  * type-only imports): in the tests it runs from the TypeScript source with Node's type stripping, in the app from
  * dist/.
  */
-import { parentPort, workerData } from 'node:worker_threads';
+import { parentPort } from 'node:worker_threads';
 import { inflateSync } from 'node:zlib';
 
 /** `pictures`: the file holds a picture (painted or not) whose content was not read, so its text may not be all the evidence. */
@@ -408,7 +408,7 @@ async function read({ data, preScan }: PdfWorkerInput): Promise<PdfWorkerReply> 
   const scanned = preScan ? scan(data) : null;
   if (preScan && scanned === null) return { ok: false, problem: 'unopenable' };
   if (scanned && scanned.pages > MAX_PAGES) return { ok: false, problem: 'too-many-pages' };
-  // Loaded only once the file has passed the check.
+  // Already loaded when the thread started (so start-up is timed apart from the read); this only fetches it.
   const { getDocument, VerbosityLevel } = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const task = getDocument({
     // pdfjs-dist 6 no longer has `isEvalSupported`: it never compiles code from a PDF.
@@ -452,7 +452,13 @@ async function read({ data, preScan }: PdfWorkerInput): Promise<PdfWorkerReply> 
 
 if (parentPort) {
   const port = parentPort;
-  void read(workerData as PdfWorkerInput).then((reply) => {
-    port.postMessage(reply);
+  // pdfjs is loaded first (it is code, never the PDF), then the process is told so; the PDF comes in the next message.
+  void import('pdfjs-dist/legacy/build/pdf.mjs').then(() => {
+    port.once('message', (input: PdfWorkerInput) => {
+      void read(input).then((reply) => {
+        port.postMessage(reply);
+      });
+    });
+    port.postMessage('ready');
   });
 }

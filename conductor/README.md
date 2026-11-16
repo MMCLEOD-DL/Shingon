@@ -52,6 +52,7 @@ Other commands:
 |---|---|
 | `conductor resume` | carry on with the latest unfinished run in this project |
 | `conductor runs` | list the unfinished runs in this project |
+| `conductor report [<path>...]` | per-step figures from run logs: who produced each step, attempts, blocks, fallbacks, time per call, cost where reported (`--json` for machines) |
 | `conductor doctor` | check which models are installed (subscriptions) or answering (local model) |
 | `conductor project new "<client>"` | make a client project folder (`--slug <name>` picks the folder name) |
 | `conductor project list` | list projects and where each brief stands |
