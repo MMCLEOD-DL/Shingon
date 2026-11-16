@@ -251,6 +251,12 @@ Its build order is: Verifier, then metrics, then a week of runs, then the review
   condition for steps that give no `check`; the block fires only when a step has no `check` and the run has no test command.
   A failing `check` blocks before `testCommand` runs; a passing `check` is the step's evidence when there is no test command.
 - **G4 — Staged step gate.** Optional `gateCommands` (`[{ name, command }]`, cheapest first, stopping at the first failure) run before the tests. Each attempt logs a `gate` event: `{ result, failedStage, excerpt, attempt: n/N }`. The excerpt is trimmed by a fixed rule (the first failing block, at most a few kB), with no model. The G3 scope flag goes to the reviewer.
+
+  **Done, 16 November 2026 (GD4):** `gateCommands` run before the step's `check` and the suite; the first failure blocks the
+  attempt with a fixed-rule excerpt (at most 3,000 characters) and no reviewer call; one `gate` event per attempt. Files outside
+  the step's `files` are flagged to the reviewer and logged (`scope-flag`), never a failure on their own. A touched protected
+  path blocks the attempt before review (`protected-path`), on factory builds only, the same gate as the council's rule. The
+  operator service does not yet show `gate` events: a Codex handoff.
 - **G3b — `testFirst` option (GD2).** This option is off by default. When it is on, each code step that has no existing check gets a test-first step written by the frontier author. That step must add tests that fail at the step's base. The local worker then codes against them. It builds on G3 and on the `firstChunk` mechanism.
 - **G5 — Local simplifier pre-review.** This task depends on G1's numbers showing that frontier blocks are mostly about bloat, duplication or drift from the spec. It works as follows:
   - It runs only after the gate passes and before the frontier review.

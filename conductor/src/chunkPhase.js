@@ -10,6 +10,31 @@ import { checkHealth } from './health.js';
 import { redact } from './secrets.js';
 import { LOCAL_DOWN_WARNING } from './team.js';
 import { makeResult } from './result.js';
+import { isProtectedPath } from './council/foundationRules.js';
+
+const GATE_EXCERPT_MAX = 3000;
+const GATE_FAIL_LINE = /\berror\b|\bfail(ed|ure)?\b|not ok|exception|✗/i;
+const GATE_ERROR = 'options.gateCommands must be a list of { name, command } with distinct names';
+
+// G4: the first failing block of a gate's output, by a fixed rule (no model): from two lines before the first
+// line that looks like a failure, at most 3000 characters; with no such line, the first 3000 characters.
+export function gateExcerpt(output) {
+  const text = typeof output === 'string' ? output : '';
+  const lines = text.split('\n');
+  const at = lines.findIndex((l) => GATE_FAIL_LINE.test(l));
+  if (at < 0) return text.slice(0, GATE_EXCERPT_MAX);
+  return lines.slice(Math.max(0, at - 2)).join('\n').slice(0, GATE_EXCERPT_MAX);
+}
+
+export function validateGateCommands(options) {
+  const g = options?.gateCommands;
+  if (g === undefined || g === null) return [];
+  const ok = Array.isArray(g) && g.every((c) => c && typeof c === 'object' && !Array.isArray(c)
+    && typeof c.name === 'string' && c.name.trim() && typeof c.command === 'string' && c.command.trim())
+    && new Set(g.map((c) => c.name)).size === g.length;
+  if (!ok) throw new Error(GATE_ERROR);
+  return g;
+}
 
 // Local failures that the same prompt to the same backend cannot fix: go to the fallback now.
 export const LOCAL_FATAL = new Set(['infrastructure', 'timeout', 'context-overflow', 'no-participant']);
@@ -69,6 +94,7 @@ const join = (a, b) => (a ? `${a} ${b}` : b);
 // Review Focus 3: whatever happens, the workspace ends either as exactly one
 // squashed commit on top of the chunk base or exactly at the base.
 export async function runChunk(ctx, chunk, index) {
+  validateGateCommands(ctx.options);
   const base = await ctx.ws.head();
   // Ignored paths present at the chunk base (deps, caches) survive every reset; new ones do not (T8-M4).
   const keepIgnored = await ctx.ws.ignoredPaths();
@@ -111,7 +137,26 @@ async function runChunkFrom(ctx, chunk, index, base, reset) {
     return tests?.ran ? { ...tests, stage: 'tests' } : tests;
   };
 
-  const attempt = (who, role) => {
+  // G4: the staged gate. Cheapest first; the first failure stops the rest, the step check and the suite.
+  const runGate = async (round, maxRounds) => {
+    const gates = validateGateCommands(options);
+    if (!gates.length) return null;
+    let failed = null;
+    for (const g of gates) {
+      const t = await ws.runTests(g.command, { timeoutMs: options.testTimeoutMs });
+      if (t?.ran && t.passed === false) { failed = { g, t }; break; }
+    }
+    const excerpt = failed ? gateExcerpt(failed.t.output) : null;
+    log.event('gate', { index, attempt: round, of: maxRounds, result: failed ? 'failed' : 'passed', failedStage: failed ? failed.g.name : null, excerpt });
+    if (!failed) return null;
+    return {
+      ran: true, passed: false, code: failed.t.code, stage: failed.g.name,
+      output: clip(`Gate stage \`${failed.g.name}\` (\`${failed.g.command}\`) failed:\n${excerpt}`, 4000),
+      gate: failed.g.name,
+    };
+  };
+
+  const attempt = (who, role, maxRounds) => {
     // The last state that was successfully inspected in this loop: a later round
     // that leaves an uninspectable mess goes back here, not all the way to base.
     let snap = null;
@@ -147,10 +192,28 @@ async function runChunkFrom(ctx, chunk, index, base, reset) {
       // inspect is a blocked round, and the bad state is reset away before the next.
       // A failing reset is real infrastructure trouble and throws to runChunk's catch.
       try {
-        const tests = await runStepTests(chunk);
+        const tests = (await runGate(round, maxRounds)) ?? await runStepTests(chunk);
         const diff = await ws.diff(base);
         snap = await ws.snapshot();
-        return { diff, tests, base, producedBy: r.servedBy ?? who.name, vendor: vendorOf(r.servedKind ?? who.adapter.kind) };
+        let files = null;
+        let outside = [];
+        if (tests?.passed !== false) {
+          files = await ws.listFiles(base);
+          // Foundation rules apply to factory builds only, the same gate as the council (FOUNDATION.collect).
+          const protectedFiles = options.factoryFeature ? files.filter(isProtectedPath) : [];
+          if (protectedFiles.length) {
+            // Fail closed: shaped like a failed test run so review() blocks it before any reviewer call
+            // and every other consumer (handover, deadlock settlement) already copes with that shape.
+            log.event('protected-path', { index, participant: who.name, files: protectedFiles });
+            return {
+              diff, base, producedBy: r.servedBy ?? who.name, vendor: vendorOf(r.servedKind ?? who.adapter.kind), files, outside,
+              tests: { ran: true, passed: false, code: null, stage: 'protected', protectedFiles, output: `Protected files edited: ${protectedFiles.join(', ')}` },
+            };
+          }
+          outside = Array.isArray(chunk.files) ? files.filter((f) => !chunk.files.includes(f)) : [];
+          if (outside.length) log.event('scope-flag', { index, outside });
+        }
+        return { diff, tests, files, outside, base, producedBy: r.servedBy ?? who.name, vendor: vendorOf(r.servedKind ?? who.adapter.kind) };
       } catch (e) {
         const msg = String(e?.message ?? e);
         log.event('inspect-failed', { index, participant: who.name, error: msg, resetTo: snap ?? base });
@@ -164,19 +227,23 @@ async function runChunkFrom(ctx, chunk, index, base, reset) {
     // Reuse the normal bounded retry/fallback loop without spending a review call.
     if (a.tests?.ran && a.tests.passed === false) {
       log.event('chunk-tests-failed', { index, code: a.tests.code, stage: a.tests.stage ?? 'tests' });
+      const stage = a.tests.stage;
+      const reason = a.tests.gate ? `The step gate failed at stage "${a.tests.gate}"; fix it before review.`
+        : stage === 'protected' ? `The step edited protected files: ${a.tests.protectedFiles.join(', ')}`
+        : 'The step tests failed; fix them before review.';
       return makeResult({
-        verdict: { decision: 'BLOCK', reason: 'The step tests failed; fix them before review.' },
+        verdict: { decision: 'BLOCK', reason },
         text: prompts.formatTests(a.tests),
       });
     }
     const rv = await callAgent(ctx, reviewer, 'reviewer',
-      prompts.chunkReview({ request, plan, chunk, index, total, diff: a.diff, tests: a.tests, base }), readOpts);
+      prompts.chunkReview({ request, plan, chunk, index, total, diff: a.diff, tests: a.tests, base, outside: a.outside }), readOpts);
     noteSameVendor(ctx, { phase: 'chunk', index, producerVendor: a.vendor, result: rv, participant: reviewer });
     return rv;
   };
 
   let note = null;
-  let loop = await reviewLoop({ maxRounds: options.localRounds, produce: attempt(team.local, 'grunt'), review });
+  let loop = await reviewLoop({ maxRounds: options.localRounds, produce: attempt(team.local, 'grunt', options.localRounds), review });
   if (loop.status === 'paused') {
     await reset();
     return { status: 'paused', reason: loop.lastReason };
@@ -210,7 +277,7 @@ async function runChunkFrom(ctx, chunk, index, base, reset) {
     log.event('chunk-fallback', { index, to: fallback.name, reason: loop.lastReason, handover: handover.summary });
     await reset();
     loop = await reviewLoop({
-      maxRounds: options.frontierRounds, produce: attempt(fallback, 'author'), review,
+      maxRounds: options.frontierRounds, produce: attempt(fallback, 'author', options.frontierRounds), review,
       start: { feedback: handover.text, feedbackKind: 'inherited' },
     });
     if (loop.status === 'paused') {
