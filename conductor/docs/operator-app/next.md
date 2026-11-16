@@ -244,6 +244,12 @@ Its build order is: Verifier, then metrics, then a week of runs, then the review
   - `files`: the paths the step is expected to touch.
 
   The plan reviewer blocks a plan whose code steps have no pass condition, but "the existing suite passes" is an explicit, allowed condition. The step gate runs `check` first, then `testCommand`. The changes are in `plan.js`, `prompts.js` and `chunkPhase.js` (shared seams), and existing plans without the fields must stay valid.
+
+  **Done, 16 November 2026 (GD4):** `check` is a shell command, or `existing-suite`, or `none` (a step that changes no code);
+  `files` is a list of expected paths. The rule runs in the plan phase before the reviewer, with no model call. Deviation
+  from the wording above, recorded in the work log: a configured run-wide `testCommand` counts as the explicit existing-suite
+  condition for steps that give no `check`; the block fires only when a step has no `check` and the run has no test command.
+  A failing `check` blocks before `testCommand` runs; a passing `check` is the step's evidence when there is no test command.
 - **G4 — Staged step gate.** Optional `gateCommands` (`[{ name, command }]`, cheapest first, stopping at the first failure) run before the tests. Each attempt logs a `gate` event: `{ result, failedStage, excerpt, attempt: n/N }`. The excerpt is trimmed by a fixed rule (the first failing block, at most a few kB), with no model. The G3 scope flag goes to the reviewer.
 - **G3b — `testFirst` option (GD2).** This option is off by default. When it is on, each code step that has no existing check gets a test-first step written by the frontier author. That step must add tests that fail at the step's base. The local worker then codes against them. It builds on G3 and on the `firstChunk` mechanism.
 - **G5 — Local simplifier pre-review.** This task depends on G1's numbers showing that frontier blocks are mostly about bloat, duplication or drift from the spec. It works as follows:

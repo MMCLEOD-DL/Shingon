@@ -266,7 +266,7 @@ import { runTask, resume } from '../src/conductor.js';
 import { makeRepo } from './helpers/gitRepo.js';
 import { approve } from './helpers/fakes.js';
 
-const PLAN = { summary: 'S', chunks: [{ title: 'One', instructions: 'make one' }] };
+const PLAN = { summary: 'S', chunks: [{ title: 'One', instructions: 'make one', check: 'none' }] };
 function runTeam(onAuthor = () => {}) {
   return {
     author: routed(fakeParticipant({ name: 'claude', kind: 'claude-code', script: (role) => { if (role === 'reviewer') return approve(); onAuthor(); return { text: '```json\n' + JSON.stringify(PLAN) + '\n```' }; } })),

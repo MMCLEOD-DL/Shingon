@@ -93,6 +93,24 @@ async function runChunkFrom(ctx, chunk, index, base, reset) {
   const readOpts = { cwd: ws.dir, write: false, timeoutMs: options.agentTimeoutMs };
   log.event('chunk', { index, title: chunk.title, base });
 
+  // G3: a step's own check command runs first; if it fails the run's test command is skipped.
+  // `existing-suite`, `none` and an absent check keep today's single test run.
+  const runStepTests = async (c) => {
+    const timeoutMs = options.testTimeoutMs;
+    const cmd = typeof c.check === 'string' && c.check !== 'existing-suite' && c.check !== 'none' ? c.check : null;
+    let checked = null;
+    if (cmd) {
+      checked = await ws.runTests(cmd, { timeoutMs });
+      if (checked?.ran && checked.passed === false) {
+        return { ...checked, stage: 'check', output: clip(`Step check \`${cmd}\` failed:\n${checked.output ?? ''}`, 4000) };
+      }
+    }
+    // A passing check is the step's own evidence when the run has no test command.
+    if (cmd && !(typeof options.testCommand === 'string' && options.testCommand.trim())) return { ...checked, stage: 'check' };
+    const tests = await ws.runTests(options.testCommand, { timeoutMs });
+    return tests?.ran ? { ...tests, stage: 'tests' } : tests;
+  };
+
   const attempt = (who, role) => {
     // The last state that was successfully inspected in this loop: a later round
     // that leaves an uninspectable mess goes back here, not all the way to base.
@@ -129,7 +147,7 @@ async function runChunkFrom(ctx, chunk, index, base, reset) {
       // inspect is a blocked round, and the bad state is reset away before the next.
       // A failing reset is real infrastructure trouble and throws to runChunk's catch.
       try {
-        const tests = await ws.runTests(options.testCommand, { timeoutMs: options.testTimeoutMs });
+        const tests = await runStepTests(chunk);
         const diff = await ws.diff(base);
         snap = await ws.snapshot();
         return { diff, tests, base, producedBy: r.servedBy ?? who.name, vendor: vendorOf(r.servedKind ?? who.adapter.kind) };
@@ -145,7 +163,7 @@ async function runChunkFrom(ctx, chunk, index, base, reset) {
     // Executed failures are objective evidence, not a reviewer preference.
     // Reuse the normal bounded retry/fallback loop without spending a review call.
     if (a.tests?.ran && a.tests.passed === false) {
-      log.event('chunk-tests-failed', { index, code: a.tests.code });
+      log.event('chunk-tests-failed', { index, code: a.tests.code, stage: a.tests.stage ?? 'tests' });
       return makeResult({
         verdict: { decision: 'BLOCK', reason: 'The step tests failed; fix them before review.' },
         text: prompts.formatTests(a.tests),

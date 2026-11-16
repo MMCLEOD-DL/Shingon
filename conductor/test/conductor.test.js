@@ -8,7 +8,7 @@ import { git, Workspace } from '../src/workspace.js';
 import { fakeParticipant, approve, block } from './helpers/fakes.js';
 import { makeRepo, refsOf } from './helpers/gitRepo.js';
 
-const PLAN = { summary: 'S', chunks: [{ title: 'One', instructions: 'make one' }, { title: 'Two', instructions: 'make two' }] };
+const PLAN = { summary: 'S', chunks: [{ title: 'One', instructions: 'make one', check: 'none' }, { title: 'Two', instructions: 'make two', check: 'none' }] };
 const planReply = { text: '```json\n' + JSON.stringify(PLAN) + '\n```' };
 const stepOf = (task) => Number(/chunk (\d+) of/.exec(task)?.[1] ?? 0);
 
