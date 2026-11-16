@@ -60,6 +60,9 @@ export const PROTECTED_DIRS = Object.freeze([
   'apps/web/src/modules/',
 ]);
 
+// The same match the council's protected-file check uses, for one repo-relative path.
+export const isProtectedPath = (p) => PROTECTED_PATHS.includes(p) || PROTECTED_DIRS.some((d) => p.startsWith(d));
+
 // Ruling Q23: the package.json files whose verify-type scripts must not change (plus any apps/<x>/package.json).
 const PACKAGE_FILES = ['package.json', 'apps/server/package.json', 'apps/web/package.json', 'ops/package.json', 'deploy/package.json', 'packages/shared/package.json'];
 const APP_PACKAGE = /^apps\/[^/]+\/package\.json$/;
@@ -136,7 +139,7 @@ async function protectedFindings(input) {
     ...PROTECTED_PATHS, ...PROTECTED_DIRS], 'git could not compare the protected foundation files with the starting commit');
   const touched = [...new Set(r.stdout.split('\0').filter(Boolean))].sort();
   const resolving = new Set(input.options?.factoryFeature?.upgradeConflicts ?? []);
-  return touched.filter((p) => PROTECTED_PATHS.includes(p) || PROTECTED_DIRS.some((d) => p.startsWith(d))).map((p) => {
+  return touched.filter(isProtectedPath).map((p) => {
     if (p === 'app-profile.json') return finding('blocking', `${p} belongs to the foundation and must not be changed`, BUILDING_ON.profile, p);
     if (resolving.has(p)) return finding('warning', `${p}, a foundation file, was changed to resolve the upgrade's merge conflict`, BUILDING_ON.upgrade, p);
     return finding('blocking', `${p} belongs to the foundation and must not be changed`, BUILDING_ON.protected, p);

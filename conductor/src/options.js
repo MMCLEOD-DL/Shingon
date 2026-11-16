@@ -6,6 +6,7 @@ export const DEFAULT_OPTIONS = Object.freeze({
   maxChunks: 12,
   testCommand: null,      // e.g. "npm test"; null = no tests configured
   testTimeoutMs: 600000,
+  gateCommands: [],       // G4: [{ name, command }], cheapest first; run before each step's check and tests, stopping at the first failure ([] = no gate)
   agentTimeoutMs: 1800000,
   localTimeoutMs: 900000, // local grunt calls: a hung local backend gives up after 15 min, not 30
   approveEachChunk: false,

@@ -110,7 +110,7 @@ export function chunkExec({ request, plan, chunk, index, total, feedback, feedba
   ].filter(Boolean).join('\n\n');
 }
 
-export function chunkReview({ request, plan, chunk, index, total, diff, tests, base }) {
+export function chunkReview({ request, plan, chunk, index, total, diff, tests, base, outside = [] }) {
   return [
     `Overall request:\n${show(request, TEXT_MAX)}`,
     planBlock(plan),
@@ -118,9 +118,10 @@ export function chunkReview({ request, plan, chunk, index, total, diff, tests, b
     stepCondition(chunk),
     diffBlock('Diff for this chunk:', diff, 30000, base),
     formatTests(tests),
+    outside?.length && `Files outside the expected set (a flag, not a failure): ${outside.join(', ')}`,
     'Check: does the diff complete this chunk, is it correct, are tests present and passing, is anything out of scope or unsafe?',
     BLOCK_RULES,
-  ].join('\n\n');
+  ].filter(Boolean).join('\n\n');
 }
 
 export function finalReview({ request, plan, diff, tests, base }) {
