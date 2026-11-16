@@ -116,14 +116,27 @@ export async function main(argv, {
     });
     let args;
     if (checkBaselineFirst) {
+      const cleanOutput = value => redact(String(value ?? '')).replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').slice(0, 4000);
+      const baselineEvent = event => {
+        if (event.type === 'start' || event.type === 'resume') {
+          if (event.workspace) workspaceDir = event.workspace;
+          term.say('Checking baseline tests…');
+        }
+        if (event.type === 'baseline-tests') {
+          term.say(event.passed ? 'Baseline tests passed.' : 'Baseline tests failed.');
+          const output = cleanOutput(event.output);
+          if (output.trim()) term.say(output);
+        }
+      };
       let interrupt = () => {
         killAllChildren();
-        term.say('\nStopped. Your repository is unchanged.');
+        term.say(`\nStopped. Your repository is unchanged.${workspaceDir ? ' To continue later, run:  conductor resume' : ''}`);
         term.close();
         exit(EXIT.interrupted);
       };
       onSignal(() => interrupt());
       args = {
+        hooks: { onEvent: baselineEvent },
         options: resuming ? (cli.flags.testCommand ? { testCommand } : {}) : { ...config.options, testCommand },
         prepare: async (dir) => {
           prepared = await prepareFor(dir, handler => { interrupt = handler; });

@@ -95,13 +95,19 @@ test('no terminal: the whole run happens, the gate fails closed, the repo is unt
 test('a failing --test baseline stops before checking workers', async t => {
   const s = await setup();
   t.after(s.close);
-  writeFileSync(path.join(s.repo, 'checks.cjs'), 'process.exit(1);\n');
+  s.env.TEST_BASELINE_TOKEN = 'synthetic-baseline-secret-123';
+  writeFileSync(path.join(s.repo, 'checks.cjs'), "console.error('baseline fixture failed \\x1b[31m synthetic-baseline-secret-123'); process.exit(1);\n");
   await git(s.repo, ['add', 'checks.cjs']);
   await git(s.repo, ['commit', '-qm', 'existing test failure']);
   const before = await refsOf(s.repo);
   const result = await spawnBin(['add multiply', '--config', s.cfg, '--test', 'node checks.cjs'], { cwd: s.repo, env: s.env });
   assert.equal(result.code, 1, result.out);
   assert.match(result.out, /tests already fail/i);
+  assert.match(result.out, /Checking baseline tests/i);
+  assert.match(result.out, /Baseline tests failed/i);
+  assert.match(result.out, /baseline fixture failed/i);
+  assert.match(result.out, /\[redacted\]/);
+  assert.doesNotMatch(result.out, /synthetic-baseline-secret-123|\x1b\[31m/);
   assert.doesNotMatch(result.out, /Checking which AI models|Plan agreed/i);
   assert.equal(await refsOf(s.repo), before);
 });
@@ -111,8 +117,28 @@ test('a passing --test baseline reaches the ordinary CLI review flow', async t =
   t.after(s.close);
   const result = await spawnBin(['add multiply', '--config', s.cfg, '--test', 'node --version'], { cwd: s.repo, env: s.env });
   assert.equal(result.code, 1, result.out);
+  assert.match(result.out, /Checking baseline tests/i);
+  assert.match(result.out, /Baseline tests passed/i);
   assert.match(result.out, /Plan agreed/);
   assert.match(result.out, /Not approved\. Your repository is unchanged\./);
+});
+
+test('an interrupted baseline gives a resume hint and rechecks visibly on resume', async t => {
+  const s = await setup();
+  t.after(s.close);
+  writeFileSync(path.join(s.repo, 'checks.cjs'), 'setTimeout(() => {}, 5000);\n');
+  await git(s.repo, ['add', 'checks.cjs']);
+  await git(s.repo, ['commit', '-qm', 'slow existing test']);
+  const first = await spawnBin(['add multiply', '--config', s.cfg, '--test', 'node checks.cjs'], {
+    cwd: s.repo, env: s.env, until: 'Checking baseline tests…',
+  });
+  assert.equal(first.code, process.platform === 'win32' ? null : 130, first.out);
+  if (process.platform !== 'win32') assert.match(first.out, /To continue later, run:  conductor resume/);
+  const resumed = await spawnBin(['resume', '--config', s.cfg, '--test', 'node --version'], { cwd: s.repo, env: s.env });
+  assert.equal(resumed.code, 1, resumed.out);
+  assert.match(resumed.out, /Checking baseline tests/i);
+  assert.match(resumed.out, /Baseline tests passed/i);
+  assert.match(resumed.out, /Plan agreed/);
 });
 
 test('Ctrl-C mid-step: exit 130, resumable, listed by runs, picked up by resume (Review Focus 1)', async () => {

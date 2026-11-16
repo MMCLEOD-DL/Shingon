@@ -142,7 +142,13 @@ export class Runs {
             : e.type === 'result' ? `${e.servedBy ?? e.participant} ${e.ok ? 'finished' : 'could not complete'} its response.`
               : e.type === 'chunk-done' ? `Finished coding step ${e.index + 1}.`
                 : e.detail ?? e.message ?? e.type;
-          this.event(run, 'progress', message, { engineType: e.type, participant: scrub(e.participant ?? ''), role: scrub(e.role ?? ''), ok: e.ok ?? null });
+          const data = { engineType: e.type, participant: scrub(e.participant ?? ''), role: scrub(e.role ?? ''), ok: e.ok ?? null };
+          if (e.type === 'baseline-tests') {
+            if (typeof e.passed === 'boolean') data.passed = e.passed;
+            if (e.code === null || Number.isSafeInteger(e.code)) data.code = e.code;
+            if (typeof e.output === 'string') data.output = scrub(e.output);
+          }
+          this.event(run, 'progress', message, data);
         } else if (msg.type === 'question') {
           requireValue(!run.activeDecisionId && ['result', 'plan', 'chunk', 'escalation', 'fallback'].includes(msg.kind), 'Unexpected engine question.');
           const evidence = msg.evidence;

@@ -9,11 +9,11 @@ import { createAppServer } from '../../src/service/server.js';
 import { writeStubCli } from '../helpers/stubCli.js';
 import { git } from '../../src/workspace.js';
 
-async function fixture(t, { workerFile, request = 'add multiply', baselineFails = false, testCommand = 'node checks.cjs' } = {}) {
+async function fixture(t, { workerFile, request = 'add multiply', baselineFails = false, baselineScript = null, testCommand = 'node checks.cjs' } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'service-engine-')); const repo = path.join(root, 'repo'); mkdirSync(repo);
   await git(repo, ['init', '-q', '-b', 'main']); writeFileSync(path.join(repo, 'README.md'), 'original\n');
-  writeFileSync(path.join(repo, 'checks.cjs'), baselineFails ? "throw new Error('existing test failure');\n"
-    : "const fs = require('node:fs'); if (fs.existsSync('multiply.txt')) require('node:assert/strict').equal(fs.readFileSync('multiply.txt','utf8'), 'local did it\\n');\n");
+  writeFileSync(path.join(repo, 'checks.cjs'), baselineScript ?? (baselineFails ? "throw new Error('existing test failure');\n"
+    : "const fs = require('node:fs'); if (fs.existsSync('multiply.txt')) require('node:assert/strict').equal(fs.readFileSync('multiply.txt','utf8'), 'local did it\\n');\n"));
   await git(repo, ['add', '.']); await git(repo, ['commit', '-qm', 'initial']);
   const originalHead = (await git(repo, ['rev-parse', 'HEAD'])).stdout;
   let localRequests = 0;
@@ -63,9 +63,37 @@ for (const [name, options] of [
     assert.equal(run.decision, null);
     assert.deepEqual(run.coverage.vendors, []);
     assert.match(s.app.runs.get(s.runId).events.at(-1).message, /tests already fail/i);
+    const baseline = s.app.runs.get(s.runId).events.find(e => e.data.engineType === 'baseline-tests');
+    assert.equal(baseline.data.passed, false);
+    assert.ok(Number.isSafeInteger(baseline.data.code) && baseline.data.code !== 0);
+    assert.match(baseline.data.output, options.testCommand ? /could not|not recognized|not found/i : /existing test failure/);
     assert.doesNotMatch((await git(s.repo, ['branch'])).stdout, /conductor\//);
   });
 }
+test('baseline output in service progress is redacted and strips terminal controls', async t => {
+  const secret = 'synthetic-service-baseline-secret-123';
+  const previous = process.env.TEST_BASELINE_TOKEN;
+  process.env.TEST_BASELINE_TOKEN = secret;
+  let s;
+  try {
+    s = await fixture(t, { baselineScript: `console.error('failure \\x1b[31m ${secret}'); process.exit(1);\n` });
+  } finally {
+    if (previous === undefined) delete process.env.TEST_BASELINE_TOKEN;
+    else process.env.TEST_BASELINE_TOKEN = previous;
+  }
+  await s.wait('paused');
+  const events = s.app.runs.get(s.runId).events;
+  const baseline = events.find(e => e.data?.engineType === 'baseline-tests');
+  assert.equal(baseline.data.passed, false);
+  assert.equal(baseline.data.code, 1);
+  assert.match(baseline.data.output, /failure.*\[redacted\]/);
+  assert.doesNotMatch(JSON.stringify(baseline), /synthetic-service-baseline-secret-123/);
+  assert.doesNotMatch(baseline.data.output, /\x1b|\x00|\x7f/);
+  assert.ok(baseline.data.output.length <= 8000);
+  await s.restart();
+  const replayed = s.app.runs.get(s.runId).events.find(e => e.data?.engineType === 'baseline-tests');
+  assert.deepEqual(replayed.data, baseline.data);
+});
 test('HTTP service drives the real engine with deterministic model CLIs, tests and approval branch', async t=>{
   const s=await fixture(t);const run=await s.wait('awaiting-decision');
   assert.equal(run.decision.kind,'result');
