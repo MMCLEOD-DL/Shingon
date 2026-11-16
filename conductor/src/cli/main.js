@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { parseCli, USAGE } from './args.js';
 import { findConfig } from './config.js';
 import { listRuns } from './runs.js';
+import { runReport } from './report.js';
 import { FACTORY_COMMANDS, runFactoryCommand } from './factory.js';
 import { loadConfig } from '../config.js';
 import { refuseKnowledge } from '../knowledge/run.js';
@@ -60,6 +61,10 @@ export async function main(argv, {
   if (Object.hasOwn(FACTORY_COMMANDS, cli.command)) {
     const code = await runFactoryCommand(cli, { cwd, env, stdin, stdout, isTTY, onSignal, exit, deps: factoryDeps });
     if (code !== null) return code;           // null = "not mine": carry on with the ordinary path (Contract 7 §7.11)
+  }
+
+  if (cli.command === 'report') {   // read-only, needs no repository, config or model
+    return runReport({ baseDir: env.CONDUCTOR_BASE_DIR || defaultBaseDir(env), paths: cli.paths.map((p) => path.resolve(cwd, p)), json: cli.json, print });
   }
 
   const repoDir = await repoRoot(cwd);
