@@ -5,7 +5,7 @@ Packet/subpacket: P07/P08 Windows acceptance round 2 (conductor/docs/operator-ap
   the parts still open after 12 Nov, plus a grouping of the native Conductor suite's failures.
 Owner and reviewer: Claude drove it on Malcolm's Windows PC with his go-ahead for each live part.
   P07/P08 rows belong to Codex, which records and reviews this evidence.
-Status: IN_PROGRESS (Part E and D3/F3 pending Malcolm's go-ahead; see the results table)
+Status: IN_PROGRESS (E1, E2 passed live; D3/F3 pending Malcolm's go-ahead)
 Baseline SHA: 85bfe0f (origin/main, 19 Nov 2026)
 Result commit(s) / patch artifact: this documentation-only branch, claude/windows-acceptance-part-e
 Owned files and shared seams changed: this work-log file only. No code, packet rows or runbook edits.
@@ -59,7 +59,7 @@ Live, synthetic and not-run results are kept apart. Dates and commits are per ro
 | D2 | Kill while question pending | live | pass | withdrawn, asked again, two branches total; 12 Nov |
 | D3 | Windows restart mid-task (optional) | live | not run | awaiting Malcolm's go-ahead |
 | E1 | Failing baseline stops before any model call | live | pass | 19 Nov 10:40, `85bfe0f`. See "E1 evidence" |
-| E2 | Broken test blocks the step; capped retries; reject recommendation | live | not run yet | awaiting go-ahead |
+| E2 | Broken test blocks the step; capped retries; reject recommendation | live | pass | 19 Nov 10:48–10:53, `85bfe0f`, second attempt; the first stopped at the local-down fallback question. See "E2 evidence" |
 | F | UAC and console table | live | recorded with gaps | F2 local and D2 counts missing; F3 not run |
 
 ## E1 evidence (live app, 19 Nov 2026)
@@ -89,6 +89,68 @@ top of `start`; `node --test` there gave 1 pass, 1 fail. Task: *Add a negate(a) 
   fault. Wording follow-up only.
 
 The broken test was then removed (`fdefb9e` "remove the broken test"); `node --test` gives 1 pass, 0 fail.
+
+## E2 evidence (live app, 19 Nov 2026)
+
+Task: *Change add so that add(2, 3) returns 6. Do not edit math.test.js.* on trial `main` at `fdefb9e`
+(`math.test.js` expects `add(2, 3) === 5`).
+
+**First attempt (run `030fa6aa`, 10:43): stopped before work, not an E2 result.** Baseline tests passed, then the
+local-model check failed in under 3 s and the run asked "The local model is unavailable…" (Pause / Use
+subscriptions). Cause, found by hand: the desktop LocalAI worker was not running (`readyz` on `:50050` gave `000`;
+Malcolm's own key-authenticated chat request returned HTTP 500 "no healthy nodes available: all models busy, cannot
+evict"). Malcolm started it with `Start-LocalAI-Worker.ps1` (`readyz` 200, chat replied OK) and pressed Pause at
+10:47:48: `decision-resolved: pause`, "Local model unavailable; subscription fallback was not approved." No model call,
+`vendors:[]`, no branch, worker process exited. **Finding:** the probe's reason (`worker-offline` / `unauthorized` /
+timeout, computed in `src/adapters/localAgent.js` `probe()`) is not shown on the page or kept in the decision or run
+record, so the operator cannot tell whether to fix the key or the worker. Owner: Codex (service decision payload),
+then Claude (display).
+
+**Second attempt (run `35a5778b`, 10:48:51–10:53:34): pass.**
+
+- Baseline tests passed. Claude authored and Codex reviewed the plan, two rounds each, agreed 10:50:12. The plan
+  named the conflict ("math.test.js will fail after this change, so the user's requirement contradicts that file") and
+  proposed running each step's check on a new test file only. The step gate ignored that and ran the configured
+  `node --test` each time.
+- Step 1: local wrote `math.add.test.js`, Codex reviewed, committed in the workspace as `7f7af35`.
+- Step 2: local changed `math.js` to `(a === 2 && b === 3 ? 6 : a + b)`; tests failed (2 pass, `add` in
+  `math.test.js` fails) → `chunk-fallback` to codex as author (handover `attempts:1`) → tests failed again →
+  `deadlock` (`situation:"tests-failing"`, `action:"escalate"`). Exactly one local and one subscription attempt.
+- Page: "The models disagree: your call … What happened: The tests are failing after the allowed attempts to fix this
+  step. The concern: The step tests failed; fix them before review. Recommendation: Reject: the tests do not pass."
+  Who did the work: "Local model: used. Subscription models that completed calls: Claude (subscription), Codex
+  (subscription)." Coverage `local:"used"`, `vendors:["anthropic","openai"]`.
+- **`math.test.js` was not edited** (workspace diff vs `fdefb9e`: `math.js` and `math.add.test.js` only). No rival
+  review of a test edit was needed.
+- Reject at 10:53:34: `decision-resolved: reject`, "You stopped the run at step 2 (Make add(2, 3) return 6 for that
+  exact input only)." `landedBranch:null`. Trial repo: status clean, `main` still `fdefb9e`, still only the two
+  12 Nov `conductor/*` branches. No `codex.exe`, `claude.exe` or worker `node.exe` left after the run.
+- UAC: 1 prompt during the run (Malcolm). Console windows: none reported.
+- Notes, none blocking:
+  - The activity log lists the decision text twice (a `progress/escalation` event and the `decision-pending` event).
+    UI de-duplication, Claude.
+  - The escalation's evidence is empty (`commit:null`, `diffId:null`, `testReportIds:[]`): the card has no failing
+    test output or diff. Codex (payload) / Claude (display).
+  - After Reject the run is `status:"paused"`, `resumable:true` and the workspace is kept; the page says "You stopped
+    the run". Worth a look for consistency with the plain reject of a final review.
+  - The plan saw the contradiction but went on without asking; the step gate caught it. Design question, not a defect.
+
+## Run-log files for G1 (step-gate G3b and G5)
+
+Kept in place in `C:\conductor-trial-2\data`; nothing deleted. If Codex or Claude needs them, pull only:
+
+- `workspaces\conductor-ws-lrB4o3.conductor\transcript.jsonl` (E2, 20.6 KB) and its `state.json` (3.2 KB). Per call:
+  `ts`, `participant`, `role`, `servedBy`, `ok`, `verdict`, `costUsd`; per step: `chunk`, `chunk-done`
+  (`sha`, `files`, `by`), `chunk-tests-failed` (`code`, `stage`), `chunk-fallback` (`handover.attempts`), `deadlock`,
+  `escalation`, `decision`. **Strip before sharing:** `call.task`, `result.text`, `result.error`, `baseline-tests.output`
+  and `chunk-fallback.handover.testExcerpt` (model prompts, replies and test output), and the absolute `workspace`
+  path in `start`.
+- `workspaces\conductor-ws-cKS3aS.conductor\transcript.jsonl` (E1, 1.4 KB). Strip `baseline-tests.output`.
+- From `service-state.json`, only `runs[]` entries `e3d0f0c6` (E1), `030fa6aa` (first E2) and `35a5778b` (E2):
+  `events[]` (`seq`, `at`, `type`, `phase`, `participant`, `data.engineType`, `data.ok`), `coverage` and
+  `decision.kind`. **Never send the file whole:** it also holds repository paths, probe results and `requestIdentity`
+  values. No key is stored in it, but check before sending.
+- Do not send `git-config`, `repo.json` or anything outside these runs.
 
 ## The native Conductor suite's 201 failures, grouped by cause
 
@@ -155,7 +217,7 @@ Each needs a focused run to place.
 
 ## Live / fake / skipped / unrun
 
-Live today: none yet. Synthetic: none rerun (Part A carried over). Not run: D3, E1, E2, F3.
+Live today: E1 (pass), E2 (pass on second attempt; first stopped at the local-down question, worker not running). Synthetic: none rerun (Part A carried over). Not run: D3, F3.
 
 ## Open defects or unknowns
 
@@ -165,7 +227,7 @@ Live today: none yet. Synthetic: none rerun (Part A carried over). Not run: D3, 
 
 ## External blocker and exact owner/action
 
-- Malcolm: go-ahead for E1, then E2 (subscription allowance and local model). He enters the LocalAI key at the hidden
+- Done: E1 and E2 ran with Malcolm's go-ahead for each. He entered the LocalAI key at the hidden
   prompt and starts the app himself.
 - Malcolm: go-ahead for D3/F3 (a Windows restart).
 
