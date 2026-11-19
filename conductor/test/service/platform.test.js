@@ -15,6 +15,9 @@ test('configured batch test command preserves arguments and exit status (.cmd on
   const result = await runCommand(testShell(`"${file}" "two words"`));
   assert.equal(result.code, 7, JSON.stringify(result));
   assert.equal(result.stdout.trim(), 'two words');
+  const compound = await runCommand(testShell(`"${file}" "two words" && echo must-not-run`));
+  assert.equal(compound.code, 7, JSON.stringify(compound));
+  assert.equal(compound.stdout.trim(), 'two words');
 });
 
 test('configured quoted test commands preserve a nonzero exit instead of reporting green', async () => {
