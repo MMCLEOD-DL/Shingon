@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { findBin, resolveTool, runTool, skipped } from '../src/council/tools.js';
@@ -17,10 +17,42 @@ test('findBin: a bare name on PATH, executable regular files only', () => {
   const dir = tmp();
   const stub = writeStubCli(dir, 'semgrep', 'console.log(1)');
   writeFileSync(path.join(dir, 'gitleaks'), 'not executable');
-  assert.equal(findBin('semgrep', { env: { PATH: `/nonexistent:${dir}` } }), stub);
+  assert.equal(findBin('semgrep', { env: { PATH: `${path.join(dir, 'missing')}${path.delimiter}${dir}` } }), stub);
   assert.equal(findBin('gitleaks', { env: { PATH: dir } }), null);
   assert.equal(findBin('semgrep', { env: { PATH: '' } }), null);
   assert.equal(findBin('../semgrep', { env: { PATH: dir } }), null, 'a name, never a path');
+});
+
+test('findBin resolves a native stub through the host PATH spelling and explicit filename', () => {
+  const dir = tmp();
+  const stub = writeStubCli(dir, 'native-check', 'console.log(1)');
+  const env = { [process.platform === 'win32' ? 'Path' : 'PATH']: dir, PATHEXT: '.EXE' };
+  assert.equal(findBin('native-check', { env }), stub);
+  assert.equal(findBin(path.basename(stub), { env }), stub);
+});
+
+test('Windows lookup honors PATHEXT order and quoted PATH entries; POSIX keeps explicit executable names', () => {
+  const dir = tmp();
+  writeFileSync(path.join(dir, 'ordered.cmd'), '@exit /b 0\r\n');
+  writeFileSync(path.join(dir, 'ordered.exe'), 'discovery-only fixture');
+  const env = { PATH: `"${dir}"`, PATHEXT: '.CMD;.EXE' };
+  if (process.platform === 'win32') {
+    assert.equal(findBin('ordered', { env }), path.join(dir, 'ordered.cmd'));
+    assert.equal(findBin('ordered.exe', { env }), path.join(dir, 'ordered.exe'));
+  } else assert.equal(findBin('ordered', { env }), null);
+});
+
+test('tool discovery rejects paths, directories and malformed executable extensions', () => {
+  const root = tmp();
+  const escape = writeStubCli(root, 'escape', 'console.log(1)');
+  const dir = path.join(root, 'bin'); mkdirSync(dir);
+  mkdirSync(path.join(dir, 'folder.exe'));
+  const env = { PATH: dir, PATHEXT: '.EXE;..\\outside;.CMD' };
+  assert.equal(findBin('folder', { env }), null);
+  for (const name of ['../native-check', 'x\0y', ...(process.platform === 'win32' ? ['..\\native-check', '.\\native-check', 'C:native-check'] : [])]) {
+    assert.equal(findBin(name, { env }), null);
+  }
+  assert.equal(findBin(`..${path.sep}${path.basename(escape)}`, { env }), null, 'a real executable outside PATH is not a bare tool name');
 });
 
 test('resolveTool: false turns it off; a configured path wins over PATH', () => {
