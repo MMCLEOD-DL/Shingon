@@ -1,5 +1,5 @@
 import { describe, test, expect, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { App } from '../src/App.jsx';
 import { RunView } from '../src/views/RunView.jsx';
@@ -56,6 +56,30 @@ describe('run states from the contract fixtures', () => {
     showRun({ ...fixtures.runningRun, coverage: { local: 'used', vendors: ['anthropic'], weakened: true, reasons: ['Only one vendor reviewed.'] } });
     expect(await screen.findByText('Review coverage is weaker than planned.')).toBeTruthy();
     expect(screen.getByText('Only one vendor reviewed.')).toBeTruthy();
+  });
+
+  // Windows round 2, Part E1 (19 Nov 2026): a run stopped by failing baseline tests made no model call, so a yellow
+  // "weaker than planned" warning read like a fault. A finished run with no completed call says so plainly instead.
+  const noCalls = { local: 'not-used', vendors: [], weakened: true, reasons: ['No subscription vendor completed a call in this run.'] };
+  test('a run that ended before any model call says nothing was reviewed, without a coverage warning', async () => {
+    showRun({ ...fixtures.runningRun, status: 'paused', resumable: false, coverage: noCalls });
+    expect(await screen.findByText(/No model was called before the run stopped, so there was no work to review\./)).toBeTruthy();
+    expect(screen.queryByText('Review coverage is weaker than planned.')).toBeNull();
+    expect(screen.queryByRole('note')).toBeNull();
+  });
+  test('the coverage warning stays while the run can still continue, or when the result may have landed', async () => {
+    showRun({ ...fixtures.runningRun, coverage: noCalls });
+    expect(await screen.findByText('Review coverage is weaker than planned.')).toBeTruthy();
+    cleanup();
+    showRun({ ...fixtures.runningRun, status: 'paused', resumable: true, coverage: noCalls });
+    expect(await screen.findByText('Review coverage is weaker than planned.')).toBeTruthy();
+    cleanup();
+    showRun({ ...fixtures.runningRun, status: 'failed', resumable: false, recoveryRequired: true, coverage: noCalls });
+    expect(await screen.findByText('Review coverage is weaker than planned.')).toBeTruthy();
+  });
+  test('a finished run where a model did work keeps the coverage warning', async () => {
+    showRun({ ...fixtures.runningRun, status: 'failed', resumable: false, coverage: { ...noCalls, local: 'used' } });
+    expect(await screen.findByText('Review coverage is weaker than planned.')).toBeTruthy();
   });
 });
 
