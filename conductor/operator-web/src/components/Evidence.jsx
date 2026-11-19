@@ -50,14 +50,21 @@ export function Checks({ tests }) {
   );
 }
 
-export function Coverage({ coverage }) {
+/**
+ * Who did the work, and whether review coverage was weaker than planned. `ended` means the run will do nothing more
+ * (finished, not resumable, nothing that may have landed). An ended run where no model completed a call produced no
+ * work, so "weaker than planned" would read like a fault (Windows round 2, Part E1): it says nothing was reviewed instead.
+ */
+export function Coverage({ coverage, ended = false }) {
   if (!coverage) return null;
   const local = { used: 'used', 'not-used': 'not used', unknown: 'no completed call yet' }[coverage.local] ?? 'unknown';
   const vendors = coverage.vendors?.length ? coverage.vendors.map((v) => ({ anthropic: 'Claude (subscription)', openai: 'Codex (subscription)' })[v] ?? plain(v, 40)).join(', ') : 'none yet';
+  const noCalls = coverage.local !== 'used' && !coverage.vendors?.length;
   return (
     <section className="coverage" aria-label="Who did the work">
       <p>Local model: <strong>{local}</strong>. Subscription models that completed calls: <strong>{vendors}</strong>.</p>
-      {coverage.weakened && (
+      {ended && noCalls && <p className="muted">No model was called before the run stopped, so there was no work to review.</p>}
+      {coverage.weakened && !(ended && noCalls) && (
         <div className="warn" role="note">
           <p><strong>Review coverage is weaker than planned.</strong></p>
           <ul>{(coverage.reasons?.length ? coverage.reasons : ['No reason was given.']).map((r, i) => <li key={i}>{plain(r, 400)}</li>)}</ul>
