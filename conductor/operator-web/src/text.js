@@ -137,3 +137,22 @@ export function eventText(e) {
   }
   return message;
 }
+
+/**
+ * The activity-log lines for a run, one per event. The service sends an escalation's summary twice: as a progress
+ * event and as the decision-pending event right after it (Windows round 2, Part E2). A progress line that repeats the
+ * next question word for word is replaced by a short sentence, so the question is shown once.
+ */
+export function activityText(events) {
+  const list = events ?? [];
+  const same = (a, b) => plain(a?.message, 1000).trim() === plain(b?.message, 1000).trim();
+  return list.map((e, i) => {
+    if (e?.type === 'progress' && plain(e.message, 1000).trim()) {
+      const question = list.slice(i + 1).find((x) => x?.type !== 'progress');
+      if (question?.type === 'decision-pending' && same(e, question)) {
+        return ENGINE_TEXT[e.data?.engineType] ?? 'Your decision is needed; the question follows.';
+      }
+    }
+    return eventText(e);
+  });
+}

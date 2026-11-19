@@ -5,7 +5,7 @@ import { ErrorNote } from '../components/ErrorNote.jsx';
 import { Coverage, ReviewDetails, diffShownInFull } from '../components/Evidence.jsx';
 import { KnowledgeNote } from '../components/Knowledge.jsx';
 import { StepChecks } from '../components/StepChecks.jsx';
-import { eventText, finishReason, phaseText, plain, shortSha, statusText, when } from '../text.js';
+import { activityText, eventText, finishReason, phaseText, plain, shortSha, statusText, when } from '../text.js';
 
 const ACTIVE = new Set(['queued', 'running', 'awaiting-decision', 'cancelling']);
 const KIND_TITLE = {
@@ -258,6 +258,7 @@ export function RunView({ api, runId, go }) {
 
   if (!run) return <section className="panel">{error ? <ErrorNote error={error} /> : <p role="status">Loading run…</p>}</section>;
   const active = ACTIVE.has(run.status);
+  const lines = activityText(events);
   const last = events.length ? events[events.length - 1] : null;
   const pending = run.status === 'awaiting-decision' && run.decision?.status === 'pending' ? run.decision : null;
 
@@ -315,8 +316,8 @@ export function RunView({ api, runId, go }) {
       <details className="activity">
         <summary>Activity log ({events.length})</summary>
         <ol>
-          {events.map((e) => (
-            <li key={e.seq}><span className="muted">{when(e.at)}</span> {eventText(e)}{e.participant ? <span className="muted"> — {plain(e.participant, 60)}</span> : null}</li>
+          {events.map((e, i) => (
+            <li key={e.seq}><span className="muted">{when(e.at)}</span> {lines[i]}{e.participant ? <span className="muted"> — {plain(e.participant, 60)}</span> : null}</li>
           ))}
         </ol>
       </details>
