@@ -5,7 +5,7 @@ Packet/subpacket: P07/P08 Windows acceptance round 2 (conductor/docs/operator-ap
   the parts still open after 12 Nov, plus a grouping of the native Conductor suite's failures.
 Owner and reviewer: Claude drove it on Malcolm's Windows PC with his go-ahead for each live part.
   P07/P08 rows belong to Codex, which records and reviews this evidence.
-Status: IN_PROGRESS (E1, E2 passed live; D3/F3 pending Malcolm's go-ahead)
+Status: IN_REVIEW (E1, E2 passed live on 19 Nov; D3/F3 not run by Malcolm's choice)
 Baseline SHA: 85bfe0f (origin/main, 19 Nov 2026)
 Result commit(s) / patch artifact: this documentation-only branch, claude/windows-acceptance-part-e
 Owned files and shared seams changed: this work-log file only. No code, packet rows or runbook edits.
@@ -40,7 +40,7 @@ commit `038289d`) and Codex's synthetic reruns:
 - **Part F: recorded with gaps.** One UAC prompt each for Codex and local can-code checks in the new folder, and one
   for Codex after a service restart; no console windows. Missing: the F2 local can-code count, the D2 count, and F3.
 
-## Results table (round 2, as of this entry)
+## Results table (round 2, final for this session)
 
 Live, synthetic and not-run results are kept apart. Dates and commits are per row.
 
@@ -57,10 +57,10 @@ Live, synthetic and not-run results are kept apart. Dates and commits are per ro
 | C3, C4 | Offline answer fails clearly; retry creates one branch; second tab cannot add one | live | pass | error wording not recorded; 12 Nov |
 | D1 | Kill while working | live | pass | no processes left at 1 min, no manual cleanup; 12 Nov |
 | D2 | Kill while question pending | live | pass | withdrawn, asked again, two branches total; 12 Nov |
-| D3 | Windows restart mid-task (optional) | live | not run | awaiting Malcolm's go-ahead |
+| D3 | Windows restart mid-task (optional) | live | not run | skipped by Malcolm's choice on 12 Nov and again on 19 Nov |
 | E1 | Failing baseline stops before any model call | live | pass | 19 Nov 10:40, `85bfe0f`. See "E1 evidence" |
 | E2 | Broken test blocks the step; capped retries; reject recommendation | live | pass | 19 Nov 10:48–10:53, `85bfe0f`, second attempt; the first stopped at the local-down fallback question. See "E2 evidence" |
-| F | UAC and console table | live | recorded with gaps | F2 local and D2 counts missing; F3 not run |
+| F | UAC and console table | live | recorded with gaps | 19 Nov additions: E1 0 prompts, E2 1 prompt (local and both subscriptions used), no consoles; the first E2 attempt and the app start: none reported. Still missing: F2 local can-code and D2 counts; F3 not run |
 
 ## E1 evidence (live app, 19 Nov 2026)
 
@@ -229,7 +229,7 @@ Live today: E1 (pass), E2 (pass on second attempt; first stopped at the local-do
 
 - Done: E1 and E2 ran with Malcolm's go-ahead for each. He entered the LocalAI key at the hidden
   prompt and starts the app himself.
-- Malcolm: go-ahead for D3/F3 (a Windows restart).
+- D3/F3 (a Windows restart): not run, by Malcolm's choice on 19 Nov. Optional; needs his go-ahead in a later session.
 
 ## Next packet unblocked
 
