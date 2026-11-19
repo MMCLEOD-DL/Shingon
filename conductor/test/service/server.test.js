@@ -178,6 +178,55 @@ test('event replay returns persisted ordered events and refuses future cursors',
   await reader.cancel();
 });
 
+test('G4 service metadata is bounded, redacted, persisted and replayed', async t => {
+  const previous = process.env.GATE_TEST_TOKEN;
+  process.env.GATE_TEST_TOKEN = 'SYNTHETIC_GATE_SECRET';
+  t.after(() => {
+    if (previous === undefined) delete process.env.GATE_TEST_TOKEN;
+    else process.env.GATE_TEST_TOKEN = previous;
+  });
+  const s = await setup(t);
+  await s.login();
+  const r = await s.start(await s.register(), 'synthetic step gate events');
+  const run = await s.wait(r.json.id, 'awaiting-decision');
+  const events = s.app.runs.get(run.id).events.slice(1, 8);
+  assert.equal(events.length, 7);
+  assert.deepEqual(events[0].data, { engineType: 'gate', index: 0, attempt: 1, of: 2,
+    result: 'failed', failedStage: 'types', excerpt: 'error TS2322 [redacted]' });
+  assert.equal(events[1].data.result, 'passed');
+  assert.equal(events[1].data.failedStage, null);
+  assert.equal(events[1].data.excerpt, null);
+  assert.deepEqual(events[2].data.outside, ['src/b.js', '[redacted].js']);
+  assert.deepEqual(events[3].data.files, ['foundation.json']);
+  assert.equal(events[3].participant, 'local');
+  assert.deepEqual(events[4].data, { engineType: 'gate' });
+  assert.ok(events[5].data.outside.length <= 100);
+  assert.ok(events[5].data.outside.join('').length <= 8000);
+  assert.equal(events[5].data.outsideCount, 120);
+  assert.equal(events[5].data.truncated, true);
+  assert.equal(events[6].data.failedStage.length, 256);
+  assert.equal(events[6].data.excerpt.length, 3000);
+  assert.ok(events[6].data.excerpt.endsWith('[redacted]'));
+  const serialized = JSON.stringify(events);
+  assert.doesNotMatch(serialized, /SYNTHETIC_GATE_SECRET|unselected-private-field|\\u001b/);
+  assert.equal((await s.call(`/runs/${run.id}/events`, { headers: { cookie: '' } })).status, 401);
+  await s.restart();
+  assert.deepEqual(s.app.runs.get(run.id).events.slice(1, 8), events);
+  const response = await s.stream(`/runs/${run.id}/events?after=1`);
+  const reader = response.body.getReader();
+  let frames = '';
+  const decoder = new TextDecoder();
+  try {
+    while ((frames.match(/\n\n/g) ?? []).length < events.length) {
+      const { value, done } = await reader.read(); assert.equal(done, false);
+      frames += decoder.decode(value, { stream: true });
+    }
+    const replay = frames.split('\n\n').slice(0, events.length).map(frame =>
+      JSON.parse(frame.split('\n').find(line => line.startsWith('data: ')).slice(6)));
+    assert.deepEqual(replay, events);
+  } finally { await reader.cancel(); }
+});
+
 test('K8 evidence metadata is persisted and replayed only to an authenticated operator', async t => {
   const s = await setup(t); await s.login();
   const r = await s.start(await s.register(), 'synthetic knowledge events');

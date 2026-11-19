@@ -9,7 +9,7 @@ import { createAppServer } from '../../src/service/server.js';
 import { writeStubCli } from '../helpers/stubCli.js';
 import { git } from '../../src/workspace.js';
 
-async function fixture(t, { workerFile, request = 'add multiply', baselineFails = false, baselineScript = null, testCommand = 'node checks.cjs', localUp = true } = {}) {
+async function fixture(t, { workerFile, request = 'add multiply', baselineFails = false, baselineScript = null, testCommand = 'node checks.cjs', localUp = true, gateCommands = [] } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'service-engine-')); const repo = path.join(root, 'repo'); mkdirSync(repo);
   await git(repo, ['init', '-q', '-b', 'main']); writeFileSync(path.join(repo, 'README.md'), 'original\n');
   writeFileSync(path.join(repo, 'checks.cjs'), baselineScript ?? (baselineFails ? "throw new Error('existing test failure');\n"
@@ -36,7 +36,7 @@ async function fixture(t, { workerFile, request = 'add multiply', baselineFails 
     { name: 'claude', adapter: 'claude-code', bin: claude, roles: ['author','reviewer'], capabilities: { can_edit_files:true } },
     { name: 'codex', adapter: 'codex', bin: codex, roles: ['author','reviewer'], capabilities: { can_edit_files:true } },
     { name: 'local', adapter: 'local-agent', bin: codex, model:'synthetic', baseUrl:`http://127.0.0.1:${local.address().port}/v1`,roles:['grunt'],capabilities:{can_edit_files:true} },
-  ], options: { testCommand }, routing: { allowApi: false } }));
+  ], options: { testCommand, gateCommands }, routing: { allowApi: false } }));
   let app = await createAppServer({ dataDir, configFile, port:0, workerFile });
   let cookie;
   async function api(p, method='GET', body) {
@@ -114,8 +114,10 @@ test('service preparation refusal after baseline removes the unused clone and ca
 });
 
 test('HTTP service drives the real engine with deterministic model CLIs, tests and approval branch', async t=>{
-  const s=await fixture(t);const run=await s.wait('awaiting-decision');
+  const s=await fixture(t, { gateCommands: [{ name: 'runtime', command: 'node --version' }] });const run=await s.wait('awaiting-decision');
   assert.equal(run.decision.kind,'result');
+  const gate = s.app.runs.get(s.runId).events.find(e => e.data.engineType === 'gate');
+  assert.deepEqual(gate.data, { engineType: 'gate', index: 0, attempt: 1, of: 3, result: 'passed', failedStage: null, excerpt: null });
   const review=(await s.api(`/runs/${s.runId}/review`)).body;
   assert.equal(review.tests.ran,true);assert.equal(review.tests.passed,true);assert.match(review.diff,/local did it/);
   assert.equal(run.coverage.local,'used');assert.deepEqual(run.coverage.vendors.sort(),['anthropic','openai']);

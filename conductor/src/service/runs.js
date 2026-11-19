@@ -13,6 +13,48 @@ const ACTIVE = new Set(['running', 'awaiting-decision', 'queued', 'cancelling'])
 const terminal = status => ({ landed: 'completed', stopped: 'paused', paused: 'paused', rejected: 'rejected', failed: 'failed' })[status] ?? 'failed';
 const scrub = v => redact(String(v ?? '')).replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').slice(0, 8000);
 
+// G4 activity uses the existing progress/replay schema. Select fields before
+// persistence; neither raw command output nor arbitrary worker fields belong here.
+function stepEventData(event) {
+  if (!['gate', 'scope-flag', 'protected-path'].includes(event.type)) return null;
+  const data = { engineType: event.type };
+  if (Number.isSafeInteger(event.index) && event.index >= 0) data.index = event.index;
+  if (event.type === 'gate') {
+    for (const key of ['attempt', 'of']) if (Number.isSafeInteger(event[key]) && event[key] > 0) data[key] = event[key];
+    if (['passed', 'failed'].includes(event.result)) data.result = event.result;
+    if (event.failedStage === null || typeof event.failedStage === 'string') data.failedStage = event.failedStage === null ? null : scrub(event.failedStage).slice(0, 256);
+    if (event.excerpt === null || typeof event.excerpt === 'string') data.excerpt = event.excerpt === null ? null : scrub(event.excerpt).slice(0, 3000);
+  } else {
+    if (event.type === 'protected-path' && typeof event.participant === 'string') data.participant = scrub(event.participant);
+    const key = event.type === 'scope-flag' ? 'outside' : 'files';
+    if (Array.isArray(event[key])) {
+      const values = event[key].filter(value => typeof value === 'string');
+      data[key] = [];
+      data[key === 'outside' ? 'outsideCount' : 'fileCount'] = values.length;
+      let budget = 8000;
+      for (const value of values.slice(0, 100)) {
+        const safe = scrub(value);
+        const bounded = safe.slice(0, Math.min(512, budget));
+        if (bounded !== safe) data.truncated = true;
+        data[key].push(bounded);
+        budget -= bounded.length;
+        if (!budget) break;
+      }
+      if (data[key].length < values.length) data.truncated = true;
+    }
+  }
+  return data;
+}
+
+function stepEventMessage(data) {
+  const step = data.index === undefined ? 'Step' : `Step ${data.index + 1}`;
+  if (data.engineType === 'scope-flag') return `${step} touched files outside its expected set.`;
+  if (data.engineType === 'protected-path') return `${step} edited protected files; review is blocked.`;
+  return data.result === 'passed' ? `${step} gate passed.`
+    : data.result === 'failed' ? `${step} gate failed${data.failedStage ? ` at ${data.failedStage}` : ''}.`
+      : `${step} gate activity.`;
+}
+
 // Keep KB activity within the existing progress event schema. Only this projection
 // is saved and sent to the operator, including when the service replays the run.
 function knowledgeEventData(event) {
@@ -122,6 +164,12 @@ export class Runs {
             run.workspaceDir = target; run.resumable = true;
           }
           const e = msg.event;
+          const step = stepEventData(e);
+          if (step) {
+            run.phase = scrub(e.type);
+            this.event(run, 'progress', stepEventMessage(step), step);
+            return;
+          }
           const knowledge = knowledgeEventData(e);
           if (knowledge) {
             this.event(run, 'progress', knowledge.engineType, knowledge);
