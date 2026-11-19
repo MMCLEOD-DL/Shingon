@@ -75,6 +75,9 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 .fact-bad strong { color: var(--bad); }
 .fact-unknown strong { color: var(--muted); }
 .coverage { margin: 12px 0; }
+.step-checks { margin: 12px 0; }
+.step-checks ul { padding-left: 20px; }
+.step-checks li.warn { list-style-position: inside; margin: 4px 0; }
 .runs { width: 100%; border-collapse: collapse; }
 .runs th, .runs td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .activity ol { padding-left: 20px; }
