@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, cpSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { runProjectCouncil } from '../src/council/projectCouncil.js';
 import { git } from '../src/workspace.js';
 import { BRIEF } from './fixtures/council-full/brief.js';
@@ -14,7 +15,7 @@ import { councilStubs } from './helpers/councilStubs.js';
 import { makeRepo } from './helpers/gitRepo.js';
 
 const RUN = '20261027-100000-abcd';   // Ruling R1: a real-format run id
-const FX = new URL('./fixtures/council-full/gates-out/', import.meta.url).pathname;
+const FX = fileURLToPath(new URL('./fixtures/council-full/gates-out/', import.meta.url));
 const log = (f) => readFileSync(new URL(`./fixtures/council-full/${f}`, import.meta.url), 'utf8');
 const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const okChecks = { browsersInstalled: () => ({ ok: true, why: '' }), testDatabaseProblem: () => null };

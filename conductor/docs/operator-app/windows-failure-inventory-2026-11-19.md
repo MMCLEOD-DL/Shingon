@@ -4,7 +4,15 @@ PR130 R1 is valid: a repeated failure count is not an accepted baseline. This in
 
 Rows remain OPEN until their named assertions run successfully or receive an explicitly agreed alternative. The first isolated rerun at `293eb161b042f27dd092902b1b6e4157c9b32d72` had **1,732total; 1,532pass / 199fail / 1skip**, exit1, fixing W029/W055 with zero new failure identities. The tool-discovery follow-up below advances that result; it does not turn the remaining failures into an accepted baseline. No existing assertions were weakened and no Windows skips were added. P07/P08 remain IN_PROGRESS; native acceptance is not established.
 
-## Latest native checkpoint — tool discovery and transport cleanup
+## Latest native checkpoint — fixture file URLs
+
+At test code `0aa6c87a34db2936ed25e7735f3cfcc2151e58b8`, the full isolated native suite has **1,738 total; 1,665 pass / 72 fail / 1 skip**, exit1 (519.573 seconds). Exact file/name comparison against the preceding91 failures resolves **19**, all originally FIX-URL, with **zero new failure identities**. All72 current failures match inventory rows. The cumulative inventory is now **129 FIXED_NATIVE / 72 OPEN**. The additional test relative to the preceding checkpoint is PR135's final batch-shell control, already included in this baseline.
+
+Seven conversions in six test/helper files now use Node `fileURLToPath` for native filesystem paths. Existing assertions and fixture bytes are unchanged. The affected six test files reproduce **97 total; 77 pass / 20 fail**, exit1 before correction, and **97 total; 96 pass / 1 fail**, exit1 afterward, with no skips in either focused run. The focused and full runs resolve exactly the same19 original identities.
+
+W018 remains OPEN: correct report loading now reaches `symlinkSync`, which Windows refuses with EPERM before the screenshot-exclusion assertion. Its latest category is ENV-SYMLINK; its original FIX-URL category remains historical. Codex owns a fixture adaptation retaining the security assertion; Malcolm owns any privilege decision. No Windows skips, privilege changes or relaxed assertions were introduced. Native acceptance remains open;72 failures are not an accepted passing baseline. These runs use synthetic participants; no live model/worker/remote acceptance was performed.
+
+## Previous native checkpoint — tool discovery and transport cleanup
 
 At production code `f3d08164e751d270ff3770c66ac4e758c832ca67`, the full isolated native suite has **1,737total; 1,645pass / 91fail / 1skip**, exit1. Exact file/name-set comparison with the prior199 failures resolves **108**, all initially assigned to WIN-TOOLS, with **zero new failure identities**. Together with PR131's two fixes, the CSV now has **110 FIXED_NATIVE / 91 OPEN** rows. Its original `category` and `observed_cause` retain the baseline classification; `latest_category`/`latest_observation` record progress and newly reached blockers.
 

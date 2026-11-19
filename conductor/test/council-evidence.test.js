@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, existsSync, cpSync, rmSync, readdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { DEFAULT_OPTIONS } from '../src/options.js';
 import { openCouncilLog } from '../src/council/councilWorkspace.js';
@@ -11,7 +12,7 @@ import { MachineError } from '../src/factory/machines/index.js';
 import { fakeGatesRun, fakeMachine, fakeProvider, fakeSsh } from './helpers/councilFull.js';
 import { makeRepo } from './helpers/gitRepo.js';
 
-const FX = new URL('./fixtures/council-full/gates-out/', import.meta.url).pathname;
+const FX = fileURLToPath(new URL('./fixtures/council-full/gates-out/', import.meta.url));
 const tmp = () => mkdtempSync(path.join(tmpdir(), 'evidence-'));
 const log = (f) => readFileSync(new URL(`./fixtures/council-full/${f}`, import.meta.url), 'utf8');
 const okChecks = { browsersInstalled: () => ({ ok: true, why: '' }), testDatabaseProblem: () => null };

@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
 import { TEST_FILE, testFindings, testFilesFinding, CORRECTNESS } from '../src/council/correctness.js';
 
 test('TEST_FILE recognises the usual test locations', () => {
@@ -68,7 +69,7 @@ import { verifyFindings, moneyFindings, CROSSING_TEST } from '../src/council/cor
 import { parseVitestJson, parsePlaywrightJson } from '../src/council/gates.js';
 import { BRIEF } from './fixtures/council-full/brief.js';
 
-const FXDIR = new URL('./fixtures/council-full/gates-out/', import.meta.url).pathname;
+const FXDIR = fileURLToPath(new URL('./fixtures/council-full/gates-out/', import.meta.url));
 const fx = (n) => rf(nodePath.join(FXDIR, n), 'utf8');
 function moneyDir() {
   const d = mkdtempSync(nodePath.join(tmpdir(), 'cmoney-'));
