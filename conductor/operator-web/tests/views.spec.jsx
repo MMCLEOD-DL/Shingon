@@ -178,6 +178,18 @@ describe('live progress', () => {
     expect((await screen.findAllByText(/Started the next coding step\./)).length).toBeGreaterThan(0);
     expect(screen.queryByText(/^\s*chunk\s*$/)).toBeNull();
   });
+  test('a streamed step-check failure appears in the step checks section and the activity log, with the attempt', async () => {
+    showRun({ ...fixtures.runningRun, phase: 'gate' });
+    expect(await screen.findByText(/— checking the step/)).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Step checks' })).toBeNull();
+    const es = FakeEventSource.all[0];
+    es.emit({ ...fixtures.events[0], seq: 1, phase: 'gate', message: 'Step 2 gate failed at types.',
+      data: { engineType: 'gate', index: 1, attempt: 1, of: 3, result: 'failed', failedStage: 'types', excerpt: 'src/a.ts(3,1): error TS2322' } });
+    const section = await screen.findByRole('region', { name: 'Step checks' });
+    expect(within(section).getByText(/Attempt 1 of 3: failed at the “types” check\./)).toBeTruthy();
+    expect(within(section).getByText('src/a.ts(3,1): error TS2322')).toBeTruthy();
+    expect(screen.getAllByText('Step 2: attempt 1 of 3 failed at the “types” check.').length).toBeGreaterThan(0);
+  });
 });
 
 test('cancel asks first, then reports a request rather than a confirmed stop', async () => {

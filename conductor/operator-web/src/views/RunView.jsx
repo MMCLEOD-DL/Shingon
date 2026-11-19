@@ -4,6 +4,7 @@ import { applyEvents, followRun, STREAM } from '../events.js';
 import { ErrorNote } from '../components/ErrorNote.jsx';
 import { Coverage, ReviewDetails, diffShownInFull } from '../components/Evidence.jsx';
 import { KnowledgeNote } from '../components/Knowledge.jsx';
+import { StepChecks } from '../components/StepChecks.jsx';
 import { eventText, finishReason, phaseText, plain, shortSha, statusText, when } from '../text.js';
 
 const ACTIVE = new Set(['queued', 'running', 'awaiting-decision', 'cancelling']);
@@ -296,6 +297,7 @@ export function RunView({ api, runId, go }) {
         onAnswered={() => { answeredAt.current = run.lastEventSeq; setAnswered(true); setNotice(ANSWER_SAVED); refresh(); }} />}
 
       <Coverage coverage={run.coverage} />
+      <StepChecks events={events} />
       <KnowledgeNote events={events} />
       {['completed', 'rejected'].includes(run.status) && review && <details><summary>What was reviewed</summary><ReviewDetails review={review} /></details>}
 
