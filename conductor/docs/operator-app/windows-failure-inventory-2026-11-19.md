@@ -2,7 +2,7 @@
 
 PR130 R1 is valid: a repeated failure count is not an accepted baseline. This inventory reconciles **all201 distinct failures** from the saved full native run at code `80b90be846b35455d2329ce61dbd01e433f02689` (1,728total; 1,526pass / 201fail / 1skip, exit1). The [CSV](windows-failure-inventory-2026-11-19.csv) identifies every test by its saved name/location, primary observed cause, owner and required action. Locations refer to that pinned revision. Private logs and host paths are excluded.
 
-All rows are OPEN until their named assertions run successfully or receive an explicitly agreed alternative. Classifying the first blocker does not exonerate later code that the test never reached. No existing assertions were weakened and no Windows skips were added. P07/P08 remain IN_PROGRESS; native acceptance is not established.
+Rows remain OPEN until their named assertions run successfully or receive an explicitly agreed alternative. The isolated full rerun at `293eb161b042f27dd092902b1b6e4157c9b32d72` has **1,732total; 1,532pass / 199fail / 1skip**, exit1. Exact file/name-set reconciliation identifies **W029 and W055 as fixed, zero new failure identities, and the other199 still OPEN**; the CSV records those statuses. Classifying the first blocker does not exonerate later code that the test never reached. No existing assertions were weakened and no Windows skips were added. P07/P08 remain IN_PROGRESS; native acceptance is not established.
 
 | Category | Count | Evidence and disposition |
 |---|---:|---|
@@ -15,7 +15,7 @@ All rows are OPEN until their named assertions run successfully or receive an ex
 | FIX-LOCALPATH |7|Tests hardcode POSIX spelling for local paths or persist `/repo` while the reader normalizes a native local path. Normalize the fixture/expectation with host path APIs.|
 | ENV-MODE |4|Windows stat reports0666 where0600/0700 is asserted. This is not an ACL assessment: privacy remains an open native requirement. Define and verify actual synthetic-file ACL behavior without weakening permissions.|
 | FIX-SIGNAL |2|Node child.kill(SIGINT/SIGTERM) abruptly terminates the native child and returns a null exit code, rather than exercising a graceful console interrupt. Keep graceful handling and forced termination distinct in a safe harness.|
-| WIN-CMD |2|**Real false-green test execution**, independently reproduced below. Corrected by this PR; original named cases and full-suite rerun are required before closing rows W029/W055.|
+| WIN-CMD |2|**Real false-green test execution**, independently reproduced below. Corrected by this PR; original named cases pass in the isolated full native rerun. Rows W029/W055 are FIXED_NATIVE; all other rows remain OPEN.|
 | WIN-ABRUPT |1|A synthetic wake child survives abrupt parent termination. This is observed, not dismissed as harmless fixture noise. Codex must investigate owned orphan cleanup separately from genuine console Ctrl-C. Cancellation acceptance stays open.|
 | WIN-REPORTPATH |1|Native path.join inserts backslashes into a generated POSIX-style report command. Codex must settle the local-versus-shell path contract and correct the appropriate source/fixture seam.|
 | FIX-CLEANUP |1|A fixture finally-block removes a directory before its synthetic catcher children have exited; Windows rm fails EPERM and can obscure the earlier remote-path refusal. Await owned child exit; retain cleanup assertions.|
