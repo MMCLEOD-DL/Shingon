@@ -2,8 +2,9 @@
 // Fakes for the full council (Plan 9). Nothing here runs a real npm, browser, database or machine.
 import { cpSync, mkdirSync, existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const FIXTURES = new URL('../fixtures/council-full/', import.meta.url).pathname;
+const FIXTURES = fileURLToPath(new URL('../fixtures/council-full/', import.meta.url));
 
 function stepOf(command) {
   if (command.includes('npm ci')) return 'npm-ci';

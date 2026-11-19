@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { checkAcceptance, renderResults, CRITERIA, FOUNDATION_V020_ROUTES } from '../spikes/acceptance/check-acceptance.mjs';
 import { makeAcceptanceProject, MUTATIONS, RUNS } from './helpers/acceptanceProject.js';
 import { approvedBrief } from './helpers/briefFixtures.js';
@@ -74,7 +75,7 @@ test('a failing run report cannot be replaced by a hand-made one: there is no fl
   const r = await checkAcceptance(dir, { ...OPTS, tests: good, changeTests: good });   // unknown options are ignored
   assert.equal(byId(r).C3.status, 'fail');
   assert.match(byId(r).C3.evidence, /monthly-report#1: its test failed/);
-  const cli = new URL('../spikes/acceptance/check-acceptance.mjs', import.meta.url).pathname;
+  const cli = fileURLToPath(new URL('../spikes/acceptance/check-acceptance.mjs', import.meta.url));
   for (const flag of ['--tests', '--change-tests']) {
     const out = spawnSync(process.execPath, [cli, dir, '--build', RUNS.build, '--change', RUNS.change, flag, good], { encoding: 'utf8' });
     assert.equal(out.status, 2, flag);
@@ -145,7 +146,7 @@ test('renderResults gives the operator a table with every criterion', async () =
 });
 
 test('the CLI exits 2 with usage for bad arguments, 1 on a fail, 0 on a pass', async () => {
-  const cli = new URL('../spikes/acceptance/check-acceptance.mjs', import.meta.url).pathname;
+  const cli = fileURLToPath(new URL('../spikes/acceptance/check-acceptance.mjs', import.meta.url));
   const run = (...args) => spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8' });
   const bad = run(await fx());                                   // no --build
   assert.equal(bad.status, 2);

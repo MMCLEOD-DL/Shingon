@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import { readFileSync, mkdtempSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { DEFAULT_OPTIONS } from '../src/options.js';
 import { detectAxe, parseVitestJson, parsePlaywrightJson, parseA11yLines, parseCrossingJson, runGates, GATE_STEPS } from '../src/council/gates.js';
 import { fakeGatesRun } from './helpers/councilFull.js';
 
-const FX = new URL('./fixtures/council-full/gates-out/', import.meta.url).pathname;
+const FX = fileURLToPath(new URL('./fixtures/council-full/gates-out/', import.meta.url));
 const tmp = () => mkdtempSync(path.join(tmpdir(), 'gates-'));
 const read = (f) => readFileSync(path.join(FX, f), 'utf8');
 const okChecks = { browsersInstalled: () => ({ ok: true, why: '' }), testDatabaseProblem: () => null };
