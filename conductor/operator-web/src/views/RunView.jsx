@@ -296,7 +296,7 @@ export function RunView({ api, runId, go }) {
       {pending && !answered && <Decision api={api} run={run} review={review} onStale={(e) => { setError(e); refresh(); }}
         onAnswered={() => { answeredAt.current = run.lastEventSeq; setAnswered(true); setNotice(ANSWER_SAVED); refresh(); }} />}
 
-      <Coverage coverage={run.coverage} />
+      <Coverage coverage={run.coverage} ended={!active && !run.resumable && !run.recoveryRequired} />
       <StepChecks events={events} />
       <KnowledgeNote events={events} />
       {['completed', 'rejected'].includes(run.status) && review && <details><summary>What was reviewed</summary><ReviewDetails review={review} /></details>}
