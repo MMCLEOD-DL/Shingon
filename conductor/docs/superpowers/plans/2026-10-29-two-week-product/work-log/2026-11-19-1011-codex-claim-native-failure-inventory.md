@@ -1,0 +1,7 @@
+# Codex claim — native failure inventory
+
+- Packet: P07/P08, PR130 review R1 and notes N1/N2. Owner Codex; Claude retains N3 UI rendering.
+- Branch `codex/native-failure-inventory`, baseline `ec3072585b22dff71a0339cb7b78b36c962c3dcc`. Latest Codex final submission155520e verified merged.
+- Scope: classify each of the201 failures in the saved native full-suite log by repository test name/location and observed cause, with an owner and next action; document unresolved causes explicitly. Add N2's intended pre-plan Resume cleanup contract to interface.md. Record N1's validation-before-merge practice.
+- Scope expanded after an independent native control reproduced a false green: the configured `node -e "process.exit(2)"` exits0 through the current test shell. Correct the named minimal shared seam `src/service/platform.js` plus `src/exec.js` Windows command-line argument handling and add meaningful native regression controls. Track tool discovery separately. No existing Windows assertions or skips will be weakened. Classification does not make failures accepted or passed; P07/P08 remain IN_PROGRESS. Any Windows skips require Malcolm's agreement. Preserve private logs and exclude private paths/raw traces from the committed inventory.
+- First action: parse saved failure blocks, reconcile201 unique entries, inspect relevant test/source causes, and prepare a reviewable evidence inventory.

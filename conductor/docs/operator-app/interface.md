@@ -51,6 +51,10 @@ Persistent state is `service-state.json` outside workspaces; the engine's own `.
 
 If the worker's second evidence check refuses approval before handing it back to the engine, the worker reports failed with `reasonCode:'review-changed'` and `landingState:'not-started'`. Only that explicit pre-landing refusal clears uncertainty for a failed approved run. Its workspace remains available, its activity message states that nothing was landed, and Resume requests fresh review. A worker disappearance or generic failed outcome after approval still requires inspection. This is internal worker IPC metadata; the browser uses canonical run flags and activity text, not guessed error strings.
 
+## Preparation cleanup on Resume
+
+When preparation returns a refusal before any plan has been saved, including on Resume after an interrupted baseline, the engine archives the transcript and sets its outcome `workspaceDir` to `null` after removing the unused clone. The service then offers no Resume; start a new run to retry. A saved plan/completed work or explicit `keepWorkspace` preserves the clone instead. An interrupted baseline itself remains resumable.
+
 ## Consumer fixtures and tests
 
 Use `test/fixtures/operator-app/contract-v1.json` for UI states and `fake-worker.cjs` only for transport tests. The JSON includes result/escalation/plan/chunk/fallback decisions, stale errors, failed/unrun tests, malicious content and terminal states. These are synthetic fixtures, not live acceptance evidence.

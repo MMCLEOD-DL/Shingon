@@ -14,7 +14,7 @@ export function stopChild(child, signal = 'SIGKILL') {
 
 const LIVE = new Set(); // every running child, for Ctrl-C
 
-export function runCommand({ cmd, args = [], cwd, input = null, timeoutMs = 120000, env } = {}) {
+export function runCommand({ cmd, args = [], cwd, input = null, timeoutMs = 120000, env, windowsVerbatimArguments = false } = {}) {
   // Default: the parent env minus SCRUB_ENV keys (see secrets.js). Callers that need a key pass env explicitly.
   env = env ?? childEnv();
   return new Promise((resolve) => {
@@ -34,7 +34,7 @@ export function runCommand({ cmd, args = [], cwd, input = null, timeoutMs = 1200
       // Detached cmd.exe loses inherited output handles in child programs on
       // Windows. taskkill /T already owns cancellation there; POSIX needs a
       // detached process group so stopChild can signal the whole tree.
-      child = spawn(cmd, args, { cwd, env, detached: process.platform !== 'win32', windowsHide: true });
+      child = spawn(cmd, args, { cwd, env, detached: process.platform !== 'win32', windowsHide: true, windowsVerbatimArguments });
     } catch (err) {
       resolve({ stdout, stderr: String(err?.message ?? err), code: -1, timedOut });
       return;
