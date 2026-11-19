@@ -47,8 +47,9 @@ test('synthetic SSH environment refuses a missing stub before transport can run'
 
 test('synthetic SSH environment uses the host delimiter and one native PATH key', async () => {
   const f = fakeSsh(tmp(), [{ match: '^fixture-check$', stdout: 'synthetic-ok' }]);
-  const env = f.env(process.platform === 'win32' ? { Path: 'retained-search-path' } : { PATH: 'retained-search-path' });
-  assert.equal(env.PATH, `${f.binDir}${path.delimiter}retained-search-path`);
+  const retained = `${path.dirname(process.execPath)}${path.delimiter}retained-search-path`;
+  const env = f.env(process.platform === 'win32' ? { Path: retained } : { PATH: retained });
+  assert.equal(env.PATH, `${f.binDir}${path.delimiter}${retained}`);
   if (process.platform === 'win32') assert.equal(Object.keys(env).filter(k => k.toUpperCase() === 'PATH').length, 1);
   const result = await remoteRun(BOX, 'fixture-check', { env });
   assert.equal(result.code, 0, result.stderr);
