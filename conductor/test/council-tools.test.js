@@ -43,13 +43,16 @@ test('Windows lookup honors PATHEXT order and quoted PATH entries; POSIX keeps e
 });
 
 test('tool discovery rejects paths, directories and malformed executable extensions', () => {
-  const dir = tmp();
+  const root = tmp();
+  const escape = writeStubCli(root, 'escape', 'console.log(1)');
+  const dir = path.join(root, 'bin'); mkdirSync(dir);
   mkdirSync(path.join(dir, 'folder.exe'));
   const env = { PATH: dir, PATHEXT: '.EXE;..\\outside;.CMD' };
   assert.equal(findBin('folder', { env }), null);
   for (const name of ['../native-check', 'x\0y', ...(process.platform === 'win32' ? ['..\\native-check', '.\\native-check', 'C:native-check'] : [])]) {
     assert.equal(findBin(name, { env }), null);
   }
+  assert.equal(findBin(`..${path.sep}${path.basename(escape)}`, { env }), null, 'a real executable outside PATH is not a bare tool name');
 });
 
 test('resolveTool: false turns it off; a configured path wins over PATH', () => {
