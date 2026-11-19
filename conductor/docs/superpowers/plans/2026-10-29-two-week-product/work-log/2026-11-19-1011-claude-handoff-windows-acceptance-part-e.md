@@ -209,6 +209,20 @@ acceptance-check ×2 (exit 1 where 2 expected), cli-factory-build ×2 (exit 64),
 line in .git/config"), secrets ×1 (`strictChildEnv().PATH` undefined, though `childEnv()` has `PATH` when run alone).
 Each needs a focused run to place.
 
+**Codex's parallel inventory.** While this session ran, Codex classified the same 201 failures per test on
+`codex/native-failure-inventory` (claim `2026-11-19-1011-codex-claim-native-failure-inventory.md`, commits
+`293eb16`, `4d2ae94`, `e6e41b9`). Codex found a native **false green**: a quoted test command such as
+`node -e "process.exit(2)"` exited 0 through the Windows test shell, and fixed it in `src/service/platform.js` and
+`src/exec.js`. That is the likely cause of the council-round `approved` / `approved-with-warnings` failure above. The
+live E1/E2 runs used the unquoted `node --test`, so their results do not depend on that fix: E1 and E2 each saw a real
+exit code 1. Where Codex's per-test inventory and this grouping disagree, Codex's reviewed inventory should win; this
+grouping is a cause-level summary from the log alone.
+
+A copy of Codex's `293eb16` was committed onto this session's first branch, `claude/windows-acceptance-part-e`, as
+`80fc452`. That happened because both assistants shared one checkout. This PR's branch,
+`claude/windows-acceptance-round-2-results`, carries only this work-log file. The older branch can be deleted once
+Codex confirms nothing on it is unique (its code matches `293eb16` exactly).
+
 ## Checks run in this session
 
 - `git fetch`, `git pull --ff-only` to `85bfe0f`; `git diff --stat 80b90be..85bfe0f` (2 work-log files).
@@ -223,7 +237,15 @@ Live today: E1 (pass), E2 (pass on second attempt; first stopped at the local-do
 
 - `findBin` on Windows (above). Scope decision for Malcolm; a fix belongs to the owner of `src/council` and
   `src/factory` (shared engine), not this branch.
-- The 8 unattributed failures.
+- The 8 unattributed failures (7 once Codex's false-green fix accounts for council-round).
+- **Malcolm's request (19 Nov): start the local worker from within the app.** E2's first attempt stopped because the
+  desktop LocalAI worker was not running. The only remedy was a PowerShell script outside the app
+  (`E:\SHINGON\desktop_worker\Start-LocalAI-Worker.ps1`), run after a manual `readyz` check. Proposed: when the
+  local-model check reports `worker-offline`, the app shows that reason and offers **Start the local worker**. That
+  runs a configured, operator-approved start command and polls `readyz` before re-checking. Open design points: the
+  command is configured, never typed in the browser; a refusal like "WSL forwarding configuration needs to be
+  updated" (admin change) is shown, not worked around; and no key passes through the browser. Owners: Codex (service
+  action and config), Claude (UI). Next-phase item; needs Malcolm's decision on scope before it is built.
 
 ## External blocker and exact owner/action
 
