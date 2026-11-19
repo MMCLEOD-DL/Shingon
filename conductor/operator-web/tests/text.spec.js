@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { eventText, phaseText, finishReason } from '../src/text.js';
+import { activityText, eventText, phaseText, finishReason } from '../src/text.js';
 
 // First live run, 31 October 2026: the activity log and status line showed the engine's internal names.
 describe('plain words for engine steps', () => {
@@ -59,5 +59,38 @@ describe('the engine reason for a finished run', () => {
   test('no finished event gives no reason', () => {
     expect(finishReason([{ type: 'progress', message: 'start' }])).toBeNull();
     expect(finishReason([])).toBeNull();
+  });
+});
+
+// Windows round 2, Part E2 (19 Nov 2026): the service sends the escalation's summary twice, once as a
+// progress/escalation event and once as the decision-pending event, so the activity log said the same thing twice.
+describe('activity log lines', () => {
+  const summary = 'The tests are failing after the allowed attempts to fix this step.';
+  const ev = (seq, type, message, data = null) => ({ seq, type, message, data });
+  test('a progress line that repeats the question that follows it is replaced by a short sentence', () => {
+    const lines = activityText([
+      ev(1, 'progress', 'deadlock', { engineType: 'deadlock' }),
+      ev(2, 'progress', summary, { engineType: 'escalation' }),
+      ev(3, 'decision-pending', summary, { decisionId: 'd1' }),
+    ]);
+    expect(lines).toEqual(['The models could not agree on this step.', 'The models disagree, so your decision is needed.', summary]);
+  });
+  test('the same text is kept when no question follows, or a different one does', () => {
+    expect(activityText([ev(1, 'progress', summary, { engineType: 'escalation' })])).toEqual([summary]);
+    expect(activityText([
+      ev(1, 'progress', summary, { engineType: 'escalation' }),
+      ev(2, 'decision-pending', 'Review this step.', {}),
+    ])).toEqual([summary, 'Review this step.']);
+  });
+  test('only the question right after it counts, and an unknown event type gets a generic sentence', () => {
+    expect(activityText([
+      ev(1, 'progress', summary, { engineType: 'something-new' }),
+      ev(2, 'decision-pending', summary, {}),
+      ev(3, 'decision-resolved', 'reject', {}),
+      ev(4, 'decision-pending', summary, {}),
+    ])).toEqual(['Your decision is needed; the question follows.', summary, 'You rejected it.', summary]);
+  });
+  test('one line per event, so the count matches', () => {
+    expect(activityText(undefined)).toEqual([]);
   });
 });

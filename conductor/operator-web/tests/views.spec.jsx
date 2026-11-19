@@ -202,6 +202,18 @@ describe('live progress', () => {
     expect((await screen.findAllByText(/Started the next coding step\./)).length).toBeGreaterThan(0);
     expect(screen.queryByText(/^\s*chunk\s*$/)).toBeNull();
   });
+  test('an escalation that repeats the question that follows it is listed once in the activity log', async () => {
+    const { container } = render(<RunView api={withRun(fixtures.runningRun).api} runId={fixtures.runningRun.id} go={() => {}} />);
+    await screen.findByText('Working');
+    const summary = 'The tests are failing after the allowed attempts to fix this step.';
+    const es = FakeEventSource.all[0];
+    es.emit({ ...fixtures.events[0], seq: 1, phase: 'escalation', participant: null, message: summary, data: { engineType: 'escalation' } });
+    es.emit({ ...fixtures.events[0], seq: 2, type: 'decision-pending', phase: 'escalation', participant: null, message: summary, data: { decisionId: 'd1' } });
+    expect(await screen.findByText('Activity log (2)')).toBeTruthy();
+    const log = within(container.querySelector('details.activity'));
+    expect(log.getAllByText(new RegExp(summary)).length).toBe(1);
+    expect(log.getByText(/The models disagree, so your decision is needed\./)).toBeTruthy();
+  });
   test('a streamed step-check failure appears in the step checks section and the activity log, with the attempt', async () => {
     showRun({ ...fixtures.runningRun, phase: 'gate' });
     expect(await screen.findByText(/— checking the step/)).toBeTruthy();
