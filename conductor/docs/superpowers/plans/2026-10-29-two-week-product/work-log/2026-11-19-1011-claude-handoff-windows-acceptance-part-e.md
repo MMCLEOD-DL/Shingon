@@ -60,7 +60,7 @@ Live, synthetic and not-run results are kept apart. Dates and commits are per ro
 | D3 | Windows restart mid-task (optional) | live | not run | skipped by Malcolm's choice on 12 Nov and again on 19 Nov |
 | E1 | Failing baseline stops before any model call | live | pass | 19 Nov 10:40, `85bfe0f`. See "E1 evidence" |
 | E2 | Broken test blocks the step; capped retries; reject recommendation | live | pass | 19 Nov 10:48–10:53, `85bfe0f`, second attempt; the first stopped at the local-down fallback question. See "E2 evidence" |
-| F | UAC and console table | live | recorded with gaps | 19 Nov additions: E1 0 prompts, E2 1 prompt (local and both subscriptions used), no consoles; the first E2 attempt and the app start: none reported. Still missing: F2 local can-code and D2 counts; F3 not run |
+| F | UAC and console table | live | recorded with gaps | 19 Nov additions: E1 none reported, E2 1 prompt (local and both subscriptions used), no consoles; the first E2 attempt and the app start: none reported. Still missing: F2 local can-code and D2 counts; F3 not run |
 
 ## E1 evidence (live app, 19 Nov 2026)
 
