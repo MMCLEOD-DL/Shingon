@@ -123,6 +123,36 @@ test('a passing --test baseline reaches the ordinary CLI review flow', async t =
   assert.match(result.out, /Not approved\. Your repository is unchanged\./);
 });
 
+for (const missingWorker of [false, true]) test(`preparation refusal after baseline archives the CLI reason (${missingWorker ? 'missing worker' : 'fallback declined'})`, async t => {
+  const s = await setup({ local: { up: false } });
+  t.after(s.close);
+  if (missingWorker) {
+    const config = JSON.parse(readFileSync(s.cfg, 'utf8'));
+    config.participants[0].bin = path.join(s.baseDir, 'missing-claude-fixture.exe');
+    writeFileSync(s.cfg, JSON.stringify(config));
+  }
+  const result = await spawnBin(['add multiply', '--config', s.cfg, '--test', 'node --version'], { cwd: s.repo, env: s.env });
+  assert.equal(result.code, missingWorker ? 2 : 1, result.out);
+  assert.match(result.out, /Baseline tests passed/i);
+  const logs = path.join(s.baseDir, 'logs');
+  assert.ok(existsSync(logs), 'preparation refusal archives its transcript');
+  const events = readFileSync(path.join(logs, readdirSync(logs)[0]), 'utf8').trim().split('\n').map(JSON.parse);
+  const finish = events.find(e => e.type === 'finish');
+  assert.ok(typeof finish.reason === 'string' && finish.reason.length > 0);
+  assert.ok(readdirSync(s.baseDir).every(name => name === 'logs' || !name.endsWith('.conductor')));
+});
+
+test('CLI preparation refusal honors --keep-workspace before team construction', async t => {
+  const s = await setup({ local: { up: false } });
+  t.after(s.close);
+  const result = await spawnBin(['add multiply', '--config', s.cfg, '--test', 'node --version', '--keep-workspace'], { cwd: s.repo, env: s.env });
+  assert.equal(result.code, 1, result.out);
+  const meta = readdirSync(s.baseDir).find(name => name.endsWith('.conductor'));
+  assert.ok(meta);
+  assert.ok(existsSync(path.join(s.baseDir, meta.slice(0, -'.conductor'.length))));
+  assert.match(JSON.parse(readFileSync(path.join(s.baseDir, meta, 'state.json'), 'utf8')).reason, /did not start/);
+});
+
 test('an interrupted baseline gives a resume hint and rechecks visibly on resume', async t => {
   const s = await setup();
   t.after(s.close);

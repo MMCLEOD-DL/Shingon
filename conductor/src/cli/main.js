@@ -137,10 +137,13 @@ export async function main(argv, {
       onSignal(() => interrupt());
       args = {
         hooks: { onEvent: baselineEvent },
-        options: resuming ? (cli.flags.testCommand ? { testCommand } : {}) : { ...config.options, testCommand },
+        options: { ...(resuming ? (cli.flags.testCommand ? { testCommand } : {}) : { ...config.options, testCommand }),
+          ...(cli.flags.keepWorkspace ? { keepWorkspace: true } : {}) },
         prepare: async (dir) => {
           prepared = await prepareFor(dir, handler => { interrupt = handler; });
-          if ('code' in prepared) return { outcome: { status: prepared.code === EXIT.stopped ? 'stopped' : 'failed' } };
+          if ('code' in prepared) return { outcome: {
+            status: prepared.code === EXIT.stopped ? 'stopped' : 'failed', reason: prepared.reason,
+          } };
           const { built, hooks, overrides } = prepared;
           return { team: built.team, hooks, options: overrides, warnings: built.warnings };
         },

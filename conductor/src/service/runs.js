@@ -169,6 +169,9 @@ export class Runs {
           run.recoveryRequired = Boolean(run.landingPending && !reviewRefused && !['landed', 'rejected'].includes(outcome.status));
           run.landingPending = false;
           const stoppedBeforeWork = ['baseline-tests-failed', 'paused-before-work'].includes(outcome.reasonCode);
+          // The engine archives unused preparation workspaces. Do not retain a
+          // stale clone path or advertise Resume after that cleanup.
+          if (outcome.workspaceDir === null) run.workspaceDir = null;
           run.resumable = !stoppedBeforeWork && !run.recoveryRequired && ['paused', 'failed', 'interrupted'].includes(run.status) && Boolean(run.workspaceDir);
           run.activeDecisionId = null;
           if (run.coverage.local === 'unknown') run.coverage.local = 'not-used';

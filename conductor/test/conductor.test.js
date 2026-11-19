@@ -31,6 +31,50 @@ function hooks(over = {}) {
 
 const base = () => mkdtempSync(path.join(tmpdir(), 'cond-'));
 
+for (const status of ['failed', 'stopped', 'paused']) {
+  test(`preparation ${status} archives an unused workspace and its reason`, async () => {
+    const repo = await makeRepo();
+    const before = await refsOf(repo);
+    const dir = base();
+    let workspace;
+    const out = await runTask({ repoDir: repo, request: 'prepare refusal', baseDir: dir,
+      options: { testCommand: 'node --version' },
+      prepare: async cwd => { workspace = cwd; return { outcome: { status, reason: 'Synthetic preparation refusal.' } }; },
+    });
+    assert.equal(out.status, status);
+    assert.equal(out.reason, 'Synthetic preparation refusal.');
+    assert.equal(out.workspaceDir, null);
+    assert.equal(existsSync(workspace), false);
+    assert.equal(existsSync(`${workspace}.conductor`), false);
+    assert.match(readFileSync(out.transcript, 'utf8'), /Synthetic preparation refusal/);
+    assert.equal(await refsOf(repo), before);
+  });
+}
+
+test('preparation refusal respects keepWorkspace', async () => {
+  const out = await runTask({ repoDir: await makeRepo(), request: 'keep preparation', baseDir: base(),
+    options: { testCommand: 'node --version', keepWorkspace: true },
+    prepare: async () => ({ outcome: { status: 'failed', reason: 'Synthetic refusal.' } }),
+  });
+  assert.ok(existsSync(out.workspaceDir));
+  assert.equal(JSON.parse(readFileSync(`${out.workspaceDir}.conductor/state.json`, 'utf8')).reason, 'Synthetic refusal.');
+});
+
+test('preparation refusal during resume preserves a saved plan and completed steps', async () => {
+  const repo = await makeRepo();
+  const first = await runTask({ repoDir: repo, request: 'saved work', team: makeTeam(),
+    hooks: hooks({ approveChunk: async () => false }), baseDir: base(), options: { approveEachChunk: true } });
+  const statePath = `${first.workspaceDir}.conductor/state.json`;
+  const state = JSON.parse(readFileSync(statePath, 'utf8'));
+  writeFileSync(statePath, JSON.stringify({ ...state, status: 'paused' }));
+  const head = (await git(first.workspaceDir, ['rev-parse', 'HEAD'])).stdout;
+  const out = await resume({ repoDir: repo, workspaceDir: first.workspaceDir,
+    prepare: async () => ({ outcome: { status: 'failed', reason: 'Synthetic resume refusal.' } }) });
+  assert.equal(out.workspaceDir, first.workspaceDir);
+  assert.equal((await git(out.workspaceDir, ['rev-parse', 'HEAD'])).stdout, head);
+  assert.deepEqual(JSON.parse(readFileSync(statePath, 'utf8')).chunkShas, state.chunkShas);
+});
+
 test('validateTeam enforces roles, editing and the two-vendor rule', () => {
   const t = makeTeam();
   assert.doesNotThrow(() => validateTeam(t));
