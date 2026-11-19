@@ -58,9 +58,37 @@ Live, synthetic and not-run results are kept apart. Dates and commits are per ro
 | D1 | Kill while working | live | pass | no processes left at 1 min, no manual cleanup; 12 Nov |
 | D2 | Kill while question pending | live | pass | withdrawn, asked again, two branches total; 12 Nov |
 | D3 | Windows restart mid-task (optional) | live | not run | awaiting Malcolm's go-ahead |
-| E1 | Failing baseline stops before any model call | live | not run yet | awaiting go-ahead |
+| E1 | Failing baseline stops before any model call | live | pass | 19 Nov 10:40, `85bfe0f`. See "E1 evidence" |
 | E2 | Broken test blocks the step; capped retries; reject recommendation | live | not run yet | awaiting go-ahead |
 | F | UAC and console table | live | recorded with gaps | F2 local and D2 counts missing; F3 not run |
+
+## E1 evidence (live app, 19 Nov 2026)
+
+Malcolm entered the LocalAI key at the hidden prompt and started the app in his own window at 10:15 (service PID
+33080). Claude never saw the bootstrap link or the key. Trial repo `main` had `42a3d66` "a test that already fails" on
+top of `start`; `node --test` there gave 1 pass, 1 fail. Task: *Add a negate(a) function with a test.*, started 10:40:45.
+
+- **Page:** heading "Paused". Message: "The configured tests already fail or could not run before any changes. Fix
+  the tests or test command, then start a new run. See the run transcript for the test output." Then: "Paused. It has
+  no saved work to resume: start the task again when you are ready." Who did the work: "Local model: not used.
+  Subscription models that completed calls: none yet." No question and no Approve button. Activity log (4).
+- **Service record** (`data/service-state.json`, run `e3d0f0c6`): four events in 0.3 s, `start` →
+  `baseline-tests` ("Baseline tests failed before model calls.", `passed:false`, `code:1`, output names
+  `already broken`) → `finish` → `finished`. No event names a participant. `coverage`: `local:"not-used"`,
+  `vendors:[]`. `activeDecisionId:null`, `decisionReceipts:{}`, `workspaceCommit:null`, `landedBranch:null`,
+  `resumable:false`.
+- **Engine record** (workspace `.conductor/transcript.jsonl` and `state.json`): `start`, `baseline-tests` at commit
+  `42a3d66` (`ran:true`, `passed:false`), `finish` with `status:"stopped"`, `reasonCode:"baseline-tests-failed"`;
+  `plan:null`, `chunkShas:[]`. Options showed `localRounds:1`, `frontierRounds:1`.
+- **Processes:** no `codex.exe`, `claude.exe` or worker `node.exe` started under the service (PID 33080) during or
+  after the run.
+- **Repo:** status clean; still only the two `conductor/*` branches from 12 Nov.
+- UAC prompts and console windows: none reported by Malcolm.
+- **Minor UI note (Claude's lane):** the yellow "Review coverage is weaker than planned. No subscription vendor
+  completed a call in this run." box shows on a run that rightly made no calls; for a baseline stop it reads like a
+  fault. Wording follow-up only.
+
+The broken test was then removed (`fdefb9e` "remove the broken test"); `node --test` gives 1 pass, 0 fail.
 
 ## The native Conductor suite's 201 failures, grouped by cause
 
