@@ -3,7 +3,20 @@
 // Rule: { host?, match (regex on the shQuoted command), once?, stdout?, subst?, stdoutFile?, stderr?, code?, saveStdinTo? }.
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
+import assert from 'node:assert/strict';
+import { findBin } from '../../src/council/tools.js';
 import { writeStubCli } from './stubCli.js';
+
+// Refuse fixture setup if discovery would escape to an installed SSH program.
+export function sshFixtureEnv(binDir, baseEnv = process.env) {
+  const windows = process.platform === 'win32';
+  const previous = baseEnv.PATH ?? (windows ? baseEnv[Object.keys(baseEnv).find(key => key.toUpperCase() === 'PATH')] : '') ?? '';
+  const env = { ...baseEnv };
+  if (windows) for (const key of Object.keys(env)) if (key.toUpperCase() === 'PATH') delete env[key];
+  env.PATH = `${binDir}${path.delimiter}${previous}`;
+  assert.equal(findBin('ssh', { env }), path.join(binDir, windows ? 'ssh.exe' : 'ssh'), 'SSH fixtures must resolve their own stub');
+  return env;
+}
 
 export function fakeSsh(dir, rules = []) {
   const base = path.resolve(dir, 'fakessh');
@@ -51,7 +64,7 @@ process.stdin.on('end', () => {
 `);
   return {
     binDir,
-    env(baseEnv = process.env) { return { ...baseEnv, PATH: `${binDir}:${baseEnv.PATH ?? ''}` }; },
+    env(baseEnv = process.env) { return sshFixtureEnv(binDir, baseEnv); },
     setRules(r) { writeFileSync(rulesFile, JSON.stringify(r)); writeFileSync(usedFile, '[]'); },
     calls() {
       if (!existsSync(callsFile)) return [];

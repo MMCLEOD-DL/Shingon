@@ -29,11 +29,21 @@ const isExecutableFile = (p) => {
 };
 
 export function findBin(bin, { env = process.env } = {}) {
-  if (typeof bin !== 'string' || !bin || bin.includes('/')) return null;
-  for (const dir of String(env?.PATH ?? '').split(path.delimiter)) {
+  const windows = process.platform === 'win32';
+  if (typeof bin !== 'string' || !bin || bin.includes('/') || bin.includes('\0')
+    || (windows && /[\\:]/.test(bin))) return null;
+  const envValue = name => env?.[name] ?? (windows ? env?.[Object.keys(env ?? {}).find(key => key.toUpperCase() === name)] : undefined);
+  const extensions = windows ? [...new Set(String(envValue('PATHEXT') ?? '.COM;.EXE;.BAT;.CMD')
+    .split(';').map(ext => ext.trim().toLowerCase()).filter(ext => /^\.[a-z0-9]+$/.test(ext)))] : [];
+  const explicit = ['.com', '.exe', '.bat', '.cmd', ...extensions].includes(path.extname(bin).toLowerCase());
+  const names = windows ? (explicit ? [bin] : extensions.map(ext => bin + ext)) : [bin];
+  for (let dir of String(envValue('PATH') ?? '').split(path.delimiter)) {
+    if (windows && dir.startsWith('"') && dir.endsWith('"')) dir = dir.slice(1, -1);
     if (!dir) continue;
-    const p = path.join(dir, bin);
-    if (isExecutableFile(p)) return p;
+    for (const name of names) {
+      const p = path.join(dir, name);
+      if (isExecutableFile(p)) return p;
+    }
   }
   return null;
 }

@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync, readlinkSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, createReadStream } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fakeSsh } from './helpers/fakeSsh.js';
+import { fakeSsh, sshFixtureEnv } from './helpers/fakeSsh.js';
 import { sshArgs, targetOf, targetOfMachine, targetProblem, remoteRun, remotePipe, sendFile, sshProblem, missingTools } from '../src/factory/ship/remote.js';
 
 const tmp = () => mkdtempSync(path.join(tmpdir(), 'remote-'));
@@ -39,6 +39,21 @@ test('targetProblem refuses a bad user, port, key path and host-key policy', () 
   assert.match(targetProblem({ ...BOX, keyPath: 'relative key' }), /key file/);
   assert.ok(targetProblem({ ...BOX, hostKeyPolicy: 'no' }));
   assert.equal(targetProblem({ host: 'acme-box', user: 'highland', port: null, keyPath: null, label: 'x' }), null);
+});
+
+test('synthetic SSH environment refuses a missing stub before transport can run', () => {
+  assert.throws(() => sshFixtureEnv(tmp(), process.env), /SSH fixtures must resolve their own stub/);
+});
+
+test('synthetic SSH environment uses the host delimiter and one native PATH key', async () => {
+  const f = fakeSsh(tmp(), [{ match: '^fixture-check$', stdout: 'synthetic-ok' }]);
+  const env = f.env(process.platform === 'win32' ? { Path: 'retained-search-path' } : { PATH: 'retained-search-path' });
+  assert.equal(env.PATH, `${f.binDir}${path.delimiter}retained-search-path`);
+  if (process.platform === 'win32') assert.equal(Object.keys(env).filter(k => k.toUpperCase() === 'PATH').length, 1);
+  const result = await remoteRun(BOX, 'fixture-check', { env });
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.stdout, 'synthetic-ok');
+  assert.equal(f.calls().length, 1);
 });
 
 test('remoteRun sends stdin, records the command, and reports ssh failures plainly', async () => {
@@ -109,7 +124,7 @@ if (host in exits) setTimeout(() => process.exit(exits[host]), 500);
 setInterval(() => {}, 1000);
 `);
   return {
-    env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}` },
+    env: sshFixtureEnv(binDir),
     pids: () => (existsSync(pids) ? readFileSync(pids, 'utf8').split('\n').filter(Boolean).map(Number) : []),
   };
 }
@@ -118,32 +133,35 @@ async function allGone(pids) {
   for (let i = 0; i < 100 && pids.some(alive); i++) await new Promise((r) => setTimeout(r, 20));
   return !pids.some(alive);
 }
-const openFds = (file) => readdirSync('/proc/self/fd').filter((fd) => { try { return readlinkSync(`/proc/self/fd/${fd}`) === file; } catch { return false; } });
 
-test('remotePipe kills the sending side when the receiving side fails', async () => {
+test('remotePipe kills the sending side when the receiving side fails', async t => {
   const d = tmp();
   const s = await hangingSsh(d, { 'acme-box': 4 });
+  t.after(() => { for (const pid of s.pids()) try { process.kill(pid, 'SIGKILL'); } catch {} });
   const r = await remotePipe({ target: BUILD, command: 'cat /a' }, { target: BOX, command: 'cat > /x' }, { timeoutMs: 10000, env: s.env });
   assert.deepEqual(r, { ok: false, why: 'the copy to acme-office stopped (code 4)' });
   assert.equal(s.pids().length, 2);
   assert.ok(await allGone(s.pids()), 'no ssh is left running');
 });
 
-test('remotePipe and sendFile give up after the time limit and kill both sides', async () => {
+test('remotePipe and sendFile give up after the time limit and kill both sides', async t => {
   const d = tmp();
   const s = await hangingSsh(d);
+  t.after(() => { for (const pid of s.pids()) try { process.kill(pid, 'SIGKILL'); } catch {} });
   const r = await remotePipe({ target: BUILD, command: 'cat /a' }, { target: BOX, command: 'cat > /x' }, { timeoutMs: 300, env: s.env });
   assert.equal(r.ok, false);
   assert.match(r.why, /^the copy took longer than/);
   assert.ok(await allGone(s.pids()), 'no ssh is left running');
   // A file bigger than a pipe's buffer: the receiver never reads it, so the copy stalls with the file still open.
   const src = path.join(d, 'images.tar'); writeFileSync(src, Buffer.alloc(4 * 1024 * 1024));
-  const r2 = await sendFile(src, { target: BOX, command: 'cat > /x' }, { timeoutMs: 300, env: s.env });
+  let fileStream;
+  const r2 = await sendFile(src, { target: BOX, command: 'cat > /x' }, { timeoutMs: 300, env: s.env,
+    openFile: file => { fileStream = createReadStream(file); return fileStream; } });
   assert.equal(r2.ok, false);
   assert.match(r2.why, /took longer than/);
   assert.ok(await allGone(s.pids()), 'no ssh is left running');
-  for (let i = 0; i < 50 && openFds(src).length; i++) await new Promise((res) => setTimeout(res, 20));
-  assert.deepEqual(openFds(src), [], 'the local file is closed');
+  for (let i = 0; i < 50 && !fileStream.closed; i++) await new Promise((res) => setTimeout(res, 20));
+  assert.equal(fileStream.closed, true, 'the real local file stream is closed');
 });
 
 test('sshProblem strips terminal control sequences from what ssh printed (one shared box-text helper)', async () => {

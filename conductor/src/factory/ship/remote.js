@@ -2,7 +2,7 @@
 // a remote command (optionally fed standard input), a streamed copy between machines, and plain-English failures.
 // Quoting and validation are Plan 8's (assertSafe, shQuote); this file has none of its own.
 import { createReadStream } from 'node:fs';
-import { runCommand, spawnTracked } from '../../exec.js';
+import { runCommand, spawnTracked, stopChild } from '../../exec.js';
 import { strictChildEnv } from '../../secrets.js';
 import { findBin } from '../../council/tools.js';
 import { assertSafe } from '../remote.js';
@@ -62,7 +62,7 @@ export async function remoteRun(t, command, { input = null, timeoutMs = 120000, 
 }
 
 // Streams a source (a remote command, or a local file) into `to`'s stdin. Both sides must exit 0.
-function stream(source, to, { timeoutMs = 600000, env = process.env } = {}) {
+function stream(source, to, { timeoutMs = 600000, env = process.env, openFile = createReadStream } = {}) {
   return new Promise((resolve) => {
     const problem = (source.target && targetProblem(source.target)) || targetProblem(to.target);
     const ssh = findBin('ssh', { env });
@@ -74,7 +74,9 @@ function stream(source, to, { timeoutMs = 600000, env = process.env } = {}) {
       settled = true;
       clearTimeout(timer);
       if (!ok) {
-        for (const k of kids) { try { process.kill(-k.pid, 'SIGKILL'); } catch { try { k.kill('SIGKILL'); } catch {} } }
+        // POSIX groups can outlive their root; Windows taskkill needs a live
+        // owned root to identify its descendants without risking a stale PID.
+        for (const k of kids) if (process.platform !== 'win32' || (k.exitCode === null && k.signalCode === null)) stopChild(k);
         if (source.localPath) srcStream?.destroy(); // a stalled copy would otherwise keep the local file open
       }
       resolve({ ok, why: ok ? null : why });
@@ -88,7 +90,7 @@ function stream(source, to, { timeoutMs = 600000, env = process.env } = {}) {
     const dest = spawnSsh(to.target, to.command, ['pipe', 'ignore', 'pipe']);
     dest.stdin.on('error', () => {});
     if (source.localPath) {
-      srcStream = createReadStream(source.localPath);
+      srcStream = openFile(source.localPath);
       srcStream.on('error', () => finish(false, `the copy from this machine stopped (could not read ${source.localPath})`));
       srcStream.on('end', () => { fromDone = true; if (toDone) finish(true); });
     } else {
