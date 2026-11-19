@@ -128,7 +128,9 @@ for (const missingWorker of [false, true]) test(`preparation refusal after basel
   t.after(s.close);
   if (missingWorker) {
     const config = JSON.parse(readFileSync(s.cfg, 'utf8'));
-    config.participants[0].bin = path.join(s.baseDir, 'missing-claude-fixture.exe');
+    for (const participant of config.participants.filter(p => p.adapter !== 'local-agent')) {
+      participant.bin = path.join(s.baseDir, `missing-${participant.name}-fixture.exe`);
+    }
     writeFileSync(s.cfg, JSON.stringify(config));
   }
   const result = await spawnBin(['add multiply', '--config', s.cfg, '--test', 'node --version'], { cwd: s.repo, env: s.env });
