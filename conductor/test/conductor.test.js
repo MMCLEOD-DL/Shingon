@@ -31,6 +31,17 @@ function hooks(over = {}) {
 
 const base = () => mkdtempSync(path.join(tmpdir(), 'cond-'));
 
+test('a quoted failing baseline cannot reach deferred model preparation', async () => {
+  let preparations = 0;
+  const out = await runTask({ repoDir: await makeRepo(), request: 'quoted baseline', baseDir: base(),
+    options: { testCommand: 'node -e "process.exit(2)"' },
+    prepare: async () => { preparations++; return { outcome: { status: 'failed', reason: 'Preparation must not run.' } }; },
+  });
+  assert.equal(preparations, 0);
+  assert.equal(out.reasonCode, 'baseline-tests-failed');
+  assert.equal(out.status, 'stopped');
+});
+
 for (const status of ['failed', 'stopped', 'paused']) {
   test(`preparation ${status} archives an unused workspace and its reason`, async () => {
     const repo = await makeRepo();
