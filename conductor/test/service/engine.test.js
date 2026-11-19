@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import http from 'node:http';
@@ -9,7 +9,7 @@ import { createAppServer } from '../../src/service/server.js';
 import { writeStubCli } from '../helpers/stubCli.js';
 import { git } from '../../src/workspace.js';
 
-async function fixture(t, { workerFile, request = 'add multiply', baselineFails = false, baselineScript = null, testCommand = 'node checks.cjs' } = {}) {
+async function fixture(t, { workerFile, request = 'add multiply', baselineFails = false, baselineScript = null, testCommand = 'node checks.cjs', localUp = true } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'service-engine-')); const repo = path.join(root, 'repo'); mkdirSync(repo);
   await git(repo, ['init', '-q', '-b', 'main']); writeFileSync(path.join(repo, 'README.md'), 'original\n');
   writeFileSync(path.join(repo, 'checks.cjs'), baselineScript ?? (baselineFails ? "throw new Error('existing test failure');\n"
@@ -17,7 +17,7 @@ async function fixture(t, { workerFile, request = 'add multiply', baselineFails 
   await git(repo, ['add', '.']); await git(repo, ['commit', '-qm', 'initial']);
   const originalHead = (await git(repo, ['rev-parse', 'HEAD'])).stdout;
   let localRequests = 0;
-  const local = http.createServer((req, res) => { localRequests++; req.resume(); req.on('end', () => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"choices":[]}'); }); });
+  const local = http.createServer((req, res) => { localRequests++; req.resume(); req.on('end', () => { res.writeHead(localUp ? 200 : 500, { 'content-type': 'application/json' }); res.end(localUp ? '{"choices":[]}' : '{"error":{"message":"no healthy nodes available"}}'); }); });
   await new Promise(r => local.listen(0, '127.0.0.1', r));
   const bin = path.join(root, 'bin');
   const claude = writeStubCli(bin, 'claude', `
@@ -94,6 +94,25 @@ test('baseline output in service progress is redacted and strips terminal contro
   const replayed = s.app.runs.get(s.runId).events.find(e => e.data?.engineType === 'baseline-tests');
   assert.deepEqual(replayed.data, baseline.data);
 });
+test('service preparation refusal after baseline removes the unused clone and cannot resume', async t => {
+  const s = await fixture(t, { localUp: false });
+  const run = await s.wait('awaiting-decision');
+  assert.equal(run.decision.kind, 'fallback');
+  const workspace = s.app.runs.get(s.runId).workspaceDir;
+  const d = run.decision;
+  const result = await s.api(`/runs/${s.runId}/decisions/${d.id}`, 'POST', {
+    choiceId: 'pause', expectedRevision: d.revision, reviewedCommit: null, clientRequestId: 'pause-preparation',
+  });
+  assert.equal(result.status, 200);
+  const done = await s.wait('paused');
+  assert.equal(existsSync(workspace), false);
+  assert.equal(done.resumable, false);
+  assert.equal(s.app.runs.get(s.runId).workspaceDir, null);
+  const logs = path.join(path.dirname(workspace), 'logs');
+  const transcript = readFileSync(path.join(logs, readdirSync(logs)[0]), 'utf8');
+  assert.match(transcript, /subscription fallback was not approved/);
+});
+
 test('HTTP service drives the real engine with deterministic model CLIs, tests and approval branch', async t=>{
   const s=await fixture(t);const run=await s.wait('awaiting-decision');
   assert.equal(run.decision.kind,'result');

@@ -56,7 +56,7 @@ function councilLines(config, env) {
     axeLine, machines].join('\n');
 }
 
-// Returns { code } when the command ends here (doctor, nothing to run with, the operator stopped), otherwise
+// Returns { code, reason? } when the command ends here (doctor, nothing to run with, the operator stopped), otherwise
 // { built, hooks, overrides, remember }. interruptedText replaces the Ctrl-C messages when given.
 export async function prepareTeam({ cli, config, term, env, baseDir, workspaceDir = null, wakeDeps = {}, onSignal, exit, interruptedText }) {
   // Ctrl-C (Ruling 5). One handler for the whole command; what it does changes once the run starts.
@@ -82,10 +82,11 @@ export async function prepareTeam({ cli, config, term, env, baseDir, workspaceDi
   // Checked workers answer from their readiness result; matched by name, so a re-checked one counts too.
   const build = () => buildTeam(config.participants, { routing: config.routing, env, health: cachedHealth(statuses, config.participants) });
   const couldNotCheck = (e) => {
-    term.say(`Conductor could not check the AI models: ${redact(String(e?.message ?? e))}`);
+    const reason = `Conductor could not check the AI models: ${redact(String(e?.message ?? e))}`;
+    term.say(reason);
     if (cli.command === 'doctor') term.say(councilLines(config, env));
     term.close();
-    return { code: EXIT.failed };
+    return { code: EXIT.failed, reason };
   };
   let built;
   try {
@@ -104,7 +105,7 @@ export async function prepareTeam({ cli, config, term, env, baseDir, workspaceDi
     term.say(built.error);
     if (cli.command === 'doctor') term.say(councilLines(config, env));
     term.close();
-    return { code: EXIT.failed };
+    return { code: EXIT.failed, reason: built.error };
   };
   if (!built.ok) return notBuilt();
   if (cli.command === 'doctor') {
@@ -137,7 +138,7 @@ export async function prepareTeam({ cli, config, term, env, baseDir, workspaceDi
     if (choice !== 'wait' || !participant) {
       term.say(STOPPED_BEFORE_START);
       term.close();
-      return { code: EXIT.stopped };
+      return { code: EXIT.stopped, reason: STOPPED_BEFORE_START };
     }
     try {
       term.say('Checking the local workers…');

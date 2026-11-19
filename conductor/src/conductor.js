@@ -226,14 +226,14 @@ function archive(ws, log, state) {
 
 async function drive(ctx) {
   const { options, ws, log, state } = ctx;
-  const finish = (status, extra = {}) => {
+  const finish = (status, extra = {}, unusedPreparation = false) => {
     Object.assign(state, { status }, extra);
     if (FINISHED.has(status)) state.phase = 'done';
     // Neither may stop drive from resolving: the outcome still reaches the caller.
     try { log.saveState(state); } catch (e) { try { log.event('state-error', { detail: message(e) }); } catch {} }
     try { log.event('finish', { status, ...extra }); } catch {}
     const out = { status, workspaceDir: ws.dir, ...extra };
-    if ((status === 'landed' || status === 'rejected') && options.keepWorkspace !== true) {
+    if ((status === 'landed' || status === 'rejected' || unusedPreparation) && options.keepWorkspace !== true) {
       try {
         out.transcript = archive(ws, log, state);
         out.workspaceDir = null;
@@ -266,7 +266,10 @@ async function drive(ctx) {
       const prepared = await ctx.prepare(ws.dir);
       if (prepared.outcome) {
         const { status, ...details } = prepared.outcome;
-        return finish(status, details);
+        // No plan means there is no model work to resume. Keep the diagnostic
+        // transcript, but do not leave a clone for bare `conductor resume`.
+        // Preparation on resume can fail with an existing plan: retain that work.
+        return finish(status, details, !state.plan);
       }
       ctx.team = prepared.team;
       ctx.hooks = prepared.hooks ?? ctx.hooks;
