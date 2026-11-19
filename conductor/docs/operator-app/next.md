@@ -18,7 +18,7 @@ The reasons are under each item. If Malcolm's priority is personal productivity 
 
 **Added 6 November 2026:** item 6, the step gate and local simplifier, from Malcolm's proposal of the same date. Its first task, **G1 (per-step numbers from the run logs)**, goes **before** item 1 (Malcolm confirmed this as GD3), so the expenses build is the first real workload to produce those numbers. G2–G4 follow once the numbers have been read. G5 depends on those numbers and may never be needed.
 
-**Added 19 November 2026:** item 7, starting the desktop local-model worker from the app, from Malcolm's request during Windows acceptance Part E. It is a proposal only, waiting for his scope decisions (W1–W7). It is small and independent of items 1–6, so it can go whenever he decides.
+**Added 19 November 2026:** item 7, starting the desktop local-model worker from the app, from Malcolm's request during Windows acceptance Part E. It is a proposal only, waiting for his scope decisions (W1–W8). It is small and independent of items 1–6, so it can go whenever he decides.
 
 ## 1. Client expenses workflow
 
@@ -309,7 +309,7 @@ Its build order is: Verifier, then metrics, then a week of runs, then the review
   - compares the distribution's current address with `local\localai-network.json`, and stops with "WSL forwarding configuration needs to be updated before starting the worker." if they differ, or if the forwarding is not marked configured (this needs an administrator network change, done by other scripts in that folder);
   - runs `docker compose … up -d` inside WSL and returns. It finishes in seconds and does not wait for the model to load.
 
-  It needs no key. The worker it starts lives until Windows restarts or the user signs out.
+  The script's text uses no key. The compose file it calls was not read, so it is unknown whether the worker container reads a secret of its own. It is also unknown whether `wsl.exe` and `docker compose` still work under the service's scrubbed child environment; the first build must check this. The worker it starts lives until Windows restarts or the user signs out.
 - **Readiness:** `http://192.168.1.109:50050/readyz` answers 200 when the worker is up and `000` (no connection) when it is not.
 - **A second, mid-run question.** If the local model dies during a step, `src/chunkPhase.js` (line 254) re-probes (`localWentDown`, which logs `local-recheck` with the reason) and asks `confirmLocalFallback` with the step's last failure text, not the probe's reason code.
 
@@ -321,7 +321,7 @@ Its build order is: Verifier, then metrics, then a week of runs, then the review
    - The `local-recheck` reason is carried into the mid-run question in the same way.
 2. **A "Start the local worker" action, shown only for `worker-offline`,** and only when a start command is configured. The other reasons get no button: a wrong key or a missing model is not fixed by starting anything.
 3. **The command comes only from the on-disk config,** never from the browser. A new, optional config section, for example `local.worker: { startCommand: [exe, ...args], readyUrl, startTimeoutMs }`, read like `testCommand`:
-   - `startCommand` is an argument list run without a shell, for example `["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "E:\\SHINGON\\desktop_worker\\Start-LocalAI-Worker.ps1"]`;
+   - `startCommand` is an argument list run without a shell, for example `["powershell.exe", "-NoProfile", "-NonInteractive", "-File", "E:\\SHINGON\\desktop_worker\\Start-LocalAI-Worker.ps1"]`. Whether it may add `-ExecutionPolicy Bypass` is W8: that overrides a Windows security setting, so the app should not add it on its own;
    - `readyUrl` is the worker's readiness URL;
    - `PUT /setup` and `POST /setup/validate` refuse any attempt to set these fields, and keep them when other settings are saved, as they already do for fields the browser does not manage;
    - `GET /setup` reports only whether a start command is configured, unless Malcolm decides otherwise (W3).
@@ -332,16 +332,16 @@ Its build order is: Verifier, then metrics, then a week of runs, then the review
    2. Otherwise run the command once:
       - with the same scrubbed child environment the service gives other tools, so no LocalAI or vendor key is passed to it;
       - with a bounded timeout for the command itself;
-      - detached from the run's worker process, so Cancel, the end of the run and the engine's process cleanup (`killAllChildren`) never stop the LocalAI worker it started. The app starts the worker and never stops it.
+      - detached from the run's worker process and from the service, so Cancel, the end of the run, the engine's process cleanup (`killAllChildren`), the service stopping and the service being killed (`taskkill /F`, as in acceptance D1) never stop the LocalAI worker it started. This includes the script's hidden `wsl.exe` keeper, which would otherwise be a descendant of the service. The app starts the worker and never stops it.
    3. If the command exits non-zero, stop. Show its last output lines, scrubbed, stripped of terminal controls and clipped (a few hundred characters), with a fixed heading: "The start command failed. Nothing else was tried." The script's WSL forwarding message arrives this way. The app shows it and does not attempt the administrator change, retry with elevation or run any other script.
    4. If the command succeeds, poll `readyUrl` every few seconds until it answers 200 or `startTimeoutMs` runs out (suggested default 3 minutes; the first load onto the graphics card can take a minute or two).
    5. On 200, run the existing `probe()` again. Only a healthy probe lets the run continue with the local model. A probe that still fails puts the question back with the new reason.
    6. Each step is a `progress` event in the activity log ("Starting the local worker", "Waiting for the worker", "Worker ready, checking the local model again", or the failure), so a reload or a second tab sees the same state.
 5. **How it fits the decision flow.** The engine worker is waiting inside `prepare()` for a yes/no answer. Two ways to fit the action in (W4):
-   - **(a) A third choice on the fallback decision** (`start-worker`). The service answers it itself instead of sending it to the engine. The question stays pending while the worker starts. On success the service re-probes, and the run continues as if local had been healthy. On failure or timeout the same decision gets a new revision with the new reason. This reuses `expectedRevision` and `clientRequestId`, so a double click or a second tab cannot start the command twice.
-   - **(b) A separate endpoint**, `POST /runs/:id/local-worker/start`, followed by the engine asking the fallback question again. This is cleaner for the engine but needs a "re-ask" message from the service to the worker.
+   - **(a) A third choice on the fallback decision** (`start-worker`). Today the answer is a boolean, and `true` means "use subscriptions", so a third answer cannot ride on it. The service runs the start command and the `readyz` wait while the question stays pending. On 200 it sends the worker a third answer ("worker started"). `prepare()` in `src/service/worker.js` then calls `buildTeam` again, and that call is the re-probe. If local is healthy, the run continues as if it had been healthy from the start. If not, `prepare()` asks the fallback question again with the new reason. On a failed command or a timeout, the service puts the same question back with a new revision and the failure text, without involving the worker. This reuses `expectedRevision` and `clientRequestId`, so a double click or a second tab cannot start the command twice.
+   - **(b) A separate endpoint**, `POST /runs/:id/local-worker/start`, followed by the engine asking the fallback question again. It needs the same "worker started" message from the service to the worker, plus a second mutation path to secure and replay.
 
-   I recommend (a). It keeps one pending question and one answer path, and it needs no engine change for the pre-run case.
+   I recommend (a). It keeps one pending question and one answer path. It changes `worker.js` and `runs.js` (both Codex's) but not the engine (`conductor.js`, `team.js` logic) for the pre-run case.
 6. **Timeouts, cancel and restart:**
    - On timeout the question stays open with "The worker did not become ready within 3 minutes", plus Pause, Use subscriptions and (W6) Try again. **Nothing ever chooses subscriptions automatically**, whatever happens.
    - Cancel during a start stops the wait and the run. The started LocalAI worker keeps running.
@@ -372,6 +372,7 @@ Its build order is: Verifier, then metrics, then a week of runs, then the review
 - Given `readyz` never answers within the timeout, then the question stays open with the timeout message, and the run uses no subscription allowance unless the operator presses Use subscriptions.
 - Given two tabs, when both press Start, then the command runs once and the second answer gets `worker-start-in-progress`.
 - Given the operator cancels during the wait, then the run is interrupted and the LocalAI worker is still running afterwards.
+- Given the worker was started from the app, when the service is killed with `taskkill /F`, then the `wsl.exe` keeper and the worker are still running and `readyz` still answers 200.
 - Given a browser request that tries to set `local.worker.startCommand` through `PUT /setup`, then it is refused and the saved command is unchanged.
 
 **Decisions for Malcolm:**
@@ -382,6 +383,7 @@ Its build order is: Verifier, then metrics, then a week of runs, then the review
 - **W5, the readiness URL:** accept a plain-HTTP LAN readiness URL from the config file (no key sent), given the setup contract allows plain HTTP only for loopback?
 - **W6, after a timeout or failure:** offer Try again, or only Pause and Use subscriptions? Recommended: Try again after a timeout; no retry after a non-zero exit, because the same command will fail the same way.
 - **W7, defaults:** a 3-minute readiness timeout, and setup writes no start command unless he adds one by hand?
+- **W8, execution policy:** may the configured command include `-ExecutionPolicy Bypass`, or must the script run under his machine's existing policy? Recommended: the existing policy. If it refuses the script, the failure is shown like any other.
 
 **Dependencies:** none hard. The service part touches `src/service/**`, so Malcolm merges it. It should not start during an open acceptance round, so P07/P08 evidence stays comparable. **Not in scope:** stopping the worker, starting it at Windows sign-in, the WSL forwarding repair, and starting anything on another machine.
 

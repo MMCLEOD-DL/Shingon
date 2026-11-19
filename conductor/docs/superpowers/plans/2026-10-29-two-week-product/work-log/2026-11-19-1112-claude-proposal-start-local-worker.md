@@ -19,7 +19,7 @@ start command taken only from the on-disk config, after a `readyz` pre-check, th
 the run continues. A failure such as the script's "WSL forwarding configuration needs to be updated" is shown and not
 worked around. Nothing ever chooses subscriptions automatically, and no key passes through the browser.
 
-Decisions W1–W7 are listed in `next.md` for Malcolm. Ownership: Codex for the service action, config schema,
+Decisions W1–W8 are listed in `next.md` for Malcolm. Ownership: Codex for the service action, config schema,
 `interface.md` and fixtures; Claude for the UI and checklist wording.
 
 ## Evidence
@@ -39,4 +39,4 @@ Documentation only. No tests run, no live calls, no `readyz` check, and the star
 
 ## Next action
 
-Malcolm decides W1–W7. Then Codex claims the service and contract part, and Claude the UI part.
+Malcolm decides W1–W8. Then Codex claims the service and contract part, and Claude the UI part.
