@@ -50,7 +50,7 @@ test('project new / list / show work outside a git repository, without a config'
 
   const made = await runMain(['project', 'new', 'Thistle Joinery Ltd', '--slug', 'thistle'], { env });
   assert.equal(made.code, 0, made.out);
-  assert.match(made.out, /Made project thistle for "Thistle Joinery Ltd" in .*projects\/thistle\nNext: conductor brief thistle --notes <your meeting notes>/);
+  assert.equal(made.out, `Made project thistle for "Thistle Joinery Ltd" in ${path.join(root, 'thistle')}\nNext: conductor brief thistle --notes <your meeting notes>\n`);
   const dup = await runMain(['project', 'new', 'Thistle', '--slug', 'thistle'], { env });
   assert.equal(dup.code, 1);
   assert.match(dup.out, /A project called thistle already exists/);
@@ -68,7 +68,8 @@ test('project new / list / show work outside a git repository, without a config'
 
   const show = await runMain(['project', 'show', 'thistle'], { env });
   assert.equal(show.code, 0);
-  for (const re of [/^Thistle Joinery Ltd \(thistle\)$/m, /^Folder: .*projects\/thistle$/m, /^Status: briefing$/m, /^Created: \d{1,2} [A-Z][a-z]+ \d{4}$/m,
+  assert.ok(show.out.split('\n').includes(`Folder: ${dir}`), show.out);
+  for (const re of [/^Thistle Joinery Ltd \(thistle\)$/m, /^Status: briefing$/m, /^Created: \d{1,2} [A-Z][a-z]+ \d{4}$/m,
     /^Foundation: not chosen yet \(set when the app is first built\)$/m, /^Approved build: none yet$/m, /^Brief: version 1, approved by Malcolm on 27 October 2026$/m,
     /^ {2}Read it: .*brief-v1\.md$/m, /^Unfinished brief: waiting at the first draft\. Carry on with: conductor brief thistle$/m]) assert.match(show.out, re);
   const missing = await runMain(['project', 'show', 'nope'], { env });
@@ -87,9 +88,10 @@ test('a bad factory section in the config is a plain usage error', async () => {
   const r = await runMain(['project', 'list', '--config', cfg], { env });
   assert.equal(r.code, 64);
   assert.match(r.out, /Conductor could not read its config: factory\.projectsRoot must be a full path/);
-  const gone = await runMain(['project', 'list', '--config', '/nope/c.json'], { env });
+  const missingConfig = path.join(tmp(), 'missing', 'c.json');
+  const gone = await runMain(['project', 'list', '--config', missingConfig], { env });
   assert.equal(gone.code, 64);
-  assert.match(gone.out, /No config file at \/nope\/c\.json/);
+  assert.equal(gone.out, `No config file at ${missingConfig}.\n`);
 });
 
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
