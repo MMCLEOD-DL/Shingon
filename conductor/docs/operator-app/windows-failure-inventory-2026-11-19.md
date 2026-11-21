@@ -4,7 +4,36 @@ PR130 R1 is valid: a repeated failure count is not an accepted baseline. This in
 
 Rows remain OPEN until their named assertions run successfully or receive an explicitly agreed alternative. The first isolated rerun at `293eb161b042f27dd092902b1b6e4157c9b32d72` had **1,732total; 1,532pass / 199fail / 1skip**, exit1, fixing W029/W055 with zero new failure identities. The tool-discovery follow-up below advances that result; it does not turn the remaining failures into an accepted baseline. No existing assertions were weakened and no Windows skips were added. P07/P08 remain IN_PROGRESS; native acceptance is not established.
 
-## Latest native checkpoint — fixture file URLs
+## Latest native checkpoint — release fixture writes, 21 November
+
+At tested code `a49a68df8cec1533357fa015156dcd0f4e344fcc`, full native
+`node --test --test-concurrency=4 --test-reporter=tap` completed with **1,744 total;
+1,677 pass / 66 fail / 1 skip**, exit1 (746.530 seconds). Exact file/name comparison
+against the preceding72 failures resolves **W115, W119, W120, W125, W126 and W127**,
+with **zero new failure identities**. All66 current failures match OPEN inventory
+rows; cumulative disposition is **135 FIXED_NATIVE / 66 OPEN**. The six additional
+tests since the preceding checkpoint come from the integrated local-down work.
+
+The release test file previously had12 pass /6 fail, all six stopping at
+`spawnSync sh ENOENT`; after replacing its four shell file-write sites with Node
+filesystem calls it passes18/18, zero skips. Fixture content and all assertions
+are unchanged, including unexpected-file/extra-commit refusal, package script and
+dependency refusal, and crash recovery preserving operator edits. Production
+source is unchanged. Linux code-head CI passed all five checks; Conductor has
+1,741 pass /0 fail /3 skips. This is synthetic validation, not live release or
+native acceptance;66 failures remain open.
+
+PR142 was merged into `d970ed9` while the native full run was still in progress;
+Codex had left it draft and did not request readiness or merge. Runtime/test trees
+at that merge are identical to the tested code. Final inventory/evidence is a
+separate documentation continuation, not a push claimed to update the closed PR.
+
+The PR140 handoff's native keyleak failure was not reproduced: the existing test
+passes one isolated invocation, four concurrent isolated invocations and this
+full run. No keyleak source/test change or closure of the peer-observed discrepancy
+is claimed. Do not add an independently reproduced failure claim from that report.
+
+## Previous native checkpoint — fixture file URLs
 
 At test code `0aa6c87a34db2936ed25e7735f3cfcc2151e58b8`, the full isolated native suite has **1,738 total; 1,665 pass / 72 fail / 1 skip**, exit1 (519.573 seconds). Exact file/name comparison against the preceding91 failures resolves **19**, all originally FIX-URL, with **zero new failure identities**. All72 current failures match inventory rows. The cumulative inventory is now **129 FIXED_NATIVE / 72 OPEN**. The additional test relative to the preceding checkpoint is PR135's final batch-shell control, already included in this baseline.
 
