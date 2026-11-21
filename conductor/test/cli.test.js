@@ -50,6 +50,7 @@ test('findConfig: flag, then ./conductor.json, then XDG, then ~/.config', () => 
 
 test('listRuns: unfinished runs of this repo only, newest first', () => {
   const baseDir = tmp();
+  const repoDir = path.join(baseDir, 'repo');
   const mk = (name, state, mtime) => {
     mkdirSync(path.join(baseDir, name));
     mkdirSync(path.join(baseDir, `${name}.conductor`));
@@ -58,19 +59,20 @@ test('listRuns: unfinished runs of this repo only, newest first', () => {
     utimesSync(f, mtime, mtime);
   };
   const plan = { chunks: [{ title: 'a' }, { title: 'b' }] };
-  mk('ws-old', { status: 'failed', repoDir: '/repo', request: 'old', phase: 'chunks', chunkShas: ['s1'], plan }, 1000);
-  mk('ws-new', { status: 'paused', repoDir: '/repo', request: 'new', phase: 'plan', chunkShas: [], plan: null }, 2000);
-  mk('ws-done', { status: 'landed', repoDir: '/repo', request: 'done', phase: 'done', chunkShas: [] }, 3000);
-  mk('ws-other', { status: 'running', repoDir: '/elsewhere', request: 'other', phase: 'plan', chunkShas: [] }, 4000);
+  mk('ws-old', { status: 'failed', repoDir, request: 'old', phase: 'chunks', chunkShas: ['s1'], plan }, 1000);
+  mk('ws-new', { status: 'paused', repoDir, request: 'new', phase: 'plan', chunkShas: [], plan: null }, 2000);
+  mk('ws-done', { status: 'landed', repoDir, request: 'done', phase: 'done', chunkShas: [] }, 3000);
+  mk('ws-other', { status: 'running', repoDir: path.join(baseDir, 'elsewhere'), request: 'other', phase: 'plan', chunkShas: [] }, 4000);
   mkdirSync(path.join(baseDir, 'ws-gone.conductor'));
-  writeFileSync(path.join(baseDir, 'ws-gone.conductor', 'state.json'), JSON.stringify({ status: 'running', repoDir: '/repo' }));
+  writeFileSync(path.join(baseDir, 'ws-gone.conductor', 'state.json'), JSON.stringify({ status: 'running', repoDir }));
   mkdirSync(path.join(baseDir, 'ws-broken.conductor'));
   mkdirSync(path.join(baseDir, 'ws-broken'));
   writeFileSync(path.join(baseDir, 'ws-broken.conductor', 'state.json'), '{not json');
-  const runs = listRuns({ baseDir, repoDir: '/repo' });
+  const runs = listRuns({ baseDir, repoDir });
   assert.deepEqual(runs.map((r) => r.request), ['new', 'old']);
   assert.deepEqual({ done: runs[1].done, total: runs[1].total, status: runs[1].status }, { done: 1, total: 2, status: 'failed' });
   assert.equal(runs[0].workspaceDir, path.join(baseDir, 'ws-new'));
+  assert.deepEqual(listRuns({ baseDir, repoDir: path.join(repoDir, '..', 'repo') }).map((r) => r.request), ['new', 'old']);
   assert.equal(listRuns({ baseDir, repoDir: null }).length, 3);
   assert.deepEqual(listRuns({ baseDir: path.join(baseDir, 'nope') }), []);
 });

@@ -30,14 +30,14 @@ test('atomic writes leave no temp files; exclusive create refuses to overwrite',
 
 // Plans 8 and 10 add sections to FactoryConfig, so these tests check Plan 7's keys one by one, never the whole object.
 test('factoryConfig: default root, ~ expansion, env override, operator name, plain errors', () => {
-  const home = '/home/m';
+  const home = path.resolve('fixture home', 'm');
   assert.equal(DEFAULT_PROJECTS_ROOT, '~/highland-projects');
   const bare = factoryConfig({}, { env: {}, home, user: 'malcolm' });
-  assert.equal(bare.projectsRoot, '/home/m/highland-projects');
+  assert.equal(bare.projectsRoot, path.join(home, 'highland-projects'));
   assert.equal(bare.operatorName, 'malcolm');
-  assert.equal(factoryConfig(null, { env: {}, home, user: 'm' }).projectsRoot, '/home/m/highland-projects');
+  assert.equal(factoryConfig(null, { env: {}, home, user: 'm' }).projectsRoot, path.join(home, 'highland-projects'));
   const cfg = { factory: { projectsRoot: '~/clients', operatorName: 'Malcolm McLeod' } };
-  assert.equal(factoryConfig(cfg, { env: {}, home, user: 'x' }).projectsRoot, '/home/m/clients');
+  assert.equal(factoryConfig(cfg, { env: {}, home, user: 'x' }).projectsRoot, path.join(home, 'clients'));
   assert.equal(factoryConfig(cfg, { env: {}, home, user: 'x' }).operatorName, 'Malcolm McLeod');
   assert.equal(factoryConfig(cfg, { env: { CONDUCTOR_PROJECTS_ROOT: '/srv/p' }, home }).projectsRoot, '/srv/p');
   assert.throws(() => factoryConfig({ factory: { projectsRoot: 'relative/dir' } }, { env: {}, home }), /factory\.projectsRoot must be a full path \(starting with \/ or ~\), but the config has "relative\/dir"/);
@@ -65,8 +65,9 @@ test('slugify and validateSlug', () => {
   for (const bad of ['', '../etc', 'Acme', 'acme/..', '-acme', 'acme-', 'a'.repeat(41), 'acme--ltd', '.']) {
     assert.match(validateSlug(bad) ?? '', /folder name/, bad);
   }
-  assert.throws(() => projectDir('/root/p', '../etc'), /folder name/);
-  assert.equal(projectDir('/root/p', 'acme'), '/root/p/acme');
+  const root = path.resolve('fixture projects');
+  assert.throws(() => projectDir(root, '../etc'), /folder name/);
+  assert.equal(projectDir(root, 'acme'), path.join(root, 'acme'));
   assert.deepEqual(PROJECT_STATUSES, ['briefing', 'building', 'ready', 'shipped']);
 });
 

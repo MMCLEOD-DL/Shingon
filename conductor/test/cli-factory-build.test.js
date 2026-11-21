@@ -48,10 +48,13 @@ test('resume inside a project folder finds the project; elsewhere it is not a bu
 });
 
 test('build outcome text', () => {
-  assert.match(buildOutcomeText({ status: 'ready', buildDir: '/p/builds/r' }, { slug: 'acme-ltd', client: 'Acme Ltd', appDir: '/p/app' }),
-    /Done\. Acme Ltd's app is approved and ready\. Its code is on the main branch of \/p\/app\.\nSee it running: conductor preview acme-ltd/);
-  assert.match(buildOutcomeText({ status: 'paused', reason: 'Conductor paused: x.', buildDir: '/p/builds/r' }, { slug: 'acme-ltd' }),
-    /Conductor paused: x\.\nTo carry on: conductor build acme-ltd\nBuild log: \/p\/builds\/r\/build-log\.jsonl/);
+  const root = path.join(tmpdir(), 'outcome project');
+  const appDir = path.join(root, 'app');
+  const buildDir = path.join(root, 'builds', 'r');
+  assert.equal(buildOutcomeText({ status: 'ready', buildDir }, { slug: 'acme-ltd', client: 'Acme Ltd', appDir }),
+    `Done. Acme Ltd's app is approved and ready. Its code is on the main branch of ${appDir}.\nSee it running: conductor preview acme-ltd`);
+  assert.equal(buildOutcomeText({ status: 'paused', reason: 'Conductor paused: x.', buildDir }, { slug: 'acme-ltd' }),
+    `Conductor paused: x.\nTo carry on: conductor build acme-ltd\nBuild log: ${path.join(buildDir, 'build-log.jsonl')}`);
 });
 
 // A fully local preview: "ssh" runs the script under bash with stub docker and curl; "scp" copies the file.

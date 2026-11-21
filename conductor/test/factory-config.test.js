@@ -1,11 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { factoryConfig } from '../src/factory/config.js';
 import { validateBrief } from '../src/factory/brief.js';
 import { newRunId, composeProjectOf, RUN_ID_RE, SLUG_RE, COMPOSE_PROJECT_RE } from '../src/factory/ids.js';
 import { sampleBrief } from './helpers/factoryFixtures.js';
 
-const home = '/home/op';
+const home = path.resolve('fixture home', 'op');
 const cfg = (factory) => factoryConfig({ factory }, { env: {}, home });
 
 test('defaults: static provider, foundation v0.2.0, the real verify, browser gate on, 2 check fixes and 3 council fixes', () => {
@@ -21,7 +22,7 @@ test('defaults: static provider, foundation v0.2.0, the real verify, browser gat
 test('a static host is completed with defaults and ~ is expanded', () => {
   const f = cfg({ machines: { static: { hosts: [{ id: 'ct111', host: '192.168.1.111', keyPath: '~/.ssh/id_ed25519' }] } } });
   assert.deepEqual(f.machines.static.hosts[0], {
-    id: 'ct111', name: 'ct111', host: '192.168.1.111', user: 'root', keyPath: '/home/op/.ssh/id_ed25519',
+    id: 'ct111', name: 'ct111', host: '192.168.1.111', user: 'root', keyPath: path.join(home, '.ssh', 'id_ed25519'),
     previewPort: 8080, workRoot: '/srv/hf-factory',
   });
 });
