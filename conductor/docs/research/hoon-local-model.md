@@ -1,6 +1,6 @@
 # Teaching the local model Hoon: design note
 
-Status: **proposal, for Malcolm's decision.** Nothing here is built or approved.
+Status: **Stages 0 and 1 approved by Malcolm, 21 November 2026** (see "Decided" at the end). Nothing is built yet.
 Written 5 November 2026 by Claude, from a conversation with Malcolm on 31 October 2026.
 
 ## The goal
@@ -154,3 +154,17 @@ baseline every later claim is measured against.
    - Running it needs the desktop, Urbit and the local model, so the runs are yours, or Codex's on that machine.
 3. Is Hoon the real target, or a test of the approach that could apply to other rare languages too? This affects how
    general to make the harness.
+
+## Decided, 21 November 2026 (Malcolm, in chat)
+
+1. **Go ahead with Stages 0 and 1 only.** Decide again from the Stage 1 numbers. There is no training and no Stage 2 or
+   later yet.
+2. **Claude writes and Malcolm runs.** Claude writes the harness and the first tasks against a stand-in checker. Malcolm,
+   or Codex on the desktop, does the real runs with Urbit and the local model.
+3. **A general approach, Hoon first.** The harness is language-pluggable. A language is a small adapter that knows how
+   to check one attempt (compile, run the tests, report pass or fail and the time taken). Hoon is the first adapter.
+   The task format, the attempt loop and the three Stage 1 numbers (compiles, pass@1, pass@10) are shared.
+
+4. **The harness code lives in a folder in the Shingon repository,** with its own tests and a `.gitignore` for run
+   output. Datasets, attempt logs and checkpoints still never go into the repository, as "Where this would live" says.
+   The build PR names the folder and how CI runs its tests.

@@ -46,4 +46,4 @@ Recorded: 5 November 2026. Status: design note written, awaiting Malcolm's decis
 
 Malcolm wants the local Qwen model to write Hoon (Urbit) well enough to use through Conductor, using the compiler and
 tests to manufacture training data because public Hoon code is scarce. The proposal, its guardrails and the first two
-cheap stages (prove the tooling, measure today's model) are in [`research/hoon-local-model.md`](research/hoon-local-model.md).
+cheap stages (prove the tooling, measure today's model) are in [`research/hoon-local-model.md`](research/hoon-local-model.md). Malcolm approved Stages 0 and 1 on 21 November 2026, with the harness written to work for other rare languages too.
