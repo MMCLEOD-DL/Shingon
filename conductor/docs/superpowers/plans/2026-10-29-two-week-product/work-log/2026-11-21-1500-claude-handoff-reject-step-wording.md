@@ -37,7 +37,7 @@ so the PR waits for Malcolm.
   - `npm test`: **113/113**.
   - `npm run build`: pass.
   - `node e2e/journey.mjs`: **22/22, 6/6, 4/4**.
-- Full native suite, `node --test --test-concurrency=4` from `conductor` at `a026afa`: **1,746 total; 1,679 pass / 65 fail /
+- Full native suite, `node --test --test-concurrency=4` from `conductor` at `a026afa`: **1,746 total; 1,681 pass / 65 fail /
   0 skip**, exit 1. Compared by test name, the 65 failures are exactly those of the item 7.1 run (64 OPEN inventory
   rows plus the pre-existing `keyleak.test.js` Windows case). None is new.
 
