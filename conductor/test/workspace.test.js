@@ -10,6 +10,12 @@ import { makeRepo, refsOf } from './helpers/gitRepo.js';
 
 const base = () => mkdtempSync(path.join(tmpdir(), 'wsbase-'));
 
+function writeTestCommand(dir, source) {
+  const file = path.join(dir, 'test-command.cjs');
+  writeFileSync(file, source);
+  return `"${process.execPath}" "${file}"`;
+}
+
 test('slugify', () => {
   assert.equal(slugify('Add CSV Export!'), 'add-csv-export');
   assert.equal(slugify('***'), 'task');
@@ -121,10 +127,11 @@ test('resetHard removes an agent-created nested git repo but keeps ignored files
 test('runTests reports pass, fail, and not-configured', async () => {
   const ws = await Workspace.create({ repoDir: await makeRepo(), baseDir: base(), taskId: 't' });
   assert.deepEqual(await ws.runTests(null), { ran: false, passed: null, code: null, output: '' });
-  const ok = await ws.runTests('echo fine');
+  const ok = await ws.runTests(writeTestCommand(ws.dir, "console.log('fine')"));
+  assert.equal(ok.code, 0, ok.output);
   assert.equal(ok.passed, true);
   assert.match(ok.output, /fine/);
-  const bad = await ws.runTests('echo broken >&2; exit 4');
+  const bad = await ws.runTests(writeTestCommand(ws.dir, "process.stderr.write('broken'); process.exit(4)"));
   assert.equal(bad.passed, false);
   assert.equal(bad.code, 4);
   assert.match(bad.output, /broken/);
@@ -132,8 +139,9 @@ test('runTests reports pass, fail, and not-configured', async () => {
 
 test('runTests timeout counts as failure', async () => {
   const ws = await Workspace.create({ repoDir: await makeRepo(), baseDir: base(), taskId: 't' });
-  const r = await ws.runTests('sleep 10', { timeoutMs: 300 });
+  const r = await ws.runTests(writeTestCommand(ws.dir, 'setTimeout(() => {}, 10_000)'), { timeoutMs: 300 });
   assert.equal(r.passed, false);
+  assert.match(r.output, /timed out/);
 });
 
 test('land creates a new branch in the real repo without touching its checkout', async () => {
@@ -324,7 +332,7 @@ test('diff/listFiles: ignored files are excluded, deleted files are included (T2
 
 test('a timed-out test run says so in its output (T2)', async () => {
   const ws = await Workspace.create({ repoDir: await makeRepo(), baseDir: base(), taskId: 't' });
-  const r = await ws.runTests('sleep 10', { timeoutMs: 300 });
+  const r = await ws.runTests(writeTestCommand(ws.dir, 'setTimeout(() => {}, 10_000)'), { timeoutMs: 300 });
   assert.match(r.output, /timed out/);
 });
 
