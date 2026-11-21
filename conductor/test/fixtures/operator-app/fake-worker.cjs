@@ -28,6 +28,17 @@ process.on('message', msg => {
         { type: 'evidence-unavailable', reason: 'unreachable' },
       ]) process.send({ type: 'event', event: { ...event, ...privateFields, detail: 'private-detail', message: 'private-message' } });
     }
+    const fallback = {
+      'synthetic fallback question': { reason: 'worker-offline', detail: 'no GPU worker [31m SYNTHETIC_GATE_SECRET ' + 'x'.repeat(2000), extra: 'unselected-private-field' },
+      'synthetic fallback unknown reason': { reason: 'start-the-worker-now', detail: 'should not be shown' },
+      'synthetic fallback odd detail': { reason: 'unauthorized', detail: { nested: 'object' } },
+    }[msg.request];
+    if (fallback) {
+      process.send({ type: 'question', id: 'test-decision', kind: 'fallback',
+        payload: { summary: 'The local model is unavailable.', reason: fallback.reason, localDown: fallback },
+        evidence: { commit: null, diffId: null, testReportIds: [] } });
+      return;
+    }
     process.send({ type: 'question', id: 'test-decision', kind: 'result',
       payload: { summary: '<script>untrusted</script>', diff: '+synthetic change', tests: { ran: true, passed: true, code: 0 } },
       evidence: { commit: 'a'.repeat(40), diffId: 'fixture-diff', testReportIds: ['fixture-tests'] } });

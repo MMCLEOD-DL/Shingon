@@ -98,6 +98,7 @@ test('service preparation refusal after baseline removes the unused clone and ca
   const s = await fixture(t, { localUp: false });
   const run = await s.wait('awaiting-decision');
   assert.equal(run.decision.kind, 'fallback');
+  assert.deepEqual(run.decision.localDown, { reason: 'worker-offline', detail: 'the local model server is running, but no GPU worker is connected to it' });
   const workspace = s.app.runs.get(s.runId).workspaceDir;
   const d = run.decision;
   const result = await s.api(`/runs/${s.runId}/decisions/${d.id}`, 'POST', {

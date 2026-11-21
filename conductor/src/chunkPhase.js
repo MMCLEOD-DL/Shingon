@@ -78,7 +78,11 @@ async function localWentDown(ctx, index, artifact) {
   }
   const down = h?.ok !== true;
   ctx.log.event('local-recheck', { index, ok: !down, reason: down ? (h?.reason || 'unavailable') : '' });
-  if (down) artifact.localDown = true;
+  if (down) {
+    artifact.localDown = true;
+    // Why, for the operator's question (next.md item 7.1). An unreachable failure above is not probed, so has none.
+    artifact.localDownWhy = { reason: h?.reason || 'unavailable', detail: typeof h?.detail === 'string' ? h.detail : null };
+  }
   return down;
 }
 
@@ -254,7 +258,8 @@ async function runChunkFrom(ctx, chunk, index, base, reset) {
   if (loop.status !== 'approved' && options.confirmLocalFallback && !state.flags?.localFallbackOk && (await localWentDown(ctx, index, loop.artifact))) {
     let answer;
     try {
-      answer = await ctx.hooks.confirmLocalFallback(redact({ index, title: chunk.title, reason: loop.lastReason }));
+      const why = loop.artifact?.localDownWhy;
+      answer = await ctx.hooks.confirmLocalFallback(redact({ index, title: chunk.title, reason: loop.lastReason, ...(why ? { localDown: why } : {}) }));
     } catch (e) {
       log.event('hook-error', { hook: 'confirmLocalFallback', error: String(e?.message ?? e) });
       answer = undefined;

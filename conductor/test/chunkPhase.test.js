@@ -755,3 +755,34 @@ test('confirmLocalFallback off (the library default): unreachable local falls ba
   const ctx = await ctxFor(t);
   assert.equal((await runChunk(ctx, PLAN.chunks[0], 0)).status, 'done');
 });
+
+test('item 7.1: the mid-run question carries the fresh probe reason and detail', async () => {
+  const asked = [];
+  const t = team({ local: TIMED_OUT });
+  t.local.adapter.probe = async () => ({ ok: false, reason: 'worker-offline', detail: 'the local model server is running, but no GPU worker is connected to it' });
+  const ctx = await ctxFor(t, { confirmLocalFallback: true }, { confirmLocalFallback: async (q) => { asked.push(q); return false; } });
+  await runChunk(ctx, PLAN.chunks[0], 0);
+  assert.equal(asked.length, 1);
+  assert.deepEqual(asked[0].localDown, { reason: 'worker-offline', detail: 'the local model server is running, but no GPU worker is connected to it' });
+  assert.match(asked[0].reason, /did not finish in time/, 'the step failure text is unchanged');
+});
+
+test('item 7.1: a probe that throws reports unavailable with no detail', async () => {
+  const asked = [];
+  const t = team({ local: TIMED_OUT });
+  t.local.adapter.probe = async () => { throw new Error('probe crashed'); };
+  const ctx = await ctxFor(t, { confirmLocalFallback: true }, { confirmLocalFallback: async (q) => { asked.push(q); return false; } });
+  await runChunk(ctx, PLAN.chunks[0], 0);
+  assert.deepEqual(asked[0].localDown, { reason: 'unavailable', detail: null });
+});
+
+test('item 7.1: an unreachable failure asks without probing, so no reason is claimed', async () => {
+  const asked = [];
+  const t = team({ local: UNREACHABLE });
+  let probed = 0;
+  t.local.adapter.probe = async () => { probed++; return { ok: false, reason: 'worker-offline' }; };
+  const ctx = await ctxFor(t, { confirmLocalFallback: true }, { confirmLocalFallback: async (q) => { asked.push(q); return false; } });
+  await runChunk(ctx, PLAN.chunks[0], 0);
+  assert.equal(probed, 0);
+  assert.equal('localDown' in asked[0], false);
+});
