@@ -309,6 +309,22 @@ for (const [request, expected] of [
   });
 }
 
+for (const [request, consequence] of [
+  ['synthetic step escalation', 'Undo this step and pause; you can resume later.'],
+  ['synthetic plan escalation', 'Do not proceed.'],
+]) {
+  test(`Reject on a ${request} says what it does`, async t => {
+    const s = await setup(t);
+    await s.login();
+    const r = await s.start(await s.register(), request);
+    const run = await s.wait(r.json.id, 'awaiting-decision');
+    assert.equal(run.decision.kind, 'escalation');
+    assert.deepEqual(run.decision.choices.map(c => c.id), ['reject', 'approve']);
+    assert.equal(run.decision.choices[0].consequence, consequence);
+    assert.equal(run.decision.choices[1].consequence, 'Continue this step.');
+  });
+}
+
 test('a storage failure blocks approval before it reaches the worker', async t => {
   const s = await setup(t); await s.login(); const r = await s.start(await s.register());
   const run = await s.wait(r.json.id, 'awaiting-decision'); const d = run.decision;

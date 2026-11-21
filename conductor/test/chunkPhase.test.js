@@ -108,6 +108,7 @@ test('frontier deadlock with failing tests escalates; reject leaves the workspac
   const base = await ctx.ws.head();
   const r = await runChunk(ctx, PLAN.chunks[0], 0);
   assert.equal(r.status, 'stopped');
+  assert.equal(r.reason, 'You rejected step 1 (Add a). Its changes were undone and earlier steps are kept. Resume to try this step again.');
   assert.equal(ctx.hookCalls[0].name, 'escalate');
   assert.match(ctx.hookCalls[0].arg.message, /tests do not pass/);
   assert.equal(await ctx.ws.head(), base);

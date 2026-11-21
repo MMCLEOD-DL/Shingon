@@ -33,6 +33,13 @@ process.on('message', msg => {
       'synthetic fallback unknown reason': { reason: 'start-the-worker-now', detail: 'should not be shown' },
       'synthetic fallback odd detail': { reason: 'unauthorized', detail: { nested: 'object' } },
     }[msg.request];
+    const escalation = { 'synthetic step escalation': 'chunk', 'synthetic plan escalation': 'plan' }[msg.request];
+    if (escalation) {
+      process.send({ type: 'question', id: 'test-decision', kind: 'escalation',
+        payload: { kind: escalation, title: 'step 1: synthetic', message: 'Conductor needs your decision.', options: ['approve', 'reject'] },
+        evidence: { commit: null, diffId: null, testReportIds: [] } });
+      return;
+    }
     if (fallback) {
       process.send({ type: 'question', id: 'test-decision', kind: 'fallback',
         payload: { summary: 'The local model is unavailable.', reason: fallback.reason, localDown: fallback },
