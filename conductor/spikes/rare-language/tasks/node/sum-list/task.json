@@ -1,0 +1,5 @@
+{
+  "id": "sum-list",
+  "title": "Sum a list",
+  "prompt": "Define a function that takes a list of natural numbers and returns their sum. The sum of an empty list is 0. Export it as module.exports.sumList."
+}
