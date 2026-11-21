@@ -1,0 +1,5 @@
+{
+  "id": "count-evens",
+  "title": "Count even numbers",
+  "prompt": "Define a function that takes a list of natural numbers and returns how many of them are even. Write a Hoon core (|% ... --) with one arm named count-evens. Use @ud for numbers."
+}

@@ -1,0 +1,5 @@
+{
+  "id": "sum-list",
+  "title": "Sum a list",
+  "prompt": "Define a function that takes a list of natural numbers and returns their sum. The sum of an empty list is 0. Write a Hoon core (|% ... --) with one arm named sum-list. Use @ud for numbers."
+}

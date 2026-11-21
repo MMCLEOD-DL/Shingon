@@ -1,0 +1,5 @@
+{
+  "id": "add-two",
+  "title": "Add two",
+  "prompt": "Define a function that takes a natural number and returns it plus 2. Write a Hoon core (|% ... --) with one arm named add-two. Use @ud for numbers."
+}

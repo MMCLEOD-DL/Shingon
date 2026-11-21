@@ -1,0 +1,4 @@
+# Run output (attempt records, model code, work folders) never goes into the repository.
+runs/
+# A filled-in adapter configuration is the operator's own.
+adapters/*.local.json

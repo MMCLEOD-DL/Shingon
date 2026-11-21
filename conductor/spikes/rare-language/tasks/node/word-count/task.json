@@ -1,0 +1,5 @@
+{
+  "id": "word-count",
+  "title": "Count words",
+  "prompt": "Define a function that takes a list of words and returns a map from each word to the number of times it appears. Export it as module.exports.wordCount. Return a Map."
+}

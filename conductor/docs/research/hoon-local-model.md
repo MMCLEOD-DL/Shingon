@@ -167,4 +167,5 @@ baseline every later claim is measured against.
 
 4. **The harness code lives in a folder in the Shingon repository,** with its own tests and a `.gitignore` for run
    output. Datasets, attempt logs and checkpoints still never go into the repository, as "Where this would live" says.
-   The build PR names the folder and how CI runs its tests.
+   The folder is [`conductor/spikes/rare-language/`](../../spikes/rare-language/README.md). Its tests run in the
+   `conductor` CI job.

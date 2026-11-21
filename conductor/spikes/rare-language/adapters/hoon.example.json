@@ -1,0 +1,9 @@
+{
+  "name": "hoon",
+  "language": "Hoon (Urbit)",
+  "solutionFile": "solution.hoon",
+  "testsFile": "tests.hoon",
+  "command": ["wsl.exe", "-d", "REPLACE-WITH-DISTRO", "--", "/REPLACE/WITH/PATH/hoon-check.sh", "{dir}"],
+  "timeoutMs": 300000,
+  "exitCodes": { "pass": 0, "testFail": 1, "compileFail": 2 }
+}
