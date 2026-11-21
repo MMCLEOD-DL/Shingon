@@ -8,7 +8,8 @@ import { git } from '../../src/workspace.js';
 export async function makeRepo(files = { 'README.md': 'hello\n' }) {
   const dir = mkdtempSync(path.join(tmpdir(), 'repo-'));
   await git(dir, ['init', '-q', '-b', 'main']);
-  for (const [name, body] of Object.entries(files)) {
+  // Keep declared fixture bytes through clones/resets, independent of host autocrlf/eol.
+  for (const [name, body] of Object.entries({ '.gitattributes': '* -text\n', ...files })) {
     mkdirSync(path.dirname(path.join(dir, name)), { recursive: true });
     writeFileSync(path.join(dir, name), body);
   }

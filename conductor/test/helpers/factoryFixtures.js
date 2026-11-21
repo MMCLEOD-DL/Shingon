@@ -8,6 +8,8 @@ import { projectDir as projectDirOf, saveProject } from '../../src/factory/proje
 export async function makeFoundationRepo({ tag = 'v0.1.0', extra = {} } = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), 'foundation-'));
   const files = {
+    // Clone/checkouts must preserve fixture bytes, including explicit CRLF/binary cases.
+    '.gitattributes': '* -text\n',
     'foundation.json': '{"name":"highland-foundation","version":"0.1.0","commit":"v0.1.0"}\n',
     'package.json': JSON.stringify({ name: 'highland-foundation', version: '0.1.0', scripts: { verify: 'node -e 0', test: 'node -e 0', lint: 'node -e 0' } }, null, 2) + '\n',
     'apps/web/src/brand.ts': "// The client's name: the one line a client build may change.\nexport const BRAND = { appName: 'Highland App', shortName: 'HA' } as const;\n",
