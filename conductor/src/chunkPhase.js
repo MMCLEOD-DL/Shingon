@@ -317,7 +317,7 @@ async function runChunkFrom(ctx, chunk, index, base, reset) {
       });
       if (decision !== 'approve') {
         await reset();
-        return { status: 'stopped', reason: `You stopped the run at step ${index + 1} (${chunk.title}).` };
+        return { status: 'stopped', reason: `You rejected step ${index + 1} (${chunk.title}). Its changes were undone and earlier steps are kept. Resume to try this step again.` };
       }
       note = join(note, `${step}: you approved it over the concern: ${loop.lastReason}`);
     }

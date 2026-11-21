@@ -97,9 +97,12 @@ function localDownData(kind, value) {
   if (kind !== 'fallback' || !LOCAL_DOWN_REASONS.has(value?.reason)) return null;
   return { reason: value.reason, detail: typeof value.detail === 'string' ? scrub(value.detail).slice(0, 300) : null };
 }
-const choices = kind => kind === 'fallback'
+// Rejecting a step's escalation undoes that step and pauses the run, which can be resumed (Part E2 note).
+const rejectConsequence = (kind, payload) => kind === 'escalation' && payload?.kind === 'chunk'
+  ? 'Undo this step and pause; you can resume later.' : 'Do not proceed.';
+const choices = (kind, payload) => kind === 'fallback'
   ? [{ id: 'pause', label: 'Pause', consequence: 'No subscription fallback.' }, { id: 'continue', label: 'Use subscriptions', consequence: 'Uses more subscription allowance.' }]
-  : [{ id: 'reject', label: 'Reject', consequence: 'Do not proceed.' }, { id: 'approve', label: 'Approve', consequence: kind === 'result' ? 'Create a new branch; do not merge or deploy.' : 'Continue this step.' }];
+  : [{ id: 'reject', label: 'Reject', consequence: rejectConsequence(kind, payload) }, { id: 'approve', label: 'Approve', consequence: kind === 'result' ? 'Create a new branch; do not merge or deploy.' : 'Continue this step.' }];
 export function summary(run) {
   const { events, decision, review, request, workspaceDir, clientRequestId, requestIdentity, decisionReceipts, recoveryReceipts, ...out } = run;
   return out;
@@ -209,7 +212,7 @@ export class Runs {
           requireValue(evidence && (evidence.commit === null || /^[a-f0-9]{40}$/.test(evidence.commit)), 'Invalid review evidence.');
           run.decision = { id: msg.id, runId: run.id, kind: msg.kind, createdAt: now(), status: 'pending',
             prompt: scrub(msg.payload.summary ?? msg.payload.message ?? msg.payload.reason ?? 'Review this step.'),
-            choices: choices(msg.kind), evidence, revision: id(), resolvedAt: null };
+            choices: choices(msg.kind, msg.payload), evidence, revision: id(), resolvedAt: null };
           const localDown = localDownData(msg.kind, msg.payload.localDown);
           if (localDown) run.decision.localDown = localDown;
           run.review = redact({ ...msg.payload, commit: evidence.commit, diffId: evidence.diffId, testReportIds: evidence.testReportIds });
