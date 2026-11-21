@@ -1,7 +1,7 @@
 // test/factory-release.test.js
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -86,7 +86,7 @@ test('a later release keeps the package name and moves the change\'s Unreleased 
   const d = tmp();
   const p = makeShipProject(d);
   const changelog = git(p.appDir, 'show', 'main:CHANGELOG.md').replace('## [Unreleased]\n', '## [Unreleased]\n- A new report.\n');
-  execFileSync('sh', ['-c', 'cat > CHANGELOG.md'], { cwd: p.appDir, input: changelog + '\n' });
+  writeFileSync(path.join(p.appDir, 'CHANGELOG.md'), changelog + '\n');
   git(p.appDir, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qam', 'A change');
   const r = await releaseApp({ projectDir: p.projectDir, bump: 'minor', runId: RUN_ID }, { env: fakeNpm(d).env() });
   assert.deepEqual(r, { ok: true, version: '0.2.0', sha: git(p.appDir, 'rev-parse', 'main'), tag: 'v0.2.0' });
@@ -150,7 +150,7 @@ test('a release script that changes more than the release files, or makes extra 
   const d = tmp();
   const p = makeShipProject(d);
   const before = git(p.appDir, 'rev-parse', 'main');
-  execFileSync('sh', ['-c', 'cat > CHANGELOG.md'], { cwd: p.appDir, input: git(p.appDir, 'show', 'main:CHANGELOG.md').replace('## [Unreleased]\n', '## [Unreleased]\n- A fix.\n') + '\n' });
+  writeFileSync(path.join(p.appDir, 'CHANGELOG.md'), git(p.appDir, 'show', 'main:CHANGELOG.md').replace('## [Unreleased]\n', '## [Unreleased]\n- A fix.\n') + '\n');
   git(p.appDir, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qam', 'A change');
   const changed = git(p.appDir, 'rev-parse', 'main');
   const r = await releaseApp({ projectDir: p.projectDir, bump: 'patch', runId: RUN_ID }, { env: fakeNpm(d, { extraFile: 'apps/web/src/sneaky.ts' }).env() });
@@ -178,7 +178,7 @@ test('a crash between moving main and updating the app folder is tidied before t
   assert.match((await releaseApp({ projectDir: p.projectDir, bump: 'first', runId: RUN_ID }, { env: npm.env() })).reason, /already had its first release/);
   assert.equal(git(p.appDir, 'status', '--porcelain'), '');
   // Real changes of the operator's own are never thrown away.
-  execFileSync('sh', ['-c', 'echo mine >> CHANGELOG.md'], { cwd: p.appDir });
+  appendFileSync(path.join(p.appDir, 'CHANGELOG.md'), 'mine\n');
   await releaseApp({ projectDir: p.projectDir, bump: 'first', runId: RUN_ID }, { env: npm.env() });
   assert.match(git(p.appDir, 'status', '--porcelain'), /CHANGELOG\.md/);
 });
@@ -243,7 +243,7 @@ test('a file whose name only looks like a release file after trimming is still r
 // check existed is refused too.
 const SETTINGS_REFUSAL = 'The release step changed more than the version numbers in package.json, so nothing was shipped.';
 const commitFiles = (dir, files, message) => {
-  for (const [name, body] of Object.entries(files)) execFileSync('sh', ['-c', `cat > '${name}'`], { cwd: dir, input: body });
+  for (const [name, body] of Object.entries(files)) writeFileSync(path.join(dir, name), body);
   git(dir, 'add', '-A');
   git(dir, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', message);
   return git(dir, 'rev-parse', 'HEAD');
