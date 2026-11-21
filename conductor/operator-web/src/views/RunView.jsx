@@ -15,6 +15,13 @@ const KIND_TITLE = {
   escalation: 'The models disagree: your call',
   fallback: 'The local model is unavailable',
 };
+// Why the local model is down, from the service's probe code (next.md item 7.1). An unknown code shows nothing extra.
+const LOCAL_DOWN_TEXT = {
+  'worker-offline': 'The local model server is running, but its GPU worker is not connected.',
+  unauthorized: 'The local model server refused the key. Check the key in the window that started the app.',
+  'model-missing': 'The local model server does not have the model named in your settings.',
+  unavailable: 'The local model server could not be reached, or did not answer in time.',
+};
 const STREAM_TEXT = {
   [STREAM.connecting]: 'Connecting to live progress…',
   [STREAM.live]: 'Live',
@@ -79,6 +86,12 @@ function Decision({ api, run, review, onAnswered, onStale }) {
     <section className="decision" aria-labelledby="decision-title">
       <h2 id="decision-title" tabIndex={-1} ref={heading}>{KIND_TITLE[d.kind] ?? 'A decision is needed'}</h2>
       <p className="prompt">{plain(d.prompt, 4000)}</p>
+      {d.kind === 'fallback' && Object.hasOwn(LOCAL_DOWN_TEXT, d.localDown?.reason) && (
+        <p className="local-down">
+          {LOCAL_DOWN_TEXT[d.localDown.reason]}
+          {typeof d.localDown.detail === 'string' && d.localDown.detail && <> Details: {plain(d.localDown.detail, 300)}.</>}
+        </p>
+      )}
       {d.kind === 'fallback' && <p>Continuing uses your Claude Code and Codex subscriptions for the work the local model would have done. It never switches to paid API keys.</p>}
       {needsEvidence && (evidenceShown ? <ReviewDetails review={review} /> : <p className="warn" role="status">Loading the exact changes and test results for commit <code>{shortSha(d.evidence?.commit)}</code>… Approval stays unavailable until they are shown.</p>)}
       {needsEvidence && evidenceShown && !complete && <p className="warn" role="alert">These changes are too long to show here in full, so they cannot be approved on this page. Reject them, and ask for the work in smaller steps.</p>}

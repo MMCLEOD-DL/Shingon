@@ -91,6 +91,12 @@ function knowledgeEventData(event) {
   }
 }
 
+// Why the local model is down (next.md item 7.1): only a known probe code, and its fixed sentence, bounded and scrubbed.
+const LOCAL_DOWN_REASONS = new Set(['unauthorized', 'model-missing', 'worker-offline', 'unavailable']);
+function localDownData(kind, value) {
+  if (kind !== 'fallback' || !LOCAL_DOWN_REASONS.has(value?.reason)) return null;
+  return { reason: value.reason, detail: typeof value.detail === 'string' ? scrub(value.detail).slice(0, 300) : null };
+}
 const choices = kind => kind === 'fallback'
   ? [{ id: 'pause', label: 'Pause', consequence: 'No subscription fallback.' }, { id: 'continue', label: 'Use subscriptions', consequence: 'Uses more subscription allowance.' }]
   : [{ id: 'reject', label: 'Reject', consequence: 'Do not proceed.' }, { id: 'approve', label: 'Approve', consequence: kind === 'result' ? 'Create a new branch; do not merge or deploy.' : 'Continue this step.' }];
@@ -204,6 +210,8 @@ export class Runs {
           run.decision = { id: msg.id, runId: run.id, kind: msg.kind, createdAt: now(), status: 'pending',
             prompt: scrub(msg.payload.summary ?? msg.payload.message ?? msg.payload.reason ?? 'Review this step.'),
             choices: choices(msg.kind), evidence, revision: id(), resolvedAt: null };
+          const localDown = localDownData(msg.kind, msg.payload.localDown);
+          if (localDown) run.decision.localDown = localDown;
           run.review = redact({ ...msg.payload, commit: evidence.commit, diffId: evidence.diffId, testReportIds: evidence.testReportIds });
           run.workspaceCommit = evidence.commit; run.activeDecisionId = msg.id; run.status = 'awaiting-decision';
           // A fresh result question proves the engine has reconciled any older

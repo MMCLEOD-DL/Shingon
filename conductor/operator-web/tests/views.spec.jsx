@@ -168,6 +168,25 @@ describe('other decision kinds use their own choices', () => {
     showRun({ ...fixtures.runningRun, status: 'awaiting-decision', decision: fixtures.fallbackDecision });
     expect(await screen.findByText(/never switches to paid API keys/)).toBeTruthy();
   });
+  test.each([
+    ['worker-offline', /GPU worker is not connected/],
+    ['unauthorized', /refused the key/],
+    ['model-missing', /does not have the model/],
+    ['unavailable', /could not be reached/],
+  ])('item 7.1: a %s fallback says why in plain words', async (reason, sentence) => {
+    const decision = { ...fixtures.fallbackDecision, localDown: { reason, detail: 'synthetic probe sentence' } };
+    showRun({ ...fixtures.runningRun, status: 'awaiting-decision', decision });
+    expect(await screen.findByText(sentence)).toBeTruthy();
+    expect(screen.getByText(/synthetic probe sentence/)).toBeTruthy();
+  });
+  test('item 7.1: a fallback with no or an unknown reason keeps the current text only', async () => {
+    for (const localDown of [undefined, { reason: 'start-now', detail: 'should not be shown' }]) {
+      showRun({ ...fixtures.runningRun, status: 'awaiting-decision', decision: { ...fixtures.fallbackDecision, localDown } });
+      expect(await screen.findByText(/never switches to paid API keys/)).toBeTruthy();
+      expect(screen.queryByText(/GPU worker|refused the key|does not have the model|could not be reached|should not be shown/)).toBeNull();
+      cleanup();
+    }
+  });
   test('spending subscription allowance is never the highlighted choice', async () => {
     showRun({ ...fixtures.runningRun, status: 'awaiting-decision', decision: fixtures.fallbackDecision });
     const pause = await screen.findByRole('button', { name: 'Pause' });

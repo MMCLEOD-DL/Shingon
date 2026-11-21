@@ -243,6 +243,10 @@
         "consequence": "Uses more subscription allowance."
       }
     ],
+    "localDown": {
+      "reason": "worker-offline",
+      "detail": "the local model server is running, but no GPU worker is connected to it"
+    },
     "evidence": {
       "commit": null,
       "diffId": null,

@@ -274,6 +274,41 @@ test('K8 evidence metadata is persisted and replayed only to an authenticated op
   } finally { await reader.cancel(); }
 });
 
+test('item 7.1: a fallback decision carries only a known local-down reason and a bounded, redacted detail', async t => {
+  const previous = process.env.GATE_TEST_TOKEN;
+  process.env.GATE_TEST_TOKEN = 'SYNTHETIC_GATE_SECRET';
+  t.after(() => {
+    if (previous === undefined) delete process.env.GATE_TEST_TOKEN;
+    else process.env.GATE_TEST_TOKEN = previous;
+  });
+  const s = await setup(t);
+  await s.login();
+  const repositoryId = await s.register();
+  const r = await s.start(repositoryId, 'synthetic fallback question');
+  const run = await s.wait(r.json.id, 'awaiting-decision');
+  assert.equal(run.decision.kind, 'fallback');
+  assert.deepEqual(Object.keys(run.decision.localDown).sort(), ['detail', 'reason']);
+  assert.equal(run.decision.localDown.reason, 'worker-offline');
+  assert.match(run.decision.localDown.detail, /^no GPU worker  \[redacted\] x+$/);
+  assert.ok(run.decision.localDown.detail.length <= 300);
+  assert.doesNotMatch(JSON.stringify(run.decision), /SYNTHETIC_GATE_SECRET||unselected-private-field/);
+  assert.deepEqual(s.app.runs.get(run.id).decision.localDown, run.decision.localDown, 'stored as returned');
+});
+
+for (const [request, expected] of [
+  ['synthetic fallback unknown reason', undefined],
+  ['synthetic fallback odd detail', { reason: 'unauthorized', detail: null }],
+]) {
+  test(`item 7.1: ${request} is not passed through as-is`, async t => {
+    const s = await setup(t);
+    await s.login();
+    const r = await s.start(await s.register(), request);
+    const run = await s.wait(r.json.id, 'awaiting-decision');
+    assert.deepEqual(run.decision.localDown, expected);
+    assert.doesNotMatch(JSON.stringify(run.decision), /start-the-worker-now|should not be shown|nested/);
+  });
+}
+
 test('a storage failure blocks approval before it reaches the worker', async t => {
   const s = await setup(t); await s.login(); const r = await s.start(await s.register());
   const run = await s.wait(r.json.id, 'awaiting-decision'); const d = run.decision;

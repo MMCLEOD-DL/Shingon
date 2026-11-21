@@ -58,7 +58,8 @@ process.on('message', async msg => {
       const built = await buildTeam(config.participants, { routing: config.routing });
       if (!built.ok) return { outcome: { status: 'failed', reason: built.error } };
       if (built.localDown) {
-        const answer = await ask('fallback', { summary: 'The local model is unavailable. Subscription fallback uses your allowance. Pause, or explicitly continue with subscription models.', reason: built.localDown.reason });
+        const answer = await ask('fallback', { summary: 'The local model is unavailable. Subscription fallback uses your allowance. Pause, or explicitly continue with subscription models.', reason: built.localDown.reason,
+          localDown: { reason: built.localDown.reason, detail: built.localDown.detail ?? null } });
         if (answer !== true) return { outcome: {
           status: 'paused', reasonCode: msg.workspaceDir ? undefined : 'paused-before-work',
           reason: 'Local model unavailable; subscription fallback was not approved.',
