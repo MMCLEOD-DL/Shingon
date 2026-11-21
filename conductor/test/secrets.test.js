@@ -2,7 +2,7 @@
 // Fake keys only; never a real credential.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { childEnv, redact, secretValues, SCRUB_ENV, REDACTED, rememberSecret, forgetRememberedSecrets } from '../src/secrets.js';
@@ -21,6 +21,13 @@ process.env.X_API_KEY = X_KEY;
 process.env.ANTHROPIC_API_KEY = 'sk-test-anthropic-0123456789';
 
 const tmp = () => mkdtempSync(path.join(tmpdir(), 'sec-'));
+
+// Keep the environment observations in JavaScript so cmd and sh run the same probe.
+function writeEnvProbe(dir, source) {
+  const file = path.join(dir, 'env-probe.cjs');
+  writeFileSync(file, source);
+  return `"${process.execPath}" "${file}"`;
+}
 
 test('childEnv drops LOCALAI_API_KEY unless allowed, and keeps frontier keys', () => {
   assert.ok(SCRUB_ENV.includes('LOCALAI_API_KEY'));
@@ -44,10 +51,18 @@ test('redact deep-walks strings, arrays and plain objects', () => {
 });
 
 test('runCommand and runTests do not pass LOCALAI_API_KEY to children', async () => {
-  const r = await runCommand({ cmd: 'sh', args: ['-c', 'echo "[$LOCALAI_API_KEY]"'] });
+  const source = "process.stdout.write('[' + (process.env.LOCALAI_API_KEY || '') + ']')";
+  const r = await runCommand({ cmd: process.execPath, args: ['-e', source] });
+  assert.equal(r.code, 0, r.stderr);
   assert.equal(r.stdout.trim(), '[]');
+  const allowed = await runCommand({ cmd: process.execPath, args: ['-e', source], env: childEnv({ allow: ['LOCALAI_API_KEY'] }) });
+  assert.equal(allowed.code, 0, allowed.stderr);
+  assert.equal(allowed.stdout, `[${LOCAL_KEY}]`, 'the probe observes an explicitly allowed synthetic key');
   const ws = await Workspace.create({ repoDir: await makeRepo(), baseDir: tmp(), taskId: 't' });
-  const t = await ws.runTests('echo "local=[$LOCALAI_API_KEY] x=[$X_API_KEY]"', {});
+  const command = writeEnvProbe(ws.dir, "process.stdout.write('local=[' + (process.env.LOCALAI_API_KEY || '') + '] x=[' + (process.env.X_API_KEY || '') + ']')");
+  const t = await ws.runTests(command, {});
+  assert.equal(t.code, 0, t.output);
+  assert.equal(t.passed, true);
   assert.match(t.output, /local=\[\]/);
   assert.match(t.output, /x=\[\]/); // N2: every secret-named var is dropped from the test env
   assert.ok(!t.output.includes(X_KEY));
@@ -81,8 +96,13 @@ test('a custom local envKey is scrubbed from every other child', async () => {
   new LocalAgentAdapter({ model: 'm', envKey: 'MY_LOCAL_PROVIDER_KEY' });
   assert.equal(childEnv().MY_LOCAL_PROVIDER_KEY, undefined);
   assert.equal(childEnv({ allow: ['MY_LOCAL_PROVIDER_KEY'] }).MY_LOCAL_PROVIDER_KEY, 'sk-test-custom-0123456789');
-  const r = await runCommand({ cmd: 'sh', args: ['-c', 'echo "[$MY_LOCAL_PROVIDER_KEY]"'] });
+  const source = "process.stdout.write('[' + (process.env.MY_LOCAL_PROVIDER_KEY || '') + ']')";
+  const r = await runCommand({ cmd: process.execPath, args: ['-e', source] });
+  assert.equal(r.code, 0, r.stderr);
   assert.equal(r.stdout.trim(), '[]');
+  const allowed = await runCommand({ cmd: process.execPath, args: ['-e', source], env: childEnv({ allow: ['MY_LOCAL_PROVIDER_KEY'] }) });
+  assert.equal(allowed.code, 0, allowed.stderr);
+  assert.equal(allowed.stdout, '[sk-test-custom-0123456789]');
 });
 
 test('the transcript never stores a key an agent printed', async () => {
@@ -110,7 +130,10 @@ test('a local envKey that is a frontier auth key is never scrubbed (frontier CLI
 test('the test command gets no secret-named vars; frontier CLIs keep their keys (N2)', async () => {
   process.env.GH_TOKEN = 'ghp_test0123456789';
   const ws = await Workspace.create({ repoDir: await makeRepo(), baseDir: tmp(), taskId: 't' });
-  await ws.runTests('printf "%s" "$ANTHROPIC_API_KEY" > leaked.txt; printf "%s" "$GH_TOKEN" >> leaked.txt', {});
+  const command = writeEnvProbe(ws.dir, "require('node:fs').writeFileSync('leaked.txt', (process.env.ANTHROPIC_API_KEY || '') + (process.env.GH_TOKEN || ''))");
+  const result = await ws.runTests(command, {});
+  assert.equal(result.code, 0, result.output);
+  assert.equal(result.passed, true);
   const { readFileSync: rf } = await import('node:fs');
   const leaked = rf(path.join(ws.dir, 'leaked.txt'), 'utf8');
   assert.ok(!leaked.includes('sk-test-anthropic-0123456789'));
@@ -119,7 +142,14 @@ test('the test command gets no secret-named vars; frontier CLIs keep their keys 
   const { strictChildEnv } = await import('../src/secrets.js');
   assert.equal(strictChildEnv().ANTHROPIC_API_KEY, undefined);
   assert.equal(strictChildEnv().LOCALAI_API_KEY, undefined);
-  assert.ok(strictChildEnv().PATH);
+  const strict = strictChildEnv();
+  const pathKey = process.platform === 'win32'
+    ? Object.keys(strict).find(key => key.toUpperCase() === 'PATH')
+    : 'PATH';
+  assert.ok(strict[pathKey]);
+  const resolved = await runCommand({ cmd: 'node', args: ['-e', "process.stdout.write('search-path-ok')"], env: strict });
+  assert.equal(resolved.code, 0, resolved.stderr);
+  assert.equal(resolved.stdout, 'search-path-ok');
 });
 
 test('final-fix 2: TEST_DATABASE_URL and its password are redacted, but the test command still gets the URL', async () => {
@@ -136,7 +166,14 @@ test('final-fix 2: TEST_DATABASE_URL and its password are redacted, but the test
   try {
     assert.equal(strictChildEnv().TEST_DATABASE_URL, url, 'the tests need the URL');
     const ws = await Workspace.create({ repoDir: await makeRepo(), baseDir: tmp(), taskId: 'db' });
-    const r = await ws.runTests('echo "connect failed $TEST_DATABASE_URL"; echo "password p@ss-w0rd-long"; exit 1');
+    const command = writeEnvProbe(ws.dir, `
+      if (process.env.TEST_DATABASE_URL !== ${JSON.stringify(url)}) process.exit(2);
+      console.log('connect failed ' + process.env.TEST_DATABASE_URL);
+      console.log('password p@ss-w0rd-long');
+      process.exit(1);
+    `);
+    const r = await ws.runTests(command);
+    assert.equal(r.code, 1, 'the failing probe actually received the database URL');
     assert.equal(r.passed, false);
     assert.ok(!r.output.includes('p@ss-w0rd-long'), r.output);
     assert.ok(!r.output.includes('p%40ss-w0rd-long'), r.output);
