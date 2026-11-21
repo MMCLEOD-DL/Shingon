@@ -18,7 +18,7 @@ The reasons are under each item. If Malcolm's priority is personal productivity 
 
 **Added 6 November 2026:** item 6, the step gate and local simplifier, from Malcolm's proposal of the same date. Its first task, **G1 (per-step numbers from the run logs)**, goes **before** item 1 (Malcolm confirmed this as GD3), so the expenses build is the first real workload to produce those numbers. G2–G4 follow once the numbers have been read. G5 depends on those numbers and may never be needed.
 
-**Added 19 November 2026:** item 7, starting the desktop local-model worker from the app, from Malcolm's request during Windows acceptance Part E. It is a proposal only, waiting for his scope decisions (W1–W8). It is small and independent of items 1–6, so it can go whenever he decides.
+**Added 19 November 2026:** item 7, starting the desktop local-model worker from the app, from Malcolm's request during Windows acceptance Part E. Malcolm decided W1–W8 on 21 November 2026, all as recommended (see the end of item 7). The reason text (proposal 1) is done; the Start action is next, Codex's contract and service first. It is small and independent of items 1–6.
 
 ## 1. Client expenses workflow
 
@@ -388,6 +388,19 @@ Its build order is: Verifier, then metrics, then a week of runs, then the review
 - **W6, after a timeout or failure:** offer Try again, or only Pause and Use subscriptions? Recommended: Try again after a timeout; no retry after a non-zero exit, because the same command will fail the same way.
 - **W7, defaults:** a 3-minute readiness timeout, and setup writes no start command unless he adds one by hand?
 - **W8, execution policy:** may the configured command include `-ExecutionPolicy Bypass`, or must the script run under his machine's existing policy? Recommended: the existing policy. If it refuses the script, the failure is shown like any other.
+
+
+**Decided, 21 November 2026 (Malcolm, in chat), all as recommended:**
+- **W1:** build the reason and the start button: proposal 1 (done) plus proposals 2–8. There is no setup-page control outside a run.
+- **W2:** offer Start only on the question asked before work starts. The mid-run question keeps showing the reason, but gets no button in this version.
+- **W3:** `GET /setup` reports only `local.worker.startConfigured`. The command's text stays in the config file.
+- **W4:** (a), a third choice `start-worker` on the existing fallback decision. There is no separate endpoint.
+- **W5:** accept a plain-HTTP LAN `readyUrl`, but only from the on-disk config and only for the readiness check. No `Authorization` header is sent. The loopback-only rule for every other setup URL is unchanged.
+- **W6:** offer Try again after a readiness timeout. After the start command exits non-zero, offer only Pause and Use subscriptions.
+- **W7:** a 3-minute default `startTimeoutMs`. Setup never writes a start command; Malcolm adds it to the config by hand.
+- **W8:** the script runs under the machine's existing execution policy. Config validation refuses a `startCommand` that contains `-ExecutionPolicy` (any case), and the app never adds it. If the policy blocks the script, that shows as an ordinary start failure.
+
+**Next:** Codex lands the config section, the service action and the contract (`interface.md` and fixtures) first. That touches `src/service/**`, so Malcolm merges it. Claude then builds the operator UI against those fixtures. Live proof needs Malcolm on his PC.
 
 **Dependencies:** none hard. The service part touches `src/service/**`, so Malcolm merges it. It should not start during an open acceptance round, so P07/P08 evidence stays comparable. **Not in scope:** stopping the worker, starting it at Windows sign-in, the WSL forwarding repair, and starting anything on another machine.
 
