@@ -33,7 +33,9 @@ Private TAP/browser logs remain under the task temporary log names and private c
 
 ## Linux evidence
 
-Not run locally: no WSL call. GitHub Linux CI will be recorded separately before final submission/readiness. The high-risk service path needs Malcolm's label or merge under the existing risk-gate; Codex leaves auto-merge off and never changes labels, workflow or repository settings.
+GitHub Linux CI44969672270 on handoff head e495ae6: Conductor job137046466663 PASS,1792tests/1789pass/0fail/3skip,82010.432407ms; operator-web and knowledge PASS. Foundation remains running at this record; final submission records its outcome. No local WSL call. Risk job137046466304 failed specifically because localWorkerLauncher.js is a high-risk service path without Malcolm's approval label; this is a human merge gate, not a test failure. Codex leaves auto-merge off and never changes labels, workflow or repository settings.
+
+Malcolm merged initial implementation PR162 (73c5a8e) while validation continued. PR163 now carries the overlapping-secret redaction correction2e65218 and these handoff/evidence records; it does not repeat the already merged implementation. PR163 still requires Malcolm's merge before the Claude UI handoff is complete.
 
 ## Claude UI handoff after merge
 
