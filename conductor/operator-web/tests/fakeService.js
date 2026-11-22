@@ -56,6 +56,11 @@ export function fakeService({ run = fixtures.awaitingResult, review = fixtures.r
       if (sub === 'decisions') {
         const d = state.run.decision;
         if (!d || d.id !== m[3] || body.expectedRevision !== d.revision || body.reviewedCommit !== d.evidence.commit) return json(409, clone(fixtures.staleDecision));
+        // Item 7: starting the worker leaves the question pending while the start runs (interface.md).
+        if (body.choiceId === 'start-worker') {
+          state.run = { ...state.run, lastEventSeq: state.run.lastEventSeq + 1, decision: { ...d, workerStart: { state: 'starting', message: 'Starting the local worker.' } } };
+          return json(200, { accepted: true, decisionId: d.id });
+        }
         state.run = { ...state.run, status: 'running', decision: null, activeDecisionId: null };
         return json(200, { accepted: true, decisionId: d.id });
       }

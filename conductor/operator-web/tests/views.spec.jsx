@@ -736,3 +736,107 @@ describe('knowledge base note', () => {
     expect(within(note).getByText('<script>x</script>')).toBeTruthy();
   });
 });
+
+// next.md item 7: start the local worker from the pre-run fallback question (contract and fixtures from PR162).
+describe('item 7: start the local worker', () => {
+  const asking = (d, extra = {}) => ({ ...fixtures.runningRun, status: 'awaiting-decision', activeDecisionId: d.id, decision: d, ...extra });
+  const ANSWERS = ['Pause', 'Use subscriptions', 'Start the local worker', 'Try again'];
+
+  test('worker-offline with a start command: says why, offers Start, and sends start-worker', async () => {
+    const d = fixtures.workerOfflineConfiguredDecision;
+    const { svc } = showRun(asking(d));
+    expect(await screen.findByText(/GPU worker is not connected/)).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Start the local worker' }));
+    const sent = svc.state.calls.find((c) => c.path.includes('/decisions/'));
+    expect(sent.body).toMatchObject({ choiceId: 'start-worker', expectedRevision: d.revision, reviewedCommit: null });
+    expect(sent.body.clientRequestId).toBeTruthy();
+    // The question stays pending while the start runs: the page shows the start, not "Answer saved".
+    expect(await screen.findByText('Starting the local worker.')).toBeTruthy();
+    for (const name of ANSWERS) expect(screen.queryByRole('button', { name })).toBeNull();
+    expect(screen.queryByText(/Answer saved/)).toBeNull();
+  });
+
+  test.each(['workerOfflineUnconfiguredDecision', 'workerUnauthorizedDecision'])('%s offers no Start button', async (key) => {
+    showRun(asking(fixtures[key]));
+    expect(await screen.findByRole('button', { name: 'Pause' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Use subscriptions' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Start the local worker|Try again/ })).toBeNull();
+  });
+
+  test('while a start runs, no answer is offered, and Stop is explained', async () => {
+    showRun(asking(fixtures.workerStartInProgressDecision));
+    expect(await screen.findByText('Starting the local worker.')).toBeTruthy();
+    for (const name of ANSWERS) expect(screen.queryByRole('button', { name })).toBeNull();
+    expect(screen.getByText(/Stopping the run stops the wait\. It does not stop the worker/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Stop run…' })).toBeTruthy();
+  });
+
+  test('a failed or timed-out start is announced, and hostile worker text is shown literally', async () => {
+    const hostile = '<img src=x onerror=alert(1)>\u001b[31m red <script>x</script>';
+    const d = { ...fixtures.workerStartFailedDecision, workerStart: { ...fixtures.workerStartFailedDecision.workerStart, output: hostile } };
+    showRun(asking(d));
+    expect((await screen.findByRole('alert')).textContent).toBe('The start command failed. Nothing else was tried.');
+    const pre = screen.getByText('Last lines from the start command:').parentElement.querySelector('pre');
+    expect(pre.querySelector('img, script')).toBeNull();
+    expect(pre.textContent).toContain('<img src=x onerror=alert(1)>');
+    expect(pre.textContent).toContain('<script>x</script>');
+    expect(pre.textContent).not.toContain('\u001b');
+    cleanup();
+    const starting = { ...fixtures.workerStartInProgressDecision, workerStart: { state: 'waiting', message: '<b>Waiting</b>\u001b[2J' } };
+    showRun(asking(starting));
+    const status = await screen.findByText(/<b>Waiting<\/b>/);
+    expect(status.querySelector('b')).toBeNull();
+    expect(status.textContent).not.toContain('\u001b');
+  });
+
+  test('a failed start shows the command output once, and offers only Pause and Use subscriptions', async () => {
+    showRun(asking(fixtures.workerStartFailedDecision));
+    expect(await screen.findByText('The start command failed. Nothing else was tried.')).toBeTruthy();
+    expect(screen.getByText('Last lines from the start command:')).toBeTruthy();
+    expect(screen.getByText(/WSL forwarding configuration needs to be updated before starting the worker\./)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Use subscriptions' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Start the local worker|Try again/ })).toBeNull();
+  });
+
+  test('a timeout offers Try again, which asks to start the command again', async () => {
+    const d = fixtures.workerStartTimeoutDecision;
+    const { svc } = showRun(asking(d));
+    expect(await screen.findByText('The worker did not become ready within 3 minutes.')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    const sent = svc.state.calls.find((c) => c.path.includes('/decisions/'));
+    expect(sent.body).toMatchObject({ choiceId: 'start-worker', expectedRevision: d.revision });
+  });
+
+  test('a second answer during a start is refused in plain words', async () => {
+    const refuse = (method, path) => (method === 'POST' && path.includes('/decisions/')
+      ? { ok: false, status: 409, json: async () => structuredClone(fixtures.workerStartInProgressError) } : null);
+    showRun(asking(fixtures.workerOfflineConfiguredDecision), { failWith: refuse });
+    await userEvent.click(await screen.findByRole('button', { name: 'Start the local worker' }));
+    expect(await screen.findByText(/The worker start is already in progress/)).toBeTruthy();
+  });
+
+  test('a failed start that arrives only as a progress event is shown without reloading the page', async () => {
+    const run = asking(fixtures.workerStartInProgressDecision);
+    const { svc } = showRun(run);
+    await screen.findByText('Starting the local worker.');
+    const failed = fixtures.workerStartProgressEvents.find((e) => e.data.engineType === 'local-worker-failed');
+    svc.state.run = asking(fixtures.workerStartFailedDecision, { lastEventSeq: run.lastEventSeq + 1 });
+    FakeEventSource.all.at(-1).emit({ ...failed, seq: run.lastEventSeq + 1 });
+    expect(await screen.findByText(/WSL forwarding configuration needs to be updated/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
+  });
+
+  test.each([
+    [true, /A start command for the local worker is configured/],
+    [false, /No start command for the local worker is configured/],
+  ])('setup says whether a start command is configured (%s), and never shows or sends it', async (configured, sentence) => {
+    const base = fakeService().state.setup;
+    const svc = fakeService({ setup: { ...base, local: { ...base.local, worker: { startConfigured: configured } } } });
+    render(<Setup api={createApi({ fetchImpl: svc.fetchImpl })} />);
+    expect(await screen.findByText(sentence)).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Save local model' }));
+    const put = svc.state.calls.find((c) => c.method === 'PUT' && c.path === '/setup');
+    expect(Object.keys(put.body.local).sort()).toEqual(['baseUrl', 'model'], 'the worker section is never sent back');
+  });
+});

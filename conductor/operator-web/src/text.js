@@ -81,6 +81,10 @@ const DECISION_TEXT = {
   reject: 'You rejected it.',
   pause: 'You chose to pause.',
   continue: 'You chose to use your subscriptions.',
+  // Item 7: the service resolves the question itself once the worker's readiness URL answers; the operator chose
+  // nothing here. The same line follows a worker that was already up (the command did not run), so it claims only
+  // that the worker is ready; the line before it says which case it was.
+  'Worker started; re-probing the local model.': 'The local worker is ready. Checking the local model again.',
 };
 const FINISH_TEXT = {
   landed: 'The branch was created.', // not "Branch created": that is the status label, and it stays unique on the page

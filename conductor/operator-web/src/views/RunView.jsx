@@ -22,6 +22,10 @@ const LOCAL_DOWN_TEXT = {
   'model-missing': 'The local model server does not have the model named in your settings.',
   unavailable: 'The local model server could not be reached, or did not answer in time.',
 };
+// Item 7: while the service is starting the local worker, the question stays pending but takes no answer (a second
+// one is refused with worker-start-in-progress). Failed and timeout put the question back with its own choices.
+const WORKER_STARTING = new Set(['starting', 'waiting', 'ready']);
+const workerStarting = (d) => d?.kind === 'fallback' && WORKER_STARTING.has(d.workerStart?.state);
 const STREAM_TEXT = {
   [STREAM.connecting]: 'Connecting to live progress…',
   [STREAM.live]: 'Live',
@@ -85,7 +89,8 @@ function Decision({ api, run, review, onAnswered, onStale }) {
   return (
     <section className="decision" aria-labelledby="decision-title">
       <h2 id="decision-title" tabIndex={-1} ref={heading}>{KIND_TITLE[d.kind] ?? 'A decision is needed'}</h2>
-      <p className="prompt">{plain(d.prompt, 4000)}</p>
+      {/* A failed or timed-out worker start replaces the question's text in place; announce it to screen readers. */}
+      <p className="prompt" role={d.kind === 'fallback' && ['failed', 'timeout'].includes(d.workerStart?.state) ? 'alert' : undefined}>{plain(d.prompt, 4000)}</p>
       {d.kind === 'fallback' && Object.hasOwn(LOCAL_DOWN_TEXT, d.localDown?.reason) && (
         <p className="local-down">
           {LOCAL_DOWN_TEXT[d.localDown.reason]}
@@ -93,6 +98,18 @@ function Decision({ api, run, review, onAnswered, onStale }) {
         </p>
       )}
       {d.kind === 'fallback' && <p>Continuing uses your Claude Code and Codex subscriptions for the work the local model would have done. It never switches to paid API keys.</p>}
+      {workerStarting(d) && (
+        <div className="worker-start" role="status">
+          <p><strong>{plain(d.workerStart.message, 300)}</strong></p>
+          <p className="muted small">The first load onto the graphics card can take a minute or two. Stopping the run stops the wait. It does not stop the worker.</p>
+        </div>
+      )}
+      {d.kind === 'fallback' && d.workerStart?.state === 'failed' && typeof d.workerStart.output === 'string' && d.workerStart.output.trim() && (
+        <div className="worker-output">
+          <p>Last lines from the start command:</p>
+          <pre>{plain(d.workerStart.output, 600)}</pre>
+        </div>
+      )}
       {needsEvidence && (evidenceShown ? <ReviewDetails review={review} /> : <p className="warn" role="status">Loading the exact changes and test results for commit <code>{shortSha(d.evidence?.commit)}</code>… Approval stays unavailable until they are shown.</p>)}
       {needsEvidence && evidenceShown && !complete && <p className="warn" role="alert">These changes are too long to show here in full, so they cannot be approved on this page. Reject them, and ask for the work in smaller steps.</p>}
       {needsEvidence && (
@@ -101,7 +118,7 @@ function Decision({ api, run, review, onAnswered, onStale }) {
         </label>
       )}
       <ErrorNote error={error} />
-      {sent ? <p role="status">{ANSWER_SAVED}</p> : (
+      {workerStarting(d) ? null : sent ? <p role="status">{ANSWER_SAVED}</p> : (
         <div className="choices">
           {/* Only approving a reviewed result is highlighted: a choice that spends subscription allowance never looks like the default. */}
           {d.choices.map((c) => (
@@ -232,7 +249,9 @@ export function RunView({ api, runId, go }) {
         onEvent: (e) => {
           eventsRef.current = applyEvents(eventsRef.current, [e]);
           setEvents(eventsRef.current);
-          if (e.type !== 'progress') refresh();
+          // A worker start reports its steps as progress events only, and a failure or timeout changes the question
+          // (new prompt, revision and choices) without another event: re-read the run for those too (item 7).
+          if (e.type !== 'progress' || String(e.data?.engineType ?? '').startsWith('local-worker-')) refresh();
         },
         onState: (s) => { if (!stopped) setStream(s); },
         checkCursor: async (cursor) => { const r = await api.run(runId); return cursor <= r.lastEventSeq; },
