@@ -445,7 +445,7 @@ try {
       // The fixture worker reports a healthy re-probe and pauses: no subscription fallback was chosen.
       await p.getByText('Paused', { exact: true }).waitFor({ timeout: 30000 });
       await p.locator('details.activity summary').click();
-      await p.getByText('The local worker started. Checking the local model again.').waitFor();
+      await p.getByText('The local worker is ready. Checking the local model again.').waitFor();
       assert.equal(await p.getByText('You chose to use your subscriptions.').count(), 0);
       assert.equal(readFileSync(started, 'utf8'), 'started\n', 'the start command ran exactly once');
       await p.goto(`${app.origin}/setup`);
@@ -472,6 +472,82 @@ try {
       await p.getByRole('button', { name: 'Pause' }).click();
       await p.getByText('Paused', { exact: true }).waitFor({ timeout: 15000 });
     } finally { await ctx.close(); }
+  });
+
+  // A readiness server that answers 200 once `ok()` holds, and a start script that records each run.
+  const readiness = async (ok) => {
+    const server = http.createServer((req, res) => { res.writeHead(ok() ? 200 : 503); res.end(); });
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    return { url: `http://127.0.0.1:${server.address().port}/readyz`, close: () => new Promise((r) => server.close(r)) };
+  };
+  const recordingScript = (name) => {
+    const marker = path.join(root, `${name}.txt`);
+    const script = path.join(root, `${name}.cjs`);
+    writeFileSync(script, `require('node:fs').appendFileSync(${JSON.stringify(marker)}, 'started\\n');\n`);
+    return { script, runs: () => (existsSync(marker) ? readFileSync(marker, 'utf8').split('\n').filter(Boolean).length : 0) };
+  };
+  const workerPage = async () => {
+    const ctx = await browser.newContext({ storageState: await context.storageState() });
+    const p = await ctx.newPage();
+    p.on('pageerror', (e) => consoleErrors.push(e.message));
+    return { ctx, p };
+  };
+
+  await step('item 7: a worker that is already up is not started again, and the log says it was up but busy', async () => {
+    const rec = recordingScript('already-ready');
+    const ready = await readiness(() => true);
+    withWorkerConfig({ startCommand: [process.execPath, rec.script], readyUrl: ready.url, startTimeoutMs: 60000 });
+    const { ctx, p } = await workerPage();
+    try {
+      await startWorkerRun(p);
+      await p.getByRole('button', { name: 'Start the local worker' }).click();
+      await p.getByText('Paused', { exact: true }).waitFor({ timeout: 30000 });
+      await p.locator('details.activity summary').click();
+      await p.getByText('The worker is already up but busy; checking the local model again.').waitFor();
+      await p.getByText('The local worker is ready. Checking the local model again.').waitFor();
+      assert.equal(rec.runs(), 0, 'the start command did not run');
+      // "Starting the local worker." is logged when Start is pressed, before readiness is checked; waiting follows
+      // only a launch.
+      assert.equal(await p.getByText('Waiting for the worker.').count(), 0);
+    } finally { await ctx.close(); await ready.close(); }
+  });
+
+  await step('item 7: a timeout offers Try again on the same question; the second start succeeds and nothing chose subscriptions', async () => {
+    const rec = recordingScript('timeout-then-retry');
+    const ready = await readiness(() => rec.runs() >= 2);
+    withWorkerConfig({ startCommand: [process.execPath, rec.script], readyUrl: ready.url, startTimeoutMs: 3000 });
+    const { ctx, p } = await workerPage();
+    try {
+      await startWorkerRun(p);
+      await p.getByRole('button', { name: 'Start the local worker' }).click();
+      await p.locator('.prompt').getByText('The worker did not become ready within 3 seconds.').waitFor({ timeout: 30000 });
+      assert.equal(rec.runs(), 1);
+      await p.getByRole('button', { name: 'Try again' }).click();
+      await p.getByText('Paused', { exact: true }).waitFor({ timeout: 30000 });
+      assert.equal(rec.runs(), 2, 'Try again ran the command a second time');
+      await p.locator('details.activity summary').click();
+      await p.getByText('The local worker is ready. Checking the local model again.').waitFor();
+      assert.equal(await p.getByText('You chose to use your subscriptions.').count(), 0);
+    } finally { await ctx.close(); await ready.close(); }
+  });
+
+  await step('item 7: when the re-probe after a start finds a refused key, the question comes back with that reason and no Start button', async () => {
+    const rec = recordingScript('reprobe-unauthorized');
+    const ready = await readiness(() => rec.runs() >= 1);
+    withWorkerConfig({ startCommand: [process.execPath, rec.script], readyUrl: ready.url, startTimeoutMs: 60000 });
+    const { ctx, p } = await workerPage();
+    try {
+      await p.goto(`${app.origin}/`);
+      await p.getByLabel(/Describe the change/).fill('synthetic worker reprobe unauthorized');
+      await p.getByRole('button', { name: 'Start' }).click();
+      await p.getByRole('heading', { name: 'The local model is unavailable' }).waitFor({ timeout: 15000 });
+      await p.getByRole('button', { name: 'Start the local worker' }).click();
+      await p.getByText(/refused the key/).waitFor({ timeout: 30000 });
+      await p.getByRole('button', { name: 'Pause' }).waitFor();
+      assert.equal(await p.getByRole('button', { name: /Start the local worker|Try again/ }).count(), 0);
+      await p.getByRole('button', { name: 'Pause' }).click();
+      await p.getByText('Paused', { exact: true }).waitFor({ timeout: 15000 });
+    } finally { await ctx.close(); await ready.close(); }
   });
 
   await step('no browser errors and no CSP violations during the journey', async () => {

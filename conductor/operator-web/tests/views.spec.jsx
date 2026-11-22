@@ -768,6 +768,25 @@ describe('item 7: start the local worker', () => {
     expect(await screen.findByText('Starting the local worker.')).toBeTruthy();
     for (const name of ANSWERS) expect(screen.queryByRole('button', { name })).toBeNull();
     expect(screen.getByText(/Stopping the run stops the wait\. It does not stop the worker/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Stop run…' })).toBeTruthy();
+  });
+
+  test('a failed or timed-out start is announced, and hostile worker text is shown literally', async () => {
+    const hostile = '<img src=x onerror=alert(1)>\u001b[31m red <script>x</script>';
+    const d = { ...fixtures.workerStartFailedDecision, workerStart: { ...fixtures.workerStartFailedDecision.workerStart, output: hostile } };
+    showRun(asking(d));
+    expect((await screen.findByRole('alert')).textContent).toBe('The start command failed. Nothing else was tried.');
+    const pre = screen.getByText('Last lines from the start command:').parentElement.querySelector('pre');
+    expect(pre.querySelector('img, script')).toBeNull();
+    expect(pre.textContent).toContain('<img src=x onerror=alert(1)>');
+    expect(pre.textContent).toContain('<script>x</script>');
+    expect(pre.textContent).not.toContain('\u001b');
+    cleanup();
+    const starting = { ...fixtures.workerStartInProgressDecision, workerStart: { state: 'waiting', message: '<b>Waiting</b>\u001b[2J' } };
+    showRun(asking(starting));
+    const status = await screen.findByText(/<b>Waiting<\/b>/);
+    expect(status.querySelector('b')).toBeNull();
+    expect(status.textContent).not.toContain('\u001b');
   });
 
   test('a failed start shows the command output once, and offers only Pause and Use subscriptions', async () => {

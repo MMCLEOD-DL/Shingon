@@ -89,7 +89,8 @@ function Decision({ api, run, review, onAnswered, onStale }) {
   return (
     <section className="decision" aria-labelledby="decision-title">
       <h2 id="decision-title" tabIndex={-1} ref={heading}>{KIND_TITLE[d.kind] ?? 'A decision is needed'}</h2>
-      <p className="prompt">{plain(d.prompt, 4000)}</p>
+      {/* A failed or timed-out worker start replaces the question's text in place; announce it to screen readers. */}
+      <p className="prompt" role={d.kind === 'fallback' && ['failed', 'timeout'].includes(d.workerStart?.state) ? 'alert' : undefined}>{plain(d.prompt, 4000)}</p>
       {d.kind === 'fallback' && Object.hasOwn(LOCAL_DOWN_TEXT, d.localDown?.reason) && (
         <p className="local-down">
           {LOCAL_DOWN_TEXT[d.localDown.reason]}
