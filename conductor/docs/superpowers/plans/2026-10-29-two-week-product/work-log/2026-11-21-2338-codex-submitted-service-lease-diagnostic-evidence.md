@@ -1,0 +1,9 @@
+# Codex task submitted — service lease diagnostic evidence
+
+Packet P07; owner Codex / BlueLake, reviewer Claude invited. Branch codex/service-lease-diagnostic-evidence; [PR161](https://github.com/MMCLEOD-DL/Shingon/pull/161). Baseline d29ba1a includes tested code39b3845 from PR159, verified merged by Malcolm. Completed evidencebedfb8e and handoff2026-11-21-2337-codex-handoff-service-lease-diagnostic-evidence.md are in this PR. This is the final submission commit. Documentation only; source/test/inventory unchanged here.
+
+Native focused39PASS/0skip, final lease3PASS/0skip; missing diagnostic reproduced0PASS/1FAIL before. Full native1766total/1719pass/46fail/1skip, exit1,610193.6259ms. Exact same46original failure identities,0new/0resolved; original201-row inventory155fixed/46OPEN unchanged. Count increase includes15peer synthetic harness and3lease tests. Historical PR157 receipt-test lease failure remains unresolved despite non-recurrence; no root-cause/collision fix or native/full-suite green claim.
+
+Source four CI suites PASS; source risk gate required Malcolm, who merged PR159. No labels/settings changed. Final documentation-head five required checks pending; current chat owns follow-through and readiness. No full native rerun for documentation. Wait for Malcolm merge of this final submission before another task; no automatic merge workaround.
+
+Next candidates: queued independent PR158 rare-language review and remaining native failure backlog, checked against fresh ownership. Lease root-cause evidence remains open for a genuine recurrence with the new safe diagnostic. No repeated historical review/archive or peer implementation edits. No shared service/worker restart, model, actual credential, remote, release or policy operation; all separate gates/ownership preserved.
