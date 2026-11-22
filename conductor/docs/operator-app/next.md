@@ -18,7 +18,7 @@ The reasons are under each item. If Malcolm's priority is personal productivity 
 
 **Added 6 November 2026:** item 6, the step gate and local simplifier, from Malcolm's proposal of the same date. Its first task, **G1 (per-step numbers from the run logs)**, goes **before** item 1 (Malcolm confirmed this as GD3), so the expenses build is the first real workload to produce those numbers. G2–G4 follow once the numbers have been read. G5 depends on those numbers and may never be needed.
 
-**Added 19 November 2026:** item 7, starting the desktop local-model worker from the app, from Malcolm's request during Windows acceptance Part E. Malcolm decided W1–W8 on 21 November 2026, all as recommended (see the end of item 7). The reason text (proposal 1) is done; the Start action is next, Codex's contract and service first. It is small and independent of items 1–6.
+**Added 19 November 2026:** item 7, starting the desktop local-model worker from the app, from Malcolm's request during Windows acceptance Part E. Malcolm decided W1–W8 on 21 November 2026, all as recommended (see the end of item 7). **Done in code, 22 November 2026** (PR 140, PR 162 and PR 164). Only the live check on Malcolm's PC remains.
 
 ## 1. Client expenses workflow
 
@@ -400,7 +400,21 @@ Its build order is: Verifier, then metrics, then a week of runs, then the review
 - **W7:** a 3-minute default `startTimeoutMs`. Setup never writes a start command; Malcolm adds it to the config by hand.
 - **W8:** the script runs under the machine's existing execution policy. Config validation refuses a `startCommand` that contains `-ExecutionPolicy` (any case), and the app never adds it. If the policy blocks the script, that shows as an ordinary start failure.
 
-**Next:** Codex lands the config section, the service action and the contract (`interface.md` and fixtures) first. That touches `src/service/**`, so Malcolm merges it. Claude then builds the operator UI against those fixtures. Live proof needs Malcolm on his PC.
+**Done, 22 November 2026:**
+- **Codex's PR 162** (merged as `142c002`) added the `local.worker` config, the `start-worker` service action and the contract.
+- **Claude's PR 164** (merged as `cccee5d`) built the operator page.
+
+Evidence is in `work-log/2026-11-22-0115-claude-handoff-start-worker-ui.md` and Codex's PR 162 entries. The real service's
+browser journey covers five cases with synthetic start commands: success, failure, already up, timeout then Try again,
+and a re-probe that finds a refused key.
+
+**Still unrun:** the live start on Malcolm's PC. To run it:
+1. Stop the GPU worker.
+2. Add `local.worker` to the config, with `startCommand` running `Start-LocalAI-Worker.ps1` through
+   `powershell.exe -NoProfile -NonInteractive -File`, and `readyUrl` set to `http://192.168.1.109:50050/readyz`.
+3. Start a run and press Start the local worker.
+
+That run should also be recorded in Part F's UAC and console table.
 
 **Dependencies:** none hard. The service part touches `src/service/**`, so Malcolm merges it. It should not start during an open acceptance round, so P07/P08 evidence stays comparable. **Not in scope:** stopping the worker, starting it at Windows sign-in, the WSL forwarding repair, and starting anything on another machine.
 
