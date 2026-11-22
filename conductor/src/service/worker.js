@@ -55,18 +55,21 @@ process.on('message', async msg => {
   try {
     const config = appConfig(msg.configFile);
     const prepare = async () => {
-      const built = await buildTeam(config.participants, { routing: config.routing });
-      if (!built.ok) return { outcome: { status: 'failed', reason: built.error } };
-      if (built.localDown) {
-        const answer = await ask('fallback', { summary: 'The local model is unavailable. Subscription fallback uses your allowance. Pause, or explicitly continue with subscription models.', reason: built.localDown.reason,
-          localDown: { reason: built.localDown.reason, detail: built.localDown.detail ?? null } });
-        if (answer !== true) return { outcome: {
-          status: 'paused', reasonCode: msg.workspaceDir ? undefined : 'paused-before-work',
-          reason: 'Local model unavailable; subscription fallback was not approved.',
-        } };
-        built.warnings.push(LOCAL_DOWN_WARNING);
+      for (;;) {
+        const built = await buildTeam(config.participants, { routing: config.routing });
+        if (!built.ok) return { outcome: { status: 'failed', reason: built.error } };
+        if (built.localDown) {
+          const answer = await ask('fallback', { summary: 'The local model is unavailable. Subscription fallback uses your allowance. Pause, or explicitly continue with subscription models.', reason: built.localDown.reason,
+            localDown: { reason: built.localDown.reason, detail: built.localDown.detail ?? null }, stage: 'pre-run' });
+          if (answer === 'worker-started') continue; // A fresh buildTeam call is the re-probe, never fallback approval.
+          if (answer !== true) return { outcome: {
+            status: 'paused', reasonCode: msg.workspaceDir ? undefined : 'paused-before-work',
+            reason: 'Local model unavailable; subscription fallback was not approved.',
+          } };
+          built.warnings.push(LOCAL_DOWN_WARNING);
+        }
+        return { team: built.team, warnings: built.warnings, options: { allowSameVendor: built.allowSameVendor } };
       }
-      return { team: built.team, warnings: built.warnings, options: { allowSameVendor: built.allowSameVendor } };
     };
     const hooks = {
       onEvent: e => { if (e.type === 'start' && e.workspace) workspaceDir = e.workspace; send({ type: 'event', event: e, workspaceDir }); },

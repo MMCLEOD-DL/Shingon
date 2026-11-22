@@ -8,6 +8,7 @@ import { MAX_RESULTS } from '../knowledge/client.js';
 import { withheldReport } from '../knowledge/evidence.js';
 import { appConfig } from './config.js';
 import { id, now, requireValue, opaqueId } from './state.js';
+import { localWorkerTools, workerOutput } from './localWorker.js';
 
 const ACTIVE = new Set(['running', 'awaiting-decision', 'queued', 'cancelling']);
 const terminal = status => ({ landed: 'completed', stopped: 'paused', paused: 'paused', rejected: 'rejected', failed: 'failed' })[status] ?? 'failed';
@@ -103,14 +104,17 @@ const rejectConsequence = (kind, payload) => kind === 'escalation' && payload?.k
 const choices = (kind, payload) => kind === 'fallback'
   ? [{ id: 'pause', label: 'Pause', consequence: 'No subscription fallback.' }, { id: 'continue', label: 'Use subscriptions', consequence: 'Uses more subscription allowance.' }]
   : [{ id: 'reject', label: 'Reject', consequence: rejectConsequence(kind, payload) }, { id: 'approve', label: 'Approve', consequence: kind === 'result' ? 'Create a new branch; do not merge or deploy.' : 'Continue this step.' }];
+const startChoice = (retry = false) => ({ id: 'start-worker', label: retry ? 'Try again' : 'Start the local worker',
+  consequence: 'Runs the start command from your configuration on this computer.' });
 export function summary(run) {
   const { events, decision, review, request, workspaceDir, clientRequestId, requestIdentity, decisionReceipts, recoveryReceipts, ...out } = run;
   return out;
 }
 export class Runs {
-  constructor({ store, dir, configFile, workerFile = fileURLToPath(new URL('./worker.js', import.meta.url)) }) {
+  constructor({ store, dir, configFile, workerFile = fileURLToPath(new URL('./worker.js', import.meta.url)), localWorkerTools: tools }) {
     Object.assign(this, { store, dir, configFile, workerFile });
     this.active = null; this.probing = false; this.listeners = new Set(); this.accepting = true;
+    this.workerStarts = new Map(); this.workerTools = localWorkerTools(tools);
   }
   available() { requireValue(this.accepting && !this.store.poisoned, 'The service needs recovery.', 'storage-unavailable', 503); }
   idle() { this.available(); requireValue(!this.active && !this.probing, 'Another run or probe is active.', 'busy', 409); }
@@ -215,6 +219,11 @@ export class Runs {
             choices: choices(msg.kind, msg.payload), evidence, revision: id(), resolvedAt: null };
           const localDown = localDownData(msg.kind, msg.payload.localDown);
           if (localDown) run.decision.localDown = localDown;
+          if (msg.kind === 'fallback' && msg.payload.stage === 'pre-run' && localDown?.reason === 'worker-offline'
+            && appConfig(this.configFile).local.worker) {
+            run.decision.choices.push(startChoice());
+            run.decision.workerStart = { state: 'available', message: 'Start the local worker on this computer.' };
+          }
           run.review = redact({ ...msg.payload, commit: evidence.commit, diffId: evidence.diffId, testReportIds: evidence.testReportIds });
           run.workspaceCommit = evidence.commit; run.activeDecisionId = msg.id; run.status = 'awaiting-decision';
           // A fresh result question proves the engine has reconciled any older
@@ -222,6 +231,7 @@ export class Runs {
           if (msg.kind === 'result' && evidence.commit !== null) run.landingPending = false;
           this.event(run, 'decision-pending', run.decision.prompt, { decisionId: msg.id });
         } else if (msg.type === 'finished') {
+          this.workerStarts.get(run.id)?.abort();
           finished = true; const outcome = msg.outcome;
           run.status = terminal(outcome.status); run.landedBranch = outcome.branch ?? null;
           const reviewRefused = outcome.status === 'failed' && outcome.reasonCode === 'review-changed' && outcome.landingState === 'not-started';
@@ -252,6 +262,7 @@ export class Runs {
     const onExit = () => {
       if (exited) return;
       exited = true;
+      this.workerStarts.get(run.id)?.abort();
       if (this.active?.child === child) this.active = null;
       if (!finished || ACTIVE.has(run.status)) {
         run.status = 'interrupted'; run.recoveryRequired = Boolean(run.landingPending);
@@ -268,6 +279,7 @@ export class Runs {
   }
   async answer(run, decisionId, body) {
     this.available(); requireValue(opaqueId(body?.clientRequestId), 'Provide a unique clientRequestId.');
+    requireValue(!this.workerStarts.has(run.id), 'The worker start is already in progress.', 'worker-start-in-progress', 409);
     const identity = JSON.stringify([decisionId, body.choiceId, body.expectedRevision, body.reviewedCommit, body.feedback ?? null]);
     const receipt = Object.hasOwn(run.decisionReceipts ?? {}, body.clientRequestId) ? run.decisionReceipts[body.clientRequestId] : null;
     if (receipt) { requireValue(receipt.identity === identity, 'Request ID conflict.', 'conflict', 409); return receipt.result; }
@@ -276,6 +288,25 @@ export class Runs {
     requireValue(body.expectedRevision === d.revision && body.reviewedCommit === d.evidence.commit, 'Review the current evidence first.', 'stale-decision', 409);
     requireValue(d.choices.some(c => c.id === body.choiceId), 'Choose one of the offered decisions.');
     requireValue(body.feedback === undefined || typeof body.feedback === 'string' && body.feedback.length <= 2000, 'Feedback is too long.');
+    if (body.choiceId === 'start-worker') {
+      const config = appConfig(this.configFile).local.worker;
+      requireValue(d.kind === 'fallback' && d.localDown?.reason === 'worker-offline' && d.workerStart && config,
+        'A worker start is not configured for this question.');
+      const controller = new AbortController();
+      this.workerStarts.set(run.id, controller);
+      const result = { accepted: true, decisionId };
+      run.decisionReceipts = { ...run.decisionReceipts, [body.clientRequestId]: { identity, result } };
+      d.workerStart = { state: 'starting', message: 'Starting the local worker.' };
+      try { this.event(run, 'progress', d.workerStart.message, { engineType: 'local-worker-start' }); }
+      catch (error) { this.workerStarts.delete(run.id); throw error; }
+      void this.startWorker(run, d, config, controller).catch(() => {
+        if (!controller.signal.aborted) {
+          try { this.workerStartFailed(run, d, 'failed', 'The start command failed. Nothing else was tried.', 'The worker start could not be completed.'); }
+          catch { this.accepting = false; if (this.active?.child.connected) this.active.child.disconnect(); }
+        }
+      }).finally(() => { if (this.workerStarts.get(run.id) === controller) this.workerStarts.delete(run.id); });
+      return result;
+    }
     if (d.kind === 'result' && run.workspaceDir) {
       const ws = await Workspace.open(run.workspaceDir);
       const current = await ws.head();
@@ -305,10 +336,64 @@ export class Runs {
     this.active.child.send({ type: 'answer', id: decisionId, value });
     return result;
   }
+  workerStartPending(run, decision) {
+    return this.accepting && this.active?.runId === run.id && this.active.child.connected
+      && run.status === 'awaiting-decision' && run.activeDecisionId === decision.id && decision.status === 'pending';
+  }
+  workerStartFailed(run, decision, state, message, output = '') {
+    if (!this.workerStartPending(run, decision)) return;
+    decision.workerStart = { state, message, ...(output ? { output: workerOutput(output) } : {}) };
+    decision.prompt = message;
+    decision.revision = id();
+    decision.choices = choices('fallback');
+    if (state === 'timeout') decision.choices.push(startChoice(true));
+    this.event(run, 'progress', message, { engineType: 'local-worker-failed', state, ...(output ? { output: workerOutput(output) } : {}) });
+  }
+  workerStarted(run, decision, alreadyReady = false) {
+    if (!this.workerStartPending(run, decision)) return;
+    const message = alreadyReady ? 'The worker is already up but busy; checking the local model again.'
+      : 'Worker ready, checking the local model again.';
+    decision.workerStart = { state: 'ready', message };
+    this.event(run, 'progress', message, { engineType: 'local-worker-ready', alreadyReady });
+    decision.status = 'resolved'; decision.resolvedAt = now(); run.activeDecisionId = null; run.status = 'running';
+    this.event(run, 'decision-resolved', 'Worker started; re-probing the local model.', { decisionId: decision.id });
+    this.active.child.send({ type: 'answer', id: decision.id, value: 'worker-started' });
+  }
+  async startWorker(run, decision, config, controller) {
+    const { signal } = controller, tools = this.workerTools;
+    const current = () => !signal.aborted && this.workerStartPending(run, decision);
+    if (await tools.ready(config.readyUrl, { signal })) {
+      if (current()) this.workerStarted(run, decision, true);
+      return;
+    }
+    if (!current()) return;
+    const result = await tools.launch(config, { signal });
+    if (!current() || result.cancelled) return;
+    if (result.code !== 0) {
+      this.workerStartFailed(run, decision, 'failed', 'The start command failed. Nothing else was tried.', result.output);
+      return;
+    }
+    decision.workerStart = { state: 'waiting', message: 'Waiting for the worker.' };
+    this.event(run, 'progress', decision.workerStart.message, { engineType: 'local-worker-wait' });
+    const deadline = tools.now() + config.startTimeoutMs;
+    while (current() && tools.now() < deadline) {
+      const ready = await tools.ready(config.readyUrl, { signal, timeoutMs: Math.min(2000, Math.max(1, Math.ceil(deadline - tools.now()))) });
+      if (ready && tools.now() < deadline) {
+        if (current()) this.workerStarted(run, decision);
+        return;
+      }
+      if (!current()) return;
+      await tools.sleep(Math.min(2000, Math.max(0, deadline - tools.now())), signal);
+    }
+    if (current()) this.workerStartFailed(run, decision, 'timeout', config.startTimeoutMs === 180000
+      ? 'The worker did not become ready within 3 minutes.'
+      : `The worker did not become ready within ${config.startTimeoutMs / 1000} seconds.`);
+  }
   cancel(run) {
     this.available();
     if (!ACTIVE.has(run.status)) return { requested: false, status: run.status };
     requireValue(!run.landingPending, 'The approved result is being added to the source repository. Wait for its outcome; cancellation is no longer safe.', 'landing-in-progress', 409);
+    this.workerStarts.get(run.id)?.abort();
     run.status = 'cancelling'; run.activeDecisionId = null;
     if (run.decision) run.decision.status = 'invalidated';
     this.event(run, 'cancel-requested', 'Stopping the owned worker; cancellation is not yet confirmed.');
@@ -344,6 +429,7 @@ export class Runs {
   resume(run) { this.idle(); requireValue(!run.recoveryRequired, 'The approved result may already be in the source repository. Inspect its branches before recovering this run.', 'recovery-required', 409); requireValue(run.resumable && run.workspaceDir, 'This run has no resumable workspace.', 'not-resumable', 409); appConfig(this.configFile); this.launch(run); return summary(run); }
   async close() {
     this.accepting = false;
+    for (const controller of this.workerStarts.values()) controller.abort();
     if (this.active) {
       const { child } = this.active;
       await new Promise(resolve => { child.once('exit', resolve); child.once('close', resolve); if (child.connected) child.disconnect(); else child.kill(); });

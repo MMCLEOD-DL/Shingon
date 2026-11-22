@@ -1,7 +1,9 @@
 // IPC fixture, not an alternative production engine.
 if (process.argv.includes('--operator-worker')) {
+let request;
 process.on('message', msg => {
   if (msg.type === 'start') {
+    request = msg.request;
     process.send({ type: 'event', event: { type: 'start' } });
     if (msg.request === 'synthetic step gate events') {
       for (const event of [
@@ -32,6 +34,12 @@ process.on('message', msg => {
       'synthetic fallback question': { reason: 'worker-offline', detail: 'no GPU worker [31m SYNTHETIC_GATE_SECRET ' + 'x'.repeat(2000), extra: 'unselected-private-field' },
       'synthetic fallback unknown reason': { reason: 'start-the-worker-now', detail: 'should not be shown' },
       'synthetic fallback odd detail': { reason: 'unauthorized', detail: { nested: 'object' } },
+      'synthetic worker offline': { reason: 'worker-offline', detail: 'The GPU worker is not connected.' },
+      'synthetic worker unauthorized': { reason: 'unauthorized', detail: 'The local server refused the key.' },
+      'synthetic worker model missing': { reason: 'model-missing', detail: 'The local model is not installed.' },
+      'synthetic worker unavailable': { reason: 'unavailable', detail: 'The local server is unavailable.' },
+      'synthetic worker mid-run': { reason: 'worker-offline', detail: 'The GPU worker is not connected.' },
+      'synthetic worker reprobe unauthorized': { reason: 'worker-offline', detail: 'The GPU worker is not connected.' },
     }[msg.request];
     const escalation = { 'synthetic step escalation': 'chunk', 'synthetic plan escalation': 'plan' }[msg.request];
     if (escalation) {
@@ -42,7 +50,8 @@ process.on('message', msg => {
     }
     if (fallback) {
       process.send({ type: 'question', id: 'test-decision', kind: 'fallback',
-        payload: { summary: 'The local model is unavailable.', reason: fallback.reason, localDown: fallback },
+        payload: { summary: 'The local model is unavailable.', reason: fallback.reason, localDown: fallback,
+          ...(request.startsWith('synthetic worker ') && request !== 'synthetic worker mid-run' ? { stage: 'pre-run' } : {}) },
         evidence: { commit: null, diffId: null, testReportIds: [] } });
       return;
     }
@@ -51,6 +60,23 @@ process.on('message', msg => {
       evidence: { commit: 'a'.repeat(40), diffId: 'fixture-diff', testReportIds: ['fixture-tests'] } });
   }
   if (msg.type === 'answer') {
+    if (msg.value === false && request?.startsWith('synthetic worker ')) {
+      process.send({ type: 'finished', outcome: { status: 'paused', reasonCode: 'paused-before-work', workspaceDir: null, reason: 'Subscription fallback was not approved.' } });
+      process.disconnect();
+      return;
+    }
+    if (msg.value === 'worker-started') {
+      if (request === 'synthetic worker reprobe unauthorized') {
+        process.send({ type: 'question', id: 'test-decision-reprobe', kind: 'fallback',
+          payload: { summary: 'The local model is unavailable.', stage: 'pre-run', localDown: { reason: 'unauthorized', detail: 'The local server refused the key.' } },
+          evidence: { commit: null, diffId: null, testReportIds: [] } });
+        return;
+      }
+      process.send({ type: 'event', event: { type: 'result', participant: 'local', ok: true } });
+      process.send({ type: 'finished', outcome: { status: 'paused', workspaceDir: null, reason: 'Synthetic local re-probe healthy; no subscription fallback.' } });
+      process.disconnect();
+      return;
+    }
     process.send({ type: 'finished', outcome: { status: msg.value === true ? 'landed' : 'rejected', branch: msg.value === true ? 'conductor/synthetic' : undefined } });
     process.disconnect();
   }

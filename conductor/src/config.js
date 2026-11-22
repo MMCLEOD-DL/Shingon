@@ -10,6 +10,7 @@ import { isApiKind } from './vendors.js';
 import { normalizeWake } from './wake.js';
 import { addScrubEnv } from './secrets.js';
 import { checkKnowledgeOptions } from './knowledge/run.js';
+import { localWorkerConfig } from './localWorkerConfig.js';
 
 export function buildAdapter(spec) {
   const opts = { bin: spec.bin, model: spec.model, timeoutMs: spec.timeoutMs };
@@ -38,6 +39,7 @@ export function readConfigJson(filePath) {
 
 export function loadConfig(filePath) {
   const parsed = readConfigJson(filePath);
+  const worker = localWorkerConfig(parsed.local);
   if (!Array.isArray(parsed.participants)) throw new Error('config must have a "participants" array');
   const options = parsed.options ?? {};
   for (const k of Object.keys(options)) {
@@ -74,5 +76,5 @@ export function loadConfig(filePath) {
     if (byName.has(p.name)) throw new Error(`Duplicate participant name: ${p.name}`);
     byName.set(p.name, p);
   }
-  return { participants, byName, routing, options, factory: parsed.factory ?? {} };
+  return { participants, byName, routing, options, factory: parsed.factory ?? {}, local: { worker } };
 }
