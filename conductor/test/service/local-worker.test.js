@@ -278,6 +278,9 @@ test('launcher command deadline is bounded and split secret output is scrubbed b
   const complete = await run(`process.stdout.write('x'.repeat(20000)+'\\n'+${JSON.stringify(secret.slice(0, 12))});setTimeout(()=>{process.stderr.write(${JSON.stringify(secret.slice(12))}+'\\nlast line');process.exit(3)},50)`, 2000, [secret]);
   assert.equal(complete.code, 3); assert.doesNotMatch(complete.output, /synthetic-fragmented|start-secret/);
   assert.ok(complete.output.endsWith('last line')); assert.match(complete.output, /\[redacted\]/);
+  const overlap = await run("console.error('prefix-synthetic-fragment-suffix');process.exit(3)", 2000,
+    ['synthetic-fragment', 'prefix-synthetic-fragment-suffix']);
+  assert.equal(overlap.output.trim(), '[redacted]', 'a shorter match must not expose fragments of a longer private value');
 });
 
 test('launcher drops case variants of configured provider variables and database URLs', async t => {
