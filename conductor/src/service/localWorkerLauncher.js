@@ -6,7 +6,7 @@ if (process.argv.includes('--local-worker-launcher')) {
   process.once('message', message => {
     if (message?.type !== 'launch') return;
     let output = '', done = false;
-    const secrets = message.redactions.filter(v => typeof v === 'string' && v.length >= 8);
+    const secrets = message.redactions.filter(v => typeof v === 'string' && v.length >= 8).sort((a, b) => b.length - a.length);
     const capacity = Math.max(16384, ...secrets.map(v => v.length * 2));
     const capture = value => { output = redact(output + value, secrets).slice(-capacity); };
     let child, timer;
