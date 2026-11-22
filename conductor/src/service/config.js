@@ -1,6 +1,7 @@
 import { existsSync, lstatSync } from 'node:fs';
 import { atomicJson, requireValue } from './state.js';
 import { loadConfig, readConfigJson } from '../config.js';
+import { localWorkerConfig } from '../localWorkerConfig.js';
 
 const SUPPORTED = new Set(['claude-code', 'codex', 'local-agent']);
 export function readSetup(file) {
@@ -13,11 +14,12 @@ function publicEndpoint(value) {
 }
 export function sanitizedSetup(file) {
   const raw = readSetup(file);
+  const worker = localWorkerConfig(raw.local);
   return { configured: raw.participants.length > 0,
     participants: raw.participants.map(p => ({ participantId: p.name, adapter: p.adapter,
       model: p.model ?? null, executable: 'unknown', authentication: 'unknown', endpoint: 'unknown',
       agenticExecution: 'unknown', checkedAt: null, probeKind: 'installation', reason: null, action: null })),
-    local: (() => { const p = raw.participants.find(p => p.adapter === 'local-agent'); return p ? { model: p.model ?? null, baseUrl: publicEndpoint(p.baseUrl) } : null; })(),
+    local: (() => { const p = raw.participants.find(p => p.adapter === 'local-agent'); return p || worker ? { model: p?.model ?? null, baseUrl: publicEndpoint(p?.baseUrl), worker: { startConfigured: Boolean(worker) } } : null; })(),
     presets: [{ id: 'default', label: 'Configured repository checks', testCommand: raw.options?.testCommand ?? null }],
     routing: { local: raw.routing?.local ?? null, author: raw.routing?.author ?? null, reviewer: raw.routing?.reviewer ?? null, allowApi: false },
     apiDisabled: true };

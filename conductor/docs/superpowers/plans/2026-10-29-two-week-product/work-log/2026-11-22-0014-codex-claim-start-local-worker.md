@@ -1,0 +1,9 @@
+# Codex claim — start the local worker: contract and service
+
+Owner Codex / BlueLake; reviewer Claude invited. Branch codex/start-local-worker, baseline694d75d (PR161 finalf2e9314 verified merged). Direct Malcolm request22November supersedes routine backlog: implement next.md item7 W1-W8, all recommended decisions recorded21November. Item7 read in full. Hoon/PR158 review cancelled by Malcolm; no further Hoon work.
+
+Own optional on-disk local.worker validation, service/setup privacy/preservation, pre-run-only fallback start action, isolated detached launcher, decision revision/receipt/concurrency, progress/recovery/cancellation, interface.md and both named contract fixture copies plus fake-worker. Explicit handoff authorizes updating operator-web/tests/fixtures/contract-v1.json only; no page/UI implementation. Shared worker/buildTeam seam is named here, engine/mid-run action unchanged.
+
+The launcher runs argv without shell, strict scrubbed child environment, windowsHide and independent detached lifetime outside engine child tracking. Cancellation/restart stop only the wait, never the started worker. Broker may finish/timeout the short start command itself; it never kills its descendants. Readiness GET is config-only, no Authorization, no redirects; existing setup endpoint rules unchanged. Command bound30seconds; readiness wait defaults180000ms. No command in browser setup/metadata.
+
+Test synthetic commands and fake readyz, including lifecycle/abrupt service termination; no real worker/model/WSL/other machine/credential operation. Native and Linux evidence separate. Service path requires Malcolm merge; auto-merge off, no labels/settings edits. Publish the PR after complete validation/evidence so the final submission is included. UI handoff to Claude after merge. Current chat owns task through final required checks, no unrelated backlog.

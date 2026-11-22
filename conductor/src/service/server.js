@@ -15,12 +15,12 @@ async function body(req) {
   for await (const part of req) { size += part.length; requireValue(size <= 32768, 'Request too large.', 'too-large', 413); parts.push(part); }
   try { return JSON.parse(Buffer.concat(parts).toString('utf8')); } catch { throw new ServiceError(400, 'invalid-json', 'Provide valid JSON.'); }
 }
-export async function createAppServer({ dataDir, configFile, port = 4318, uiDir = null, workerFile, probe = null }) {
+export async function createAppServer({ dataDir, configFile, port = 4318, uiDir = null, workerFile, probe = null, localWorkerTools }) {
   requireValue(Number.isInteger(port) && port >= 0 && port <= 65535, 'Invalid port.');
   const releaseLease = await acquireLease(dataDir);
   let store;
   try { store = new StateStore(dataDir); } catch (e) { await releaseLease(); throw e; }
-  const runs = new Runs({ store, dir: dataDir, configFile, ...(workerFile ? { workerFile } : {}) });
+  const runs = new Runs({ store, dir: dataDir, configFile, ...(workerFile ? { workerFile } : {}), localWorkerTools });
   const bootstrapToken = randomBytes(32).toString('hex'), session = randomBytes(32).toString('hex');
   rememberSecret(bootstrapToken); rememberSecret(session);
   let bootstrapUsed = false, origin, closing = false;

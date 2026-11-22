@@ -495,5 +495,305 @@
       "retryable": false,
       "requestId": "request-fixture"
     }
-  }
+  },
+  "workerOfflineConfiguredDecision": {
+    "id": "worker-offline-configured",
+    "runId": "run-fixture",
+    "kind": "fallback",
+    "createdAt": "2026-11-22T00:00:00.000Z",
+    "status": "pending",
+    "prompt": "The local model is unavailable.",
+    "choices": [
+      {
+        "id": "pause",
+        "label": "Pause",
+        "consequence": "No subscription fallback."
+      },
+      {
+        "id": "continue",
+        "label": "Use subscriptions",
+        "consequence": "Uses more subscription allowance."
+      },
+      {
+        "id": "start-worker",
+        "label": "Start the local worker",
+        "consequence": "Runs the start command from your configuration on this computer."
+      }
+    ],
+    "localDown": {
+      "reason": "worker-offline",
+      "detail": "The GPU worker is not connected."
+    },
+    "evidence": {
+      "commit": null,
+      "diffId": null,
+      "testReportIds": []
+    },
+    "revision": "worker-offline-configured-revision",
+    "resolvedAt": null,
+    "workerStart": {
+      "state": "available",
+      "message": "Start the local worker on this computer."
+    }
+  },
+  "workerOfflineUnconfiguredDecision": {
+    "id": "worker-offline-unconfigured",
+    "runId": "run-fixture",
+    "kind": "fallback",
+    "createdAt": "2026-11-22T00:00:00.000Z",
+    "status": "pending",
+    "prompt": "The local model is unavailable.",
+    "choices": [
+      {
+        "id": "pause",
+        "label": "Pause",
+        "consequence": "No subscription fallback."
+      },
+      {
+        "id": "continue",
+        "label": "Use subscriptions",
+        "consequence": "Uses more subscription allowance."
+      }
+    ],
+    "localDown": {
+      "reason": "worker-offline",
+      "detail": "The GPU worker is not connected."
+    },
+    "evidence": {
+      "commit": null,
+      "diffId": null,
+      "testReportIds": []
+    },
+    "revision": "worker-offline-unconfigured-revision",
+    "resolvedAt": null
+  },
+  "workerUnauthorizedDecision": {
+    "id": "worker-unauthorized",
+    "runId": "run-fixture",
+    "kind": "fallback",
+    "createdAt": "2026-11-22T00:00:00.000Z",
+    "status": "pending",
+    "prompt": "The local model is unavailable.",
+    "choices": [
+      {
+        "id": "pause",
+        "label": "Pause",
+        "consequence": "No subscription fallback."
+      },
+      {
+        "id": "continue",
+        "label": "Use subscriptions",
+        "consequence": "Uses more subscription allowance."
+      }
+    ],
+    "localDown": {
+      "reason": "unauthorized",
+      "detail": "The local model server refused the key. Check the key in the window that started the app."
+    },
+    "evidence": {
+      "commit": null,
+      "diffId": null,
+      "testReportIds": []
+    },
+    "revision": "worker-unauthorized-revision",
+    "resolvedAt": null
+  },
+  "workerStartInProgressDecision": {
+    "id": "worker-start-in-progress",
+    "runId": "run-fixture",
+    "kind": "fallback",
+    "createdAt": "2026-11-22T00:00:00.000Z",
+    "status": "pending",
+    "prompt": "The local model is unavailable.",
+    "choices": [
+      {
+        "id": "pause",
+        "label": "Pause",
+        "consequence": "No subscription fallback."
+      },
+      {
+        "id": "continue",
+        "label": "Use subscriptions",
+        "consequence": "Uses more subscription allowance."
+      },
+      {
+        "id": "start-worker",
+        "label": "Start the local worker",
+        "consequence": "Runs the start command from your configuration on this computer."
+      }
+    ],
+    "localDown": {
+      "reason": "worker-offline",
+      "detail": "The GPU worker is not connected."
+    },
+    "evidence": {
+      "commit": null,
+      "diffId": null,
+      "testReportIds": []
+    },
+    "revision": "worker-start-in-progress-revision",
+    "resolvedAt": null,
+    "workerStart": {
+      "state": "starting",
+      "message": "Starting the local worker."
+    }
+  },
+  "workerStartFailedDecision": {
+    "id": "worker-start-failed",
+    "runId": "run-fixture",
+    "kind": "fallback",
+    "createdAt": "2026-11-22T00:00:00.000Z",
+    "status": "pending",
+    "prompt": "The start command failed. Nothing else was tried.",
+    "choices": [
+      {
+        "id": "pause",
+        "label": "Pause",
+        "consequence": "No subscription fallback."
+      },
+      {
+        "id": "continue",
+        "label": "Use subscriptions",
+        "consequence": "Uses more subscription allowance."
+      }
+    ],
+    "localDown": {
+      "reason": "worker-offline",
+      "detail": "The GPU worker is not connected."
+    },
+    "evidence": {
+      "commit": null,
+      "diffId": null,
+      "testReportIds": []
+    },
+    "revision": "worker-start-failed-revision",
+    "resolvedAt": null,
+    "workerStart": {
+      "state": "failed",
+      "message": "The start command failed. Nothing else was tried.",
+      "output": "WSL forwarding configuration needs to be updated before starting the worker."
+    }
+  },
+  "workerStartTimeoutDecision": {
+    "id": "worker-start-timeout",
+    "runId": "run-fixture",
+    "kind": "fallback",
+    "createdAt": "2026-11-22T00:00:00.000Z",
+    "status": "pending",
+    "prompt": "The worker did not become ready within 3 minutes.",
+    "choices": [
+      {
+        "id": "pause",
+        "label": "Pause",
+        "consequence": "No subscription fallback."
+      },
+      {
+        "id": "continue",
+        "label": "Use subscriptions",
+        "consequence": "Uses more subscription allowance."
+      },
+      {
+        "id": "start-worker",
+        "label": "Try again",
+        "consequence": "Runs the start command from your configuration on this computer."
+      }
+    ],
+    "localDown": {
+      "reason": "worker-offline",
+      "detail": "The GPU worker is not connected."
+    },
+    "evidence": {
+      "commit": null,
+      "diffId": null,
+      "testReportIds": []
+    },
+    "revision": "worker-start-timeout-revision",
+    "resolvedAt": null,
+    "workerStart": {
+      "state": "timeout",
+      "message": "The worker did not become ready within 3 minutes."
+    }
+  },
+  "workerStartSetupConfigured": {
+    "local": {
+      "model": "synthetic-model",
+      "baseUrl": "http://127.0.0.1:8080/v1",
+      "worker": {
+        "startConfigured": true
+      }
+    }
+  },
+  "workerStartSetupUnconfigured": {
+    "local": {
+      "model": "synthetic-model",
+      "baseUrl": "http://127.0.0.1:8080/v1",
+      "worker": {
+        "startConfigured": false
+      }
+    }
+  },
+  "workerStartInProgressError": {
+    "error": {
+      "code": "worker-start-in-progress",
+      "message": "The worker start is already in progress.",
+      "retryable": false,
+      "requestId": "synthetic-request-id"
+    }
+  },
+  "workerStartProgressEvents": [
+    {
+      "schema": 1,
+      "runId": "run-fixture",
+      "seq": 1,
+      "at": "2026-11-22T00:00:00.000Z",
+      "type": "progress",
+      "phase": "checking",
+      "participant": null,
+      "message": "Starting the local worker.",
+      "data": {
+        "engineType": "local-worker-start"
+      }
+    },
+    {
+      "schema": 1,
+      "runId": "run-fixture",
+      "seq": 2,
+      "at": "2026-11-22T00:00:00.000Z",
+      "type": "progress",
+      "phase": "checking",
+      "participant": null,
+      "message": "Waiting for the worker.",
+      "data": {
+        "engineType": "local-worker-wait"
+      }
+    },
+    {
+      "schema": 1,
+      "runId": "run-fixture",
+      "seq": 3,
+      "at": "2026-11-22T00:00:00.000Z",
+      "type": "progress",
+      "phase": "checking",
+      "participant": null,
+      "message": "Worker ready, checking the local model again.",
+      "data": {
+        "engineType": "local-worker-ready"
+      }
+    },
+    {
+      "schema": 1,
+      "runId": "run-fixture",
+      "seq": 4,
+      "at": "2026-11-22T00:00:00.000Z",
+      "type": "progress",
+      "phase": "checking",
+      "participant": null,
+      "message": "The start command failed. Nothing else was tried.",
+      "data": {
+        "engineType": "local-worker-failed",
+        "state": "failed",
+        "output": "WSL forwarding configuration needs to be updated before starting the worker."
+      }
+    }
+  ]
 }

@@ -9,7 +9,7 @@ import { createAppServer } from '../../src/service/server.js';
 import { writeStubCli } from '../helpers/stubCli.js';
 import { git } from '../../src/workspace.js';
 
-async function fixture(t, { workerFile, request = 'add multiply', baselineFails = false, baselineScript = null, testCommand = 'node checks.cjs', localUp = true, gateCommands = [] } = {}) {
+async function fixture(t, { workerFile, request = 'add multiply', baselineFails = false, baselineScript = null, testCommand = 'node checks.cjs', localUp = true, gateCommands = [], localWorker } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'service-engine-')); const repo = path.join(root, 'repo'); mkdirSync(repo);
   await git(repo, ['init', '-q', '-b', 'main']); writeFileSync(path.join(repo, 'README.md'), 'original\n');
   writeFileSync(path.join(repo, 'checks.cjs'), baselineScript ?? (baselineFails ? "throw new Error('existing test failure');\n"
@@ -17,7 +17,10 @@ async function fixture(t, { workerFile, request = 'add multiply', baselineFails 
   await git(repo, ['add', '.']); await git(repo, ['commit', '-qm', 'initial']);
   const originalHead = (await git(repo, ['rev-parse', 'HEAD'])).stdout;
   let localRequests = 0;
-  const local = http.createServer((req, res) => { localRequests++; req.resume(); req.on('end', () => { res.writeHead(localUp ? 200 : 500, { 'content-type': 'application/json' }); res.end(localUp ? '{"choices":[]}' : '{"error":{"message":"no healthy nodes available"}}'); }); });
+  const local = http.createServer((req, res) => { localRequests++; req.resume(); req.on('end', () => {
+    const up = typeof localUp === 'function' ? localUp() : localUp;
+    res.writeHead(up ? 200 : 500, { 'content-type': 'application/json' }); res.end(up ? '{"choices":[]}' : '{"error":{"message":"no healthy nodes available"}}');
+  }); });
   await new Promise(r => local.listen(0, '127.0.0.1', r));
   const bin = path.join(root, 'bin');
   const claude = writeStubCli(bin, 'claude', `
@@ -36,7 +39,7 @@ async function fixture(t, { workerFile, request = 'add multiply', baselineFails 
     { name: 'claude', adapter: 'claude-code', bin: claude, roles: ['author','reviewer'], capabilities: { can_edit_files:true } },
     { name: 'codex', adapter: 'codex', bin: codex, roles: ['author','reviewer'], capabilities: { can_edit_files:true } },
     { name: 'local', adapter: 'local-agent', bin: codex, model:'synthetic', baseUrl:`http://127.0.0.1:${local.address().port}/v1`,roles:['grunt'],capabilities:{can_edit_files:true} },
-  ], options: { testCommand, gateCommands }, routing: { allowApi: false } }));
+  ], options: { testCommand, gateCommands }, routing: { allowApi: false }, ...(localWorker ? { local: { worker: localWorker(`http://127.0.0.1:${local.address().port}/readyz`) } } : {}) }));
   let app = await createAppServer({ dataDir, configFile, port:0, workerFile });
   let cookie;
   async function api(p, method='GET', body) {
@@ -271,4 +274,35 @@ test('restart and explicit resume regenerate decisions without repeating a compl
   const d=after.decision;
   assert.equal((await s.api(`/runs/${s.runId}/decisions/${d.id}`,'POST',{choiceId:'approve',expectedRevision:d.revision,reviewedCommit:d.evidence.commit,clientRequestId:'after-restart'})).status,200);
   await s.wait('completed');
+});
+
+
+test('start-worker re-enters real prepare/buildTeam, probes healthy, and uses the local executor', async t => {
+  const state = mkdtempSync(path.join(tmpdir(), 'engine-start-ready-'));
+  t.after(() => rmSync(state, { recursive: true, force: true }));
+  const ready = path.join(state, 'ready');
+  const s = await fixture(t, { localUp: () => existsSync(ready), localWorker: readyUrl => ({
+    startCommand: [process.execPath, '-e', `require('node:fs').writeFileSync(${JSON.stringify(ready)}, 'ready')`], readyUrl, startTimeoutMs: 5000,
+  }) });
+  const question = await s.wait('awaiting-decision');
+  assert.equal(question.decision.kind, 'fallback');
+  assert.equal(question.decision.localDown.reason, 'worker-offline');
+  assert.ok(question.decision.choices.some(c => c.id === 'start-worker'));
+  const answer = await s.api(`/runs/${s.runId}/decisions/${question.decision.id}`, 'POST', {
+    choiceId: 'start-worker', expectedRevision: question.decision.revision, reviewedCommit: null, clientRequestId: 'worker-start-1',
+  });
+  assert.equal(answer.status, 200);
+  let result;
+  for (let n = 0; n < 600; n++) {
+    result = (await s.api('/runs/' + s.runId)).body;
+    if (result.decision?.kind === 'result') break;
+    if (result.status === 'failed') throw new Error(JSON.stringify(result));
+    await new Promise(r => setTimeout(r, 25));
+  }
+  assert.equal(result.decision?.kind, 'result');
+  assert.equal(result.coverage.local, 'used');
+  const events = s.app.runs.get(s.runId).events;
+  assert.ok(events.some(e => e.data.engineType === 'local-worker-ready'));
+  assert.equal(events.some(e => e.type === 'decision-resolved' && e.message === 'continue'), false);
+  assert.ok(s.localRequests >= 3, 'initial probe, readiness checks and fresh buildTeam probe reach the synthetic server');
 });
