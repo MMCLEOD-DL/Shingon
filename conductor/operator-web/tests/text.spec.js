@@ -94,3 +94,15 @@ describe('activity log lines', () => {
     expect(activityText(undefined)).toEqual([]);
   });
 });
+
+describe('item 7: worker start lines in the activity log', () => {
+  test('the re-probe after a worker start is not shown as a choice the operator made', () => {
+    const line = eventText({ type: 'decision-resolved', message: 'Worker started; re-probing the local model.' });
+    expect(line).toBe('The local worker started. Checking the local model again.');
+  });
+  test('the service sentences for each start step are kept', () => {
+    for (const message of ['Starting the local worker.', 'Waiting for the worker.', 'Worker ready, checking the local model again.']) {
+      expect(eventText({ type: 'progress', message, data: { engineType: 'local-worker-start' } })).toBe(message);
+    }
+  });
+});

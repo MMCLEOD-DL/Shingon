@@ -81,6 +81,8 @@ const DECISION_TEXT = {
   reject: 'You rejected it.',
   pause: 'You chose to pause.',
   continue: 'You chose to use your subscriptions.',
+  // Item 7: the service resolves the question itself once a started worker answers; the operator chose nothing here.
+  'Worker started; re-probing the local model.': 'The local worker started. Checking the local model again.',
 };
 const FINISH_TEXT = {
   landed: 'The branch was created.', // not "Branch created": that is the status label, and it stays unique on the page

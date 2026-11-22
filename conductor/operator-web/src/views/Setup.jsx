@@ -102,6 +102,14 @@ export function Setup({ api }) {
         <button type="submit">Save local model</button>
         {saved && <p role="status">Saved.</p>}
       </form>
+      {typeof setup.local?.worker?.startConfigured === 'boolean' && (
+        <p className="muted small">
+          {setup.local.worker.startConfigured
+            ? 'A start command for the local worker is configured. When a run finds the GPU worker not connected, it offers "Start the local worker".'
+            : 'No start command for the local worker is configured, so runs do not offer to start it.'}
+          {' '}The command is set in the Conductor configuration file (<code>local.worker</code>), not here.
+        </p>
+      )}
 
       <h2>Checks used before approval</h2>
       {setup.presets?.map((preset) => (
